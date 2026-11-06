@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Product: Trail running shoe</title>
+<style>body{font:16px sans-serif;margin:0}main{padding:16px}[role=tab][aria-selected=true]{font-weight:bold}</style></head>
+<body>
+<main><h1>Trail running shoe</h1>
+<!-- Pattern: ARIA tabs whose inactive panels are hidden, and a <details> accordion that is closed. The hidden text is
+     in the DOM but not rendered. -->
+<div role="tablist">
+  <button role="tab" id="tab-desc" aria-selected="true" aria-controls="panel-desc">Description</button>
+  <button role="tab" id="tab-specs" aria-selected="false" aria-controls="panel-specs">Specifications</button>
+  <button role="tab" id="tab-reviews" aria-selected="false" aria-controls="panel-reviews">Reviews</button>
+</div>
+<div role="tabpanel" id="panel-desc" aria-labelledby="tab-desc"><p>A light shoe for rocky trails.</p></div>
+<div role="tabpanel" id="panel-specs" aria-labelledby="tab-specs" hidden><p>Weight: 280 g. Drop: 6 mm.</p></div>
+<div role="tabpanel" id="panel-reviews" aria-labelledby="tab-reviews" hidden><p>Average rating: 4.4 out of 5.</p></div>
+<details><summary>Shipping and returns</summary><p>Free returns within 30 days.</p></details>
+</main>
+<script>
+for (const tab of document.querySelectorAll('[role=tab]')) {
+  tab.addEventListener('click', () => {
+    for (const other of document.querySelectorAll('[role=tab]')) {
+      other.setAttribute('aria-selected', String(other === tab));
+      document.getElementById(other.getAttribute('aria-controls')).hidden = other !== tab;
+    }
+  });
+}
+</script>
+</body></html>

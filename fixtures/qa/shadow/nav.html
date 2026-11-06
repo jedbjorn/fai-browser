@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Driftline CLI</title>
+<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#1d2330;background:#fff;line-height:1.5}
+header.site{display:flex;gap:18px;align-items:center;padding:12px 24px;background:#f2f4f8;border-bottom:1px solid #d9dee8}
+header.site strong{margin-right:auto}main{max-width:880px;margin:0 auto;padding:24px}a{color:#1f5fbf}
+button{font:inherit;padding:6px 12px;border:1px solid #8a94a8;border-radius:6px;background:#fff;cursor:pointer}
+table{border-collapse:collapse}td,th{border:1px solid #d9dee8;padding:6px 10px;text-align:left}footer{padding:24px;color:#5a6478;border-top:1px solid #e3e6ee;margin-top:40px}</style>
+</head>
+<body>
+<app-shell></app-shell>
+<main><h1>Driftline CLI</h1><p>Driftline syncs tide-gauge data to your laptop. Pick a section from the navigation above.</p></main>
+<script>
+class NavPanel extends HTMLElement{connectedCallback(){var r=this.attachShadow({mode:'open'});
+  r.innerHTML='<style>nav{display:flex;gap:16px}a{color:#fff}</style><nav aria-label="Product"><a href="/shadow/nav.html">Overview</a><a href="/shadow/releases.html">Releases</a><a href="/shadow/support.html">Support</a></nav>';}}
+class HelpCard extends HTMLElement{connectedCallback(){var r=this.attachShadow({mode:'open'});
+  r.innerHTML='<style>p{margin:4px 0}</style><p><b>Need help?</b></p><p>Support hotline: +351 21 555 0142</p>';}}
+class AppShell extends HTMLElement{connectedCallback(){var r=this.attachShadow({mode:'open'});
+  r.innerHTML='<style>header{display:flex;gap:24px;align-items:center;background:#1d2330;color:#fff;padding:12px 24px}.help{margin-left:auto;font-size:14px}</style><header><strong>Driftline</strong><nav-panel></nav-panel><help-card class="help"></help-card></header>';}}
+customElements.define('nav-panel',NavPanel);customElements.define('help-card',HelpCard);customElements.define('app-shell',AppShell);
+</script>
+</body>
+</html>

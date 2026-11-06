@@ -1,0 +1,80 @@
+name: Bug report
+description: Something does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Do not paste secrets, cookies, pairing secrets or personal page content.** Redaction
+        placeholders such as `[secret:3 ...]` are safe to include. Security problems go to a private advisory (see SECURITY.md), not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A fixture page or a short MCP session is ideal. For a site problem, use the Site compatibility template.
+      placeholder: |
+        1. fai_browser_open origins=[...] mode=...
+        2. fai_browser_act actionId=a3 ...
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Area
+      options:
+        - MCP server / tools
+        - Approval card / popup
+        - Secret redaction / secret handles
+        - Guardrails / levels / Approve gate
+        - Native messaging / pairing / setup
+        - Daemon / CLI
+        - Firefox
+        - Skill / task guides
+        - Docs
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser
+      options: [Chrome, Chromium, Brave, Edge, Vivaldi, Firefox, Other]
+    validations:
+      required: true
+  - type: input
+    id: browser-version
+    attributes:
+      label: Browser version and OS
+      placeholder: "Chrome 141, Ubuntu 24.04"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: FAI Browser version / commit
+      placeholder: "0.3.0 or commit id"
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: Coding agent
+      options: [Claude Code, Codex, OpenCode, Other MCP client, CLI only]
+  - type: dropdown
+    id: driver
+    attributes:
+      label: Driver
+      options: ["Your agent (default)", "Jev autopilot (experimental)"]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Status output and logs
+      description: "Output of `fai_browser_status` or `node src/cli.js status`, and any error text. Review it for secrets before pasting."
+      render: shell

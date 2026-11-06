@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Plans and saved items</title>
+<style>body{font:16px sans-serif;margin:0}main{padding:16px}button,label{display:block;margin:6px 0}</style></head>
+<body>
+<main><h1>Choose a plan</h1>
+<!-- Intent corpus: controls the label lists flag (or used to) that commit nothing. Each click only writes #status. -->
+<p id="status">idle</p>
+<fieldset><legend>Billing period</legend>
+  <label><input type="radio" name="period" value="monthly" checked onclick="hit('period monthly')"> Monthly €9/month</label>
+  <label><input type="radio" name="period" value="yearly" onclick="hit('period yearly')"> Yearly – €90/year, billed yearly (save 17%)</label>
+  <div role="listbox" aria-label="Term">
+    <div role="option" aria-selected="true" tabindex="0" onclick="hit('term one year')">One year</div>
+    <div role="option" aria-selected="false" tabindex="0" onclick="hit('term two years')">Two years (save 30%)</div>
+  </div>
+</fieldset>
+<button type="button" onclick="hit('badge')">Save 20% today</button>
+<h2>Your cart</h2>
+<p>Desk lamp, €24</p>
+<button type="button" onclick="hit('saved for later')">Save for later</button>
+<h2>Teams</h2>
+<button type="button" onclick="hit('demo form opened')">Book a demo</button>
+<button type="button" onclick="hit('plans shown')">Upgrade</button>
+<button type="button" onclick="hit('invite dialog opened')">Invite teammates</button>
+<button type="button" onclick="hit('table widget opened')">Reserve a table</button>
+<h2>Account</h2>
+<button type="button" onclick="hit('confirmation email sent')">Confirm email address</button>
+<button type="button" onclick="hit('feedback sent')">Send feedback</button>
+<h2>Catalog</h2>
+<button type="button" onclick="hit('sorted by price')">Order by price</button>
+<a href="#guide" onclick="hit('guide')">Upgrade guide</a>
+</main>
+<script>function hit(what) { document.getElementById('status').textContent = what; }</script>
+</body></html>

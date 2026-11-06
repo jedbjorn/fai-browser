@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Marseille to London | Flights fixture</title>
+  <style>
+    body { margin: 8px; font: 14px sans-serif; }
+    header a, header [role="button"] { margin-right: 6px; }
+    .field { display: inline-flex; align-items: center; margin-right: 12px; }
+    .stepper { width: 24px; height: 24px; padding: 0; }
+    .row { display: flex; gap: 8px; margin: 2px 0; }
+    .icon { display: inline-block; width: 16px; height: 16px; background: #aac; }
+  </style>
+</head>
+<body>
+  <!-- The structure of a Google Flights results page (live capture 2026-10-05): role=button divs and spans, icon-only
+       stepper buttons next to date inputs (aria-hidden, no name at all), a span role=button with an empty aria-label
+       whose only name sits on a nested role=link, a switch named by aria-labelledby, a div role=combobox ("Round trip") that opens a list, and 18 result rows (a link and
+       two buttons each: 10 before and 8 after the "Date grid" and "Price graph" buttons), then "Price calendar" at the
+       very end. 91 controls (under the page script's 100), 86 of them offered as clicks at interactive (text fields
+       take only supplied values; "Explore" submits the form): over the listing cap of 80, so observe lists the 80
+       most relevant and warns controls_capped:6. -->
+  <header>
+    <div role="button" aria-label="Main menu" tabindex="0"><span class="icon"></span></div>
+    <a href="/">Home</a><a href="/explore">Explore</a><a href="/flights">Flights</a><a href="/hotels">Hotels</a>
+    <a href="/rentals">Vacation rentals</a>
+    <button type="button" title="Change appearance"><span class="icon"></span></button>
+    <button type="button"><svg width="16" height="16" aria-hidden="true"><title>Google apps</title><rect width="16" height="16"></rect></svg></button>
+    <button type="button"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="Notifications" width="16" height="16"></button>
+  </header>
+
+  <h1>Flight search</h1>
+  <form id="search" onsubmit="return false">
+    <div role="combobox" aria-expanded="false" tabindex="0">Round trip</div>
+    <span id="pax-label">Passengers</span>
+    <button type="button" aria-labelledby="pax-label pax-count"><span id="pax-count">1</span></button>
+    <label for="from">Where from?</label><input id="from" type="text" value="Marseille">
+    <label>Where to? <input type="text" value="London"></label>
+    <div class="field">
+      <input id="depart" type="text" value="Sun, Jan 31" placeholder="Departure">
+      <button class="stepper" type="button" tabindex="-1" aria-hidden="true"><span class="icon"></span></button>
+      <button class="stepper" type="button" tabindex="-1" aria-hidden="true"><span class="icon"></span></button>
+    </div>
+    <div class="field">
+      <input id="return" type="text" value="Mon, Feb 8" aria-label="Return">
+      <button class="stepper" type="button" tabindex="-1" aria-hidden="true"><span class="icon"></span></button>
+      <button class="stepper" type="button" tabindex="-1" aria-hidden="true"><span class="icon"></span></button>
+    </div>
+    <input type="submit" value="Explore">
+  </form>
+
+  <h2>Filters</h2>
+  <div id="filters">
+    <button type="button">All filters</button><button type="button">Stops</button><button type="button">Airlines</button>
+    <button type="button">Bags</button><button type="button">Times</button><button type="button">Duration</button>
+  </div>
+
+  <h2>Top departing flights</h2>
+  <div id="top"></div>
+
+  <h2>Price insights</h2>
+  <span role="button" aria-label="" tabindex="0"><span role="link" aria-label="Learn more about tracked prices" tabindex="0"><span class="icon"></span></span></span>
+  <span id="any-dates">Track prices from Marseille to London - Any dates</span>
+  <button type="button" role="switch" aria-checked="false" aria-labelledby="any-dates"><span class="icon"></span></button>
+  <div role="button" tabindex="0">Date grid</div>
+  <div role="button" tabindex="0">Price graph</div>
+
+  <h2>Other departing flights</h2>
+  <div id="other"></div>
+  <button type="button">View more flights</button>
+  <fieldset>
+    <legend>Display currency</legend>
+    <button type="button"><span class="icon"></span></button>
+  </fieldset>
+  <footer>
+    <a href="/about">About</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a>
+    <div role="button" tabindex="0">Price calendar</div>
+  </footer>
+  <script>
+    const airlines = ['Ryanair', 'easyJet', 'British Airways', 'Vueling', 'Air France', 'KLM', 'Lufthansa', 'Swiss',
+      'Iberia', 'TAP', 'ITA', 'Brussels Airlines', 'Aer Lingus'];
+    function rows(id, start, count) {
+      const box = document.getElementById(id);
+      for (let i = start; i < start + count; i++) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        const airline = airlines[i % airlines.length];
+        row.innerHTML = `<a href="/booking/${i}">From ${60 + i * 7} euros round trip with ${airline}</a>`
+          + `<button type="button">Emissions estimate ${90 + i} kilograms</button>`
+          + `<button type="button" aria-label="Flight details for flight ${i + 1}">Details</button>`;
+        box.append(row);
+      }
+    }
+    rows('top', 0, 10);
+    rows('other', 10, 8);
+  </script>
+</body>
+</html>

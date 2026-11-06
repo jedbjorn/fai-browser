@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Before you continue</title>
+<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#1d2330;background:#fff;line-height:1.5}
+header.site{display:flex;gap:18px;align-items:center;padding:12px 24px;background:#f2f4f8;border-bottom:1px solid #d9dee8}
+header.site strong{margin-right:auto}main{max-width:880px;margin:0 auto;padding:24px}a{color:#1f5fbf}
+button{font:inherit;padding:6px 12px;border:1px solid #8a94a8;border-radius:6px;background:#fff;cursor:pointer}
+table{border-collapse:collapse}td,th{border:1px solid #d9dee8;padding:6px 10px;text-align:left}footer{padding:24px;color:#5a6478;border-top:1px solid #e3e6ee;margin-top:40px}
+.wall{max-width:640px;margin:40px auto;padding:24px;border:1px solid #d9dee8;border-radius:12px}.wall form{display:inline-block;margin-right:8px}</style>
+</head>
+<body>
+<div class="wall">
+<h1>Before you continue to Searchly</h1>
+<p>We use cookies and data to:</p>
+<ul><li>Deliver and maintain Searchly services</li><li>Track outages and protect against spam, fraud and abuse</li><li>Measure audience engagement and site statistics</li><li>Develop and improve new services</li><li>Deliver and measure the effectiveness of ads</li><li>Show personalised content, depending on your settings</li><li>Show personalised ads, depending on your settings</li></ul>
+<p>If you choose to &ldquo;Reject all&rdquo;, we will not use cookies for these additional purposes.</p>
+<form action="/consent/save" method="get"><input type="hidden" name="continue" value="/consent/search"><input type="hidden" name="set" value="reject"><button type="submit">Reject all</button></form>
+<form action="/consent/save" method="get"><input type="hidden" name="continue" value="/consent/search"><input type="hidden" name="set" value="accept"><button type="submit">Accept all</button></form>
+<p><a href="/consent/wall-options.html">More options</a></p>
+</div>
+<script>
+(function(){var c=new URLSearchParams(location.search).get('continue');if(c&&c.charAt(0)==='/'&&c.charAt(1)!=='/'){document.querySelectorAll('input[name=continue]').forEach(function(i){i.value=c;});}})();
+</script>
+</body>
+</html>

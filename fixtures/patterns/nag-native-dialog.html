@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Recipes</title>
+<style>body{font:16px sans-serif;margin:0}main{padding:16px}dialog{width:420px;padding:24px}</style></head>
+<body>
+<main><h1>Weeknight recipes</h1>
+<ol><li>Lemon pasta, 20 minutes</li><li>Chickpea curry, 35 minutes</li><li>Sheet-pan salmon, 25 minutes</li></ol>
+</main>
+<!-- Pattern: a native <dialog> opened with showModal(); it has no close control, the browser closes it on Escape. -->
+<dialog id="signup">
+  <h2>Create a free account</h2>
+  <p>Members save recipes and get a weekly meal plan. Sign up with your email.</p>
+  <button type="button">Sign up free</button>
+</dialog>
+<script>document.getElementById('signup').showModal();</script>
+</body></html>

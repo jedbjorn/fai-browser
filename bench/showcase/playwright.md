@@ -1,0 +1,1 @@
+Browser tools: use the Playwright MCP tools (for example browser_navigate, browser_snapshot, browser_click, browser_type, browser_select_option, browser_file_upload, browser_wait_for). The browser starts blank, so navigate to {{START}} first. The task may name a file in your current workspace; use that file for an upload.

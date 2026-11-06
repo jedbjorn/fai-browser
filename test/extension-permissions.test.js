@@ -1,0 +1,819 @@
+// The popup's Permissions section and request-card level selector (configurable-guardrails.md §3.3): the pure logic
+// in extension/permissions.js (storage shape, default level, origin validation, testing visibility), its agreement
+// with the worker's and the runtime's level tables, and popup.js itself in headless Chromium against a fake chrome
+// API (what it renders and stores, and the exact `start` message Approve sends).
+import test from 'node:test';
+import { headlessEnv } from '../scripts/headless-env.mjs';
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import { readFile } from 'node:fs/promises';
+import { chromium } from 'playwright-core';
+import {
+  BUDGET_LIMITS, BUDGET_MINUTES, CAPABILITIES, DEFAULT_LEVELS, LEVELS, addTestingOrigin, budgetFromFields, describeBudget,
+  exactOrigin, levelChoices, minLevel, normalizeBudget, normalizePermissions, normalizeRememberedSites, removeTestingOrigin,
+  requestedLevel, startTarget, testingAllowed,
+} from '../extension/permissions.js';
+import * as guardrails from '../src/guardrails.js';
+
+const EXTENSION = new URL('../extension/', import.meta.url);
+
+test('empty or malformed storage yields Act (preselect ceiling) and no testing environments', () => {
+  assert.deepEqual(normalizePermissions(undefined), { defaultLevel: 'full', testingOrigins: [] });
+  assert.deepEqual(normalizePermissions(null), { defaultLevel: 'full', testingOrigins: [] });
+  assert.deepEqual(normalizePermissions({ defaultLevel: 'testing', testingOrigins: 'http://localhost:3000' }),
+    { defaultLevel: 'full', testingOrigins: [] }, 'testing is never a default; a string is not a list');
+  assert.deepEqual(normalizePermissions({
+    defaultLevel: 'full',
+    testingOrigins: ['http://localhost:3000', 'http://localhost:3000', 'https://*.example.com', 'ftp://x.test', 42, 'http://127.0.0.1:8080'],
+  }), { defaultLevel: 'full', testingOrigins: ['http://localhost:3000', 'http://127.0.0.1:8080'] });
+  for (const level of DEFAULT_LEVELS) assert.equal(normalizePermissions({ defaultLevel: level }).defaultLevel, level);
+});
+
+test('testing environments are exact http(s) origins: no paths, wildcards, user info or other schemes', () => {
+  for (const origin of ['http://localhost:3000', 'http://localhost', 'http://127.0.0.1:5173', 'https://staging.example.com',
+    'http://[::1]:8080', 'https://xn--bcher-kva.example']) {
+    assert.equal(exactOrigin(origin), origin, origin);
+  }
+  for (const value of ['https://staging.example.com/', 'https://staging.example.com/app', 'https://*.example.com',
+    'staging.example.com', 'localhost:3000', 'ftp://example.com', 'chrome://extensions', 'file:///tmp',
+    'https://user:pw@example.com', 'HTTPS://Example.com', 'https://example.com:443', 'http://localhost:3000?x=1',
+    '', ' http://localhost:3000', null, 42]) {
+    assert.equal(exactOrigin(value), null, String(value));
+  }
+});
+
+test('adding and removing testing environments', () => {
+  const empty = normalizePermissions(undefined);
+  const added = addTestingOrigin(empty, '  http://localhost:3000  ');
+  assert.deepEqual(added.permissions, { defaultLevel: 'full', testingOrigins: ['http://localhost:3000'] });
+  assert.match(addTestingOrigin(added.permissions, 'http://localhost:3000').error, /already listed/);
+  assert.match(addTestingOrigin(empty, 'https://staging.example.com/app').error, /Did you mean https:\/\/staging\.example\.com\?/);
+  assert.match(addTestingOrigin(empty, 'https://*.example.com').error, /no wildcards/);
+  assert.doesNotMatch(addTestingOrigin(empty, 'https://*.example.com').error, /Did you mean/);
+  assert.match(addTestingOrigin(empty, 'ftp://example.com').error, /exact origin/);
+  assert.deepEqual(removeTestingOrigin(added.permissions, 'http://localhost:3000').testingOrigins, []);
+});
+
+test('the request card offers levels up to the asked one, presets the asked one, and offers testing only for listed origins', () => {
+  const permissions = { defaultLevel: 'full', testingOrigins: ['http://localhost:3000', 'http://localhost:4000'] };
+  const levels = choice => choice.options.map(option => option.level);
+  const names = choice => choice.options.map(option => option.name);
+  // The bug this fixes: with empty storage a Full request preset to Read-only.
+  let choice = levelChoices({ mode: 'full', origins: ['https://app.example.com'] }, undefined);
+  assert.equal(choice.requested, 'full');
+  assert.equal(choice.preset, 'full');
+  assert.deepEqual(levels(choice), ['read-only', 'interactive', 'full']);
+  assert.deepEqual(names(choice), ['Read', 'Use', 'Act']);
+  assert.equal(levelChoices({ mode: 'full', origins: ['https://a.test'] }, { defaultLevel: 'read-only' }).preset, 'read-only',
+    'the Preselect up to setting caps the preset');
+  assert.equal(levelChoices({ mode: 'full', origins: ['https://a.test'] }, { defaultLevel: 'reversible' }).preset, 'interactive',
+    'a ceiling saved as Reversible counts as Use');
+  choice = levelChoices({ mode: 'read-only', origins: ['https://app.example.com'] }, { defaultLevel: 'full' });
+  assert.equal(choice.preset, 'read-only', 'never above what the agent asked for');
+  assert.deepEqual(levels(choice), ['read-only'], 'nothing above the asked level is offered');
+  assert.deepEqual(levels(levelChoices({ mode: 'reversible', origins: ['https://a.test'] }, permissions)), ['read-only', 'reversible'],
+    'Use stands for reversible when that is what the agent asked for');
+  assert.deepEqual(levels(levelChoices({ mode: 'interactive', origins: ['https://a.test'] }, permissions)), ['read-only', 'interactive']);
+  assert.deepEqual(levels(levelChoices({ mode: 'full', origins: ['http://localhost:3000'] }, permissions)), ['read-only', 'interactive', 'full'],
+    'Test site only when the agent asked for testing');
+  choice = levelChoices({ mode: 'testing', origins: ['http://localhost:3000', 'http://localhost:4000'] }, permissions);
+  assert.deepEqual(levels(choice), ['read-only', 'interactive', 'full', 'testing']);
+  assert.equal(choice.options.at(-1).name, 'Test site');
+  assert.equal(choice.preset, 'full', 'testing is never preset; the user picks it');
+  assert.equal(choice.options.find(option => option.level === 'testing').warning, true);
+  assert.equal(levelChoices({ mode: 'testing', origins: ['http://localhost:3000'] }, { defaultLevel: 'interactive', testingOrigins: ['http://localhost:3000'] }).preset, 'interactive');
+  for (const origins of [['http://localhost:3000', 'https://prod.example.com'], [], undefined, ['http://localhost:3000/']]) {
+    assert.ok(!levels(levelChoices({ mode: 'testing', origins }, permissions)).includes('testing'), JSON.stringify(origins));
+  }
+  assert.equal(levelChoices({ origins: ['https://a.test'] }, undefined).preset, 'read-only', 'empty storage, legacy request');
+  assert.equal(requestedLevel({ mode: 'reversible' }), 'reversible');
+  assert.equal(requestedLevel({ level: 'interactive', mode: 'read-only' }), 'interactive');
+  assert.equal(requestedLevel({ mode: 'root' }), 'read-only');
+  assert.equal(minLevel('testing', 'full'), 'full');
+  assert.equal(minLevel('bogus', 'full'), 'read-only');
+  assert.equal(testingAllowed(['http://localhost:3000'], ['http://localhost:3000']), true);
+  assert.equal(testingAllowed([], ['http://localhost:3000']), false);
+});
+
+test('the popup, the worker and the runtime agree on the levels and their capabilities (drift check)', async () => {
+  const worker = await readFile(new URL('background.js', EXTENSION), 'utf8');
+  const levels = worker.match(/\nconst LEVELS = (\[[^\]]+\]);/)?.[1];
+  const capabilities = worker.match(/\nconst CAPABILITIES = (\{[\s\S]*?\n\});/)?.[1];
+  assert.ok(levels && capabilities, 'background.js defines LEVELS and CAPABILITIES');
+  assert.deepEqual(JSON.parse(JSON.stringify(vm.runInNewContext(`(${levels})`))), [...LEVELS]);
+  const workerCapabilities = JSON.parse(JSON.stringify(vm.runInNewContext(`(${capabilities})`)));
+  assert.deepEqual(workerCapabilities, JSON.parse(JSON.stringify(CAPABILITIES)));
+  assert.deepEqual([...guardrails.LEVELS], [...LEVELS]);
+  assert.deepEqual(JSON.parse(JSON.stringify(guardrails.CAPABILITIES)), JSON.parse(JSON.stringify(CAPABILITIES)));
+  // purchase and sign_in exist only at testing.
+  for (const level of LEVELS.slice(0, -1)) {
+    assert.ok(!CAPABILITIES[level].includes('purchase') && !CAPABILITIES[level].includes('sign_in'), level);
+  }
+});
+
+// --- popup.js in Chromium -------------------------------------------------------------------------------------------
+
+let browser;
+test.before(async () => {
+  browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, env: headlessEnv(), args: ['--no-sandbox'] });
+});
+test.after(() => browser?.close());
+
+// Loads popup.html with a fake chrome API. `local` is chrome.storage.local, `requests` the worker's request list,
+// `state` what the worker answers to every message (merged with the message log).
+// `allowSite`: what Chrome's site-access prompt answers to chrome.permissions.request (recorded in __permissionRequests).
+// `held`: patterns Chrome already holds (chrome.permissions.contains); removals are recorded in __permissionRemovals.
+async function popup(t, { local = {}, requests = [], state = {}, tabUrl = 'http://localhost:3000/app', allowSite = true,
+  held = [], query = '', pinned = true, connected = true } = {}) {
+  const page = await browser.newPage({ viewport: { width: 400, height: 900 } });
+  t.after(() => page.close());
+  await page.route('https://popup.test/**', async route => {
+    const file = new URL(route.request().url()).pathname.slice(1);
+    const type = file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : 'text/html';
+    route.fulfill({ contentType: type, body: await readFile(new URL(file, EXTENSION), 'utf8') });
+  });
+  await page.addInitScript(([local, requests, state, tabUrl, allowSite, held, pinned, connected]) => {
+    const listeners = [];
+    globalThis.__permissionRequests = [];
+    globalThis.__permissionRemovals = [];
+    const granted = new Set(held);
+    globalThis.__listeners = listeners;
+    globalThis.__state = state;
+    globalThis.__sent = [];
+    globalThis.__local = local;
+    globalThis.__closed = 0;
+    window.close = () => { globalThis.__closed++; };
+    globalThis.__tabQueries = 0;
+    globalThis.chrome = {
+      storage: {
+        local: {
+          async get(keys) { return Object.fromEntries(keys.filter(key => key in __local).map(key => [key, structuredClone(__local[key])])); },
+          async set(values) { Object.assign(__local, structuredClone(values)); },
+        },
+        session: { async get() { return { requests, connection: { connected, transport: connected ? 'websocket' : 'none', paired: connected, native: __state.native ?? null } }; } },
+        onChanged: { addListener(listener) { listeners.push(listener); } },
+      },
+      tabs: { async query() { __tabQueries++; return [{ id: 7, url: tabUrl, title: 'App' }]; } },
+      commands: { async getAll() { return [{ name: '_execute_action', shortcut: 'Ctrl+Shift+Y' }]; } },
+      action: { async getUserSettings() { return { isOnToolbar: pinned }; } },
+      permissions: {
+        async request(value) {
+          __permissionRequests.push({ ...value, sentBefore: __sent.length, heldBefore: value.origins.every(o => granted.has(o)) });
+          if (allowSite) for (const origin of value.origins) granted.add(origin);
+          return allowSite || value.origins.every(o => granted.has(o));
+        },
+        async contains({ origins }) { return origins.every(origin => granted.has(origin)); },
+        async remove({ origins }) {
+          __permissionRemovals.push(...origins);
+          for (const origin of origins) granted.delete(origin);
+          return true;
+        },
+      },
+      runtime: {
+        async sendMessage(message) {
+          __sent.push(message);
+          if (message.type === 'set_driver') {
+            if (__state.driverError) return { error: __state.driverError };
+            __state.control = { ...__state.control, driver: message.driver };
+          }
+          if (message.type === 'pair' && __state.pairError) return { error: __state.pairError };
+          const live = connected || (message.type === 'pair' && !__state.pairError);
+          return { status: __state.status ?? null, session: __state.session ?? null, requests,
+            connection: { connected: live, transport: live ? 'websocket' : 'none', paired: live, native: __state.native ?? null,
+              ...(__state.control ? { control: __state.control } : {}) } };
+        },
+      },
+    };
+  }, [local, requests, state, tabUrl, allowSite, held, pinned, connected]);
+  await page.goto(`https://popup.test/popup.html${query}`);
+  await page.waitForFunction(expected => document.querySelector('#transport').textContent.includes(expected),
+    connected ? 'websocket' : 'not connected');
+  return page;
+}
+
+const PAIRED = { endpoint: 'http://127.0.0.1:4318', secret: 'x'.repeat(30) };
+const request = (origins, mode) => ({ requestId: 'req_1', state: 'pending', origins, mode, reason: 'Run the checkout test', createdAt: new Date().toISOString() });
+const options = page => page.$$eval('.request-card .level-select option', nodes => nodes.map(node => node.value));
+// How many elements match. Never assert on an element handle itself: a failing assertion makes node inspect the whole
+// Playwright object graph behind it, which takes gigabytes of memory in seconds.
+const count = (page, selector) => page.locator(selector).count();
+
+test('popup: browser control toggles both ways, sends the choice and reflects confirmation', async t => {
+  const page = await popup(t, { local: PAIRED, state: { control: { driver: 'jev', jevAvailable: true } } });
+  await page.click('#advanced summary');
+  assert.equal(await page.getAttribute('#driver-jev', 'aria-pressed'), 'true');
+  // Your agent first and recommended; Jev labelled experimental; the Jev key row shows only while Jev is selected.
+  assert.deepEqual(await page.$$eval('.driver-toggle button', nodes => nodes.map(node => node.id)), ['driver-agent', 'driver-jev']);
+  assert.match(await page.textContent('#driver-agent'), /Your agent\s*recommended/);
+  assert.match(await page.textContent('#driver-jev'), /Jev autopilot\s*experimental/);
+  assert.equal(await page.$eval('#key-row', node => node.hidden), false);
+  await page.click('#driver-agent');
+  await page.waitForFunction(() => document.querySelector('#driver-agent').getAttribute('aria-pressed') === 'true');
+  assert.equal(await page.$eval('#key-row', node => node.hidden), true);
+  assert.deepEqual(await page.evaluate(() => __sent.filter(message => message.type === 'set_driver')),
+    [{ type: 'set_driver', driver: 'agent' }]);
+  assert.match(await page.textContent('#driver-saved'), /No restart needed/);
+  assert.equal(await page.evaluate(() => __local.driver), undefined);
+  await page.click('#driver-jev');
+  await page.waitForFunction(() => document.querySelector('#driver-jev').getAttribute('aria-pressed') === 'true');
+  assert.equal(await page.evaluate(() => __sent.filter(message => message.type === 'set_driver').at(-1).driver), 'jev');
+  assert.ok(await page.$eval('.driver-toggle', node => node.scrollWidth <= node.clientWidth), 'toggle fits the popup');
+});
+
+test('popup: driver save errors leave the confirmed choice selected and allow retry', async t => {
+  const page = await popup(t, { local: PAIRED,
+    state: { control: { driver: 'jev', jevAvailable: true }, driverError: 'Could not save browser control.' } });
+  await page.click('#advanced summary');
+  await page.click('#driver-agent');
+  await page.waitForFunction(() => document.querySelector('#driver-error').textContent.includes('Could not save'));
+  assert.equal(await page.getAttribute('#driver-jev', 'aria-pressed'), 'true');
+  assert.equal(await page.getAttribute('#driver-agent', 'aria-pressed'), 'false');
+  assert.equal(await page.isDisabled('#driver-agent'), false);
+  // The service reports the asked-for choice in effect after all (a lost acknowledgement): the error clears.
+  await page.evaluate(() => __listeners.forEach(listener => listener({ connection: { newValue: {
+    connected: true, transport: 'websocket', mode: 'daemon', control: { driver: 'agent', jevAvailable: true },
+  } } }, 'session')));
+  await page.waitForFunction(() => document.querySelector('#driver-error').textContent === '');
+  assert.equal(await page.getAttribute('#driver-agent', 'aria-pressed'), 'true');
+});
+
+test('popup: unavailable Jev, disconnected service and an older daemon cannot be toggled', async t => {
+  const page = await popup(t, { local: PAIRED, state: { control: { driver: 'agent', jevAvailable: false } } });
+  assert.equal(await page.isDisabled('#driver-jev'), true);
+  assert.match(await page.textContent('#driver-help'), /needs its key: add it during setup/);
+  await page.evaluate(() => __listeners.forEach(listener => listener({ connection: { newValue: {
+    connected: false, mode: 'daemon', control: { driver: 'agent', jevAvailable: false },
+  } } }, 'session')));
+  assert.equal(await page.isDisabled('#driver-agent'), true);
+  const old = await popup(t, { local: PAIRED });
+  assert.equal(await old.isDisabled('#driver-agent'), true);
+  assert.equal(await old.isDisabled('#driver-jev'), true);
+});
+
+test('popup: works with empty storage; Advanced preselects up to Act and no testing environments', async t => {
+  const page = await popup(t, { requests: [request(['http://localhost:3000'], 'full')] });
+  assert.equal(await page.$eval('#default-level', node => node.value), 'full');
+  assert.equal(await page.$eval('#testing-empty', node => node.hidden), false);
+  assert.equal(await page.$eval('.request-card .level-select', node => node.value), 'full', 'preset: what the agent asked for');
+  assert.deepEqual(await options(page), ['read-only', 'interactive', 'full']);
+  assert.deepEqual(await page.$$eval('.request-card .level-select option', nodes => nodes.map(node => node.textContent)),
+    ['Read', 'Use', 'Act']);
+  assert.match(await page.$eval('.request-meta', node => node.textContent), /asks for Act/);
+});
+
+test('popup: the default level and testing environments persist as permissions = { defaultLevel, testingOrigins }', async t => {
+  const page = await popup(t, { local: { ...PAIRED } });
+  assert.equal(await page.$eval('#advanced', node => node.open), false, 'Advanced starts collapsed');
+  await page.click('#advanced summary');
+  assert.equal(await page.$eval('#default-level', node => node.value), 'full', 'preselect up to Act by default');
+  await page.selectOption('#default-level', 'interactive');
+  assert.match(await page.$eval('#default-level-help', node => node.textContent), /up to this level/);
+  await page.fill('#testing-origin', 'https://staging.example.com/app');
+  await page.click('#testing-add');
+  assert.match(await page.$eval('#testing-error', node => node.textContent), /Did you mean https:\/\/staging\.example\.com\?/);
+  await page.fill('#testing-origin', 'http://localhost:3000');
+  await page.press('#testing-origin', 'Enter');
+  await page.fill('#testing-origin', 'https://staging.example.com');
+  await page.click('#testing-add');
+  assert.deepEqual(await page.evaluate(() => __local.permissions),
+    { defaultLevel: 'interactive', testingOrigins: ['http://localhost:3000', 'https://staging.example.com'] });
+  assert.deepEqual(await page.$$eval('#testing-list code', nodes => nodes.map(node => node.textContent)),
+    ['http://localhost:3000', 'https://staging.example.com']);
+  await page.click('#testing-list button[aria-label="Remove http://localhost:3000"]');
+  assert.deepEqual(await page.evaluate(() => __local.permissions.testingOrigins), ['https://staging.example.com']);
+});
+
+test('popup: Testing appears only when every requested origin is listed, warning-styled; Approve sends the level', async t => {
+  const local = { ...PAIRED, permissions: { defaultLevel: 'full', testingOrigins: ['http://localhost:3000'] } };
+  const mixed = await popup(t, { local, requests: [request(['http://localhost:3000', 'https://prod.example.com'], 'testing')] });
+  assert.ok(!(await options(mixed)).includes('testing'));
+
+  const page = await popup(t, { local, requests: [request(['http://localhost:3000'], 'testing')] });
+  assert.deepEqual(await options(page), ['read-only', 'interactive', 'full', 'testing']);
+  assert.equal(await page.$eval('.request-card .level-select', node => node.value), 'full', 'preset: requested, never testing');
+  assert.equal(await page.$eval('.request-card .level-warning', node => node.hidden), true);
+  assert.equal(await page.$eval('option[value="testing"]', node => node.className), 'level-testing');
+  await page.selectOption('.request-card .level-select', 'testing');
+  assert.equal(await page.$eval('.request-card', node => node.dataset.level), 'testing');
+  assert.equal(await page.$eval('.request-card .level-warning', node => node.hidden), false);
+  await page.click('.approve-request');
+  const start = (await page.evaluate(() => __sent)).find(message => message.type === 'start');
+  assert.deepEqual(start, { type: 'start', requestId: 'req_1', level: 'testing' }, 'the pairing never rides along');
+});
+
+test('popup: Approve sends the preset level when the user does not change it', async t => {
+  const page = await popup(t, { local: { ...PAIRED, permissions: { defaultLevel: 'reversible' } }, requests: [request(['http://localhost:3000'], 'full')] });
+  await page.click('.approve-request');
+  const start = (await page.evaluate(() => __sent)).find(message => message.type === 'start');
+  assert.equal(start.level, 'interactive', 'a Reversible ceiling counts as Use');
+});
+
+test('popup: an active testing lease reads "TESTING, no guardrails" in the warning style', async t => {
+  const session = { requestId: 'req_1', leaseId: 'lease-1', tabId: 7, origin: 'http://localhost:3000', status: 'active', level: 'testing' };
+  const active = { ...request(['http://localhost:3000'], 'testing'), state: 'active' };
+  const page = await popup(t, { local: { ...PAIRED, status: 'active' }, requests: [active], state: { status: 'active', session } });
+  await page.waitForFunction(() => document.querySelector('#state-label').dataset.state === 'testing');
+  assert.equal(await page.$eval('#state-label', node => node.textContent), 'TEST SITE, no guardrails');
+  assert.equal(await page.$eval('#state-label', node => getComputedStyle(node).color), 'rgb(168, 50, 42)');
+
+  const full = await popup(t, { local: { ...PAIRED, status: 'active' }, requests: [active], state: { status: 'active', session: { ...session, level: 'full' } } });
+  await full.waitForFunction(() => document.querySelector('#state-label').dataset.state === 'active');
+  assert.equal(await full.$eval('#state-label', node => node.textContent), 'In use');
+  assert.match(await full.$eval('.request-card', node => node.textContent), /Approved: Act/);
+});
+
+test('popup: removing the testing environment while open refreshes the tab card from the worker', async t => {
+  const session = { requestId: 'req_1', leaseId: 'lease-1', tabId: 7, origin: 'http://localhost:3000', status: 'active', level: 'testing' };
+  const active = { ...request(['http://localhost:3000'], 'testing'), state: 'active' };
+  const permissions = { defaultLevel: 'full', testingOrigins: ['http://localhost:3000'] };
+  const page = await popup(t, { local: { ...PAIRED, status: 'active', permissions }, requests: [active], state: { status: 'active', session } });
+  await page.waitForFunction(() => document.querySelector('#state-label').dataset.state === 'testing');
+  await page.evaluate(() => {
+    // The worker drops the session to Full once the origin is gone; storage.onChanged reaches the popup.
+    __state.session = { ...__state.session, level: 'full' };
+    for (const listener of __listeners) listener({ permissions: { newValue: { defaultLevel: 'full', testingOrigins: [] } } }, 'local');
+  });
+  await page.waitForFunction(() => document.querySelector('#state-label').dataset.state === 'active');
+  assert.equal(await page.$eval('#state-label', node => node.textContent), 'In use');
+  assert.match(await page.$eval('.request-card', node => node.textContent), /Approved: Act/);
+});
+
+// --- domain roots on the request card -------------------------------------------------------------------------------
+
+const ROOT_REQUEST = { requestId: 'req_1', state: 'pending', origins: ['https://*.example.org'], mode: 'read-only',
+  reason: 'Read the team page', createdAt: new Date().toISOString() };
+const DEV_TAB = 'https://developer.example.org/docs';
+const startMessage = page => page.evaluate(() => __sent.find(message => message.type === 'start'));
+
+test('popup: a domain root reads "all of example.org", with an explicit site choice preset to the domain', async t => {
+  const page = await popup(t, { local: { ...PAIRED }, requests: [ROOT_REQUEST], tabUrl: DEV_TAB });
+  assert.match(await page.$eval('.request-meta', node => node.textContent), /^all of example\.org · asks for Read$/);
+  assert.doesNotMatch(await page.$eval('.request-card', node => node.textContent), /\*/, 'no wildcard pattern is shown');
+  const options = await page.$$eval('.request-scope label', nodes => nodes.map(node => node.textContent));
+  assert.deepEqual(options, ['All of example.org', 'Only https://developer.example.org']);
+  assert.equal(await page.$eval('.request-scope input[value="domain"]', node => node.checked), true);
+  assert.equal(await page.$eval('.request-card', node => node.dataset.scope), 'domain');
+  assert.match(await page.$eval('.scope-prompt', node => node.textContent), /Chrome asks you to allow site access/);
+});
+
+test('popup: Approve requests https://*.<root>/* in the click, before the start message, and sends scope domain', async t => {
+  const page = await popup(t, { local: { ...PAIRED }, requests: [ROOT_REQUEST], tabUrl: DEV_TAB });
+  await page.click('.approve-request');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'start'));
+  const [asked] = await page.evaluate(() => __permissionRequests);
+  assert.deepEqual(asked.origins, ['https://*.example.org/*']);
+  const sent = await page.evaluate(() => __sent);
+  assert.ok(sent.findIndex(message => message.type === 'start') >= asked.sentBefore, 'requested before start was sent');
+  assert.deepEqual(sent.find(message => message.type === 'track').patterns, ['https://*.example.org/*'],
+    'the worker is told which pattern this extension requested');
+  const start = await startMessage(page);
+  assert.equal(start.scope, 'domain');
+  assert.equal(start.level, 'read-only');
+});
+
+test('popup: a declined Chrome prompt approves the exact origin only and says so', async t => {
+  const page = await popup(t, { local: { ...PAIRED }, requests: [ROOT_REQUEST], tabUrl: DEV_TAB, allowSite: false });
+  await page.click('.approve-request');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'start'));
+  assert.equal((await startMessage(page)).scope, 'origin');
+  await page.waitForFunction(() => /site access was not allowed/.test(document.querySelector('#status').textContent));
+});
+
+test('popup: "Only <origin>" asks Chrome for nothing and sends scope origin', async t => {
+  const page = await popup(t, { local: { ...PAIRED }, requests: [ROOT_REQUEST], tabUrl: DEV_TAB });
+  await page.check('.request-scope input[value="origin"]');
+  assert.equal(await page.$eval('.request-card', node => node.dataset.scope), 'origin');
+  await page.click('.approve-request');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'start'));
+  assert.deepEqual(await page.evaluate(() => __permissionRequests), []);
+  assert.equal((await startMessage(page)).scope, 'origin');
+});
+
+test('popup: an exact request has no site choice; a tab outside the root cannot approve it', async t => {
+  const exact = await popup(t, { local: { ...PAIRED }, requests: [request(['http://localhost:3000'], 'read-only')] });
+  assert.equal(await count(exact, '.request-scope'), 0);
+  const away = await popup(t, { local: { ...PAIRED }, requests: [ROOT_REQUEST], tabUrl: 'https://example.net/' });
+  assert.equal(await count(away, '.request-scope'), 0);
+  assert.match(await away.$eval('.request-mismatch', node => node.textContent), /asked for: all of example\.org/);
+  assert.equal(await away.$eval('.approve-request', node => node.disabled), true);
+  const http = await popup(t, { local: { ...PAIRED }, requests: [ROOT_REQUEST], tabUrl: 'http://developer.example.org/' });
+  assert.equal(await http.$eval('.approve-request', node => node.disabled), true, 'roots are https only');
+});
+
+test('popup: the active domain lease shows the site it covers', async t => {
+  const active = { ...ROOT_REQUEST, state: 'active' };
+  const session = { requestId: 'req_1', leaseId: 'lease-1', tabId: 7, origin: 'https://developer.example.org', status: 'active',
+    level: 'read-only', scope: 'domain' };
+  const page = await popup(t, { local: { ...PAIRED, status: 'active' }, requests: [active], tabUrl: DEV_TAB, state: { status: 'active', session } });
+  await page.waitForFunction(() => document.querySelector('.scope-approved'));
+  assert.equal(await page.$eval('.scope-approved', node => node.textContent), 'Site: all of example.org');
+  const narrowed = await popup(t, { local: { ...PAIRED, status: 'active' }, requests: [active], tabUrl: DEV_TAB,
+    state: { status: 'active', session: { ...session, scope: 'origin' } } });
+  await narrowed.waitForFunction(() => document.querySelector('.scope-approved'));
+  assert.equal(await narrowed.$eval('.scope-approved', node => node.textContent), 'Site: only https://developer.example.org');
+});
+
+test('popup: "Remember domain approvals" is off by default, persists, lists remembered domains and forgets one', async t => {
+  const until = Date.now() + 3600_000;
+  const page = await popup(t, { local: { ...PAIRED } });
+  await page.click('#advanced summary');
+  assert.equal(await page.$eval('#remember-domains', node => node.checked), false);
+  assert.equal(await page.$eval('#remembered-list', node => node.hidden), true);
+  await page.check('#remember-domains');
+  assert.deepEqual(await page.evaluate(() => __local.domainMemory), { remember: true });
+  const listed = await popup(t, { local: { ...PAIRED, domainMemory: { remember: true },
+    rememberedSites: [{ root: 'example.org', until }, { root: 'co.uk', until }] }, requests: [ROOT_REQUEST], tabUrl: DEV_TAB,
+  held: ['https://*.example.org/*'] });
+  await listed.click('#advanced summary');
+  assert.equal(await listed.$eval('#remember-domains', node => node.checked), true);
+  assert.deepEqual(await listed.$$eval('#remembered-list code', nodes => nodes.map(node => node.textContent)), ['all of example.org']);
+  await listed.waitForFunction(() => document.querySelector('.scope-prompt')?.dataset.kind === 'remembered');
+  assert.match(await listed.$eval('.scope-prompt', node => node.textContent), /Remembered until .*no Chrome prompt/);
+  await listed.click('#remembered-list button[aria-label="Forget example.org"]');
+  assert.ok((await listed.evaluate(() => __sent)).some(message => message.type === 'forget' && message.root === 'example.org'));
+});
+
+test('popup: a domain remembered at Read-only still prompts at Full (removed, then requested again)', async t => {
+  const until = Date.now() + 3600_000;
+  const page = await popup(t, { local: { ...PAIRED, permissions: { defaultLevel: 'full' }, domainMemory: { remember: true },
+    rememberedSites: [{ root: 'example.org', until }] }, requests: [{ ...ROOT_REQUEST, mode: 'full' }], tabUrl: DEV_TAB,
+  held: ['https://*.example.org/*'] });
+  // The card ends the remembered grant before any click, so the click requests synchronously and Chrome asks again.
+  await page.waitForFunction(() => document.querySelector('.scope-prompt')?.dataset.kind === 'prompt');
+  assert.deepEqual(await page.evaluate(() => __permissionRemovals), ['https://*.example.org/*']);
+  assert.ok((await page.evaluate(() => __sent)).some(message => message.type === 'forget' && message.root === 'example.org'));
+  assert.deepEqual(await page.evaluate(() => __permissionRequests), [], 'nothing requested before the click');
+  await page.click('.approve-request');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'start'));
+  const [asked] = await page.evaluate(() => __permissionRequests);
+  assert.equal(asked.heldBefore, false, 'Chrome had to ask again');
+  assert.equal((await startMessage(page)).scope, 'domain');
+  // Back at Read-only the remembered grant needs no prompt.
+  const ro = await popup(t, { local: { ...PAIRED, domainMemory: { remember: true }, rememberedSites: [{ root: 'example.org', until }] },
+    requests: [ROOT_REQUEST], tabUrl: DEV_TAB, held: ['https://*.example.org/*'] });
+  await ro.waitForFunction(() => document.querySelector('.scope-prompt')?.dataset.kind === 'remembered');
+  await ro.click('.approve-request');
+  await ro.waitForFunction(() => __sent.some(message => message.type === 'start'));
+  assert.deepEqual(await ro.evaluate(() => __permissionRemovals), []);
+});
+
+test('popup: when Chrome already allows the site (site access setting) the card says no prompt will appear', async t => {
+  const page = await popup(t, { local: { ...PAIRED }, requests: [ROOT_REQUEST], tabUrl: DEV_TAB, held: ['https://*.example.org/*'] });
+  await page.waitForFunction(() => document.querySelector('.scope-prompt')?.dataset.kind === 'granted');
+  assert.match(await page.$eval('.scope-prompt', node => node.textContent), /no prompt will appear/);
+  await page.click('.approve-request');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'start'));
+  assert.ok(!(await page.evaluate(() => __sent)).some(message => message.type === 'track'),
+    'a site the user allowed by hand is not tracked, so the worker never removes it');
+  assert.equal((await startMessage(page)).scope, 'domain');
+});
+
+// --- Open <host> --------------------------------------------------------------------------------------------------
+
+test('startTarget: the request url on its origins, else the first exact origin; never off-origin or http elsewhere', () => {
+  const exact = ['https://shop.example.com', 'http://localhost:3000'];
+  assert.deepEqual(startTarget({ origins: exact, url: 'https://shop.example.com/cart?x=1' }),
+    { url: 'https://shop.example.com/cart?x=1', origin: 'https://shop.example.com', host: 'shop.example.com' });
+  assert.equal(startTarget({ origins: exact, url: 'https://evil.example.net/' }).url, 'https://shop.example.com/');
+  assert.equal(startTarget({ origins: exact, url: 'javascript:alert(1)' }).url, 'https://shop.example.com/');
+  assert.equal(startTarget({ origins: ['http://localhost:3000'] }).host, 'localhost:3000', 'the port stays');
+  assert.equal(startTarget({ origins: ['https://*.example.org'] }), null, 'roots only, no url: no open path');
+  assert.equal(startTarget({ origins: ['https://*.example.org'], url: 'https://docs.example.org/a' }).origin, 'https://docs.example.org');
+  assert.equal(startTarget({ origins: ['http://intranet.example'] }).url, 'http://intranet.example/', 'opening needs no host permission');
+  const until = Date.now() + 1000;
+  assert.deepEqual(normalizeRememberedSites([{ origin: 'https://shop.example.com', until }, { root: 'example.org', until }]),
+    [{ root: 'example.org', until }], 'exact origins are no longer remembered');
+});
+
+const SHOP_REQUEST = { ...request(['https://shop.example.com'], 'read-only'), url: 'https://shop.example.com/cart' };
+
+const openMessage = page => page.evaluate(() => __sent.find(message => message.type === 'open'));
+
+test('popup: a tab off the request offers "Open <host>"; the click asks Chrome for nothing and sends open', async t => {
+  const page = await popup(t, { local: { ...PAIRED }, requests: [SHOP_REQUEST] });
+  assert.equal(await count(page, '#approve'), 0, '#approve stays the plain matching-tab path');
+  const button = await page.$('.open-request');
+  assert.equal(await button.textContent(), 'Open shop.example.com');
+  assert.match(await page.$eval('.request-mismatch', node => node.textContent),
+    /asked for: https:\/\/shop\.example\.com\. Open shop\.example\.com opens it in a new window; approve there with the FAI Browser icon\./);
+  await button.click();
+  await page.waitForFunction(() => __sent.some(message => message.type === 'open'));
+  assert.deepEqual(await page.evaluate(() => __permissionRequests), [], 'no Chrome permission for a single origin');
+  const open = await openMessage(page);
+  assert.deepEqual({ requestId: open.requestId, level: open.level, scope: open.scope },
+    { requestId: 'req_1', level: 'read-only', scope: 'origin' });
+  assert.equal(await page.evaluate(() => __sent.some(message => ['start', 'intent', 'track'].includes(message.type))), false);
+  await page.waitForFunction(() => /click the FAI Browser icon \(or Ctrl\+Shift\+Y\) to approve/.test(document.querySelector('#status').textContent));
+});
+
+test('popup: a matching tab keeps "Approve this tab" as #approve, with a secondary "Open in a new window"', async t => {
+  const page = await popup(t, { local: { ...PAIRED }, requests: [{ ...request(['http://localhost:3000'], 'read-only'), url: 'http://localhost:3000/app' }] });
+  assert.equal(await page.$eval('#approve', node => node.textContent), 'Approve this tab');
+  assert.equal(await page.$eval('.link-button.open-request', node => node.textContent), 'Open in a new window');
+  await page.click('.link-button.open-request');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'open'));
+  assert.equal((await openMessage(page)).requestId, 'req_1');
+});
+
+test('popup: "All of <root>" asks Chrome for the roots in the click and opens with scope domain; declined is origin', async t => {
+  const rooted = { ...ROOT_REQUEST, url: 'https://developer.example.org/docs' };
+  const page = await popup(t, { local: { ...PAIRED }, requests: [rooted], tabUrl: 'https://example.net/' });
+  assert.equal(await page.$eval('.open-request', node => node.textContent), 'Open developer.example.org');
+  const before = await page.evaluate(() => __sent.length);
+  await page.click('.open-request');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'open'));
+  const [asked] = await page.evaluate(() => __permissionRequests);
+  assert.deepEqual(asked.origins, ['https://*.example.org/*']);
+  assert.equal(asked.sentBefore, before, 'requested before any message of the click (inside the gesture)');
+  const sent = await page.evaluate(() => __sent.map(message => message.type));
+  assert.deepEqual(sent.filter(type => ['intent', 'open'].includes(type)), ['intent', 'open']);
+  assert.equal((await openMessage(page)).scope, 'domain');
+  const declined = await popup(t, { local: { ...PAIRED }, requests: [rooted], tabUrl: 'https://example.net/', allowSite: false });
+  await declined.click('.open-request');
+  await declined.waitForFunction(() => __sent.some(message => message.type === 'open'));
+  assert.equal((await openMessage(declined)).scope, 'origin');
+  await declined.waitForFunction(() => /Chrome site access was not allowed: developer\.example\.org opened for its own origin only/
+    .test(document.querySelector('#status').textContent));
+});
+
+test('approval window: no current tab; the card opens the request\'s page and the window closes after the open', async t => {
+  const page = await popup(t, { local: { ...PAIRED }, requests: [SHOP_REQUEST], query: '?window=1',
+    tabUrl: 'https://shop.example.com/cart' });
+  assert.equal(await page.evaluate(() => __tabQueries), 0, 'its own extension tab is never the current tab');
+  assert.equal(await page.$eval('.tab-card .card-label', node => node.textContent), 'AGENT REQUEST');
+  const button = await page.$('.open-request');
+  assert.equal(await button.textContent(), 'Open shop.example.com');
+  assert.equal(await page.evaluate(() => __closed), 0);
+  await button.click();
+  await page.waitForFunction(() => __closed > 0);
+  assert.equal((await openMessage(page)).requestId, 'req_1');
+});
+
+test('approval window: it closes itself when no pending or paused request is left', async t => {
+  const page = await popup(t, { local: { ...PAIRED }, requests: [SHOP_REQUEST], query: '?window=1' });
+  assert.equal(await page.evaluate(() => __closed), 0);
+  await page.evaluate(() => { for (const listener of __listeners) listener({ requests: { newValue: [] } }, 'session'); });
+  assert.equal(await page.evaluate(() => __closed), 1);
+});
+
+test('approval window: a request with no page to open cannot be approved from the window', async t => {
+  const roots = { ...request(['https://*.example.com'], 'read-only') };
+  const page = await popup(t, { local: { ...PAIRED }, requests: [roots], query: '?window=1' });
+  assert.equal(await page.$eval('.request-card .primary-button', node => node.disabled), true);
+  assert.match(await page.$eval('.request-card', node => node.textContent), /approve there with the FAI Browser icon/);
+});
+
+test('approval window: a higher level for the tab the session drives is "Approve on the FAI tab", sent onSessionTab', async t => {
+  const session = { requestId: 'req_1', leaseId: 'lease-1', tabId: 7, origin: 'https://shop.example.com', status: 'active', level: 'read-only' };
+  const live = { ...SHOP_REQUEST, state: 'active' };
+  const raise = { ...SHOP_REQUEST, requestId: 'req_2', mode: 'full' };
+  const page = await popup(t, { local: { ...PAIRED, status: 'active' }, requests: [live, raise], query: '?window=1',
+    state: { status: 'active', session } });
+  assert.equal(await page.textContent('.fai-tab-request'), 'Approve on the FAI tab');
+  assert.equal(await count(page, '.open-request'), 0, 'nothing opens a second window');
+  await page.click('.fai-tab-request');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'start'));
+  const start = await startMessage(page);
+  assert.deepEqual({ requestId: start.requestId, onSessionTab: start.onSessionTab }, { requestId: 'req_2', onSessionTab: true });
+});
+
+test('popup: "Show a window when an agent asks for a tab" is on by default and saves approvalWindow', async t => {
+  const page = await popup(t, { local: { ...PAIRED } });
+  assert.equal(await page.evaluate(() => __closed), 0, 'the toolbar popup never closes itself');
+  await page.click('#advanced summary');
+  assert.equal(await page.$eval('#approval-window', node => node.checked), true);
+  await page.click('#approval-window');
+  assert.equal(await page.evaluate(() => __local.approvalWindow), false);
+});
+
+test('popup: "Open requested pages right away" is on by default (absent or any other value), off only on an explicit false', async t => {
+  const page = await popup(t, { local: { ...PAIRED } });
+  await page.click('#advanced summary');
+  assert.equal(await page.$eval('#open-right-away', node => node.checked), true);
+  const help = await page.$eval('label[for="open-right-away"] + .field-help', node => node.textContent);
+  assert.match(help, /Opening approves nothing/);
+  assert.match(help, /click the FAI Browser icon on the page/);
+  await page.click('#open-right-away');
+  assert.equal(await page.evaluate(() => __local.openRightAway), false);
+  const off = await popup(t, { local: { ...PAIRED, openRightAway: false } });
+  assert.equal(await off.$eval('#open-right-away', node => node.checked), false);
+  const legacy = await popup(t, { local: { ...PAIRED, openRightAway: 'yes' } });
+  assert.equal(await legacy.$eval('#open-right-away', node => node.checked), true);
+});
+
+// --- arm.html: the waiting prompt next to a page that opened by itself ------------------------------------------
+
+// Loads arm.html?tab=<tabId> with a fake chrome API: `arms` is chrome.storage.session.armedTabs, `requests` the
+// worker's request list, `permissions` chrome.storage.local.permissions.
+async function armPage(t, { arms, requests = [], permissions = null, tabId = 9, pinned = true } = {}) {
+  const page = await browser.newPage({ viewport: { width: 400, height: 250 } });
+  t.after(() => page.close());
+  await page.route('https://popup.test/**', async route => {
+    const file = new URL(route.request().url()).pathname.slice(1);
+    const type = file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : 'text/html';
+    route.fulfill({ contentType: type, body: await readFile(new URL(file, EXTENSION), 'utf8') });
+  });
+  await page.addInitScript(([arms, requests, permissions, pinned]) => {
+    const listeners = [];
+    globalThis.__listeners = listeners;
+    globalThis.__sent = [];
+    globalThis.__closed = 0;
+    globalThis.__reply = null;
+    window.close = () => { globalThis.__closed++; };
+    globalThis.chrome = {
+      storage: {
+        local: { async get() { return permissions ? { permissions } : {}; } },
+        session: { async get() { return { armedTabs: arms, requests }; } },
+        onChanged: { addListener(listener) { listeners.push(listener); } },
+      },
+      runtime: {
+        async sendMessage(message) {
+          __sent.push(message);
+          return __reply ?? { status: null };
+        },
+      },
+      commands: { async getAll() { return [{ name: '_execute_action', shortcut: 'Ctrl+Shift+Y' }]; } },
+      action: { async getUserSettings() { return { isOnToolbar: pinned }; } },
+    };
+  }, [arms, requests, permissions, pinned]);
+  await page.goto(`https://popup.test/arm.html?tab=${tabId}`);
+  await page.waitForFunction(() => document.querySelector('#level option') !== null || globalThis.__closed > 0);
+  return page;
+}
+
+const ARM = { tabId: 9, requestId: 'req_1', level: 'reversible', scope: 'origin', patterns: [], client: 'Codex', at: Date.now(),
+  groupId: null, promptWindowId: 31 };
+const ARM_REQUEST = { ...request(['https://shop.example.com'], 'reversible'), url: 'https://shop.example.com/cart', client: 'Codex' };
+
+test('arm.html says to click the icon on the opened page, names the client, host, reason and level, and offers the levels', async t => {
+  const page = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST] });
+  assert.match(await page.$eval('#headline', node => node.textContent), /Click the FAI Browser icon in the toolbar of the page that just opened/);
+  const detail = await page.$eval('#detail', node => node.textContent);
+  assert.match(detail, /Codex asks for shop\.example\.com: "Run the checkout test"/);
+  assert.match(detail, /Click the FAI Browser icon there \(or Ctrl\+Shift\+Y\) to let it use that tab at the level below\. Nothing happens until you do\./);
+  assert.equal(await page.$eval('#level', node => node.value), 'reversible');
+  assert.deepEqual(await page.$$eval('#level option', nodes => nodes.map(node => node.value)), ['read-only', 'reversible'],
+    'never above what the agent asked for');
+  assert.deepEqual(await page.$$eval('#level option', nodes => nodes.map(node => node.textContent)), ['Read', 'Use']);
+  assert.match(await page.$eval('#level-help', node => node.textContent), /Clicks, picks options/);
+  assert.equal(await page.$eval('#pin-hint', node => node.hidden), true, 'pinned: no hint');
+  assert.equal(await page.$eval('#level-warning', node => node.hidden), true);
+  assert.equal(await page.evaluate(() => __closed), 0);
+});
+
+test('arm.html: changing the level sends arm_level for the tab; Deny sends deny for the request', async t => {
+  const page = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST] });
+  await page.selectOption('#level', 'read-only');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'arm_level'));
+  assert.deepEqual(await page.evaluate(() => __sent.find(message => message.type === 'arm_level')), { type: 'arm_level', tabId: 9, level: 'read-only' });
+  await page.waitForFunction(() => /approve Read\./.test(document.querySelector('#status').textContent));
+  await page.click('#deny');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'deny'));
+  assert.deepEqual(await page.evaluate(() => __sent.find(message => message.type === 'deny')), { type: 'deny', requestId: 'req_1' });
+  await page.waitForFunction(() => /Request denied/.test(document.querySelector('#status').textContent));
+  // The worker's refusal is shown.
+  const refused = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST] });
+  await refused.evaluate(() => { globalThis.__reply = { error: 'This page is no longer waiting for approval.' }; });
+  await refused.selectOption('#level', 'read-only');
+  await refused.waitForFunction(() => /no longer waiting/.test(document.querySelector('#status').textContent));
+});
+
+test('arm.html offers Testing only when every requested origin is a listed environment, and closes when its arm ends', async t => {
+  const listed = { defaultLevel: 'read-only', testingOrigins: ['http://localhost:3000'] };
+  const local = { ...request(['http://localhost:3000'], 'testing'), url: 'http://localhost:3000/app' };
+  const page = await armPage(t, { arms: [{ ...ARM, level: 'interactive' }], requests: [local], permissions: listed });
+  assert.deepEqual(await page.$$eval('#level option', nodes => nodes.map(node => node.value)), ['read-only', 'interactive', 'full', 'testing']);
+  assert.equal(await page.$eval('#level', node => node.value), 'interactive');
+  // An interactive request on a listed test site still offers nothing above Use.
+  const use = await armPage(t, { arms: [{ ...ARM, level: 'interactive' }], requests: [{ ...local, mode: 'interactive' }], permissions: listed });
+  assert.deepEqual(await use.$$eval('#level option', nodes => nodes.map(node => node.value)), ['read-only', 'interactive']);
+  // The arm leaves storage.session (approved, denied, expired or the tab closed): the prompt closes itself.
+  await page.evaluate(() => { for (const listener of __listeners) listener({ armedTabs: { newValue: [] } }, 'session'); });
+  assert.equal(await page.evaluate(() => __closed), 1);
+  // No arm for this tab at all (a stale window): it closes at once.
+  const stale = await armPage(t, { arms: [], requests: [] });
+  assert.equal(await stale.evaluate(() => __closed), 1);
+  // Without the request list yet (a worker restart before the daemon's snapshot), only the armed level is shown.
+  const bare = await armPage(t, { arms: [ARM], requests: [] });
+  assert.deepEqual(await bare.$$eval('#level option', nodes => nodes.map(node => node.value)), ['reversible']);
+  assert.match(await bare.$eval('#detail', node => node.textContent), /Codex asks for that page/);
+});
+
+// --- per-request budget (Setup & connection) ---------------------------------------------------------------------
+
+test('normalizeBudget: integers within the bounds, else null (not set); the bounds match src/settings.js', async () => {
+  const settings = await import('../src/settings.js');
+  assert.deepEqual(BUDGET_LIMITS, settings.BUDGET_LIMITS, 'the popup and the server agree on the bounds');
+  assert.deepEqual(BUDGET_MINUTES, { min: 1, max: 240 });
+  assert.equal(normalizeBudget(undefined), null);
+  assert.equal(normalizeBudget(null), null);
+  assert.equal(normalizeBudget({ maxCalls: 0, maxMs: 60_000 }), null);
+  assert.equal(normalizeBudget({ maxCalls: 501, maxMs: 60_000 }), null);
+  assert.equal(normalizeBudget({ maxCalls: 5, maxMs: 999 }), null);
+  assert.equal(normalizeBudget({ maxCalls: 5, maxMs: 14_400_001 }), null);
+  assert.equal(normalizeBudget({ maxCalls: '5', maxMs: 60_000 }), null);
+  assert.equal(normalizeBudget({ maxCalls: 5 }), null, 'both fields are needed');
+  assert.deepEqual(normalizeBudget({ maxCalls: 5, maxMs: 60_000, extra: 1 }), { maxCalls: 5, maxMs: 60_000 });
+  assert.deepEqual(normalizeBudget(settings.DEFAULT_BUDGET), { maxCalls: 50, maxMs: 1_200_000 });
+});
+
+test('budgetFromFields: whole numbers within the bounds; both empty removes the setting; describeBudget reads back', () => {
+  assert.deepEqual(budgetFromFields({ calls: '', minutes: '' }), { budget: null });
+  assert.deepEqual(budgetFromFields({ calls: ' 12 ', minutes: '5' }), { budget: { maxCalls: 12, maxMs: 300_000 } });
+  assert.match(budgetFromFields({ calls: '', minutes: '5' }).error, /Fill in both calls and minutes, or leave both empty/);
+  assert.match(budgetFromFields({ calls: '12', minutes: '' }).error, /Fill in both/);
+  assert.match(budgetFromFields({ calls: '0', minutes: '5' }).error, /Calls must be a whole number from 1 to 500/);
+  assert.match(budgetFromFields({ calls: '501', minutes: '5' }).error, /Calls must be/);
+  assert.match(budgetFromFields({ calls: '1.5', minutes: '5' }).error, /Calls must be/);
+  assert.match(budgetFromFields({ calls: '0', minutes: '' }).error, /Calls must be/, 'a bad value is named before the missing one');
+  assert.match(budgetFromFields({ calls: '12', minutes: '241' }).error, /Minutes must be a whole number from 1 to 240/);
+  assert.match(budgetFromFields({ calls: '12', minutes: '-3' }).error, /Minutes must be/);
+  assert.equal(describeBudget({ maxCalls: 50, maxMs: 1_200_000 }), '50 calls, 20 min');
+  assert.equal(describeBudget({ maxCalls: 1, maxMs: 90_000 }), '1 call, 1.5 min');
+  assert.equal(describeBudget(null), '');
+});
+
+test('popup: the per-request budget fields are empty by default, validate whole numbers and save budget = {maxCalls, maxMs}', async t => {
+  const page = await popup(t, { local: { ...PAIRED } });
+  await page.click('#advanced summary');
+  assert.equal(await page.$eval('#budget-calls', node => node.value), '');
+  assert.equal(await page.$eval('#budget-minutes', node => node.value), '');
+  assert.equal(await page.$eval('#budget-calls', node => node.placeholder), '50');
+  assert.match(await page.$eval('#budget-effective', node => node.textContent), /^In effect: 50 calls, 20 min \(default\)$/);
+  // A bad value shows an error and saves nothing.
+  await page.fill('#budget-calls', '0');
+  await page.dispatchEvent('#budget-calls', 'change');
+  assert.match(await page.$eval('#budget-error', node => node.textContent), /Calls must be a whole number from 1 to 500/);
+  assert.equal(await page.evaluate(() => __local.budget), undefined);
+  // Both fields valid: saved as milliseconds.
+  await page.fill('#budget-calls', '12');
+  await page.fill('#budget-minutes', '5');
+  await page.dispatchEvent('#budget-minutes', 'change');
+  assert.equal(await page.$eval('#budget-error', node => node.textContent), '');
+  assert.deepEqual(await page.evaluate(() => __local.budget), { maxCalls: 12, maxMs: 300_000 });
+  // Both cleared: the setting goes (null), the daemon's default applies again.
+  await page.fill('#budget-calls', '');
+  await page.fill('#budget-minutes', '');
+  await page.dispatchEvent('#budget-minutes', 'change');
+  assert.equal(await page.evaluate(() => __local.budget), null);
+  // A stored budget shows in the fields.
+  const stored = await popup(t, { local: { ...PAIRED, budget: { maxCalls: 8, maxMs: 600_000 } } });
+  await stored.click('#advanced summary');
+  assert.equal(await stored.$eval('#budget-calls', node => node.value), '8');
+  assert.equal(await stored.$eval('#budget-minutes', node => node.value), '10');
+});
+
+// --- setup, pairing, pin hint, privacy note -------------------------------------------------------------------------
+
+test('popup: connected collapses setup to one line; the saved secret never reaches the page', async t => {
+  const page = await popup(t, { local: { ...PAIRED } });
+  assert.equal(await page.$eval('#connection-line', node => node.hidden), false);
+  assert.match(await page.textContent('#connection-line'), /Connected to the FAI service/);
+  assert.equal(await page.$eval('#setup', node => node.hidden), true);
+  assert.equal(await page.$eval('#secret', node => node.value), '', 'the secret field is never prefilled');
+  assert.equal(await page.evaluate(secret => document.documentElement.outerHTML.includes(secret), PAIRED.secret), false);
+  assert.equal(await page.$eval('#endpoint', node => node.value), 'http://127.0.0.1:4318');
+  assert.equal(await page.$eval('#advanced', node => node.open), false);
+  assert.equal(await count(page, '#start'), 0, 'no Phase 1 "Select tab and start" button');
+  // A typed secret is saved and the field cleared.
+  await page.click('#advanced summary');
+  await page.fill('#secret', 'y'.repeat(32));
+  await page.dispatchEvent('#secret', 'change');
+  await page.waitForFunction(() => __local.secret === 'y'.repeat(32));
+  assert.equal(await page.$eval('#secret', node => node.value), '');
+});
+
+test('popup: unpaired shows the setup card; Pair asks the worker and the card goes once connected', async t => {
+  const page = await popup(t, { connected: false });
+  assert.equal(await page.$eval('#setup', node => node.hidden), false);
+  assert.equal(await page.$eval('#connection-line', node => node.hidden), true);
+  assert.match(await page.textContent('#setup-text'), /npm run setup/);
+  assert.equal(await page.textContent('#state-label'), 'Setup needed');
+  await page.click('#pair');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'pair'));
+  await page.waitForFunction(() => document.querySelector('#setup').hidden);
+  assert.match(await page.textContent('#status'), /Paired/);
+  const missing = await popup(t, { connected: false, state: { native: 'missing', pairError: 'Automatic pairing is not installed.' } });
+  assert.match(await missing.textContent('#setup-text'), /Automatic pairing is not installed/);
+  await missing.click('#pair');
+  await missing.waitForFunction(() => /not installed/.test(document.querySelector('#status').textContent));
+  assert.equal(await missing.$eval('#setup', node => node.hidden), false);
+});
+
+test('popup and arm.html: an unpinned icon shows how to pin it; the shortcut comes from chrome.commands', async t => {
+  const page = await popup(t, { local: { ...PAIRED }, pinned: false });
+  await page.waitForFunction(() => !document.querySelector('#pin-hint').hidden);
+  assert.match(await page.textContent('#pin-hint'), /Pin FAI Browser: you approve requests by clicking it/);
+  const pinned = await popup(t, { local: { ...PAIRED } });
+  assert.equal(await pinned.$eval('#pin-hint', node => node.hidden), true);
+  const arm = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST], pinned: false });
+  await arm.waitForFunction(() => !document.querySelector('#pin-hint').hidden);
+  assert.match(await arm.textContent('#pin-hint'), /Or press Ctrl\+Shift\+Y\./);
+});
+
+test('popup: the privacy note names where page text goes for the current driver', async t => {
+  const agent = await popup(t, { local: { ...PAIRED }, state: { control: { driver: 'agent', jevAvailable: false } } });
+  await agent.waitForFunction(() => /coding agent\.$/.test(document.querySelector('#privacy-note').textContent));
+  const jev = await popup(t, { local: { ...PAIRED }, state: { control: { driver: 'jev', jevAvailable: true } } });
+  await jev.waitForFunction(() => /Jev provider/.test(document.querySelector('#privacy-note').textContent));
+});

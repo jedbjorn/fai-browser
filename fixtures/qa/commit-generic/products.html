@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Products · Northwind</title>
+<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#1d2330;background:#fff;line-height:1.5}
+header.site{display:flex;gap:18px;align-items:center;padding:12px 24px;background:#f2f4f8;border-bottom:1px solid #d9dee8}
+header.site strong{margin-right:auto}main{max-width:880px;margin:0 auto;padding:24px}a{color:#1f5fbf}
+button{font:inherit;padding:6px 12px;border:1px solid #8a94a8;border-radius:6px;background:#fff;cursor:pointer}
+table{border-collapse:collapse}td,th{border:1px solid #d9dee8;padding:6px 10px;text-align:left}footer{padding:24px;color:#5a6478;border-top:1px solid #e3e6ee;margin-top:40px}
+.primary{background:#1f5fbf;color:#fff;border-color:#1f5fbf}.icon{width:44px;height:40px;display:inline-flex;align-items:center;justify-content:center}
+.modal{position:fixed;top:18%;left:50%;transform:translateX(-50%);width:min(520px,90%);background:#fff;border:1px solid #8a94a8;border-radius:8px;padding:20px;box-shadow:0 8px 30px rgba(0,0,0,.2)}
+label{display:block;margin:8px 0}</style>
+</head>
+<body>
+<header class="site"><strong>Northwind</strong><a href="/commit-generic/cart.html">Cart</a></header>
+<main><h1>Products</h1>
+<aside aria-label="Filters"><h2>Filters</h2><label><input type="checkbox" id="stock"> In stock only</label>
+<button type="button" id="apply">Apply</button> <button type="button" id="clear">Clear all</button></aside>
+<p id="count">12 products</p>
+<ul id="list"><li>Tide clock — $64.00 (in stock)</li><li>Brass hook — $12.00 (in stock)</li><li>Rope lamp — $48.00 (sold out)</li><li>Chart print — $30.00 (in stock)</li><li>Sea glass bowl — $26.00 (sold out)</li><li>Deck chair — $120.00 (in stock)</li><li>Anchor bookend — $22.00 (in stock)</li><li>Compass — $40.00 (sold out)</li><li>Sail bag — $35.00 (sold out)</li><li>Lantern — $55.00 (sold out)</li><li>Tide table — $9.00 (sold out)</li><li>Oar rack — $70.00 (sold out)</li></ul>
+<p>Filters narrow the list; nothing is bought from this panel.</p></main>
+<script>
+function render(only){var items=document.querySelectorAll("#list li"),n=0;items.forEach(function(li){var show=!only||li.textContent.indexOf("in stock")>=0;li.hidden=!show;if(show)n++;});document.getElementById("count").textContent=n+" products";}
+document.getElementById("apply").onclick=function(){render(document.getElementById("stock").checked);};
+document.getElementById("clear").onclick=function(){document.getElementById("stock").checked=false;render(false);};
+</script>
+</body>
+</html>

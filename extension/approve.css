@@ -1,0 +1,13 @@
+/* The Approve gate: the "Approve this action?" window (approve.html) and the popup's action cards (approval-card.js). */
+.approval-card { border-left-color: #b3261e; }
+.approval-label, .approve-facts q { font-weight: 650; overflow-wrap: anywhere; }
+.approval-label { margin: 0 0 6px; font-size: 13px; }
+.page-text-note { color: var(--muted, #6b6359); font-size: 11px; font-weight: 400; }
+.approve-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; margin: 10px 0; font-size: 12px; }
+.approve-facts dt { color: var(--muted, #6b6359); }
+.approve-facts dd { margin: 0; overflow-wrap: anywhere; }
+.approve-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.approve-actions .primary-button { flex: 1; width: auto; }
+.approval-settings { margin: 8px 0; }
+.approval-setting label { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.approval-setting .field-help { margin: 0 0 6px 22px; }

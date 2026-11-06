@@ -1,0 +1,65 @@
+name: Site compatibility report
+description: FAI Browser misreads or cannot operate a website
+labels: ["site-compat"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us make more sites work. **Never include page text with personal data, account names, order numbers,
+        cookies or keys.** Describe controls by their role and label instead of pasting the page. Redaction placeholders are safe.
+  - type: input
+    id: site
+    attributes:
+      label: Site and page type
+      description: Origin and a kind of page (login-free): search results, docs, settings, checkout form, SPA dashboard ...
+      placeholder: "https://example.com, product search results"
+    validations:
+      required: true
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: What goes wrong
+      options:
+        - A control I need is not offered
+        - A control is offered with the wrong label or class
+        - The digest is empty, wrong or truncated
+        - An action runs but the page does not change
+        - An expectation does not verify although the task is done
+        - Cookie or consent dialog not handled
+        - Approval asked when it should not be (or not asked when it should)
+        - A secret was NOT redacted (report privately via SECURITY.md if it is a live credential)
+        - Screenshot problem (blank, wrong crop, over-redacted)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: observe
+    attributes:
+      label: What FAI showed
+      description: The relevant lines of `page.digest`, `actions`, `warnings` and `next` from `fai_browser_open` / `fai_browser_observe` (trimmed, no personal data).
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Which control or text should have been there, and its role/label as seen in the browser.
+  - type: input
+    id: level
+    attributes:
+      label: Level granted and asked
+      placeholder: "granted Use (asked Use)"
+  - type: input
+    id: browser
+    attributes:
+      label: Browser, version, FAI Browser version
+      placeholder: "Firefox 140 ESR, FAI 0.3.0"
+    validations:
+      required: true
+  - type: textarea
+    id: markup
+    attributes:
+      label: Minimal markup (optional)
+      description: If you can reduce it to a few lines of HTML that reproduce the problem, that becomes a fixture.
+      render: html

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Transactions</title>
+<style>body{font:16px sans-serif;margin:0;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+header{padding:8px 16px}#viewport{flex:1;overflow-y:auto;position:relative}#spacer{position:relative}
+.row{position:absolute;left:0;right:0;height:40px;border-bottom:1px solid #eee;padding:0 16px;line-height:40px}</style></head>
+<body>
+<header><h1>Transactions</h1><p>1,000 transactions</p></header>
+<!-- Pattern: a virtualized list in its own scroll container (the window does not scroll). Only the rows in view are in
+     the DOM; scrolling the container replaces them. -->
+<div id="viewport" role="list"><div id="spacer"></div></div>
+<script>
+const ROW = 40;
+const TOTAL = 1000;
+const viewport = document.getElementById('viewport');
+const spacer = document.getElementById('spacer');
+spacer.style.height = `${ROW * TOTAL}px`;
+function render() {
+  const first = Math.floor(viewport.scrollTop / ROW);
+  const count = Math.ceil(viewport.clientHeight / ROW) + 2;
+  spacer.replaceChildren();
+  for (let i = first; i < Math.min(TOTAL, first + count); i++) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.setAttribute('role', 'listitem');
+    row.style.top = `${i * ROW}px`;
+    row.textContent = `Transaction ${i + 1}: €${(i * 7) % 300}.00`;
+    spacer.append(row);
+  }
+}
+viewport.addEventListener('scroll', render);
+render();
+</script>
+</body></html>

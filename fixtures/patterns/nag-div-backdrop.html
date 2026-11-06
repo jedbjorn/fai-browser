@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>City breaks</title>
+<style>body{font:16px sans-serif;margin:0}main{padding:16px}.card{border:1px solid #ccc;margin:8px 0;padding:8px}
+#backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:900}
+#promo{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:440px;background:#fff;padding:24px;z-index:901}</style></head>
+<body>
+<main><h1>City breaks: 6 deals</h1>
+<div class="card"><h3>Lisbon, 3 nights</h3><p>€289 per person</p></div>
+<div class="card"><h3>Prague, 2 nights</h3><p>€199 per person</p></div>
+<div class="card"><h3>Seville, 4 nights</h3><p>€349 per person</p></div>
+</main>
+<!-- Pattern: plain divs (no dialog role) with a separate backdrop element; only a click on the backdrop closes it. -->
+<div id="backdrop"></div>
+<div id="promo">
+  <h2>Limited-time offer</h2>
+  <p>Spin the wheel and win up to 30% off your next trip. Exclusive deals for today only.</p>
+  <button type="button" id="spin">Spin to win</button>
+</div>
+<script>
+document.getElementById('backdrop').addEventListener('click', () => {
+  document.getElementById('backdrop').remove();
+  document.getElementById('promo').remove();
+});
+</script>
+</body></html>

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page not found · FAI Browser</title>
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<!-- 404 pages are served from any depth, so assets use one fixed base.
+     Project Pages live under /fai-browser/. With a custom domain at the root, change this to "/". -->
+<base href="/fai-browser/">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<script>try { var t = localStorage.getItem('fai-theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}</script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<main class="nf" id="main">
+  <div>
+    <div class="nf__tab" aria-hidden="true">
+      <div class="nf__bar"><i></i><i></i><i></i><span>404 · tab not found</span></div>
+      <div class="nf__body"><i style="width:60%"></i><i style="width:85%"></i><i class="nf__blk"></i><i style="width:40%"></i></div>
+    </div>
+    <h1>This tab doesn't exist.</h1>
+    <p>The page you asked for isn't here. Like an unapproved request, the agent never got this one either.</p>
+    <div class="cta">
+      <a class="btn btn--primary" href="./">Back to FAI Browser</a>
+      <a class="btn btn--quiet" href="https://github.com/jedbjorn/fai-browser">View on GitHub</a>
+    </div>
+  </div>
+</main>
+</body>
+</html>

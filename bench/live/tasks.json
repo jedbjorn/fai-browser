@@ -1,0 +1,161 @@
+{
+  "version": 1,
+  "notes": "Live tasks for bench/live/run.mjs --live. prompt is what a user would type to Claude Code; the host chooses the fai_browser_run parameters itself. origins: only what the task needs (Google needs www.google.com and consent.google.com). mode: the lowest level that does the task; the owner picks it in the popup. startUrl: what the owner opens in Chrome before the task. answerPattern: case-insensitive regex tested on the host's reply (auto grading); without one the owner grades in grades.json. expectSignals: fixed FAI codes recorded as seen/absent from receipts and traces. {{DATE+N}} is today + N days (local, YYYY-MM-DD); {{DATE+N|long}} 'Wednesday 7 October 2026', {{DATE+N|dm}} '7 October'. skip: true tasks are listed and never run.",
+  "tasks": [
+    {
+      "id": "gf-week-window",
+      "prompt": "Use my Chrome tab with Google Flights to look up one-way flights from Marseille (MRS) to London, any day from {{DATE+1|long}} to {{DATE+7|long}}. What are the best options departing between 10:00 and 12:00? Give me the day, airline, departure time and price for each. Only look, don't select or book anything.",
+      "startUrl": "https://www.google.com/travel/flights?hl=en",
+      "origins": [
+        "https://www.google.com",
+        "https://consent.google.com"
+      ],
+      "mode": "read-only",
+      "notes": "Dates {{DATE+1}}..{{DATE+7}}. Read-only: the host may name per-day result URLs (allowedUrls with ?q=Flights from MRS to LON on <date> one way); typing a search needs interactive, which the receipt asks for with needs.level. Manual grading: plausible day/airline/time/price rows departing 10:00-12:00."
+    },
+    {
+      "id": "gf-cheapest-day",
+      "prompt": "In my browser on Google Flights, check one-way Marseille (MRS) to London for the week from {{DATE+1|long}} to {{DATE+7|long}}. Using the price graph, which day that week is cheapest, and what is the price? Don't select or book a flight.",
+      "startUrl": "https://www.google.com/travel/flights?hl=en",
+      "origins": [
+        "https://www.google.com",
+        "https://consent.google.com"
+      ],
+      "mode": "reversible",
+      "answerPattern": "(\u20ac|EUR|US\\$|\\$|\u00a3)\\s?\\d",
+      "notes": "Opening the price graph is a button (reversible). answerPattern only checks that a price is reported; the owner checks the day against the graph."
+    },
+    {
+      "id": "gf-date-grid",
+      "prompt": "On Google Flights in my Chrome tab, look at one-way flights from Marseille (MRS) to London departing {{DATE+3|long}}, and open the date grid. Which departure date in the grid has the lowest price? Don't select or book anything.",
+      "startUrl": "https://www.google.com/travel/flights?hl=en",
+      "origins": [
+        "https://www.google.com",
+        "https://consent.google.com"
+      ],
+      "mode": "reversible",
+      "expectSignals": [
+        "unreadable_region:canvas"
+      ],
+      "notes": "The date grid may render as a canvas: expect unreadable_region:canvas in a receipt or trace; the summary records whether it appeared. Manual grading."
+    },
+    {
+      "id": "wiki-tagus",
+      "prompt": "In my browser I have the Wikipedia article on Lisbon open. Open the article for the river Lisbon lies on and tell me its length in km.",
+      "startUrl": "https://en.wikipedia.org/wiki/Lisbon",
+      "origins": [
+        "https://en.wikipedia.org"
+      ],
+      "mode": "read-only",
+      "answerPattern": "1[,.\\s]?0(07|38)\\s?km",
+      "notes": "bench/real/tasks.json wiki-tagus."
+    },
+    {
+      "id": "hn-comments",
+      "prompt": "I have Hacker News open in Chrome. Open the comments page of the top story and tell me how many comments it has.",
+      "startUrl": "https://news.ycombinator.com/",
+      "origins": [
+        "https://news.ycombinator.com"
+      ],
+      "mode": "read-only",
+      "answerPattern": "\\d+\\s*comments?",
+      "notes": "bench/real/tasks.json hn-comments. The pattern needs the word 'comments' next to the number."
+    },
+    {
+      "id": "mdn-array-at",
+      "prompt": "In my browser tab on MDN's JavaScript docs, go to the reference page for Array.prototype.at and tell me its syntax line.",
+      "startUrl": "https://developer.mozilla.org/en-US/docs/Web/JavaScript",
+      "origins": [
+        "https://developer.mozilla.org"
+      ],
+      "mode": "read-only",
+      "answerPattern": "at\\(index\\)",
+      "notes": "bench/real/tasks.json mdn-array-at."
+    },
+    {
+      "id": "github-license",
+      "prompt": "I'm on the microsoft/playwright repository on GitHub in Chrome. Open its LICENSE file and tell me which license it is.",
+      "startUrl": "https://github.com/microsoft/playwright",
+      "origins": [
+        "https://github.com"
+      ],
+      "mode": "read-only",
+      "answerPattern": "Apache License",
+      "notes": "bench/real/tasks.json github-license."
+    },
+    {
+      "id": "pydocs-read-text",
+      "prompt": "In my browser on the Python 3 docs, find the documentation for pathlib.Path.read_text and tell me its signature.",
+      "startUrl": "https://docs.python.org/3/",
+      "origins": [
+        "https://docs.python.org"
+      ],
+      "mode": "read-only",
+      "answerPattern": "read_text\\(\\s*encoding=None",
+      "notes": "bench/real/tasks.json pydocs-read-text."
+    },
+    {
+      "id": "booking-search",
+      "prompt": "Using my Booking.com tab, search for a place to stay in Paris for 2 nights, checking in {{DATE+14|long}} and out {{DATE+16|long}}, 2 adults. What's the cheapest price listed on the first page of results? Don't book or reserve anything.",
+      "startUrl": "https://www.booking.com/",
+      "origins": [
+        "https://www.booking.com"
+      ],
+      "mode": "interactive",
+      "notes": "Check-in {{DATE+14}}, check-out {{DATE+16}}. Typing the destination and submitting the search is interactive; a results URL would be read-only. Manual grading: the cheapest price on the first results page (sort order and currency vary)."
+    },
+    {
+      "id": "expedia-search",
+      "prompt": "In my Expedia tab, search hotels in Paris for 2 nights, {{DATE+14|long}} to {{DATE+16|long}}, 2 adults. What's the cheapest price on the first page of results? Just search, don't book anything.",
+      "startUrl": "https://www.expedia.com/",
+      "origins": [
+        "https://www.expedia.com"
+      ],
+      "mode": "interactive",
+      "notes": "Dates {{DATE+14}} to {{DATE+16}}. Expedia often shows a bot wall to automation (bench/real census): a blocked receipt is a recorded outcome, not a harness failure. Manual grading."
+    },
+    {
+      "id": "dosarch-recon",
+      "prompt": "Describe what is on this workspace page: its main sections and the controls available, without changing anything. It's my dos-arch sandbox workspace, open in Chrome at https://dos-arch.designs-os.com/sandbox/workspace.",
+      "startUrl": "https://dos-arch.designs-os.com/sandbox/workspace",
+      "origins": [
+        "https://dos-arch.designs-os.com"
+      ],
+      "mode": "read-only",
+      "notes": "The owner's own app, signed in in the Public profile. A sign-in page returns login (FAI never signs in below testing). Manual grading; its answer seeds dosarch-t1..t3."
+    },
+    {
+      "id": "dosarch-t1-sections",
+      "prompt": "Use my browser on my dos-arch sandbox workspace (https://dos-arch.designs-os.com/sandbox/workspace, I'm signed in). Open the Projects section, then Orgs, then Flags, using the navigation buttons at the top. For each of the three, tell me how many items are listed and their names (or that it's empty). Only navigate between sections; don't send chat messages, attach, share or change any data.",
+      "startUrl": "https://dos-arch.designs-os.com/sandbox/workspace",
+      "origins": [
+        "https://dos-arch.designs-os.com"
+      ],
+      "mode": "reversible",
+      "notes": "From dosarch-recon. The top navigation entries are buttons, not links (reversible). Hand runs 2026-10-06: Sonnet first sent instruction together with steps (invalid_params), then a 3-step list. Manual grading: count and names per section."
+    },
+    {
+      "id": "dosarch-t2",
+      "prompt": "TODO after recon",
+      "skip": true,
+      "skipReason": "placeholder: write after dosarch-recon"
+    },
+    {
+      "id": "dosarch-t3",
+      "prompt": "TODO after recon",
+      "skip": true,
+      "skipReason": "placeholder: write after dosarch-recon"
+    },
+    {
+      "id": "price-compare-live",
+      "prompt": "Find the best price for a new MacBook Air M5 on Amazon and eBay. Tell me the cheapest listing on each site with its price and link, and which one is the better deal.",
+      "startUrl": "https://www.amazon.com/",
+      "origins": [
+        "https://www.amazon.com",
+        "https://www.ebay.com"
+      ],
+      "mode": "interactive",
+      "notes": "Showcase live task; manual grading only. Search, filter and sort are permitted. Never add to cart, sign in, buy, bid or submit anything else. Record each listing title, condition, price/currency, URL, timestamp and the comparison; reject accessories and used/refurbished listings unless explicitly reported. An honest model-unavailable/not-found answer with closest model and evidence is valid. Record bot walls/captchas and consent/sign-in relays as separate outcomes. No deterministic fixture score or hardcoded price; not part of showcase Phase 1."
+    }
+  ]
+}

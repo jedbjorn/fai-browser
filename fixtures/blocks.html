@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>FAI blocks fixture</title>
+  <style>body { margin: 8px; font: 14px sans-serif; } .spacer { height: 3000px; }</style>
+</head>
+<body>
+  <nav aria-label="Primary">
+    <ul>
+      <li><a href="/index.html">Home</a></li>
+      <li><a href="/about.html">About</a></li>
+    </ul>
+  </nav>
+  <div id="cookie-banner" role="dialog" aria-label="Cookie consent">
+    <p>We use cookies to improve the handbook.</p>
+    <form action="/consent" method="post">
+      <button type="submit" name="choice" value="reject">Reject all</button>
+      <button type="submit" name="choice" value="accept">Accept all</button>
+    </form>
+    <button type="button">Manage settings</button>
+  </div>
+  <h1>Team handbook</h1>
+  <p>Read the <a href="/about.html">member list</a> before the meeting.</p>
+  <div role="alert">Two seats left</div>
+  <h2>Checklist</h2>
+  <ul>
+    <li>Bring a laptop</li>
+    <li>Install <code>node</code> 22</li>
+  </ul>
+  <h3>Members</h3>
+  <table>
+    <tr><th>Name</th><th>Role</th></tr>
+    <tr><td>Ada</td><td>Engineer</td></tr>
+    <tr><td>Grace</td><td>Admiral</td></tr>
+  </table>
+  <dl><dt>Room</dt><dd>4B, second floor</dd></dl>
+  <label>Display name <input name="displayName"></label>
+  <label for="plan">Plan</label>
+  <select id="plan"><option>Basic</option><option>Pro</option></select>
+  <button type="button">Show plan</button>
+  <div id="shadow-host"></div>
+  <p hidden>Hidden paragraph</p>
+  <p style="display:none">Undisplayed paragraph</p>
+  <p aria-hidden="true">Decorative paragraph</p>
+  <div class="spacer"></div>
+  <h4>Appendix</h4>
+  <p>Below the fold</p>
+  <h2>Sign in</h2>
+  <form action="/login" method="post">
+    <label>Email <input type="email" name="email"></label>
+    <label>Password <input type="password" name="password"></label>
+  </form>
+  <script>
+    document.title = document.title;
+    document.querySelector('#shadow-host').attachShadow({ mode: 'open' }).innerHTML =
+      '<p>Shadow note</p><a href="/about.html">Shadow link</a>';
+  </script>
+</body>
+</html>

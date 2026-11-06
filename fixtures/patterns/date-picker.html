@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Book a table</title>
+<style>body{font:16px sans-serif;margin:0}main{padding:16px}
+#picker{position:absolute;top:120px;left:16px;background:#fff;border:1px solid #333;padding:8px;z-index:10}
+#picker td button{width:36px;height:32px}</style></head>
+<body>
+<main><h1>Book a table</h1>
+<!-- Pattern: a date field that opens a picker dialog with a month grid of day buttons named by their number only. The
+     picker is a task dialog: never dismissed. -->
+<label>Date <input id="date" readonly aria-haspopup="dialog" placeholder="Select a date"></label>
+<p id="chosen">No date chosen</p></main>
+<div id="picker" role="dialog" aria-label="Choose a date" hidden>
+  <h2 id="month">October 2026</h2>
+  <table role="grid" aria-labelledby="month"><thead><tr><th>Mo</th><th>Tu</th><th>We</th><th>Th</th><th>Fr</th><th>Sa</th><th>Su</th></tr></thead>
+  <tbody id="days"></tbody></table>
+  <button type="button" id="done">Done</button>
+</div>
+<script>
+const days = document.getElementById('days');
+let row = document.createElement('tr');
+for (let i = 0; i < 3; i++) row.append(document.createElement('td'));
+for (let d = 1; d <= 31; d++) {
+  const cell = document.createElement('td');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = String(d);
+  button.addEventListener('click', () => {
+    document.getElementById('date').value = `2026-10-${String(d).padStart(2, '0')}`;
+    document.getElementById('chosen').textContent = `Chosen: ${d} October 2026`;
+  });
+  cell.append(button);
+  row.append(cell);
+  if (row.children.length === 7) { days.append(row); row = document.createElement('tr'); }
+}
+if (row.children.length) days.append(row);
+document.getElementById('date').addEventListener('click', () => { document.getElementById('picker').hidden = false; });
+document.getElementById('done').addEventListener('click', () => { document.getElementById('picker').hidden = true; });
+</script>
+</body></html>

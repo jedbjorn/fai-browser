@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "id": "github.com",
+  "version": 2,
+  "origins": ["https://github.com"],
+  "description": "Curated, experimental: repository home, issue and pull request lists, single issues and pull requests, the license file. Read-only navigation; account buttons are refused.",
+  "restrict": { "forbid": ["Star", "Unstar", "Watch", "Unwatch", "Fork", "Sponsor", "Pin", "Unpin"] },
+  "defaults": { "mode": "read-only", "maxActions": 4 },
+  "pageTypes": {
+    "repo_home": {
+      "label": "repository home",
+      "url": "/{owner}/{repo}",
+      "checks": [{ "title": "GitHub" }, { "link": "Issues" }, { "link": "Pull requests" }],
+      "expectation": { "urlIncludes": "/{owner}/{repo}" }
+    },
+    "issue_list": {
+      "label": "issue list",
+      "url": "/{owner}/{repo}/issues?*",
+      "checks": [{ "title": "Issues · " }],
+      "expect": ["/issues", "/{owner}/{repo}/issues"],
+      "expectation": { "urlIncludes": "/{owner}/{repo}/issues" },
+      "answers": [{ "question": "how many", "block": "a", "text": " Open" }]
+    },
+    "pull_list": {
+      "label": "pull request list",
+      "url": "/{owner}/{repo}/pulls?*",
+      "checks": [{ "title": "Pull requests · " }],
+      "expect": ["/pulls", "/{owner}/{repo}/pulls"],
+      "expectation": { "urlIncludes": "/{owner}/{repo}/pulls" }
+    },
+    "issue": {
+      "label": "single issue",
+      "url": "/{owner}/{repo}/issues/{number}",
+      "checks": [{ "title": " · Issue #" }],
+      "expect": ["/issues/{number}", "/{owner}/{repo}/issues/{number}"],
+      "expectation": { "urlIncludes": "/{owner}/{repo}/issues/{number}" }
+    },
+    "license_file": {
+      "label": "license file",
+      "url": "/{owner}/{repo}/blob/{ref}/LICENSE",
+      "checks": [{ "title": "LICENSE at " }],
+      "expect": ["LICENSE", "/LICENSE", "/{owner}/{repo}/blob/{ref}/LICENSE"]
+    },
+    "pull": {
+      "label": "single pull request",
+      "url": "/{owner}/{repo}/pull/{number}",
+      "checks": [{ "title": " · Pull Request #" }],
+      "expect": ["/pull/{number}", "/{owner}/{repo}/pull/{number}"],
+      "expectation": { "urlIncludes": "/{owner}/{repo}/pull/{number}" }
+    }
+  },
+  "edges": [
+    { "id": "repo->issues", "from": "repo_home", "to": "issue_list",
+      "link": { "label": "Issues", "href": "/{owner}/{repo}/issues", "hint": "Issues" } },
+    { "id": "repo->pulls", "from": "repo_home", "to": "pull_list",
+      "link": { "label": "Pull requests", "href": "/{owner}/{repo}/pulls", "hint": "Pull requests" } },
+    { "id": "repo->license", "from": "repo_home", "to": "license_file",
+      "link": { "label": "LICENSE", "href": "/{owner}/{repo}/blob/{ref}/LICENSE", "hint": "LICENSE" } },
+    { "id": "issues->pulls", "from": "issue_list", "to": "pull_list",
+      "link": { "label": "Pull requests", "href": "/{owner}/{repo}/pulls", "hint": "Pull requests" } },
+    { "id": "pulls->issues", "from": "pull_list", "to": "issue_list",
+      "link": { "label": "Issues", "href": "/{owner}/{repo}/issues", "hint": "Issues" } },
+    { "id": "issues->issue", "from": "issue_list", "to": "issue",
+      "link": { "href": "/{owner}/{repo}/issues/{number}" } },
+    { "id": "pulls->pull", "from": "pull_list", "to": "pull",
+      "link": { "href": "/{owner}/{repo}/pull/{number}" } }
+  ]
+}

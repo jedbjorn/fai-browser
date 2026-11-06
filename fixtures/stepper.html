@@ -1,0 +1,105 @@
+<!doctype html>
+<!--
+  Unnamed icon controls and a late re-render, modelled on the Google Flights results page (live run 2026-10-06):
+  - two unnamed arrow buttons (bare SVG, no name of any kind) flank the read-only Departure date textbox; a click
+    changes the date, the URL (?date=) and the results only after a delay (?delay=ms, default 1200), as the live
+    site does 1-5 s after a click that settled quiet;
+  - the Departure textbox is read-only with aria-haspopup: a click (or focus) opens the date dialog ("Choose a date");
+  - a lone unnamed icon button after the Return field (a calendar icon: no direction);
+  - an unnamed pair around a short text ("Photo 3 / 8"), unnamed buttons whose class or data-* tokens spell a
+    direction ("nav-chevron-left", data-action="increment") and one whose class only says "float-right";
+  - icon buttons named only by a tooltip attribute or by aria-describedby.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Flights</title>
+  <style>
+    body { font-family: sans-serif; margin: 16px; }
+    .row { display: flex; align-items: center; gap: 4px; margin: 8px 0; }
+    button.icon { width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+    input { height: 28px; width: 160px; }
+    [role="dialog"][hidden] { display: none; }
+    .tip { position: absolute; left: -9999px; }
+  </style>
+</head>
+<body>
+  <h1>Flights</h1>
+  <section aria-label="Search">
+    <div class="row">
+      <input aria-label="Where from?" role="combobox" value="Marseille">
+      <button class="icon" type="button" aria-describedby="swap-tip"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 5h12M2 11h12"/></svg></button>
+      <span id="swap-tip" class="tip">Swap origin and destination</span>
+      <input aria-label="Where to?" role="combobox" value="London">
+    </div>
+    <div class="row" id="date-row">
+      <button class="icon" type="button"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M10 2 4 8l6 6"/></svg></button>
+      <input id="departure" aria-label="Departure" readonly aria-haspopup="dialog" value="Sat, Oct 10">
+      <button class="icon" type="button"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M6 2l6 6-6 6"/></svg></button>
+    </div>
+    <div class="row">
+      <input aria-label="Return" placeholder="Return">
+      <button class="icon" type="button" id="calendar"><svg width="16" height="16" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="11"/></svg></button>
+    </div>
+  </section>
+  <div role="dialog" id="picker" aria-label="Date picker" hidden>
+    <h2>Choose a date</h2>
+    <button type="button" data-day="8">Oct 8</button>
+    <button type="button" data-day="9">Oct 9</button>
+    <button type="button" id="done">Done</button>
+  </div>
+  <section aria-label="Gallery">
+    <div class="row" id="gallery">
+      <button class="icon" type="button"><svg width="16" height="16"><path d="M10 2 4 8l6 6"/></svg></button>
+      <span>Photo 3 / 8</span>
+      <button class="icon" type="button"><svg width="16" height="16"><path d="M6 2l6 6-6 6"/></svg></button>
+    </div>
+  </section>
+  <section aria-label="Passengers">
+    <div class="row">
+      <span>Adults: 1</span>
+      <button class="icon nav-chevron-left" type="button" id="back-arrow"><svg width="16" height="16"><path d="M10 2 4 8l6 6"/></svg></button>
+      <button class="icon" type="button" data-action="increment"><svg width="16" height="16"><path d="M2 8h12M8 2v12"/></svg></button>
+      <button class="icon float-right" type="button" id="plain"><svg width="16" height="16"><circle cx="8" cy="8" r="6"/></svg></button>
+      <button class="icon" type="button" data-tooltip="Share this search"><svg width="16" height="16"><circle cx="8" cy="8" r="3"/></svg></button>
+    </div>
+  </section>
+  <main>
+    <h2>Top flights</h2>
+    <p id="status">Top flights departing 2026-10-10</p>
+    <ul id="results"></ul>
+  </main>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const delay = Number(params.get('delay') ?? 1200);
+    let day = Number((params.get('date') ?? '2026-10-10').slice(8));
+    const departure = document.getElementById('departure');
+    const picker = document.getElementById('picker');
+    const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    function iso() { return `2026-10-${String(day).padStart(2, '0')}`; }
+    function render() {
+      departure.value = `${names[new Date(Date.UTC(2026, 9, day)).getUTCDay()]}, Oct ${day}`;
+      document.getElementById('status').textContent = `Top flights departing ${iso()}`;
+      document.getElementById('results').innerHTML = [10, 11].map(hour =>
+        `<li>${hour}:15 AM departing ${iso()} · Vueling · €${60 + day + hour}</li>`).join('');
+    }
+    function go(next) {
+      day = next;
+      params.set('date', iso());
+      history.pushState({}, '', `?${params}`);
+      render();
+    }
+    // The arrows settle at once (nothing in the DOM changes) and re-render `delay` ms later, as the live site does.
+    const [earlier, later] = document.querySelectorAll('#date-row button');
+    earlier.addEventListener('click', () => setTimeout(() => go(day - 1), delay));
+    later.addEventListener('click', () => setTimeout(() => go(day + 1), delay));
+    departure.addEventListener('focus', () => { picker.hidden = false; });
+    departure.addEventListener('click', () => { picker.hidden = false; });
+    for (const button of picker.querySelectorAll('[data-day]')) {
+      button.addEventListener('click', () => go(Number(button.dataset.day)));
+    }
+    document.getElementById('done').addEventListener('click', () => { picker.hidden = true; });
+    render();
+  </script>
+</body>
+</html>

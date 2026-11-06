@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Returns policy · Northwind Outfitters</title>
+<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#1d2330;background:#fff;line-height:1.5}
+header.site{display:flex;gap:18px;align-items:center;padding:12px 24px;background:#f2f4f8;border-bottom:1px solid #d9dee8}
+header.site strong{margin-right:auto}main{max-width:880px;margin:0 auto;padding:24px}a{color:#1f5fbf}
+button{font:inherit;padding:6px 12px;border:1px solid #8a94a8;border-radius:6px;background:#fff;cursor:pointer}
+table{border-collapse:collapse}td,th{border:1px solid #d9dee8;padding:6px 10px;text-align:left}footer{padding:24px;color:#5a6478;border-top:1px solid #e3e6ee;margin-top:40px}
+.cookie-bar{position:fixed;left:0;right:0;bottom:0;background:#20262f;color:#fff;padding:14px 24px;display:flex;gap:12px;align-items:center;z-index:999}
+.cookie-bar span{flex:1}.cookie-bar button{background:#fff}</style>
+</head>
+<body>
+<header class="site"><strong>Northwind Outfitters</strong><a href="/consent/fade.html">Store</a><a href="/consent/returns.html">Returns policy</a></header><main><h1>Returns policy</h1>
+<p>Unused items can be returned within 45 days of delivery for a full refund.</p>
+<p>Sale items can be exchanged but not refunded.</p>
+</main><div class="cookie-bar" id="cookie-bar">
+  <span>We use cookies to make this site work and to measure traffic. See our privacy policy for details.</span>
+  <button type="button" id="cb-decline">Decline</button>
+  <button type="button" id="cb-accept">Accept cookies</button>
+</div>
+<script>
+function qaBeacon(ev){try{fetch('/api/beacon?ev='+encodeURIComponent(ev))}catch(e){}}
+(function(){
+  var bar=document.getElementById('cookie-bar');
+  if(document.cookie.indexOf('nw_consent=')>=0){bar.remove();return;}
+  function fade(choice){document.cookie='nw_consent='+choice+'; path=/';qaBeacon('consent:'+choice);
+    bar.style.transition='opacity 400ms ease';bar.style.opacity='0';setTimeout(function(){bar.style.display='none';},400);}
+  document.getElementById('cb-decline').onclick=function(){fade('reject');};
+  document.getElementById('cb-accept').onclick=function(){fade('accept');};
+})();
+</script>
+</body>
+</html>

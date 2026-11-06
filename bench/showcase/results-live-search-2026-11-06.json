@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-06T17:11:47.737Z",
+  "task": "price-compare-live: new MacBook Air M5, Amazon vs eBay",
+  "protocol": "Isolated logged-out Chromium; direct public search URLs only; no forms, login, cart, bid, checkout or purchase. Non-GET/HEAD requests and commerce navigation blocked.",
+  "scoring": "Unscored public-site availability probe, separate from local A/B agent benchmark. Listing candidates require manual verification of new condition, model, price, delivery and availability; no best-deal claim.",
+  "results": [
+    {
+      "site": "Amazon",
+      "searchedAt": "2026-11-06T17:11:45.965Z",
+      "requestedUrl": "https://www.amazon.com/s?k=MacBook+Air+M5&rh=p_n_condition-type%3A2224371011",
+      "finalUrl": "https://www.amazon.com/s?k=MacBook+Air+M5&rh=p_n_condition-type%3A2224371011",
+      "httpStatus": 503,
+      "title": "Sorry! Something went wrong!",
+      "outcome": "http_error",
+      "readableChars": 0,
+      "listingCandidates": [],
+      "deniedRequests": []
+    },
+    {
+      "site": "eBay",
+      "searchedAt": "2026-11-06T17:11:47.688Z",
+      "requestedUrl": "https://www.ebay.com/sch/i.html?_nkw=MacBook+Air+M5&LH_ItemCondition=1000&_sop=15",
+      "finalUrl": "https://www.ebay.com/sch/i.html?_nkw=MacBook+Air+M5&LH_ItemCondition=1000&_sop=15",
+      "httpStatus": 403,
+      "title": "Error Page | eBay",
+      "outcome": "http_error",
+      "readableChars": 155,
+      "listingCandidates": [],
+      "deniedRequests": []
+    }
+  ]
+}

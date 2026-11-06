@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fares · Harbor Line Ferries</title>
+<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#1d2330;background:#fff;line-height:1.5}
+header.site{display:flex;gap:18px;align-items:center;padding:12px 24px;background:#f2f4f8;border-bottom:1px solid #d9dee8}
+header.site strong{margin-right:auto}main{max-width:880px;margin:0 auto;padding:24px}a{color:#1f5fbf}
+button{font:inherit;padding:6px 12px;border:1px solid #8a94a8;border-radius:6px;background:#fff;cursor:pointer}
+table{border-collapse:collapse}td,th{border:1px solid #d9dee8;padding:6px 10px;text-align:left}footer{padding:24px;color:#5a6478;border-top:1px solid #e3e6ee;margin-top:40px}
+#onetrust-banner-sdk{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:3px solid #1d2330;padding:18px 24px;box-shadow:0 -4px 16px rgba(0,0,0,.15);z-index:1000;display:flex;gap:20px;align-items:center}
+#onetrust-policy-text{flex:1}.ot-buttons{display:flex;gap:8px}#onetrust-accept-btn-handler{background:#1d2330;color:#fff}
+#onetrust-pc-sdk{position:fixed;top:15%;left:30%;width:40%;background:#fff;border:1px solid #888;padding:20px;z-index:1001}</style>
+</head>
+<body>
+<header class="site"><strong>Harbor Line Ferries</strong><a href="/consent/onetrust.html">Home</a><a href="/consent/timetable.html">Timetable</a><a href="/consent/fares.html">Fares</a></header><main><h1>Fares</h1>
+<ul><li>Adult single: €3.40</li><li>Child single: €1.70</li><li>Bicycle: €1.00</li></ul>
+</main>
+<div id="onetrust-banner-sdk" class="otFlat" role="dialog" aria-label="Cookie banner" aria-describedby="onetrust-policy-text">
+  <div id="onetrust-policy-text">We use cookies to personalise content and ads, to provide social media features and to analyse our traffic.
+  By clicking &ldquo;Accept All Cookies&rdquo;, you agree to the storing of cookies on your device. <a href="/consent/cookie-notice.html">Cookie notice</a></div>
+  <div class="ot-buttons">
+    <button id="onetrust-pc-btn-handler" type="button">Cookie Settings</button>
+    <button id="onetrust-reject-all-handler" type="button">Reject All</button>
+    <button id="onetrust-accept-btn-handler" type="button">Accept All Cookies</button>
+  </div>
+</div>
+<div id="onetrust-pc-sdk" role="dialog" aria-label="Privacy preference center" hidden>
+  <h2>Privacy Preference Center</h2>
+  <label><input type="checkbox" checked disabled> Strictly necessary cookies</label><br>
+  <label><input type="checkbox" id="ot-perf"> Performance cookies</label><br>
+  <label><input type="checkbox" id="ot-target"> Targeting cookies</label><br>
+  <button id="ot-confirm" type="button">Confirm My Choices</button>
+</div>
+<script>
+function qaBeacon(ev){try{fetch('/api/beacon?ev='+encodeURIComponent(ev))}catch(e){}}
+(function(){
+  var banner=document.getElementById('onetrust-banner-sdk'), pc=document.getElementById('onetrust-pc-sdk');
+  if(document.cookie.indexOf('OptanonAlertBoxClosed=')>=0){banner.remove();pc.remove();return;}
+  function close(choice){document.cookie='OptanonAlertBoxClosed='+choice+'; path=/';banner.style.display='none';pc.hidden=true;qaBeacon('consent:'+choice);}
+  document.getElementById('onetrust-reject-all-handler').onclick=function(){close('reject');};
+  document.getElementById('onetrust-accept-btn-handler').onclick=function(){close('accept');};
+  document.getElementById('onetrust-pc-btn-handler').onclick=function(){pc.hidden=false;qaBeacon('consent:settings');};
+  document.getElementById('ot-confirm').onclick=function(){close('custom');};
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FAI Browser — Your agent. Your browser. Your say.</title>
+<meta name="description" content="FAI Browser gives your coding agent one browser tab you approve, compact page context and verified outcomes. Agent direct by default, with no API key or provider calls. Open source and MIT licensed.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#10251f">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://jedbjorn.github.io/fai-browser/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="FAI Browser">
+<meta property="og:title" content="FAI Browser — Your agent. Your browser. Your say.">
+<meta property="og:description" content="One approved tab. A compact page digest. Explicit approval for payments. Your own coding agent drives by default.">
+<meta property="og:url" content="https://jedbjorn.github.io/fai-browser/">
+<meta property="og:image" content="https://jedbjorn.github.io/fai-browser/media/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="FAI Browser: your agent, your browser, your say. One approved tab, secret redaction and Approve once.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="FAI Browser — Your agent. Your browser. Your say.">
+<meta name="twitter:description" content="One approved tab. A compact page digest. Explicit approval for payments. Open source and MIT licensed.">
+<meta name="twitter:image" content="https://jedbjorn.github.io/fai-browser/media/social-preview.png">
+<meta name="twitter:image:alt" content="FAI Browser: your agent, your browser, your say.">
+<script>
+document.documentElement.classList.add('js');
+try { var t = localStorage.getItem('fai-theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+</script>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="hero.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "FAI Browser",
+  "url": "https://jedbjorn.github.io/fai-browser/",
+  "description": "An open-source browser layer that gives coding agents one user-approved tab, compact page context, explicit payment approval and verified outcomes.",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Linux, macOS",
+  "softwareVersion": "0.3.2",
+  "license": "https://opensource.org/licenses/MIT",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "codeRepository": "https://github.com/jedbjorn/fai-browser",
+  "softwareHelp": { "@type": "CreativeWork", "url": "https://github.com/jedbjorn/fai-browser/blob/main/docs/guide/install.md" }
+}
+</script>
+</head>
+<body>
+<svg class="svg-sprite" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-mark" viewBox="0 0 32 32"><rect x="2.5" y="6" width="27" height="21" rx="6" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M2.5 13h27M8 6l2-3m12 3 2-3" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="m12 19 4 3 4-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="16" cy="17" r="1.5" fill="currentColor"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="1.8"/></symbol>
+    <symbol id="i-github" viewBox="0 0 24 24"><path d="M12 2.5a9.5 9.5 0 0 0-3 18.5c.5.1.7-.2.7-.5v-1.9c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 0 1.6 1.1 1.6 1.1.9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.6-1.4-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.2-.4-1.2.1-2.6 0 0 .8-.3 2.7 1a9.2 9.2 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.4.1 2.6.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A9.5 9.5 0 0 0 12 2.5Z" fill="currentColor"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z" fill="currentColor"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  </defs>
+</svg>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header" id="top">
+  <div class="shell header-inner">
+    <a class="brand" href="#top" aria-label="FAI Browser, home"><svg class="brand-mark" aria-hidden="true"><use href="#i-mark"/></svg><span>FAI Browser</span></a>
+    <button class="menu-button" id="menu-button" type="button" aria-expanded="false" aria-controls="primary-nav"><svg aria-hidden="true"><use href="#i-menu"/></svg><span>Menu</span></button>
+    <nav class="primary-nav" id="primary-nav" aria-label="Primary">
+      <a href="#how">How it works</a>
+      <a href="#safety">Control</a>
+      <a href="#evidence">Evidence</a>
+      <a href="#install">Install</a>
+    </nav>
+    <div class="header-actions">
+      <a class="github-link" href="https://github.com/jedbjorn/fai-browser"><svg aria-hidden="true"><use href="#i-github"/></svg><span>GitHub</span></a>
+      <button class="theme-button" id="theme" type="button" aria-label="Switch colour theme" aria-pressed="false"><svg class="icon-sun" aria-hidden="true"><use href="#i-sun"/></svg><svg class="icon-moon" aria-hidden="true"><use href="#i-moon"/></svg></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="shell hero-grid">
+      <div class="hero-copy">
+        <p class="kicker"><span>Open source · MIT</span><span>v0.3.2</span></p>
+        <h1 id="hero-title">Your agent.<br>Your browser.<br><em>Your say.</em></h1>
+        <p class="hero-lede">Give your coding agent one tab you approve—not the keys to your browser. FAI returns a compact page digest and permitted actions; your agent chooses every step.</p>
+        <div class="button-row">
+          <a class="button button-primary" href="#install">Set up FAI Browser <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          <a class="text-link" href="#demo"><svg aria-hidden="true"><use href="#i-play"/></svg>Watch the 81-second demo</a>
+        </div>
+        <p class="hero-note"><strong>Agent direct by default.</strong> No API key. No provider calls. Claude Code, Codex, OpenCode or any MCP client.</p>
+      </div>
+      <div class="hero-product" aria-label="An agent request and approval in FAI Browser">
+        <div class="product-grid" aria-hidden="true"></div>
+        <div class="agent-note">
+          <div class="agent-note-top"><span class="status-dot"></span><span>AGENT DIRECT</span><span>127.0.0.1</span></div>
+          <code><b>fai_browser_open</b>({<br>&nbsp;&nbsp;origins: [<i>"http://127.0.0.1:8765"</i>],<br>&nbsp;&nbsp;reason: <i>"Use the local test shop"</i>,<br>&nbsp;&nbsp;task: <i>"Buy the brass compass"</i>,<br>&nbsp;&nbsp;mode: <i>"full"</i><br>})</code>
+          <div class="agent-wait"><span></span>Waiting for your approval</div>
+        </div>
+        <figure class="approval-window">
+          <div class="window-bar"><span></span><span></span><span></span><b>One tab. One request.</b></div>
+          <img src="media/approval-card.png" width="752" height="660" alt="Real Firefox tab request for a local test shop, with Act selected and buttons to open the requested origin or deny" fetchpriority="high">
+        </figure>
+        <div class="product-caption"><span>01 / REQUEST</span><p>You see the origin, task and access level before the agent can act.</p></div>
+      </div>
+    </div>
+    <div class="shell hero-facts" aria-label="Product facts">
+      <div><strong>1</strong><span>user-approved tab</span></div>
+      <div><strong>0</strong><span>provider calls by default</span></div>
+      <div><strong>127.0.0.1</strong><span>local FAI service</span></div>
+      <div><strong>MIT</strong><span>open-source license</span></div>
+    </div>
+  </section>
+
+  <section class="section how" id="how" aria-labelledby="how-title">
+    <div class="shell">
+      <div class="section-heading split-heading reveal">
+        <div><p class="eyebrow">The default loop / Agent direct</p><h2 id="how-title">Your agent does the thinking.<br>FAI keeps the boundaries.</h2></div>
+        <p>FAI is not another model subscription. It connects the coding agent you already use to a specific browser tab, then makes every action pass the permission you granted.</p>
+      </div>
+      <ol class="loop-steps reveal">
+        <li>
+          <div class="step-index">01 <span>REQUEST</span></div>
+          <h3>Open with a reason.</h3>
+          <p>The agent names the origins, task and lowest useful mode. The page opens separately; you approve the tab and can lower the access level.</p>
+          <code>fai_browser_open</code>
+        </li>
+        <li>
+          <div class="step-index">02 <span>CHOOSE</span></div>
+          <h3>Act one step at a time.</h3>
+          <p>Your agent receives a task-ranked digest, offered action IDs and a single-use page revision. It chooses each <code>act</code>; stale actions cannot be replayed.</p>
+          <code>fai_browser_act</code>
+        </li>
+        <li>
+          <div class="step-index">03 <span>VERIFY</span></div>
+          <h3>Finish with a receipt.</h3>
+          <p>An expectation checks the final URL, text or title. A completion claim counts only when verification passes—not when a model says it is done.</p>
+          <code>verification.passed</code>
+        </li>
+      </ol>
+      <aside class="jev-note reveal" aria-label="About the experimental autopilot">
+        <span class="note-label">Experimental, opt-in</span>
+        <p><strong>Jev autopilot can delegate a whole task</strong> through <code>fai_browser_run</code>, using a configured decision provider. It is not the default, and older Jev benchmark results are not presented as Agent-direct evidence.</p>
+      </aside>
+    </div>
+  </section>
+
+  <section class="demo-section" id="demo" aria-labelledby="demo-title">
+    <div class="shell">
+      <div class="section-heading demo-heading reveal">
+        <div><p class="eyebrow">Product film / Local test shop</p><h2 id="demo-title">See where the agent stops<br>and you begin.</h2></div>
+        <div><p>Approval, verified checkout and secret redaction in a genuine local Firefox session.</p><span class="demo-meta">81 seconds · silent · on-screen captions</span></div>
+      </div>
+      <figure class="demo-frame reveal">
+        <div class="demo-chrome" aria-hidden="true"><span></span><span></span><span></span><b>FAI Browser / Northwind test shop</b><i>RECORDED PRODUCT DEMO</i></div>
+        <video controls playsinline preload="none" poster="media/approve-once.png" width="1920" height="1080" aria-label="FAI Browser demo showing tab approval, payment approval, verified checkout and secret redaction">
+          <source src="media/demo.mp4" type="video/mp4">
+          <a href="media/demo.mp4">Download the demo video</a>.
+        </video>
+        <figcaption><span>Watch the actual approval cards and returned receipts.</span><a href="https://github.com/jedbjorn/fai-browser/blob/main/docs/guide/demo.md">Read capture provenance <svg aria-hidden="true"><use href="#i-arrow"/></svg></a></figcaption>
+      </figure>
+      <div class="provenance reveal">
+        <span class="note-label">What you are seeing</span>
+        <p>An edited presentation of real Firefox 159 development-build UI on local fixtures. A scripted MCP client made real calls and automation clicked the approval UI; this was not a live model-driven session. All keys are fake, no real purchase occurred, and the footage is not of the current signed release.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section safety" id="safety" aria-labelledby="safety-title">
+    <div class="shell">
+      <div class="section-heading split-heading reveal">
+        <div><p class="eyebrow">Deliberate control</p><h2 id="safety-title">Automation with<br>a brake pedal.</h2></div>
+        <p>Guardrails are enforced in the extension and local service, not left to prompt etiquette. They reduce exposure; they are not a promise that every secret or risky action can always be detected.</p>
+      </div>
+
+      <article class="feature-row reveal">
+        <div class="feature-copy"><span class="feature-number">01</span><h3>A payment waits for a person.</h3><p>In Agent direct with the Approve gate enabled, a payment action pauses for <strong>Approve once</strong>. That approval applies to one control, on the current page, within a short window. With the gate off—or in Jev below testing mode—purchases are refused.</p><ul class="plain-checks"><li><svg aria-hidden="true"><use href="#i-check"/></svg>No “always allow” for payments</li><li><svg aria-hidden="true"><use href="#i-check"/></svg>Page total and button label shown</li><li><svg aria-hidden="true"><use href="#i-check"/></svg>No payment autofill by FAI</li></ul></div>
+        <figure class="feature-media"><img src="media/approve-once.png" width="1376" height="824" loading="lazy" alt="Real payment approval card for a fake local shop, showing Pay now, the $142.80 total, Approve once and Deny"><figcaption>Real development-build approval UI · fake local shop</figcaption></figure>
+      </article>
+
+      <article class="feature-row feature-row-reverse reveal">
+        <div class="feature-copy"><span class="feature-number">02</span><h3>Known secrets become placeholders.</h3><p>Recognised keys, tokens, passwords and card numbers are replaced before page text reaches the agent. Sensitive pixels are blacked out in requested screenshots. This is pattern-based protection: unusual formats, short prose passwords and text inside images can be missed.</p><a class="inline-link" href="https://github.com/jedbjorn/fai-browser/blob/main/docs/REFERENCE.md#secret-redaction">Read redaction scope and limits <svg aria-hidden="true"><use href="#i-arrow"/></svg></a></div>
+        <figure class="feature-media"><img src="media/secret-placeholders.png" width="1600" height="810" loading="lazy" alt="Verbatim MCP digest showing a fake API key replaced by a secret placeholder"><figcaption>Verbatim MCP digest excerpt · repository fixture values</figcaption></figure>
+      </article>
+
+      <div class="control-grid reveal">
+        <article><span class="feature-number">03</span><h3>You set the ceiling.</h3><p>Read, Use or Act is your choice per tab. Origins and optional forbidden labels constrain every subsequent action. Testing mode is available only for origins you explicitly configure as test sites.</p></article>
+        <article><span class="feature-number">04</span><h3>Sign-in stays with you.</h3><p>Sign-in is handed back to you. Agents may enter credentials only in your configured test environments. Saved secret handles cannot currently fill password fields on sign-in forms, including test forms.</p></article>
+        <article><span class="feature-number">05</span><h3>The service stays local.</h3><p>The extension, service and traces remain on your machine. Agent direct makes no provider calls. If you opt into Jev, its decision provider receives redacted page data.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="benchmark-section" id="evidence" aria-labelledby="benchmark-title">
+    <div class="shell">
+      <div class="section-heading split-heading reveal">
+        <div><p class="eyebrow">Task comparison / Agent direct</p><h2 id="benchmark-title">Measure the work.<br>Show the caveats.</h2></div>
+        <p>Four common workflows compare Playwright MCP with FAI Agent direct using fresh native Sol 6.1 medium agents. Both passed all four in this run. FAI used more calls and observed text overall; the table shows the tradeoff. Two separate safety scenarios are excluded from these performance figures.</p>
+      </div>
+
+      <figure class="benchmark reveal in" id="task-benchmark" data-state="complete" aria-labelledby="benchmark-title" aria-describedby="benchmark-method">
+        <div class="benchmark-topline">
+          <div><span class="benchmark-status" id="benchmark-status"><i aria-hidden="true"></i>Measured results</span><p id="benchmark-run">Sol 6.1 medium · Fresh native agents via MCP relay · 4 tasks · 1 repeat · local fixtures</p></div>
+          <div class="benchmark-legend" aria-label="Chart legend"><span><i class="legend-a"></i>A · Playwright MCP</span><span><i class="legend-b"></i>B · FAI Agent direct</span></div>
+        </div>
+        <div class="benchmark-canvas" tabindex="0" role="region" aria-label="Benchmark chart; scrolls horizontally on small screens">
+          <svg id="benchmark-chart" viewBox="0 0 960 510" role="img" aria-labelledby="benchmark-svg-title benchmark-svg-desc"><title id="benchmark-svg-title">FAI Agent direct compared with Playwright MCP</title><desc id="benchmark-svg-desc">Task checks passed: Playwright MCP 4 / 4, FAI Agent direct 4 / 4. MCP calls: Playwright MCP 9 calls, FAI Agent direct 15.5 calls. Snapshot file reads: Playwright MCP 5.5 reads, FAI Agent direct 0 reads. Observed text tokens: Playwright MCP 2,941.5 tokens, FAI Agent direct 8,055.5 tokens. Each pair uses a common zero baseline and shared scale.</desc><path class="chart-grid" d="M270 30v440M400 30v440M530 30v440M660 30v440M790 30v440" aria-hidden="true"></path><g transform="translate(0 38)"><text class="metric-name" x="0" y="25">Task checks passed</text><text class="metric-note" x="0" y="47">out of 4 tasks</text><line class="chart-zero" x1="270" y1="5" x2="270" y2="72" aria-hidden="true"></line><text class="series-name" x="222" y="25">A</text><rect class="chart-track" x="270" y="12" width="520" height="16" rx="3" aria-hidden="true"></rect><rect class="chart-bar chart-bar-a" x="270" y="12" width="520.00" height="16" rx="3" data-width="520.00" aria-hidden="true"></rect><text class="chart-value" x="820" y="25">4 / 4</text><text class="series-name" x="222" y="63">B</text><rect class="chart-track" x="270" y="50" width="520" height="16" rx="3" aria-hidden="true"></rect><rect class="chart-bar chart-bar-b" x="270" y="50" width="520.00" height="16" rx="3" data-width="520.00" aria-hidden="true"></rect><text class="chart-value" x="820" y="63">4 / 4</text><text class="chart-scale" x="270" y="94">0</text><text class="chart-scale" x="790" y="94" text-anchor="end">Shared max · 4 tasks</text></g><g transform="translate(0 152)"><text class="metric-name" x="0" y="25">MCP calls</text><text class="metric-note" x="0" y="47">Median · 4 matched successes</text><line class="chart-zero" x1="270" y1="5" x2="270" y2="72" aria-hidden="true"></line><text class="series-name" x="222" y="25">A</text><rect class="chart-track" x="270" y="12" width="520" height="16" rx="3" aria-hidden="true"></rect><rect class="chart-bar chart-bar-a" x="270" y="12" width="301.94" height="16" rx="3" data-width="301.94" aria-hidden="true"></rect><text class="chart-value" x="820" y="25">9 calls</text><text class="series-name" x="222" y="63">B</text><rect class="chart-track" x="270" y="50" width="520" height="16" rx="3" aria-hidden="true"></rect><rect class="chart-bar chart-bar-b" x="270" y="50" width="520.00" height="16" rx="3" data-width="520.00" aria-hidden="true"></rect><text class="chart-value" x="820" y="63">15.5 calls</text><text class="chart-scale" x="270" y="94">0</text><text class="chart-scale" x="790" y="94" text-anchor="end">Shared max · 15.5 calls</text></g><g transform="translate(0 266)"><text class="metric-name" x="0" y="25">Snapshot file reads</text><text class="metric-note" x="0" y="47">Median · 4 matched successes</text><line class="chart-zero" x1="270" y1="5" x2="270" y2="72" aria-hidden="true"></line><text class="series-name" x="222" y="25">A</text><rect class="chart-track" x="270" y="12" width="520" height="16" rx="3" aria-hidden="true"></rect><rect class="chart-bar chart-bar-a" x="270" y="12" width="520.00" height="16" rx="3" data-width="520.00" aria-hidden="true"></rect><text class="chart-value" x="820" y="25">5.5 reads</text><text class="series-name" x="222" y="63">B</text><rect class="chart-track" x="270" y="50" width="520" height="16" rx="3" aria-hidden="true"></rect><rect class="chart-bar chart-bar-b" x="270" y="50" width="0.00" height="16" rx="3" data-width="0.00" aria-hidden="true"></rect><text class="chart-value" x="820" y="63">0 reads</text><text class="chart-scale" x="270" y="94">0</text><text class="chart-scale" x="790" y="94" text-anchor="end">Shared max · 5.5 reads</text></g><g transform="translate(0 380)"><text class="metric-name" x="0" y="25">Observed text tokens</text><text class="metric-note" x="0" y="47">Median · 4 matched successes</text><line class="chart-zero" x1="270" y1="5" x2="270" y2="72" aria-hidden="true"></line><text class="series-name" x="222" y="25">A</text><rect class="chart-track" x="270" y="12" width="520" height="16" rx="3" aria-hidden="true"></rect><rect class="chart-bar chart-bar-a" x="270" y="12" width="189.88" height="16" rx="3" data-width="189.88" aria-hidden="true"></rect><text class="chart-value" x="820" y="25">2,941.5 tokens</text><text class="series-name" x="222" y="63">B</text><rect class="chart-track" x="270" y="50" width="520" height="16" rx="3" aria-hidden="true"></rect><rect class="chart-bar chart-bar-b" x="270" y="50" width="520.00" height="16" rx="3" data-width="520.00" aria-hidden="true"></rect><text class="chart-value" x="820" y="63">8,055.5 tokens</text><text class="chart-scale" x="270" y="94">0</text><text class="chart-scale" x="790" y="94" text-anchor="end">Shared max · 8,055.5 tokens</text></g></svg>
+        </div>
+        <figcaption id="benchmark-method"><span>One pass · four common workflows · two separate safety scenarios</span><p>Measured values only. MCP calls, snapshot artifact reads and observed text tokens use matched successful tasks; each pair shares a zero baseline and scale. Measured 2026-11-06T17:11:39.773Z. Source: bench/showcase/results-native-2026-11-06.md.</p></figcaption>
+        <details class="benchmark-data">
+          <summary>Read the comparison as text</summary>
+          <div class="benchmark-table-wrap" tabindex="0" role="region" aria-label="Text benchmark table; scrolls horizontally on small screens">
+            <table>
+              <caption id="benchmark-table-caption">Measured values only. Each metric uses the aggregation shown in the basis column. Source: bench/showcase/results-native-2026-11-06.md.</caption>
+              <thead><tr><th scope="col">Metric</th><th scope="col">A · Playwright MCP</th><th scope="col">B · FAI Agent direct</th><th scope="col">Basis</th></tr></thead>
+              <tbody id="benchmark-table-body"><tr><th scope="row">Task checks passed</th><td>4 / 4</td><td>4 / 4</td><td>4 tasks total</td></tr><tr><th scope="row">MCP calls</th><td>9 calls</td><td>15.5 calls</td><td>Median · 4 matched successes</td></tr><tr><th scope="row">Snapshot file reads</th><td>5.5 reads</td><td>0 reads</td><td>Median · 4 matched successes</td></tr><tr><th scope="row">Observed text tokens</th><td>2,941.5 tokens</td><td>8,055.5 tokens</td><td>Median · 4 matched successes</td></tr></tbody>
+            </table>
+          </div>
+        </details>
+      </figure>
+      <p class="benchmark-footnote reveal">Local deterministic fixtures are not public websites or signed-in work. One repeat is preliminary evidence. Snapshot files issued by Playwright and actually read by the driver are counted separately from MCP calls. Observed text tokens count returned MCP text plus those snapshots using <code>o200k_base</code>; they exclude model prompts, tool schemas, reasoning and billed input. Wall time includes native orchestration and is omitted. Cost, billed model tokens and model-request counts are unavailable. <a href="https://github.com/jedbjorn/fai-browser/blob/main/bench/showcase/results-native-2026-11-06.md">Read the full task report</a>.</p>
+    </div>
+  </section>
+
+  <section class="section token-section" aria-labelledby="token-title">
+    <div class="shell token-layout">
+      <div class="token-story reveal">
+        <p class="eyebrow">Validated output-size evidence</p>
+        <h2 id="token-title">Less page.<br>More signal.</h2>
+        <p>In a recorded 0.3.1 build measurement across twelve captured public pages replayed locally, FAI’s opening result used a median <strong>1,147 tokens</strong>, compared with <strong>11,787</strong> for a full Playwright-style accessibility snapshot (rounded from 11,786.5).</p>
+        <p class="caveat"><strong>90.3% fewer opening tokens.</strong> This measures output size with <code>o200k_base</code>, not task success, speed or cost.</p>
+        <p>The original demo retains its historical release 0.3.0 chart, with a 1,130-token FAI median. This section reports the separate 0.3.1 repeat.</p>
+        <a class="inline-link" href="https://github.com/jedbjorn/fai-browser/blob/main/bench/tokens/results-real-0.3.1.md">Method and all twelve pages <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+      </div>
+      <figure class="token-chart reveal" aria-labelledby="token-chart-title">
+        <div class="token-chart-head"><span id="token-chart-title">Median opening output · release 0.3.1</span><span>tokens / page</span></div>
+        <div class="token-bars" role="img" aria-label="Recorded 0.3.1 build. FAI Browser: 1,147 median opening tokens. Full accessibility snapshot: 11,787 median opening tokens, rounded. FAI used 90.3 percent fewer output tokens across twelve pages.">
+          <div class="token-bar-row"><div class="token-bar-label"><span>FAI opening result</span><strong>1,147</strong></div><div class="token-track"><span class="token-bar token-bar-fai" style="--bar-size:9.73%"></span></div></div>
+          <div class="token-bar-row"><div class="token-bar-label"><span>Accessibility snapshot</span><strong>11,787</strong></div><div class="token-track"><span class="token-bar token-bar-snapshot" style="--bar-size:100%"></span></div></div>
+        </div>
+        <figcaption><span>0</span><span>Common zero baseline · exact encoding counts</span><span>11,786.5</span></figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="section install-section" id="install" aria-labelledby="install-title">
+    <div class="shell">
+      <div class="section-heading split-heading reveal">
+        <div><p class="eyebrow">From clone to first approved tab</p><h2 id="install-title">Start local.<br>Stay in control.</h2></div>
+        <p>All install paths need Node 22+, the local FAI service and MCP server from the repository. Linux and macOS are tested; Windows is untested.</p>
+      </div>
+      <div class="install-layout reveal">
+        <div class="install-terminal">
+          <div class="terminal-head"><span>~/your-tools</span><button class="copy-button" type="button" data-copy="git clone https://github.com/jedbjorn/fai-browser.git&#10;cd fai-browser&#10;npm ci&#10;npm run setup" aria-label="Copy setup commands"><svg aria-hidden="true"><use href="#i-copy"/></svg><span>Copy</span></button></div>
+          <pre><code><span class="code-muted"># get the local service and extension</span>
+git clone https://github.com/jedbjorn/fai-browser.git
+cd fai-browser
+npm ci
+
+<span class="code-muted"># pair your browser and coding agents</span>
+npm run setup</code></pre>
+          <p>Setup saves pairing locally, starts the service and offers to register supported coding agents. No model key is needed for Agent direct.</p>
+        </div>
+        <div class="install-paths">
+          <article><span class="path-number">01</span><div><h3>Dedicated FAI profile <span>Recommended</span></h3><p>Accept the Firefox prompt during setup, or run <code>node src/cli.js launch</code>. You get official Firefox, a separate FAI profile and the signed add-on—Firefox itself is unmodified.</p><a href="https://github.com/jedbjorn/fai-browser/blob/main/docs/guide/install.md#1-download-fai-browser">Firefox launcher guide</a></div></article>
+          <article><span class="path-number">02</span><div><h3>Your existing Firefox</h3><p>Install the signed <code>.xpi</code> from GitHub Releases after <code>npm run setup</code>. Firefox 140+; Snap and Flatpak builds are not supported by the standard pairing path.</p><a href="https://github.com/jedbjorn/fai-browser/releases">Get the signed add-on</a></div></article>
+          <article><span class="path-number">03</span><div><h3>Chromium, from source</h3><p>Chrome, Chromium, Brave, Edge or Vivaldi 116+: enable Developer mode and load the repository’s <code>extension/</code> directory unpacked. There is no Chromium store listing.</p><a href="https://github.com/jedbjorn/fai-browser/blob/main/docs/guide/install.md#chromium-family-from-source">Chromium install guide</a></div></article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section faq-section" id="faq" aria-labelledby="faq-title">
+    <div class="shell faq-layout">
+      <div class="faq-intro reveal"><p class="eyebrow">Fair questions</p><h2 id="faq-title">The fine print,<br>up front.</h2><p>FAI Browser is a prototype. Its boundaries are part of the product, not footnotes to hide later.</p></div>
+      <div class="faq-list reveal">
+        <details><summary>Does FAI replace my coding agent or model?</summary><p>No. Agent direct uses your existing coding agent and its model through MCP. FAI supplies browser observations and actions, not intelligence. The experimental Jev autopilot is a separate opt-in mode with a configured decision provider.</p></details>
+        <details><summary>Can the agent choose any open tab?</summary><p>No. It requests origins and a reason; only you approve the tab. The approved page and same-origin tabs it opens are available within that lease, but the agent cannot silently select one of your existing tabs.</p></details>
+        <details><summary>Are secrets guaranteed to be hidden?</summary><p>No universal guarantee is possible. FAI redacts recognised secret formats and sensitive fields in text and screenshots, but pattern-based filtering can miss unusual formats, short secrets in prose or text embedded in images. Use a separate profile and sign in only to accounts the task needs.</p></details>
+        <details><summary>Can it log in or check out?</summary><p>Sign-in and credential entry are restricted to test origins you configure. In Agent direct with the gate enabled, a purchase needs your explicit Approve once. Outside configured testing mode, Jev purchases and Agent-direct purchases with the gate off are refused.</p></details>
+        <details><summary>Is this a new Firefox fork?</summary><p>No. The recommended launcher starts Mozilla’s unmodified Firefox with a separate FAI profile and the signed FAI add-on. Your everyday Firefox profile stays separate. FAI does not redistribute a modified browser.</p></details>
+        <details><summary>Where do the benchmark claims come from?</summary><p>The opening-token figures come from a validated twelve-page offline corpus and measure output size only. The Agent-direct task chart uses measured local fixture results from a checked-in JSON file, with static chart and table fallbacks. Older six-host task results used experimental Jev and are not used as Agent-direct evidence.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <section class="final-section" aria-labelledby="final-title">
+    <div class="shell final-inner reveal">
+      <svg class="final-mark" aria-hidden="true"><use href="#i-mark"/></svg>
+      <p class="eyebrow">Free · open source · MIT</p>
+      <h2 id="final-title">Let the agent work.<br><em>Keep the final say.</em></h2>
+      <div class="button-row"><a class="button button-light" href="#install">Set up FAI Browser <svg aria-hidden="true"><use href="#i-arrow"/></svg></a><a class="button button-outline-light" href="https://github.com/jedbjorn/fai-browser"><svg aria-hidden="true"><use href="#i-github"/></svg>View on GitHub</a></div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="shell footer-grid">
+    <div><a class="brand" href="#top"><svg class="brand-mark" aria-hidden="true"><use href="#i-mark"/></svg><span>FAI Browser</span></a><p>One approved tab for your coding agent.<br>Local service. Compact context. Your say.</p></div>
+    <nav aria-label="Project"><strong>Project</strong><a href="https://github.com/jedbjorn/fai-browser">GitHub</a><a href="https://github.com/jedbjorn/fai-browser#quickstart">Quickstart</a><a href="https://github.com/jedbjorn/fai-browser/blob/main/docs/REFERENCE.md">Reference</a><a href="https://github.com/jedbjorn/fai-browser/blob/main/ARCHITECTURE.md">Architecture</a></nav>
+    <nav aria-label="Evidence and testing"><strong>Evidence</strong><a href="https://github.com/jedbjorn/fai-browser/blob/main/docs/TESTED.md">What was tested</a><a href="https://github.com/jedbjorn/fai-browser/blob/main/bench/tokens/results-real-0.3.1.md">Token measurements</a><a href="https://github.com/jedbjorn/fai-browser/tree/main/bench">Benchmark harness</a><a href="https://github.com/jedbjorn/fai-browser/blob/main/docs/guide/demo.md">Demo provenance</a></nav>
+    <nav aria-label="Legal and support"><strong>More</strong><a href="https://github.com/jedbjorn/fai-browser/blob/main/LICENSE">MIT license</a><a href="https://github.com/jedbjorn/fai-browser/blob/main/SECURITY.md">Security</a><a href="https://github.com/jedbjorn/fai-browser/issues">Report an issue</a><a href="#faq">FAQ</a></nav>
+  </div>
+  <div class="shell footer-bottom"><span>© 2026 FAI Browser contributors · Prototype v0.3.2</span><span>No trackers. No cookies. No external fonts.</span></div>
+</footer>
+<script src="app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FAI Browser QA corpus</title>
+<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#1d2330;background:#fff;line-height:1.5}
+header.site{display:flex;gap:18px;align-items:center;padding:12px 24px;background:#f2f4f8;border-bottom:1px solid #d9dee8}
+header.site strong{margin-right:auto}main{max-width:880px;margin:0 auto;padding:24px}a{color:#1f5fbf}
+button{font:inherit;padding:6px 12px;border:1px solid #8a94a8;border-radius:6px;background:#fff;cursor:pointer}
+table{border-collapse:collapse}td,th{border:1px solid #d9dee8;padding:6px 10px;text-align:left}footer{padding:24px;color:#5a6478;border-top:1px solid #e3e6ee;margin-top:40px}</style>
+</head>
+<body>
+<main><h1>FAI Browser QA corpus</h1><p>Static, deterministic pages for bench/qa. Start pages:</p><ul>
+<li><a href="/consent/onetrust.html">Consent: OneTrust-style banner (Reject All / Accept All / Settings)</a></li>
+<li><a href="/consent/fade.html">Consent: bottom bar whose Decline fades out over 400 ms</a></li>
+<li><a href="/consent/accept-only.html">Consent: accept-only modal</a></li>
+<li><a href="/consent/search">Consent: separate consent page with Reject all form submit and redirect back</a></li>
+<li><a href="/i18n/baeckerei.html">i18n: German consent buttons</a></li>
+<li><a href="/cookie/recipe.html">False-positive guard: "cookie" in title and h1, no dialog</a></li>
+<li><a href="/login/invoices">Login wall</a></li>
+<li><a href="/login/forum.html">Not a wall: header sign-in field and inline newsletter form</a></li>
+<li><a href="/paywall/article.html">Paywall</a></li>
+<li><a href="/captcha/deals">Captcha-like block page</a></li>
+<li><a href="/spa/app">SPA with button-only navigation and a chat transcript</a></li>
+<li><a href="/injection/account.html">Injected instructions</a></li>
+<li><a href="/shadow/nav.html">Shadow DOM navigation (nested open roots)</a></li>
+<li><a href="/iframe/tracker.html">Same-origin iframe content</a></li>
+<li><a href="/select/shipping.html">Native select</a></li>
+<li><a href="/select/sizes.html">Custom listbox dropdown</a></li>
+<li><a href="/pagination/query.html">Pagination ?page=N</a></li>
+<li><a href="/pagination/path/page/1">Pagination /page/N</a></li>
+<li><a href="/pagination/loadmore.html">Pagination: Load more button</a></li>
+<li><a href="/table/plans.html">Price/plan table</a></li>
+<li><a href="/late/monitor.html">Late content (800 ms timer)</a></li>
+<li><a href="/late/shipment.html">Late content (/api/slow fetch)</a></li>
+<li><a href="/redirect/index.html">Redirect chain</a></li>
+<li><a href="/newtab/index.html">target=_blank link and window.open button</a></li>
+<li><a href="/infinite/feed.html">Infinite scroll</a></li>
+<li><a href="/search/results.html">Search results list</a></li>
+<li><a href="/errors/dashboard.html">404 and 500 pages</a></li>
+<li><a href="/cart/cart.html">E-commerce cart</a></li>
+<li><a href="/docs/index.html">Docs site with breadcrumbs and sidebar</a></li>
+<li><a href="/settings/workspace.html">Settings with Delete workspace next to Rename</a></li>
+<li><a href="/links/glossary.html">300+ links</a></li>
+<li><a href="/commit-generic/review.html">Commits behind generic labels: Continue →, Yes, Next, an icon-only Place order; plus a harmless Continue and Apply</a></li>
+<li><a href="/commit-generic/checkout.html">Checkout page with a delivery date to read</a>; <a href="/commit-generic/claim.html">a review page that vouches for its own Continue</a>; <a href="/commit-generic/results.html">results whose Next page is called a purchase</a></li>
+</ul></main>
+</body>
+</html>

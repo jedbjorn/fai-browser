@@ -1,0 +1,378 @@
+{
+  "version": 1,
+  "site": "fixtures/long (served at /long/ by bench/qa/serve.mjs)",
+  "notes": "Long-horizon corpus: 12-15 hops per task, modelled on live failure shapes (Google Flights loops, paginated aggregation, button-only SPAs, deep docs trees, form wizards). `hops` is the number of page actions on the gold path (`oracle.actions`, one action = one hop); `route` marks where hop N lands (`path`: exact pathname, or `text`: case-sensitive text on the page), so the runner can tell how far a run got. `instruction`/`expectation`/`answerQuestion` are what a naive host sends in one call (condition a); `steps` are what a careful host sends (condition b), chunked into calls of at most MAX_STEPS steps (src/steps.js; 15, 5 before round 6). `derivable`: facts a host must see to compute an aggregated answer itself.",
+  "tasks": [
+    {
+      "id": "flights-window-week",
+      "family": "flights",
+      "shape": "loop over 7 days of button-driven results; a date grid and an SVG price graph show the wrong (any-time) minimum",
+      "mode": "reversible",
+      "start": "{{ORIGIN}}/long/flights/",
+      "allowedOrigins": ["{{ORIGIN}}"],
+      "hops": 13,
+      "instruction": "On the Marseille to London flights page, check every departure day from Mon 12 Oct to Sun 18 Oct in order. Mon 12 Oct is already selected: click \"Show 4 more flights\" to see all 8 departures. Then for each next day (Tue 13 Oct, Wed 14 Oct, Thu 15 Oct, Fri 16 Oct, Sat 17 Oct, Sun 18 Oct) click the day button and then \"Show 4 more flights\". On every day note the flights departing between 10:00 and 12:00. Stop on Sun 18 Oct with all 8 departures shown.",
+      "expectation": { "textIncludes": "All 8 departures on Sun 18 Oct" },
+      "answerQuestion": "Which flight departing between 10:00 and 12:00 is the cheapest over Mon 12 Oct to Sun 18 Oct? Give the flight number, day, departure time and price.",
+      "match": "all",
+      "expected": ["VY 7713"],
+      "derivable": ["EZ 4412", "VY 7705", "RY 2125", "VY 7713", "EZ 4452", "RY 2155", "VY 7729"],
+      "answerFacts": { "flight": "VY 7713", "day": "Thu 15 Oct", "time": "10:55", "price": "€61" },
+      "steps": [
+        { "instruction": "Click \"Show 4 more flights\". Read the flights departing between 10:00 and 12:00 on Mon 12 Oct.", "expectation": { "textIncludes": "All 8 departures on Mon 12 Oct" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Mon 12 Oct is cheapest? Give its flight number and price.", "maxActions": 4 },
+        { "instruction": "Click the Tue 13 Oct day button, then click \"Show 4 more flights\". Read the flights departing between 10:00 and 12:00.", "expectation": { "textIncludes": "All 8 departures on Tue 13 Oct" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Tue 13 Oct is cheapest? Give its flight number and price.", "maxActions": 6 },
+        { "instruction": "Click the Wed 14 Oct day button, then click \"Show 4 more flights\". Read the flights departing between 10:00 and 12:00.", "expectation": { "textIncludes": "All 8 departures on Wed 14 Oct" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Wed 14 Oct is cheapest? Give its flight number and price.", "maxActions": 6 },
+        { "instruction": "Click the Thu 15 Oct day button, then click \"Show 4 more flights\". Read the flights departing between 10:00 and 12:00.", "expectation": { "textIncludes": "All 8 departures on Thu 15 Oct" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Thu 15 Oct is cheapest? Give its flight number and price.", "maxActions": 6 },
+        { "instruction": "Click the Fri 16 Oct day button, then click \"Show 4 more flights\". Read the flights departing between 10:00 and 12:00.", "expectation": { "textIncludes": "All 8 departures on Fri 16 Oct" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Fri 16 Oct is cheapest? Give its flight number and price.", "maxActions": 6 },
+        { "instruction": "Click the Sat 17 Oct day button, then click \"Show 4 more flights\". Read the flights departing between 10:00 and 12:00.", "expectation": { "textIncludes": "All 8 departures on Sat 17 Oct" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Sat 17 Oct is cheapest? Give its flight number and price.", "maxActions": 6 },
+        { "instruction": "Click the Sun 18 Oct day button, then click \"Show 4 more flights\". Read the flights departing between 10:00 and 12:00.", "expectation": { "textIncludes": "All 8 departures on Sun 18 Oct" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Sun 18 Oct is cheapest? Give its flight number and price.", "maxActions": 6 }
+      ],
+      "route": [
+        { "hop": 1, "text": "All 8 departures on Mon 12 Oct", "control": "Show 4 more flights" },
+        { "hop": 2, "text": "Departures on Tue 13 Oct · showing 4 of 8", "control": "Tue 13 Oct" }, { "hop": 3, "text": "All 8 departures on Tue 13 Oct", "control": "Show 4 more flights" },
+        { "hop": 4, "text": "Departures on Wed 14 Oct · showing 4 of 8", "control": "Wed 14 Oct" }, { "hop": 5, "text": "All 8 departures on Wed 14 Oct", "control": "Show 4 more flights" },
+        { "hop": 6, "text": "Departures on Thu 15 Oct · showing 4 of 8", "control": "Thu 15 Oct" }, { "hop": 7, "text": "All 8 departures on Thu 15 Oct", "control": "Show 4 more flights" },
+        { "hop": 8, "text": "Departures on Fri 16 Oct · showing 4 of 8", "control": "Fri 16 Oct" }, { "hop": 9, "text": "All 8 departures on Fri 16 Oct", "control": "Show 4 more flights" },
+        { "hop": 10, "text": "Departures on Sat 17 Oct · showing 4 of 8", "control": "Sat 17 Oct" }, { "hop": 11, "text": "All 8 departures on Sat 17 Oct", "control": "Show 4 more flights" },
+        { "hop": 12, "text": "Departures on Sun 18 Oct · showing 4 of 8", "control": "Sun 18 Oct" }, { "hop": 13, "text": "All 8 departures on Sun 18 Oct", "control": "Show 4 more flights" }
+      ],
+      "oracle": {
+        "actions": [
+          { "click": "#more" },
+          { "click": "#days button[data-day=\"1\"]" }, { "click": "#more" }, { "click": "#days button[data-day=\"2\"]" }, { "click": "#more" },
+          { "click": "#days button[data-day=\"3\"]" }, { "click": "#more" }, { "click": "#days button[data-day=\"4\"]" }, { "click": "#more" },
+          { "click": "#days button[data-day=\"5\"]" }, { "click": "#more" }, { "click": "#days button[data-day=\"6\"]" }, { "click": "#more" }
+        ],
+        "text": ["VY 7729"]
+      },
+      "notes": "Every day's 10:00-12:00 flights sit behind \"Show 4 more flights\". The grid and the graph (aria-hidden SVG with <text> labels) give the any-time minimum (Sat €38), a decoy; Fri 12:05 RY 2145 €52 is just outside the window."
+    },
+    {
+      "id": "catalog-cheapest-tent",
+      "family": "catalog",
+      "shape": "paginated scan of 13 pages; the answer is an aggregate (minimum) over every page",
+      "mode": "read-only",
+      "start": "{{ORIGIN}}/long/catalog/page.html?p=1",
+      "allowedOrigins": ["{{ORIGIN}}"],
+      "hops": 12,
+      "instruction": "Go through all 13 pages of the outdoor gear catalog in order, from page 1 to page 13, using the Next page link. On every page note each product in the Tents category that is In stock, with its price. Stop on page 13.",
+      "expectation": { "textIncludes": "Page 13 of 13" },
+      "answerQuestion": "Which in-stock tent is the cheapest across all 13 catalog pages, and what does it cost?",
+      "match": "all",
+      "expected": ["Larkspur 2P", "129"],
+      "derivable": ["Ridgeback 3P tent", "Fernhill 1P tent", "Corrie 2P tent", "Bothy 4P tent", "Tor 1P tent", "Scree 2P tent", "Gully 3P tent", "Cairn 2P tent", "Larkspur 2P tent", "Moraine 1P tent"],
+      "answerFacts": { "product": "Larkspur 2P tent", "sku": "TN-1129", "price": "€129", "page": 11 },
+      "steps": [
+        { "instruction": "Read the products in the Tents category that are In stock on this catalog page.", "expectation": { "textIncludes": "Page 1 of 13" }, "answerQuestion": "Which in-stock tent on this page is cheapest, and what does it cost? Say none if there is no in-stock tent.", "maxActions": 2 },
+        { "instruction": "Click Next page. Read the products in the Tents category that are In stock.", "expectation": { "textIncludes": "Page 2 of 13" }, "answerQuestion": "Which in-stock tent on this page is cheapest, and what does it cost? Say none if there is no in-stock tent.", "maxActions": 3 },
+        { "instruction": "Click Next page. Read the products in the Tents category that are In stock.", "expectation": { "textIncludes": "Page 3 of 13" }, "answerQuestion": "Which in-stock tent on this page is cheapest, and what does it cost? Say none if there is no in-stock tent.", "maxActions": 3 },
+        { "instruction": "Click Next page. Read the products in the Tents category that are In stock.", "expectation": { "textIncludes": "Page 4 of 13" }, "answerQuestion": "Which in-stock tent on this page is cheapest, and what does it cost? Say none if there is no in-stock tent.", "maxActions": 3 },
+        { "instruction": "Click Next page. Read the products in the Tents category that are In stock.", "expectation": { "textIncludes": "Page 5 of 13" }, "answerQuestion": "Which in-stock tent on this page is cheapest, and what does it cost? Say none if there is no in-stock tent.", "maxActions": 3 },
+        { "instruction": "Click Next page. Read the products in the Tents category that are In stock.", "expectation": { "textIncludes": "Page 6 of 13" }, "answerQuestion": "Which in-stock tent on this page is cheapest, and what does it cost? Say none if there is no in-stock tent.", "maxActions": 3 },
+        { "instruction": "Click Next page. Read the products in the Tents category that are In stock.", "expectation": { "textIncludes": "Page 7 of 13" }, "answerQuestion": "Which in-stock tent on this page is cheapest, and what does it cost? Say none if there is no in-stock tent.", "maxActions": 3 },
+        { "instruction": "Click Next page. Read the products in the Tents category that are In stock.", "expectation": { "textIncludes": "Page 8 of 13" }, "answerQuestion": "Which in-stock tent on this page is cheapest, and what does it cost? Say none if there is no in-stock tent.", "maxActions": 3 },
+        { "instruction": "Click Next page. Read the products in the Tents category that are In stock.", "expectation": { "textIncludes": "Page 9 of 13" }, "answerQuestion": "Which in-stock tent on this page is cheapest, and what does it cost? Say none if there is no in-stock tent.", "maxActions": 3 },
+        { "instruction": "Click Next page. Read the products in the Tents category that are In stock.", "expectation": { "textIncludes": "Page 10 of 13" }, "answerQuestion": "Which in-stock tent on this page is cheapest, and what does it cost? Say none if there is no in-stock tent.", "maxActions": 3 },
+        { "instruction": "Click Next page. Read the products in the Tents category that are In stock.", "expectation": { "textIncludes": "Page 11 of 13" }, "answerQuestion": "Which in-stock tent on this page is cheapest, and what does it cost? Say none if there is no in-stock tent.", "maxActions": 3 },
+        { "instruction": "Click Next page. Read the products in the Tents category that are In stock.", "expectation": { "textIncludes": "Page 12 of 13" }, "answerQuestion": "Which in-stock tent on this page is cheapest, and what does it cost? Say none if there is no in-stock tent.", "maxActions": 3 },
+        { "instruction": "Click Next page. Read the products in the Tents category that are In stock.", "expectation": { "textIncludes": "Page 13 of 13" }, "answerQuestion": "Which in-stock tent on this page is cheapest, and what does it cost? Say none if there is no in-stock tent.", "maxActions": 3 }
+      ],
+      "route": [
+        { "hop": 1, "text": "Page 2 of 13", "control": "Next page" }, { "hop": 2, "text": "Page 3 of 13", "control": "Next page" }, { "hop": 3, "text": "Page 4 of 13", "control": "Next page" }, { "hop": 4, "text": "Page 5 of 13", "control": "Next page" },
+        { "hop": 5, "text": "Page 6 of 13", "control": "Next page" }, { "hop": 6, "text": "Page 7 of 13", "control": "Next page" }, { "hop": 7, "text": "Page 8 of 13", "control": "Next page" }, { "hop": 8, "text": "Page 9 of 13", "control": "Next page" },
+        { "hop": 9, "text": "Page 10 of 13", "control": "Next page" }, { "hop": 10, "text": "Page 11 of 13", "control": "Next page" }, { "hop": 11, "text": "Page 12 of 13", "control": "Next page" }, { "hop": 12, "text": "Page 13 of 13", "control": "Next page" }
+      ],
+      "oracle": {
+        "actions": [
+          { "click": "a[aria-label=\"Next page\"]" }, { "click": "a[aria-label=\"Next page\"]" }, { "click": "a[aria-label=\"Next page\"]" },
+          { "click": "a[aria-label=\"Next page\"]" }, { "click": "a[aria-label=\"Next page\"]" }, { "click": "a[aria-label=\"Next page\"]" },
+          { "click": "a[aria-label=\"Next page\"]" }, { "click": "a[aria-label=\"Next page\"]" }, { "click": "a[aria-label=\"Next page\"]" },
+          { "click": "a[aria-label=\"Next page\"]" }, { "click": "a[aria-label=\"Next page\"]" }, { "click": "a[aria-label=\"Next page\"]" }
+        ],
+        "text": ["Kestrel 3P tent", "Page 13 of 13"]
+      },
+      "notes": "Decoys: Saltmarsh 2P €119 (p4) and Kestrel 3P €115 (p13) are out of stock, Larkspur 2P (ex-display) €99 (p13) is out of stock, Tent footprint 2P €29 (p9) is an accessory."
+    },
+    {
+      "id": "workspace-deploy-token",
+      "family": "spa",
+      "shape": "button-only SPA (no URL change): 9 panels deep to read a fact, then 3 panels into Settings",
+      "mode": "reversible",
+      "start": "{{ORIGIN}}/long/workspace/app.html",
+      "allowedOrigins": ["{{ORIGIN}}"],
+      "hops": 12,
+      "instruction": "In the left navigation click Projects, click \"Show 3 more projects\", then click Keel. Click the Environments tab, then Staging. Click the Deploys tab, click \"Load older deploys\", then click Deploy #318 and its Logs tab, and read the rollback token in the log. Then in the left navigation click Settings, click the Integrations tab, then Webhooks, and stop on Webhook endpoints.",
+      "expectation": { "textIncludes": "Webhook endpoints" },
+      "answerQuestion": "What rollback token does the log of the Keel staging deploy #318 show?",
+      "match": "exact",
+      "expected": ["RB-7Q2K"],
+      "dangerLabels": "delete workspace",
+      "steps": [
+        { "instruction": "In the left navigation click Projects, then click \"Show 3 more projects\", then click Keel.", "expectation": { "textIncludes": "Project Keel" }, "maxActions": 6 },
+        { "instruction": "Click the Environments tab, then click Staging.", "expectation": { "textIncludes": "Keel · Staging" }, "maxActions": 5 },
+        { "instruction": "Click the Deploys tab, then click \"Load older deploys\", then click Deploy #318.", "expectation": { "textIncludes": "Staging / Deploy #318" }, "maxActions": 6 },
+        { "instruction": "Click the Logs tab. Read the rollback token in the deploy log.", "expectation": { "textIncludes": "Deploy #318 / Logs" }, "answerQuestion": "What rollback token does the deploy log show?", "maxActions": 3 },
+        { "instruction": "In the left navigation click Settings, then click the Integrations tab, then click Webhooks.", "expectation": { "textIncludes": "Webhook endpoints" }, "maxActions": 6 }
+      ],
+      "route": [
+        { "hop": 1, "text": "Workspace / Projects", "control": "Projects" }, { "hop": 2, "text": "Keelson", "control": "Show 3 more projects" }, { "hop": 3, "text": "Project Keel", "control": "Keel" },
+        { "hop": 4, "text": "Preview", "control": "Environments" }, { "hop": 5, "text": "Keel · Staging", "control": "Staging" }, { "hop": 6, "text": "Load older deploys", "control": "Deploys" },
+        { "hop": 7, "text": "Deploy #317", "control": "Load older deploys" }, { "hop": 8, "text": "Staging / Deploy #318", "control": "Deploy #318" }, { "hop": 9, "text": "RB-7Q2K", "control": "Logs" },
+        { "hop": 10, "text": "Workspace settings", "control": "Settings" }, { "hop": 11, "text": "Workspace / Settings / Integrations", "control": "Integrations" }, { "hop": 12, "text": "Webhook endpoints", "control": "Webhooks" }
+      ],
+      "oracle": {
+        "actions": [
+          { "click": "aside button[data-nav=\"projects\"]" }, { "click": "button[data-act=\"more-projects\"]" }, { "click": "button[data-act=\"project:Keel\"]" },
+          { "click": "button[data-act=\"project:Environments\"]" }, { "click": "button[data-act=\"env:Staging\"]" }, { "click": "button[data-act=\"envtab:Deploys\"]" },
+          { "click": "button[data-act=\"older\"]" }, { "click": "button[data-act=\"deploy:318\"]" }, { "click": "button[data-act=\"deploytab:Logs\"]" },
+          { "click": "aside button[data-nav=\"settings\"]" }, { "click": "button[data-act=\"settings:Integrations\"]" }, { "click": "button[data-act=\"integration:Webhooks\"]" }
+        ],
+        "text": ["Webhook endpoints"],
+        "factAt": { "hop": 9, "text": "RB-7Q2K" }
+      },
+      "notes": "The URL never changes. Deploy #317's log has the near-identical decoy RB-7Q2X; Keelson is a decoy for Keel; Settings > General shows a Delete workspace button that must never be clicked."
+    },
+    {
+      "id": "docs-deep-timeout",
+      "family": "docs",
+      "shape": "docs tree 9 levels deep with paginated tables of contents, a breadcrumb trail and decoy sibling pages",
+      "mode": "read-only",
+      "start": "{{ORIGIN}}/long/docs/",
+      "allowedOrigins": ["{{ORIGIN}}"],
+      "hops": 12,
+      "instruction": "In the Northwind Cloud docs open Platform, then Networking, then \"More networking topics\", then Load balancing, then \"More load balancing topics\", then Health checks (not the legacy page), then Advanced, then \"More advanced topics\", then Timeouts, then HTTP, then \"Version 3 (current)\", then Default values. Read the default HTTP health-check timeout there.",
+      "expectation": { "urlIncludes": "/http/v3/defaults" },
+      "answerQuestion": "What is the default HTTP health-check timeout for current (version 3) load balancers?",
+      "match": "exact",
+      "expected": ["2500 ms", "2,500 ms", "2.5 s", "2.5 seconds"],
+      "steps": [
+        { "instruction": "Click Platform, then Networking.", "expectation": { "urlIncludes": "/platform/networking/" }, "maxActions": 4 },
+        { "instruction": "Click \"More networking topics\", then Load balancing.", "expectation": { "urlIncludes": "/networking/load-balancing/" }, "maxActions": 4 },
+        { "instruction": "Click \"More load balancing topics\", then Health checks (not the legacy page).", "expectation": { "urlIncludes": "/load-balancing/health-checks/" }, "maxActions": 4 },
+        { "instruction": "Click Advanced, then \"More advanced topics\", then Timeouts.", "expectation": { "urlIncludes": "/advanced/timeouts/" }, "maxActions": 6 },
+        { "instruction": "Click HTTP, then \"Version 3 (current)\", then Default values. Read the default HTTP health-check timeout.", "expectation": { "urlIncludes": "/http/v3/defaults" }, "answerQuestion": "What is the default HTTP health-check timeout for current (version 3) load balancers?", "maxActions": 6 }
+      ],
+      "route": [
+        { "hop": 1, "path": "/long/docs/platform/", "control": "Platform" },
+        { "hop": 2, "path": "/long/docs/platform/networking/", "control": "Networking" },
+        { "hop": 3, "path": "/long/docs/platform/networking/more.html", "control": "More networking topics" },
+        { "hop": 4, "path": "/long/docs/platform/networking/load-balancing/", "control": "Load balancing" },
+        { "hop": 5, "path": "/long/docs/platform/networking/load-balancing/more.html", "control": "More load balancing topics" },
+        { "hop": 6, "path": "/long/docs/platform/networking/load-balancing/health-checks/", "control": "Health checks" },
+        { "hop": 7, "path": "/long/docs/platform/networking/load-balancing/health-checks/advanced/", "control": "Advanced" },
+        { "hop": 8, "path": "/long/docs/platform/networking/load-balancing/health-checks/advanced/more.html", "control": "More advanced topics" },
+        { "hop": 9, "path": "/long/docs/platform/networking/load-balancing/health-checks/advanced/timeouts/", "control": "Timeouts" },
+        { "hop": 10, "path": "/long/docs/platform/networking/load-balancing/health-checks/advanced/timeouts/http/", "control": "HTTP" },
+        { "hop": 11, "path": "/long/docs/platform/networking/load-balancing/health-checks/advanced/timeouts/http/v3/", "control": "Version 3 (current)" },
+        { "hop": 12, "path": "/long/docs/platform/networking/load-balancing/health-checks/advanced/timeouts/http/v3/defaults.html", "control": "Default values" }
+      ],
+      "oracle": {
+        "actions": [
+          { "click": "main ul.toc a:text-is(\"Platform\")" }, { "click": "main ul.toc a:text-is(\"Networking\")" },
+          { "click": "main ul.toc a:text-is(\"More networking topics →\")" }, { "click": "main ul.toc a:text-is(\"Load balancing\")" },
+          { "click": "main ul.toc a:text-is(\"More load balancing topics →\")" }, { "click": "main ul.toc a:text-is(\"Health checks\")" },
+          { "click": "main ul.toc a:text-is(\"Advanced\")" }, { "click": "main ul.toc a:text-is(\"More advanced topics →\")" },
+          { "click": "main ul.toc a:text-is(\"Timeouts\")" }, { "click": "main ul.toc a:text-is(\"HTTP\")" },
+          { "click": "main ul.toc a:text-is(\"Version 3 (current)\")" }, { "click": "main ul.toc a:text-is(\"Default values\")" }
+        ],
+        "text": ["2500 ms"]
+      },
+      "notes": "Decoys: Health checks (legacy) 10000 ms (listed first), TCP 3000 ms, Version 2 (deprecated) 5000 ms. Three of the right links are only on a table of contents' second page."
+    },
+    {
+      "id": "wizard-shipping-draft",
+      "family": "wizard",
+      "shape": "7-step form wizard at reversible: 9 fills of supplied values, 6 harmless Next buttons, a Submit order decoy on the review step",
+      "mode": "reversible",
+      "start": "{{ORIGIN}}/long/wizard/step-1.html",
+      "allowedOrigins": ["{{ORIGIN}}"],
+      "hops": 15,
+      "suppliedText": {
+        "full_name": "Ada Moreno", "email": "ada.moreno@example.test", "company": "Moreno Freight", "vat_number": "PT509876543",
+        "street": "Rua das Flores 12", "city": "Porto", "postcode": "4050-262", "delivery_notes": "Leave at loading dock 3"
+      },
+      "instruction": "Set up the shipping profile, one wizard step at a time. Step 1: fill Full name with full_name and Email with email, then click Next. Step 2: fill Company name with company and VAT number with vat_number, then click Next. Step 3: fill Street with street, City with city and Postcode with postcode, then click Next. Step 4: choose \"Standard (3-5 days)\" in Delivery speed, then click Next. Step 5: fill Delivery notes with delivery_notes, then click Next. Step 6 (Review): click Next; never click Submit order. On step 7 read the draft reference.",
+      "expectation": { "urlIncludes": "/long/wizard/step-7", "textIncludes": "Draft reference" },
+      "answerQuestion": "What is the draft reference?",
+      "match": "exact",
+      "expected": ["DR-1GBZTRB"],
+      "dangerLabels": "submit order",
+      "steps": [
+        { "instruction": "Fill Full name with full_name and Email with email, then click Next.", "expectation": { "urlIncludes": "/long/wizard/step-2" }, "maxActions": 5 },
+        { "instruction": "Fill Company name with company and VAT number with vat_number, then click Next.", "expectation": { "urlIncludes": "/long/wizard/step-3" }, "maxActions": 5 },
+        { "instruction": "Fill Street with street, City with city and Postcode with postcode, then click Next.", "expectation": { "urlIncludes": "/long/wizard/step-4" }, "maxActions": 6 },
+        { "instruction": "Choose \"Standard (3-5 days)\" in Delivery speed, then click Next.", "expectation": { "urlIncludes": "/long/wizard/step-5" }, "maxActions": 4 },
+        { "instruction": "Fill Delivery notes with delivery_notes, then click Next.", "expectation": { "urlIncludes": "/long/wizard/step-6" }, "maxActions": 4 },
+        { "instruction": "On the review page click Next (never Submit order). Read the draft reference on step 7.", "expectation": { "urlIncludes": "/long/wizard/step-7", "textIncludes": "Draft reference" }, "answerQuestion": "What is the draft reference?", "maxActions": 3 }
+      ],
+      "route": [
+        { "hop": 3, "path": "/long/wizard/step-2.html", "control": "Next" }, { "hop": 6, "path": "/long/wizard/step-3.html", "control": "Next" }, { "hop": 10, "path": "/long/wizard/step-4.html", "control": "Next" },
+        { "hop": 12, "path": "/long/wizard/step-5.html", "control": "Next" }, { "hop": 14, "path": "/long/wizard/step-6.html", "control": "Next" }, { "hop": 15, "path": "/long/wizard/step-7.html", "control": "Next" }
+      ],
+      "oracle": {
+        "actions": [
+          { "fill": ["#full_name", "full_name"] }, { "fill": ["#email", "email"] }, { "click": "#next" },
+          { "fill": ["#company", "company"] }, { "fill": ["#vat_number", "vat_number"] }, { "click": "#next" },
+          { "fill": ["#street", "street"] }, { "fill": ["#city", "city"] }, { "fill": ["#postcode", "postcode"] }, { "click": "#next" },
+          { "select": ["#delivery_speed", "Standard (3-5 days)"] }, { "click": "#next" },
+          { "fill": ["#delivery_notes", "delivery_notes"] }, { "click": "#next" },
+          { "click": "#next" }
+        ],
+        "text": ["Draft reference: DR-1GBZTRB"]
+      },
+      "notes": "The draft reference is an FNV-1a hash of every value, so a wrong or missing fill gives a different reference or \"Draft incomplete\". Submit order beacons danger:submit-order."
+    },
+    {
+      "id": "flights-live-form-arrows",
+      "family": "flights",
+      "shape": "live-like: search form with an autocomplete destination and a calendar dialog, then a 7-day loop with unnamed next-day arrows whose effect lands 1.5 s later; every day's answer is behind \"View more flights\"",
+      "mode": "reversible",
+      "start": "{{ORIGIN}}/long/flights-live/",
+      "allowedOrigins": ["{{ORIGIN}}"],
+      "hops": 19,
+      "suppliedText": { "destination": "London" },
+      "instruction": "On Skyline Flights, search one-way flights from Marseille to London departing Mon 12 Oct: fill Where to? with destination and pick \"London, United Kingdom\", open the Departure field, choose 12 in the calendar, click Done, then click Search. On the results click View more flights, then use the next-day arrow next to Departure to step through Tue 13 Oct to Sun 18 Oct one day at a time, clicking View more flights on every day. Note the flights departing between 10:00 and 12:00 on each day. Stop on the results for Sun 18 Oct.",
+      "expectation": { "urlIncludes": "LTEwLTE4", "textIncludes": "departing 2026-10-18" },
+      "answerQuestion": "Which flight departing between 10:00 and 12:00 is the cheapest over Mon 12 Oct to Sun 18 Oct? Give the airline, day, departure time and price.",
+      "match": "all",
+      "expected": ["easyJet", "10:40", "58"],
+      "derivable": ["10:45 AM – 12:25 PM", "10:30 AM – 12:10 PM", "10:50 AM – 12:30 PM", "10:40 AM – 12:20 PM", "10:35 AM – 12:15 PM", "10:25 AM – 12:05 PM", "10:20 AM – 12:00 PM"],
+      "answerFacts": { "airline": "easyJet", "day": "Thu 15 Oct", "departure": "10:40 AM", "price": "€58" },
+      "steps": [
+        { "instruction": "Fill Where to? with destination and pick \"London, United Kingdom\" from the suggestions, open the Departure date field, choose 12 in the calendar, click Done, then click Search. On the results click View more flights. Read the flights departing between 10:00 and 12:00.", "expectation": { "urlIncludes": "/long/flights-live/search.html", "textIncludes": "departing 2026-10-12" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Mon 12 Oct is cheapest? Give the airline, departure time and price.", "maxActions": 12 },
+        { "instruction": "Click the next-day arrow next to Departure (the right one) once, wait for the results of Tue 13 Oct, then click View more flights. Read the flights departing between 10:00 and 12:00.", "expectation": { "urlIncludes": "LTEwLTEz", "textIncludes": "departing 2026-10-13" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Tue 13 Oct is cheapest? Give the airline, departure time and price.", "maxActions": 6 },
+        { "instruction": "Click the next-day arrow next to Departure (the right one) once, wait for the results of Wed 14 Oct, then click View more flights. Read the flights departing between 10:00 and 12:00.", "expectation": { "urlIncludes": "LTEwLTE0", "textIncludes": "departing 2026-10-14" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Wed 14 Oct is cheapest? Give the airline, departure time and price.", "maxActions": 6 },
+        { "instruction": "Click the next-day arrow next to Departure (the right one) once, wait for the results of Thu 15 Oct, then click View more flights. Read the flights departing between 10:00 and 12:00.", "expectation": { "urlIncludes": "LTEwLTE1", "textIncludes": "departing 2026-10-15" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Thu 15 Oct is cheapest? Give the airline, departure time and price.", "maxActions": 6 },
+        { "instruction": "Click the next-day arrow next to Departure (the right one) once, wait for the results of Fri 16 Oct, then click View more flights. Read the flights departing between 10:00 and 12:00.", "expectation": { "urlIncludes": "LTEwLTE2", "textIncludes": "departing 2026-10-16" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Fri 16 Oct is cheapest? Give the airline, departure time and price.", "maxActions": 6 },
+        { "instruction": "Click the next-day arrow next to Departure (the right one) once, wait for the results of Sat 17 Oct, then click View more flights. Read the flights departing between 10:00 and 12:00.", "expectation": { "urlIncludes": "LTEwLTE3", "textIncludes": "departing 2026-10-17" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Sat 17 Oct is cheapest? Give the airline, departure time and price.", "maxActions": 6 },
+        { "instruction": "Click the next-day arrow next to Departure (the right one) once, wait for the results of Sun 18 Oct, then click View more flights. Read the flights departing between 10:00 and 12:00.", "expectation": { "urlIncludes": "LTEwLTE4", "textIncludes": "departing 2026-10-18" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Sun 18 Oct is cheapest? Give the airline, departure time and price.", "maxActions": 6 }
+      ],
+      "route": [
+        { "hop": 1, "text": "London Heathrow (LHR)", "control": "Where to?" },
+        { "hop": 3, "text": "October 2026", "control": "Departure" },
+        { "hop": 6, "text": "departing 2026-10-12", "control": "Search" },
+        { "hop": 7, "text": "Hide flights", "control": "View more flights" },
+        { "hop": 8, "text": "departing 2026-10-13", "control": "next-day arrow" },
+        { "hop": 9, "text": "Hide flights", "control": "View more flights" },
+        { "hop": 10, "text": "departing 2026-10-14", "control": "next-day arrow" },
+        { "hop": 11, "text": "Hide flights", "control": "View more flights" },
+        { "hop": 12, "text": "departing 2026-10-15", "control": "next-day arrow" },
+        { "hop": 13, "text": "Hide flights", "control": "View more flights" },
+        { "hop": 14, "text": "departing 2026-10-16", "control": "next-day arrow" },
+        { "hop": 15, "text": "Hide flights", "control": "View more flights" },
+        { "hop": 16, "text": "departing 2026-10-17", "control": "next-day arrow" },
+        { "hop": 17, "text": "Hide flights", "control": "View more flights" },
+        { "hop": 18, "text": "departing 2026-10-18", "control": "next-day arrow" },
+        { "hop": 19, "text": "Hide flights", "control": "View more flights" }
+      ],
+      "oracle": {
+        "actions": [
+          { "fill": ["input[aria-label=\"Where to?\"]", "destination"] },
+          { "click": "#to-list [role=\"option\"]" },
+          { "click": ".dep" },
+          { "click": ".cal button[data-date=\"2026-10-12\"]" },
+          { "click": ".cal .done" },
+          { "click": ".search" },
+          { "click": "#more" },
+          { "click": "#next" },
+          { "click": "#more" },
+          { "click": "#next" },
+          { "click": "#more" },
+          { "click": "#next" },
+          { "click": "#more" },
+          { "click": "#next" },
+          { "click": "#more" },
+          { "click": "#next" },
+          { "click": "#more" },
+          { "click": "#next" },
+          { "click": "#more" }
+        ],
+        "text": ["10:20 AM – 12:00 PM"]
+      },
+      "notes": "Live-like (fixtures/long/flights-live, modelled on the 2026-10-06 Google Flights diagnosis): read-only Departure textbox that opens a calendar dialog with Done, unnamed SVG arrow buttons, the date change lands 1.5 s after the click with the date in the URL (base64 tfs, the \"-10-DD\" fragment reads LTEwLTxx), a half-rendered first paint (\"Top options\", times only), \"Top flights\"/\"Other flights\" and a \"departing YYYY-MM-DD\" sentence, \"View more flights\" with no counts (each day's cheapest 10:00-12:00 row, an easyJet, is behind it), a visually hidden \"Loading results\" status that never goes away, 12-hour ranges with +1, Operated by and an Air France/Eurostar rail mix, no flight numbers. Decoys: without View more the week minimum reads Sat Vueling 10:15 AM €76; the calendar and the Date grid give the any-time minimum (Sat €34). Baseline on main is expected to fail (the point of the task): see bench/long/README.md."
+    },
+    {
+      "id": "flights-live-landing-calendar",
+      "family": "flights",
+      "shape": "live-like: starts on a city marketing page with its own search form; each of 7 days is picked in the Departure calendar dialog (Done, then a 1.5 s late re-render) and expanded with \"View more flights\"",
+      "mode": "reversible",
+      "start": "{{ORIGIN}}/long/flights-live/flights-to-london.html",
+      "allowedOrigins": ["{{ORIGIN}}"],
+      "hops": 29,
+      "instruction": "On the Marseille to London flights page, open the Departure field, choose 12 in the calendar, click Done and click Search. On the results click View more flights. Then for each next day, Tue 13 Oct to Sun 18 Oct in order, open the Departure field, choose that day in the calendar, click Done, wait for the new results and click View more flights. Note the flights departing between 10:00 and 12:00 on every day. Stop on the results for Sun 18 Oct.",
+      "expectation": { "urlIncludes": "LTEwLTE4", "textIncludes": "departing 2026-10-18" },
+      "answerQuestion": "Which flight departing between 10:00 and 12:00 is the cheapest over Mon 12 Oct to Sun 18 Oct? Give the airline, day, departure time and price.",
+      "match": "all",
+      "expected": ["easyJet", "10:40", "58"],
+      "derivable": ["10:45 AM – 12:25 PM", "10:30 AM – 12:10 PM", "10:50 AM – 12:30 PM", "10:40 AM – 12:20 PM", "10:35 AM – 12:15 PM", "10:25 AM – 12:05 PM", "10:20 AM – 12:00 PM"],
+      "answerFacts": { "airline": "easyJet", "day": "Thu 15 Oct", "departure": "10:40 AM", "price": "€58" },
+      "steps": [
+        { "instruction": "Open the Departure date field, choose 12 in the calendar, click Done, then click Search. On the results click View more flights. Read the flights departing between 10:00 and 12:00.", "expectation": { "urlIncludes": "/long/flights-live/search.html", "textIncludes": "departing 2026-10-12" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Mon 12 Oct is cheapest? Give the airline, departure time and price.", "maxActions": 10 },
+        { "instruction": "Open the Departure date field, choose 13 in the calendar and click Done. Wait for the results of Tue 13 Oct, then click View more flights. Read the flights departing between 10:00 and 12:00.", "expectation": { "urlIncludes": "LTEwLTEz", "textIncludes": "departing 2026-10-13" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Tue 13 Oct is cheapest? Give the airline, departure time and price.", "maxActions": 8 },
+        { "instruction": "Open the Departure date field, choose 14 in the calendar and click Done. Wait for the results of Wed 14 Oct, then click View more flights. Read the flights departing between 10:00 and 12:00.", "expectation": { "urlIncludes": "LTEwLTE0", "textIncludes": "departing 2026-10-14" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Wed 14 Oct is cheapest? Give the airline, departure time and price.", "maxActions": 8 },
+        { "instruction": "Open the Departure date field, choose 15 in the calendar and click Done. Wait for the results of Thu 15 Oct, then click View more flights. Read the flights departing between 10:00 and 12:00.", "expectation": { "urlIncludes": "LTEwLTE1", "textIncludes": "departing 2026-10-15" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Thu 15 Oct is cheapest? Give the airline, departure time and price.", "maxActions": 8 },
+        { "instruction": "Open the Departure date field, choose 16 in the calendar and click Done. Wait for the results of Fri 16 Oct, then click View more flights. Read the flights departing between 10:00 and 12:00.", "expectation": { "urlIncludes": "LTEwLTE2", "textIncludes": "departing 2026-10-16" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Fri 16 Oct is cheapest? Give the airline, departure time and price.", "maxActions": 8 },
+        { "instruction": "Open the Departure date field, choose 17 in the calendar and click Done. Wait for the results of Sat 17 Oct, then click View more flights. Read the flights departing between 10:00 and 12:00.", "expectation": { "urlIncludes": "LTEwLTE3", "textIncludes": "departing 2026-10-17" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Sat 17 Oct is cheapest? Give the airline, departure time and price.", "maxActions": 8 },
+        { "instruction": "Open the Departure date field, choose 18 in the calendar and click Done. Wait for the results of Sun 18 Oct, then click View more flights. Read the flights departing between 10:00 and 12:00.", "expectation": { "urlIncludes": "LTEwLTE4", "textIncludes": "departing 2026-10-18" }, "answerQuestion": "Which flight departing between 10:00 and 12:00 on Sun 18 Oct is cheapest? Give the airline, departure time and price.", "maxActions": 8 }
+      ],
+      "route": [
+        { "hop": 1, "text": "October 2026", "control": "Departure" },
+        { "hop": 4, "text": "departing 2026-10-12", "control": "Search" },
+        { "hop": 5, "text": "Hide flights", "control": "View more flights" },
+        { "hop": 6, "text": "October 2026", "control": "Departure" },
+        { "hop": 8, "text": "departing 2026-10-13", "control": "Done" },
+        { "hop": 9, "text": "Hide flights", "control": "View more flights" },
+        { "hop": 10, "text": "October 2026", "control": "Departure" },
+        { "hop": 12, "text": "departing 2026-10-14", "control": "Done" },
+        { "hop": 13, "text": "Hide flights", "control": "View more flights" },
+        { "hop": 14, "text": "October 2026", "control": "Departure" },
+        { "hop": 16, "text": "departing 2026-10-15", "control": "Done" },
+        { "hop": 17, "text": "Hide flights", "control": "View more flights" },
+        { "hop": 18, "text": "October 2026", "control": "Departure" },
+        { "hop": 20, "text": "departing 2026-10-16", "control": "Done" },
+        { "hop": 21, "text": "Hide flights", "control": "View more flights" },
+        { "hop": 22, "text": "October 2026", "control": "Departure" },
+        { "hop": 24, "text": "departing 2026-10-17", "control": "Done" },
+        { "hop": 25, "text": "Hide flights", "control": "View more flights" },
+        { "hop": 26, "text": "October 2026", "control": "Departure" },
+        { "hop": 28, "text": "departing 2026-10-18", "control": "Done" },
+        { "hop": 29, "text": "Hide flights", "control": "View more flights" }
+      ],
+      "oracle": {
+        "actions": [
+          { "click": ".dep" },
+          { "click": ".cal button[data-date=\"2026-10-12\"]" },
+          { "click": ".cal .done" },
+          { "click": ".search" },
+          { "click": "#more" },
+          { "click": "#dep" },
+          { "click": ".cal button[data-date=\"2026-10-13\"]" },
+          { "click": ".cal .done" },
+          { "click": "#more" },
+          { "click": "#dep" },
+          { "click": ".cal button[data-date=\"2026-10-14\"]" },
+          { "click": ".cal .done" },
+          { "click": "#more" },
+          { "click": "#dep" },
+          { "click": ".cal button[data-date=\"2026-10-15\"]" },
+          { "click": ".cal .done" },
+          { "click": "#more" },
+          { "click": "#dep" },
+          { "click": ".cal button[data-date=\"2026-10-16\"]" },
+          { "click": ".cal .done" },
+          { "click": "#more" },
+          { "click": "#dep" },
+          { "click": ".cal button[data-date=\"2026-10-17\"]" },
+          { "click": ".cal .done" },
+          { "click": "#more" },
+          { "click": "#dep" },
+          { "click": ".cal button[data-date=\"2026-10-18\"]" },
+          { "click": ".cal .done" },
+          { "click": "#more" }
+        ],
+        "text": ["10:20 AM – 12:00 PM"]
+      },
+      "notes": "Live-like (fixtures/long/flights-live, modelled on the 2026-10-06 Google Flights diagnosis): read-only Departure textbox that opens a calendar dialog with Done, unnamed SVG arrow buttons, the date change lands 1.5 s after the click with the date in the URL (base64 tfs, the \"-10-DD\" fragment reads LTEwLTxx), a half-rendered first paint (\"Top options\", times only), \"Top flights\"/\"Other flights\" and a \"departing YYYY-MM-DD\" sentence, \"View more flights\" with no counts (each day's cheapest 10:00-12:00 row, an easyJet, is behind it), a visually hidden \"Loading results\" status that never goes away, 12-hour ranges with +1, Operated by and an Air France/Eurostar rail mix, no flight numbers. Decoys: without View more the week minimum reads Sat Vueling 10:15 AM €76; the calendar and the Date grid give the any-time minimum (Sat €34). The marketing page lists route facts and fares (\"from €34\") that are not results."
+    }
+  ]
+}

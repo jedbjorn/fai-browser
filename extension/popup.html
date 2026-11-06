@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="approve.css">
+  <title>FAI Browser</title>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <img class="brand-mark" src="icons/icon-48.png" alt="" width="34" height="34">
+      <div class="brand-copy">
+        <span class="eyebrow">FAI BROWSER</span>
+        <h1>Browser control</h1>
+      </div>
+      <span class="local-label">LOCAL</span>
+    </header>
+
+    <p id="pin-hint" class="pin-hint" role="note" hidden></p>
+
+    <section id="setup" class="setup-card" aria-label="Setup" hidden>
+      <span class="card-label">SETUP NEEDED</span>
+      <p id="setup-text" class="setup-text">Run <code>npm run setup</code> in the fai-browser folder, then pair.</p>
+      <button id="pair" class="primary-button" type="button">Pair with the FAI service</button>
+      <button id="setup-all-sites" class="secondary-button" type="button" hidden>Allow on all sites</button>
+      <p id="setup-all-sites-help" class="field-help" hidden>Optional: no site-access prompt per site. You still approve every tab.</p>
+    </section>
+
+    <section class="tab-card" aria-label="Selected browser tab">
+      <div class="card-topline">
+        <span class="card-label">CURRENT TAB</span>
+        <span id="state-label" class="state-label" data-state="idle">Ready</span>
+      </div>
+      <p id="tab-title" class="tab-title">Checking active tab…</p>
+      <p id="tab-origin" class="tab-origin"></p>
+    </section>
+
+    <section id="approvals" class="requests approvals" aria-label="Agent actions waiting for your approval" aria-live="polite" hidden></section>
+
+    <section id="requests" class="requests" aria-label="Tab requests from agents" aria-live="polite">
+      <p id="requests-empty" class="requests-empty" hidden>No agent is asking for a tab.</p>
+      <div id="request-list"></div>
+    </section>
+
+    <section class="control-area" aria-label="Browser controls">
+      <div id="controls" class="secondary-controls" hidden>
+        <button id="pause" class="secondary-button" type="button">Pause</button>
+        <button id="stop" class="secondary-button" type="button">Stop</button>
+      </div>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <p id="privacy-note" class="privacy-note">Only the approved tab is shared. Page text goes to your coding agent.</p>
+    </section>
+
+    <p id="connection-line" class="connection-line" hidden><span class="connection-check" aria-hidden="true">✓</span> Connected to the FAI service</p>
+
+    <details id="advanced" class="connection advanced">
+      <summary><span>Advanced</span><span class="chevron" aria-hidden="true"></span></summary>
+      <div class="connection-body">
+        <fieldset class="driver-control" aria-describedby="driver-help driver-note">
+          <legend>Who drives the browser?</legend>
+          <div class="driver-toggle">
+            <button id="driver-agent" type="button" aria-pressed="false" disabled>Your agent<small>recommended</small></button>
+            <button id="driver-jev" type="button" aria-pressed="false" disabled>Jev autopilot<small>experimental</small></button>
+          </div>
+          <p id="driver-help" class="field-help">Connect to the FAI service to choose.</p>
+          <p id="driver-note" class="field-help">Applies on the next agent call. No restart needed.</p>
+          <p id="driver-error" class="field-help field-error" role="alert"></p>
+          <p id="driver-saved" class="field-help" role="status" aria-live="polite"></p>
+        </fieldset>
+        <div id="key-row" class="key-row" hidden>
+          <div><strong>Jev API key</strong><span>Only for Jev. Add it with npm run setup -- --driver jev.</span></div>
+          <span class="key-badge">OPTIONAL</span>
+        </div>
+
+        <span class="section-label">Approvals</span>
+        <label for="default-level">Preselect up to</label>
+        <select id="default-level" class="level-select">
+          <option value="read-only">Read</option>
+          <option value="interactive">Use</option>
+          <option value="full">Act</option>
+        </select>
+        <p id="default-level-help" class="field-help">Cards preselect what the agent asked for, up to this level.</p>
+        <label class="check-row" for="approval-window"><input id="approval-window" type="checkbox" checked> Show a window when an agent asks</label>
+        <label class="check-row" for="open-right-away"><input id="open-right-away" type="checkbox" checked> Open requested pages right away</label>
+        <p class="field-help">Opening approves nothing: you still click the FAI Browser icon on the page.</p>
+        <label class="check-row" for="remember-domains"><input id="remember-domains" type="checkbox"> Remember whole-domain approvals for 24 hours</label>
+        <p class="field-help">Only Read and no-submit Use approvals; higher levels ask Chrome again.</p>
+        <ul id="remembered-list" class="testing-list" hidden></ul>
+
+        <span class="section-label">Site access</span>
+        <p id="all-sites-state" class="field-help">The browser asks for access per site when a task needs it.</p>
+        <button id="all-sites" class="secondary-button" type="button">Allow on all sites</button>
+        <p class="field-help">Lets the extension read and capture pages on any site you approve a tab on, without a prompt per site. Agents still get only the one tab you approve, at the level you pick.</p>
+
+        <span class="section-label">Test sites</span>
+        <p class="field-help">Exact origins where you may pick <strong>Test site</strong>: no guardrails there.</p>
+        <ul id="testing-list" class="testing-list"></ul>
+        <p id="testing-empty" class="field-help">None listed.</p>
+        <div class="testing-add">
+          <input id="testing-origin" type="url" spellcheck="false" autocomplete="off" placeholder="http://localhost:3000" aria-label="Test site origin">
+          <button id="testing-add" class="secondary-button" type="button">Add</button>
+        </div>
+        <p id="testing-error" class="field-help field-error" role="alert"></p>
+        <div id="approval-settings" class="approval-settings"></div>
+
+        <span class="section-label">Per-request budget</span>
+        <p class="field-help">Most an agent may spend on one request. Empty: the default.</p>
+        <div class="budget-fields">
+          <label for="budget-calls">Calls<input id="budget-calls" type="number" min="1" max="500" step="1" inputmode="numeric" placeholder="50" aria-describedby="budget-effective"></label>
+          <label for="budget-minutes">Minutes<input id="budget-minutes" type="number" min="1" max="240" step="1" inputmode="numeric" placeholder="20" aria-describedby="budget-effective"></label>
+        </div>
+        <p id="budget-effective" class="field-help">In effect: 50 calls, 20 min (default)</p>
+        <p id="budget-error" class="field-help field-error" role="alert"></p>
+
+        <div id="trusted-input-row" hidden>
+          <span class="section-label">Input</span>
+          <label class="check-row" for="trusted-input"><input id="trusted-input" type="checkbox"> Trusted input</label>
+          <p class="field-help">Clicks and keys come from Chrome itself, so sites cannot tell them from yours. Chrome shows its debugging bar during each action.</p>
+        </div>
+
+        <span class="section-label">Secret redaction</span>
+        <label for="secret-mode">Redact secrets the page shows</label>
+        <select id="secret-mode" class="level-select">
+          <option value="standard">Standard</option>
+          <option value="strict">Strict</option>
+        </select>
+        <p id="secret-mode-help" class="field-help"></p>
+        <p class="field-help">Always on. Agents see <code>[secret:N …]</code> placeholders, never the values.</p>
+        <span class="section-label">Relaxed origins</span>
+        <p class="field-help">Exact origins where only known key formats, cards and signed links are redacted.</p>
+        <ul id="relaxed-list" class="testing-list"></ul>
+        <p id="relaxed-empty" class="field-help">None listed.</p>
+        <div class="testing-add">
+          <input id="relaxed-origin" type="url" spellcheck="false" autocomplete="off" placeholder="https://docs.example.com" aria-label="Relaxed origin">
+          <button id="relaxed-add" class="secondary-button" type="button">Add</button>
+        </div>
+        <p id="relaxed-error" class="field-help field-error" role="alert"></p>
+
+
+        <span class="section-label">Connection</span>
+        <label for="endpoint">FAI service address</label>
+        <input id="endpoint" type="url" value="http://127.0.0.1:4318" spellcheck="false" autocomplete="off">
+        <label for="secret">Pairing secret (manual pairing)</label>
+        <input id="secret" type="password" autocomplete="off" spellcheck="false" placeholder="Only if automatic pairing fails">
+        <p id="secret-help" class="field-help">node src/cli.js pair prints it. Pairing is usually automatic.</p>
+        <p id="transport" class="field-help transport">Connection: not connected</p>
+      </div>
+    </details>
+  </main>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

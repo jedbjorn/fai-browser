@@ -1,0 +1,459 @@
+{
+  "label": null,
+  "tree": "<pre-round6 worktree> (pre-round6-2026-10-06)",
+  "repeat": 3,
+  "conditions": [
+    "a",
+    "b"
+  ],
+  "startedAt": "2026-10-06T01:30:39.167Z",
+  "origin": "http://127.0.0.1:43051",
+  "tasks": [
+    "flights-window-week",
+    "catalog-cheapest-tent",
+    "workspace-deploy-token",
+    "docs-deep-timeout",
+    "wizard-shipping-draft"
+  ],
+  "node": "v24.21.0",
+  "provider": "daemon default (Jev)",
+  "steps": "on",
+  "profile": "none",
+  "retry": "default",
+  "hostCaps": {
+    "maxActions": 30,
+    "maxSteps": 5,
+    "maxCalls": 6,
+    "maxMs": 120000,
+    "callWindowMs": 43000
+  },
+  "timeoutMs": "MCP default (runtime 30 s single, 45-120 s list (6 s per step), clamped to the request budget)",
+  "finishedAt": "2026-10-06T01:33:44.865Z",
+  "runs": 30,
+  "byCondition": {
+    "a": {
+      "runs": 15,
+      "success": 4,
+      "verified": 13,
+      "answerOk": 4,
+      "meanProgress": 12.67,
+      "meanSurvival": 12.67,
+      "meanHops": 12.67,
+      "goldHops": 13,
+      "meanHostTurns": 1,
+      "meanJevRequests": 14.33,
+      "p50JevMs": 240,
+      "p90JevMs": 308,
+      "p50TaskMs": 5210,
+      "p50MsPerHop": 394,
+      "breaks": {
+        "unreadable_region": 9,
+        "low_confidence": 1,
+        "provider_handoff_on_offered_control": 1
+      },
+      "breakCodes": {
+        "handoff_expectation_passed": 5,
+        "expectation_passed": 4,
+        "low_confidence": 1,
+        "handoff": 1
+      },
+      "firstBreaks": {
+        "low_confidence": 1,
+        "provider_handoff_on_offered_control": 1
+      },
+      "caps": {
+        "steps": 1,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    "b": {
+      "runs": 15,
+      "success": 9,
+      "verified": 9,
+      "answerOk": 9,
+      "meanProgress": 9.27,
+      "meanSurvival": 8.2,
+      "meanHops": 10.33,
+      "goldHops": 13,
+      "meanHostTurns": 2.4,
+      "meanJevRequests": 19,
+      "p50JevMs": 236,
+      "p90JevMs": 293,
+      "p50TaskMs": 5763,
+      "p50MsPerHop": 489,
+      "breaks": {
+        "cap_actions": 3,
+        "cap_calls": 3
+      },
+      "breakCodes": {
+        "action_budget": 3,
+        "task_budget": 3
+      },
+      "firstBreaks": {
+        "cap_actions": 3,
+        "provider_handoff_on_offered_control": 3
+      },
+      "caps": {
+        "steps": 9,
+        "maxActions": 3,
+        "maxCalls": 3,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    }
+  },
+  "rows": [
+    {
+      "task": "catalog-cheapest-tent",
+      "condition": "a",
+      "family": "catalog",
+      "runs": 3,
+      "success": 0,
+      "verified": 3,
+      "answerOk": 0,
+      "meanProgress": 12,
+      "meanSurvival": 12,
+      "meanHops": 12,
+      "goldHops": 12,
+      "meanHostTurns": 1,
+      "meanJevRequests": 14,
+      "p50JevMs": 241,
+      "p90JevMs": 269,
+      "p50TaskMs": 5229,
+      "p50MsPerHop": 436,
+      "breaks": {
+        "unreadable_region": 3
+      },
+      "breakCodes": {
+        "handoff_expectation_passed": 2,
+        "expectation_passed": 1
+      },
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "catalog-cheapest-tent",
+      "condition": "b",
+      "family": "catalog",
+      "runs": 3,
+      "success": 0,
+      "verified": 0,
+      "answerOk": 0,
+      "meanProgress": 6.33,
+      "meanSurvival": 4,
+      "meanHops": 6.33,
+      "goldHops": 12,
+      "meanHostTurns": 2,
+      "meanJevRequests": 12.67,
+      "p50JevMs": 251,
+      "p90JevMs": 274,
+      "p50TaskMs": 3639,
+      "p50MsPerHop": 602,
+      "breaks": {
+        "cap_actions": 3
+      },
+      "breakCodes": {
+        "action_budget": 3
+      },
+      "firstBreaks": {
+        "cap_actions": 3
+      },
+      "caps": {
+        "steps": 3,
+        "maxActions": 3,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "docs-deep-timeout",
+      "condition": "a",
+      "family": "docs",
+      "runs": 3,
+      "success": 3,
+      "verified": 3,
+      "answerOk": 3,
+      "meanProgress": 12,
+      "meanSurvival": 12,
+      "meanHops": 12,
+      "goldHops": 12,
+      "meanHostTurns": 1,
+      "meanJevRequests": 14,
+      "p50JevMs": 251,
+      "p90JevMs": 291,
+      "p50TaskMs": 5391,
+      "p50MsPerHop": 449,
+      "breaks": {},
+      "breakCodes": {},
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "docs-deep-timeout",
+      "condition": "b",
+      "family": "docs",
+      "runs": 3,
+      "success": 3,
+      "verified": 3,
+      "answerOk": 3,
+      "meanProgress": 12,
+      "meanSurvival": 12,
+      "meanHops": 12,
+      "goldHops": 12,
+      "meanHostTurns": 1,
+      "meanJevRequests": 22,
+      "p50JevMs": 230,
+      "p90JevMs": 275,
+      "p50TaskMs": 6946,
+      "p50MsPerHop": 579,
+      "breaks": {},
+      "breakCodes": {},
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "flights-window-week",
+      "condition": "a",
+      "family": "flights",
+      "runs": 3,
+      "success": 0,
+      "verified": 3,
+      "answerOk": 0,
+      "meanProgress": 13,
+      "meanSurvival": 13,
+      "meanHops": 13,
+      "goldHops": 13,
+      "meanHostTurns": 1,
+      "meanJevRequests": 15,
+      "p50JevMs": 250,
+      "p90JevMs": 348,
+      "p50TaskMs": 5123,
+      "p50MsPerHop": 394,
+      "breaks": {
+        "unreadable_region": 3
+      },
+      "breakCodes": {
+        "handoff_expectation_passed": 3
+      },
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "flights-window-week",
+      "condition": "b",
+      "family": "flights",
+      "runs": 3,
+      "success": 3,
+      "verified": 3,
+      "answerOk": 3,
+      "meanProgress": 13,
+      "meanSurvival": 13,
+      "meanHops": 13,
+      "goldHops": 13,
+      "meanHostTurns": 2,
+      "meanJevRequests": 27,
+      "p50JevMs": 243,
+      "p90JevMs": 303,
+      "p50TaskMs": 6182,
+      "p50MsPerHop": 476,
+      "breaks": {},
+      "breakCodes": {},
+      "firstBreaks": {},
+      "caps": {
+        "steps": 3,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "wizard-shipping-draft",
+      "condition": "a",
+      "family": "wizard",
+      "runs": 3,
+      "success": 1,
+      "verified": 1,
+      "answerOk": 1,
+      "meanProgress": 14.33,
+      "meanSurvival": 14.33,
+      "meanHops": 14.33,
+      "goldHops": 15,
+      "meanHostTurns": 1,
+      "meanJevRequests": 15.67,
+      "p50JevMs": 233,
+      "p90JevMs": 271,
+      "p50TaskMs": 5218,
+      "p50MsPerHop": 368,
+      "breaks": {
+        "low_confidence": 1,
+        "provider_handoff_on_offered_control": 1
+      },
+      "breakCodes": {
+        "low_confidence": 1,
+        "handoff": 1
+      },
+      "firstBreaks": {
+        "low_confidence": 1,
+        "provider_handoff_on_offered_control": 1
+      },
+      "caps": {
+        "steps": 1,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "wizard-shipping-draft",
+      "condition": "b",
+      "family": "wizard",
+      "runs": 3,
+      "success": 0,
+      "verified": 0,
+      "answerOk": 0,
+      "meanProgress": 3,
+      "meanSurvival": 0,
+      "meanHops": 8.33,
+      "goldHops": 15,
+      "meanHostTurns": 6,
+      "meanJevRequests": 11.33,
+      "p50JevMs": 231,
+      "p90JevMs": 264,
+      "p50TaskMs": 4206,
+      "p50MsPerHop": 489,
+      "breaks": {
+        "cap_calls": 3
+      },
+      "breakCodes": {
+        "task_budget": 3
+      },
+      "firstBreaks": {
+        "provider_handoff_on_offered_control": 3
+      },
+      "caps": {
+        "steps": 3,
+        "maxActions": 0,
+        "maxCalls": 3,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "workspace-deploy-token",
+      "condition": "a",
+      "family": "spa",
+      "runs": 3,
+      "success": 0,
+      "verified": 3,
+      "answerOk": 0,
+      "meanProgress": 12,
+      "meanSurvival": 12,
+      "meanHops": 12,
+      "goldHops": 12,
+      "meanHostTurns": 1,
+      "meanJevRequests": 13,
+      "p50JevMs": 239,
+      "p90JevMs": 312,
+      "p50TaskMs": 4076,
+      "p50MsPerHop": 340,
+      "breaks": {
+        "unreadable_region": 3
+      },
+      "breakCodes": {
+        "expectation_passed": 3
+      },
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "workspace-deploy-token",
+      "condition": "b",
+      "family": "spa",
+      "runs": 3,
+      "success": 3,
+      "verified": 3,
+      "answerOk": 3,
+      "meanProgress": 12,
+      "meanSurvival": 12,
+      "meanHops": 12,
+      "goldHops": 12,
+      "meanHostTurns": 1,
+      "meanJevRequests": 22,
+      "p50JevMs": 230,
+      "p90JevMs": 301,
+      "p50TaskMs": 5763,
+      "p50MsPerHop": 480,
+      "breaks": {},
+      "breakCodes": {},
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    }
+  ],
+  "p50JevMsAll": 238
+}

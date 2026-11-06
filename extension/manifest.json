@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "FAI Browser",
+  "version": "0.3.2",
+  "description": "Lets your coding agent work in one browser tab you approve, on your own machine.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAiSJ5B7uWQF7DoDAGdrtJ/AABmwTUImxDkY/z5V0DNOAEV3+sWshD6PBBUVj4oaA3X1Bl3M1QSJ/ZNxKFlm4jWWX9UOAA0sLn/kaG5XcUxFkPleX4BnMT3uSr4csnX9GibzxthmCXdjb/+pC1OJK20VaOAWXpRPcGeypZWLKfLJ6eyZHPjqRt+GZtEkfLFgrP0Yx03Ur9XXwo1pUYhZ9KKIIxu/Q68miA/vziM66KQdLk6hkR0V3p6vDYETetnBiZgnenuNDQBIwh9mtGLEpV1n0JFC6KrHe9wEkE8g1XYhpcNYiFeYg7ay/zG5r1I9XsV3n+T4hkXCdVvtV+7hNM+QIDAQAB",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "offscreen",
+    "alarms",
+    "tabGroups",
+    "nativeMessaging",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:4318/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "FAI Browser",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y"
+      },
+      "description": "Open FAI Browser controls"
+    }
+  },
+  "minimum_chrome_version": "116"
+}

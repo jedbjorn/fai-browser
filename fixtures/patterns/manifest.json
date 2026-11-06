@@ -1,0 +1,178 @@
+{
+  "about": "Front-end pattern corpus: small synthetic pages, one common way to build a front end each, with the observation facts extension/page.js should report on them. test/patterns.test.js loads every page into headless Chromium with the real page script and turns each check into a test; a check with `finding` is a known gap, run as a todo whose message names it. Check fields: `steps` run first in order ({click: label}, {scroll: up|down}, {fill: label, text}, {wait: ms}); `level` is the capability level the page script is given (read-only, reversible, interactive; default read-only); `expect` holds the facts: overlay (null, or a subset of the observation's overlay), consent (true/false), text / textAbsent (viewport text), blocks / blocksAbsent (any block's text), controls / controlsAbsent (control labels, substring), marked (labels of controls inside an overlay), dismiss (labels of an overlay's close controls), frameControls (labels of controls inside a frame), fillKept (the last fill), warnings. A `run` check runs BrowserRuntime at `run.level` with a provider that only reports done, and `expect` holds dismissSteps (the methods of its dismiss steps in order), overlayAfter (an overlay still on the final page), why (codes the verdict must list), status and finalBlocks (texts of the final observation's blocks).",
+  "patterns": [
+    {
+      "id": "nag-aria-dialog-x",
+      "file": "nag-aria-dialog-x.html",
+      "exercises": "ARIA modal (role=dialog, aria-modal) in a dimming wrapper, newsletter nag closed by a × button",
+      "checks": [
+        { "id": "detected", "expect": { "overlay": { "kind": "newsletter", "nag": true, "escape": true }, "dismiss": ["Close"], "marked": ["Subscribe", "Close"], "warnings": ["blocking_overlay"], "blocks": ["Pruning shears"] } },
+        { "id": "dismissed", "run": { "level": "read-only", "expectation": { "textIncludes": "Garden tools" } }, "expect": { "dismissSteps": ["close"], "overlayAfter": false, "why": ["overlay:dismissed", "overlay:close"], "status": "completed" } },
+        { "id": "records", "expect": { "records": ["Pruning shears", "Hand trowel", "Garden fork", "Hose reel"], "recordHints": { "Garden fork": { "rating": 4.8 } } } }
+      ]
+    },
+    {
+      "id": "nag-div-backdrop",
+      "file": "nag-div-backdrop.html",
+      "exercises": "promo overlay made of plain divs (no dialog role) over a separate backdrop element; only a backdrop click closes it",
+      "checks": [
+        { "id": "detected", "expect": { "overlay": { "kind": "promo", "nag": true, "backdrop": true }, "marked": ["Spin to win"] } },
+        { "id": "dismissed", "run": { "level": "read-only", "expectation": { "textIncludes": "City breaks" } }, "expect": { "dismissSteps": ["escape", "backdrop"], "overlayAfter": false, "why": ["overlay:dismissed", "overlay:backdrop"], "status": "completed" } }
+      ]
+    },
+    {
+      "id": "nag-native-dialog",
+      "file": "nag-native-dialog.html",
+      "exercises": "native <dialog> opened with showModal(), sign-up nag with no close control; Escape closes it",
+      "checks": [
+        { "id": "detected", "expect": { "overlay": { "kind": "sign_in", "nag": true, "escape": true }, "controlsAbsent": ["Close"], "marked": ["Sign up free"] } },
+        { "id": "dismissed", "run": { "level": "read-only", "expectation": { "textIncludes": "Weeknight recipes" } }, "expect": { "dismissSteps": ["escape"], "overlayAfter": false, "why": ["overlay:escape"], "status": "completed" } }
+      ]
+    },
+    {
+      "id": "nag-bottom-sheet-app",
+      "file": "nag-bottom-sheet-app.html",
+      "exercises": "non-modal bottom sheet asking to install the app, closed by \"Not now\"",
+      "checks": [
+        { "id": "detected", "expect": { "overlay": { "kind": "app", "nag": true }, "dismiss": ["Not now"], "marked": ["Open in app"] } },
+        { "id": "dismissed", "run": { "level": "read-only", "expectation": { "textIncludes": "Today in the city" } }, "expect": { "dismissSteps": ["close"], "overlayAfter": false, "status": "completed" } }
+      ]
+    },
+    {
+      "id": "cookie-plus-nag",
+      "file": "cookie-plus-nag.html",
+      "exercises": "the live Booking.com shape: a cookie banner and a membership modal (\"Sign in, save money\") at once; reject the cookies first, then dismiss the modal by its aria-labelled icon button",
+      "checks": [
+        { "id": "detected", "expect": { "consent": true, "overlay": { "kind": "sign_in", "nag": true }, "dismiss": ["Dismiss sign-in info."], "controlsAbsent": [] } },
+        { "id": "dismissed", "run": { "level": "read-only", "expectation": { "textIncludes": "properties found" } }, "expect": { "dismissSteps": ["close"], "overlayAfter": false, "why": ["consent:rejected", "overlay:dismissed"], "status": "completed" } },
+        { "id": "records", "expect": { "records": ["Hotel Lumière", "Maison Verte", "Le Petit Quai"], "recordHints": { "Hotel Lumière": { "price": "€412", "rating": 8.7 } } } }
+      ]
+    },
+    {
+      "id": "task-dialog",
+      "file": "task-dialog.html",
+      "exercises": "a task dialog (an address form with a close X): reported as kind task, never dismissed, its controls not demoted",
+      "checks": [
+        { "id": "detected", "expect": { "overlay": { "kind": "task", "nag": false }, "dismiss": [], "marked": [] } },
+        { "id": "kept", "run": { "level": "read-only", "expectation": { "textIncludes": "Edit your shipping address" } }, "expect": { "dismissSteps": [], "overlayAfter": true, "why": ["overlay:kept:task"], "status": "completed" } }
+      ]
+    },
+    {
+      "id": "age-gate",
+      "file": "age-gate.html",
+      "exercises": "an age gate with a close X: the user answers it, never dismissed",
+      "checks": [
+        { "id": "detected", "expect": { "overlay": { "kind": "age_gate", "nag": false }, "dismiss": [], "marked": ["Yes, I am over 18"] } },
+        { "id": "kept", "run": { "level": "read-only", "expectation": { "textIncludes": "Red wines" } }, "expect": { "dismissSteps": [], "overlayAfter": true, "why": ["overlay:kept:age_gate"] } }
+      ]
+    },
+    {
+      "id": "sticky-header",
+      "file": "sticky-header.html",
+      "exercises": "a fixed header with navigation and a Sign in link: page chrome, never an overlay",
+      "checks": [
+        { "id": "chrome", "expect": { "overlay": null, "controls": ["Guides", "Sign in", "Search"], "text": ["Configuration", "30 seconds"] } }
+      ]
+    },
+    {
+      "id": "lazy-list",
+      "file": "lazy-list.html",
+      "exercises": "an infinite list: an IntersectionObserver appends 10 items when a sentinel scrolls into view, up to 40",
+      "checks": [
+        { "id": "first-batch", "expect": { "blocks": ["Photo 10:"], "blocksAbsent": ["Photo 11:"] } },
+        { "id": "scroll-loads", "steps": [{ "scroll": "down" }, { "wait": 250 }, { "scroll": "down" }, { "wait": 250 }], "expect": { "blocks": ["Photo 20:"] } },
+        { "id": "runtime-scrolls-to-load", "run": { "level": "read-only", "instruction": "Read the photo feed.", "answerQuestion": "Which photo has the most likes?", "expectation": { "textIncludes": "Photo feed" } }, "expect": { "why": ["more:scrolled"], "status": "completed", "finalBlocks": ["Photo 20:"] } },
+        { "id": "plain-rows", "expect": { "records": [] } }
+      ]
+    },
+    {
+      "id": "load-more",
+      "file": "load-more.html",
+      "exercises": "a \"Load more\" button appending the next items in place",
+      "checks": [
+        { "id": "button", "expect": { "controls": ["Load more jobs"], "blocks": ["Engineer 5"], "blocksAbsent": ["Engineer 6"] } },
+        { "id": "click-loads", "level": "reversible", "steps": [{ "click": "Load more jobs" }, { "wait": 300 }], "expect": { "blocks": ["Engineer 10", "Showing 10 of 15 jobs"] } },
+        { "id": "records", "expect": { "records": ["Engineer 1", "Engineer 2", "Engineer 3", "Engineer 4", "Engineer 5"] } },
+        { "id": "records-after-load", "level": "reversible", "steps": [{ "click": "Load more jobs" }, { "wait": 300 }], "expect": { "records": ["Engineer 1", "Engineer 2"], "recordsAtLeast": 10 } }
+      ]
+    },
+    {
+      "id": "pagination",
+      "file": "pagination.html",
+      "exercises": "numbered page links with Previous (disabled span) and Next",
+      "checks": [
+        { "id": "links", "expect": { "controls": ["Next", "2", "3"], "text": ["Page 1 of 3"] } },
+        { "id": "plain-rows", "expect": { "records": [] } }
+      ]
+    },
+    {
+      "id": "tabs-accordion",
+      "file": "tabs-accordion.html",
+      "exercises": "ARIA tabs with hidden inactive panels and a closed <details> accordion",
+      "checks": [
+        { "id": "visible-only", "expect": { "controls": ["Specifications", "Reviews", "Shipping and returns"], "text": ["A light shoe for rocky trails"], "textAbsent": ["280 g"] } },
+        { "id": "tab-click", "level": "reversible", "steps": [{ "click": "Specifications" }], "expect": { "text": ["Weight: 280 g"], "textAbsent": ["rocky trails"] } },
+        { "id": "hidden-panels-named", "expect": { "blocks": ["Weight: 280 g", "Free returns within 30 days"] }, "finding": "FINDING: the text of hidden tab panels and closed <details> is in the DOM but nowhere in the observation, not even marked hidden, so a reader cannot tell which tab holds the answer before clicking each one" }
+      ]
+    },
+    {
+      "id": "shadow-dom",
+      "file": "shadow-dom.html",
+      "exercises": "open shadow roots (text, a button, a nested component, slotted light DOM) and a closed shadow root",
+      "checks": [
+        { "id": "open-roots", "expect": { "text": ["Harbour Street", "Open 9:00 to 18:00", "Mill Lane"], "controls": ["Get directions"] } },
+        { "id": "slotted", "expect": { "text": ["Parking is free after 18:00"] } },
+        { "id": "closed-root", "expect": { "text": ["Riverside store opens in May"] }, "finding": "FINDING: a closed shadow root cannot be read by a page script (by design); its text never reaches the observation" }
+      ]
+    },
+    {
+      "id": "iframe-same-origin",
+      "file": "iframe-same-origin.html",
+      "exercises": "a same-origin iframe (table and link) and a srcdoc iframe",
+      "checks": [
+        { "id": "frames-read", "expect": { "text": ["Ferry timetable", "07:10", "does not run on Sundays"], "frameControls": ["Next week"] } }
+      ]
+    },
+    {
+      "id": "virtual-list",
+      "file": "virtual-list.html",
+      "exercises": "a virtualized list in its own scroll container (the window does not scroll): only rows in view are in the DOM",
+      "checks": [
+        { "id": "rows-in-view", "expect": { "blocks": ["Transaction 1:"], "blocksAbsent": ["Transaction 500:"] } },
+        { "id": "scroll-moves-container", "steps": [{ "scroll": "down" }, { "wait": 100 }], "expect": { "blocksAbsent": ["Transaction 1:"], "blocks": ["Transaction 20:"] } },
+        { "id": "plain-rows", "expect": { "records": [] } }
+      ]
+    },
+    {
+      "id": "controlled-input",
+      "file": "controlled-input.html",
+      "exercises": "framework-controlled inputs: a React-style value tracker and a field that only takes trusted keyboard input",
+      "checks": [
+        { "id": "react-tracker", "level": "reversible", "steps": [{ "fill": "From", "text": "Paris" }, { "wait": 50 }], "expect": { "fillKept": true, "text": ["From: Paris"] } },
+        { "id": "trusted-only", "level": "reversible", "steps": [{ "fill": "To", "text": "Rome" }, { "wait": 50 }], "expect": { "fillKept": true }, "finding": "FINDING: a field that accepts only trusted (user) keyboard input reverts every synthetic fill; the page script reports fill_not_kept correctly but has no way to type trusted keys (that needs the debugger's Input.insertText)" }
+      ]
+    },
+    {
+      "id": "custom-select",
+      "file": "custom-select.html",
+      "exercises": "an ARIA combobox opening a div listbox, and a role-less div dropdown",
+      "checks": [
+        { "id": "aria-closed", "expect": { "controls": ["Monthly"], "controlsAbsent": ["Yearly"] } },
+        { "id": "aria-open", "level": "reversible", "steps": [{ "click": "Monthly" }], "expect": { "controls": ["Yearly", "Two years (save 30%)"] } },
+        { "id": "aria-choose", "level": "reversible", "steps": [{ "click": "Monthly" }, { "click": "Yearly" }], "expect": { "text": ["Yearly"], "controlsAbsent": ["Monthly"] } },
+        { "id": "discount-option", "level": "reversible", "steps": [{ "click": "Monthly" }, { "click": "Two years (save 30%)" }], "expect": { "text": ["Two years (save 30%)"] } },
+        { "id": "div-dropdown", "expect": { "controls": ["Europe"] }, "finding": "FINDING: a role-less div with only a click handler and cursor: pointer is not a control; a div dropdown cannot be opened or chosen from" }
+      ]
+    },
+    {
+      "id": "date-picker",
+      "file": "date-picker.html",
+      "exercises": "a read-only date field opening a non-modal picker dialog with a grid of day buttons named by number only: the picker is not a blocking overlay (and as a grid it would be a task dialog), and its days get calendar names",
+      "checks": [
+        { "id": "field-opens", "expect": { "controls": ["Date"], "overlay": null } },
+        { "id": "grid-named", "level": "reversible", "steps": [{ "click": "Date" }], "expect": { "controls": ["14 October 2026"], "overlay": null, "marked": [] } },
+        { "id": "day-click", "level": "reversible", "steps": [{ "click": "Date" }, { "click": "14 October 2026" }], "expect": { "text": ["Chosen: 14 October 2026"] } }
+      ]
+    }
+  ]
+}

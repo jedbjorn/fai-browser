@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Input detector</title>
+<style>
+  body { margin: 0; font: 15px sans-serif; }
+  main { padding: 24px 40px; }
+  .row { margin: 18px 0; }
+  button, input, select { font: inherit; padding: 6px 10px; }
+  #spacer { height: 2600px; background: linear-gradient(#fafafa, #e8e8f0); }
+  #far { display: inline-block; margin: 20px 0 40px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Input detector</h1>
+  <p id="status">Waiting for input.</p>
+  <div class="row"><button id="show" type="button"><span class="icon">+</span> Show details</button></div>
+  <div class="row"><label for="name">Full name</label> <input id="name" name="name" autocomplete="off"></div>
+  <div class="row"><label for="notes">Notes</label> <textarea id="notes" rows="2"></textarea></div>
+  <form id="search" role="search" action="#results">
+    <label for="q">Search</label> <input id="q" name="q" type="search" autocomplete="off">
+    <button id="go" type="submit">Search</button>
+  </form>
+  <div class="row"><label for="sort">Sort by</label>
+    <select id="sort"><option value="best">Best match</option><option value="price">Lowest price</option><option value="new">Newest</option></select>
+  </div>
+  <div class="row"><a id="section" href="#results">Jump to results</a></div>
+  <div id="spacer"></div>
+  <h2 id="results">Results</h2>
+  <button id="far" type="button">Load more results</button>
+</main>
+<script>
+// A stand-in for the client-side half of a bot-detection script: it records the event stream with capture listeners
+// on window and scores it with the heuristics such scripts publish or are known to use. report() returns
+// { flags: { name: count }, counts, clicks, submits }. Flags never include isTrusted (reported apart as `untrusted`,
+// which no content script can avoid).
+(() => {
+  const events = [];
+  const flags = {};
+  const counts = { click: {}, submit: 0, change: {}, input: {} };
+  let untrusted = 0;
+  const flag = (name, detail) => { flags[name] = (flags[name] || 0) + 1; (flags.details ||= []).push(`${name}: ${detail}`); };
+  const id = node => (node && node.closest && node.closest('[id]')?.id) || (node && node.tagName) || String(node);
+  const TYPES = ['pointerover', 'pointerenter', 'pointermove', 'pointerdown', 'pointerup', 'pointerout', 'pointerleave',
+    'mouseover', 'mouseenter', 'mousemove', 'mousedown', 'mouseup', 'mouseout', 'mouseleave', 'click',
+    'keydown', 'keypress', 'keyup', 'beforeinput', 'input', 'change', 'focus', 'blur', 'submit', 'wheel', 'scroll'];
+  const lastOf = (type, since = 0) => { for (let i = events.length - 1; i >= 0 && events[i].t >= since; i--) if (events[i].type === type) return events[i]; return null; };
+  let screenOffset = null;
+  const keyIntervals = [];
+  let lastKeydown = null;
+  // Each field's focus session: whether it saw key events before its value changed.
+  const keysSinceFocus = new Map();
+
+  function onEvent(e) {
+    const t = performance.now();
+    if (!e.isTrusted) untrusted++;
+    const rec = { type: e.type, target: id(e.target), t, x: e.clientX, y: e.clientY, key: e.key };
+    events.push(rec);
+    // A keyboard click (Enter's implicit submission, Space on a button) has no pointer and no coordinates.
+    const keyboardClick = e.type === 'click' && e.detail === 0 && lastOf('keydown', t - 300);
+    const mouse = typeof e.clientX === 'number' && e.type !== 'scroll' && !keyboardClick;
+    if (mouse && /^(?:mouse|pointer|click|wheel)/.test(e.type)) {
+      if (e.view !== window) flag('mouse_view_null', e.type);
+      if (e.clientX === 0 && e.clientY === 0) flag('zero_coordinates', `${e.type} on ${rec.target}`);
+      const offset = `${e.screenX - e.clientX},${e.screenY - e.clientY}`;
+      if (screenOffset === null) screenOffset = offset;
+      else if (offset !== screenOffset) flag('screen_client_mismatch', `${e.type} ${offset} vs ${screenOffset}`);
+    }
+    switch (e.type) {
+      case 'click': {
+        counts.click[rec.target] = (counts.click[rec.target] || 0) + 1;
+        if (keyboardClick) break;
+        const down = lastOf('mousedown', t - 2000);
+        const up = lastOf('mouseup', t - 2000);
+        const pdown = lastOf('pointerdown', t - 2000);
+        if (!pdown) flag('click_without_pointerdown', rec.target);
+        if (!down || !up) flag('click_without_mousedown_up', rec.target);
+        if (e.detail === 0) flag('click_detail_zero', rec.target);
+        if (e.pointerId === -1 || e.pointerType === '') flag('click_without_pointer', rec.target);
+        if (down && up && up.t - down.t < 15) flag('instant_press', `${Math.round(up.t - down.t)} ms`);
+        const move = lastOf('mousemove', t - 3000);
+        const pmove = lastOf('pointermove', t - 3000);
+        if (!move || !pmove) flag('click_without_movement', rec.target);
+        else if (Math.hypot(move.x - e.clientX, move.y - e.clientY) > 2) flag('click_away_from_pointer', rec.target);
+        const moves = events.filter(ev => ev.type === 'mousemove' && ev.t > t - 3000).length;
+        if (moves < 2) flag('teleporting_pointer', `${moves} moves`);
+        if (!lastOf('mouseover', t - 3000)) flag('click_without_hover', rec.target);
+        break;
+      }
+      case 'mousedown': {
+        const target = e.target.closest?.('input,textarea,select,button,a[href]');
+        if (target) setTimeout(() => { if (!e.defaultPrevented && document.activeElement !== target) flag('press_without_focus', id(target)); }, 0);
+        break;
+      }
+      case 'keydown': {
+        if (e.target !== document.activeElement) flag('key_without_focus', `${e.key} on ${rec.target}`);
+        if (e.key.length === 1 && /[\x20-\x7e]/.test(e.key)) {
+          if (!e.code || !e.keyCode) flag('key_without_code', e.key);
+          if (/[A-Z~!@#$%^&*()_+{}|:"<>?]/.test(e.key) && !e.shiftKey) flag('shifted_key_without_shift', e.key);
+        }
+        if (lastKeydown) keyIntervals.push(t - lastKeydown);
+        lastKeydown = t;
+        keysSinceFocus.set(e.target, (keysSinceFocus.get(e.target) || 0) + 1);
+        break;
+      }
+      case 'keyup': {
+        const down = lastOf('keydown', t - 2000);
+        if (down && t - down.t < 5) flag('instant_key', `${Math.round(t - down.t)} ms`);
+        break;
+      }
+      case 'input':
+        counts.input[rec.target] = (counts.input[rec.target] || 0) + 1;
+        if (e.target !== document.activeElement) flag('input_without_focus', rec.target);
+        if (/^(?:INPUT|TEXTAREA)$/.test(e.target.tagName) && !keysSinceFocus.get(e.target)) flag('value_without_keys', rec.target);
+        if (!(e instanceof InputEvent) && /^(?:INPUT|TEXTAREA)$/.test(e.target.tagName) && !['checkbox', 'radio'].includes(e.target.type)) flag('input_not_inputevent', rec.target);
+        break;
+      case 'change':
+        counts.change[rec.target] = (counts.change[rec.target] || 0) + 1;
+        // A text field's change comes with its blur or an Enter, never while the user is still in it.
+        if (/^(?:INPUT|TEXTAREA)$/.test(e.target.tagName) && !['checkbox', 'radio'].includes(e.target.type)) {
+          // A change with nothing that commits it: no Enter, no press elsewhere, no Tab.
+          const key = lastOf('keydown', t - 300);
+          const press = lastOf('mousedown', t - 300);
+          if (!(key && ['Enter', 'Tab'].includes(key.key)) && !(press && press.target !== rec.target)) flag('change_without_commit', rec.target);
+        }
+        break;
+      case 'focus':
+        keysSinceFocus.set(e.target, 0);
+        break;
+      case 'submit': {
+        counts.submit++;
+        const gesture = lastOf('keydown', t - 500) || lastOf('click', t - 500);
+        if (!gesture) flag('submit_without_gesture', rec.target);
+        e.preventDefault();
+        document.getElementById('status').textContent = `Searched for ${document.getElementById('q').value}`;
+        break;
+      }
+      case 'scroll': {
+        if (e.target !== document) break;
+        const key = lastOf('keydown', t - 400);
+        const scrollKey = key && /^(?:PageUp|PageDown|Home|End|ArrowUp|ArrowDown| )$/.test(key.key);
+        if (!lastOf('wheel', t - 400) && !scrollKey && !lastOf('focus', t - 400) && !lastOf('click', t - 400)) flag('scroll_without_wheel', `${Math.round(scrollY)}`);
+        break;
+      }
+      default:
+    }
+  }
+  for (const type of TYPES) window.addEventListener(type, onEvent, { capture: true, passive: false });
+  document.getElementById('show').addEventListener('click', () => { document.getElementById('status').textContent = 'Details shown.'; });
+  document.getElementById('far').addEventListener('click', () => { document.getElementById('status').textContent = 'More results loaded.'; });
+
+  window.__detector = {
+    report() {
+      const result = { flags: { ...flags }, untrusted, counts: JSON.parse(JSON.stringify(counts)) };
+      delete result.flags.details;
+      result.details = (flags.details || []).slice(0, 40);
+      if (keyIntervals.length >= 6) {
+        const mean = keyIntervals.reduce((a, b) => a + b, 0) / keyIntervals.length;
+        const sd = Math.sqrt(keyIntervals.reduce((a, b) => a + (b - mean) ** 2, 0) / keyIntervals.length);
+        if (sd < 3) result.flags.robotic_key_rhythm = 1;
+        if (mean < 15) result.flags.superhuman_typing = 1;
+      }
+      return result;
+    },
+    reset() {
+      events.length = 0;
+      keyIntervals.length = 0;
+      lastKeydown = null;
+      untrusted = 0;
+      for (const key of Object.keys(flags)) delete flags[key];
+      counts.click = {}; counts.change = {}; counts.input = {}; counts.submit = 0;
+    },
+  };
+})();
+</script>
+</body>
+</html>

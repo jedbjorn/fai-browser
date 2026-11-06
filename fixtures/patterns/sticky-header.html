@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Docs: configuration</title>
+<style>body{font:16px sans-serif;margin:0}
+header{position:fixed;top:0;left:0;right:0;height:56px;background:#fff;border-bottom:1px solid #ccc;z-index:100;display:flex;gap:16px;align-items:center;padding:0 16px}
+main{padding:72px 16px 16px}section{min-height:500px}</style></head>
+<body>
+<!-- Pattern: a fixed header with navigation and a "Sign in" link. Page chrome, never an overlay. -->
+<header><a href="/">Acme Docs</a><nav><a href="/guides">Guides</a> <a href="/api">API</a></nav><a href="/login">Sign in</a>
+<button type="button" aria-label="Search">⌕</button></header>
+<main><h1>Configuration</h1>
+<section><h2>Timeouts</h2><p>The default request timeout is 30 seconds.</p></section>
+<section><h2>Retries</h2><p>Failed requests are retried up to 3 times.</p></section>
+<section><h2>Logging</h2><p>Logs are kept for 14 days.</p></section>
+</main>
+</body></html>

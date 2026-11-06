@@ -1,0 +1,3400 @@
+{
+  "schemaVersion": 3,
+  "corpus": "real",
+  "generatedAt": "2026-11-06T16:16:04.058Z",
+  "tokenizers": [
+    {
+      "id": "chars4",
+      "label": "Chars / 4",
+      "status": "available",
+      "exact": false,
+      "note": "Rough baseline: Math.ceil(UTF-16 code units / 4), not a model tokenizer."
+    },
+    {
+      "id": "openaiO200k",
+      "label": "OpenAI o200k_base",
+      "status": "available",
+      "exact": true,
+      "encoding": "o200k_base",
+      "implementation": "js-tiktoken 1.0.21",
+      "note": "Exact o200k_base encoding counts; the closest public encoding for current Sol/Astra-era OpenAI GPT models. No chat or tool envelope is added."
+    },
+    {
+      "id": "kimiK2",
+      "label": "Kimi K2 tiktoken",
+      "status": "available",
+      "exact": true,
+      "encoding": "moonshotai/Kimi-K2-Instruct tiktoken.model",
+      "implementation": "js-tiktoken 1.0.21",
+      "source": "https://huggingface.co/moonshotai/Kimi-K2-Instruct/resolve/fd1984e2b7a3350dbf7305fe73a4ede25c14de50/tiktoken.model",
+      "note": "Exact published Kimi K2 BPE counts using the official pattern translated from Python regex to JavaScript. No chat template, BOS/EOS or tool envelope is added."
+    },
+    {
+      "id": "claudeSonnet55",
+      "label": "Claude Sonnet 5.5",
+      "model": "claude-sonnet-5-5",
+      "status": "not measured in this run",
+      "exact": true,
+      "note": "No official offline tokenizer is published for current Claude models. An optional owner run of bench/tokens/count-anthropic.mjs can use the count_tokens endpoint."
+    },
+    {
+      "id": "claudeOpus55",
+      "label": "Claude Opus 5.5",
+      "model": "claude-opus-5-5",
+      "status": "not measured in this run",
+      "exact": true,
+      "note": "No official offline tokenizer is published for current Claude models. An optional owner run of bench/tokens/count-anthropic.mjs can use the count_tokens endpoint."
+    }
+  ],
+  "versions": {
+    "fai": "0.3.1",
+    "node": "v24.22.2",
+    "playwrightCore": "1.63.0",
+    "mcpSdk": "1.32.0",
+    "chromium": "156.0.8078.79"
+  },
+  "method": {
+    "task": "Read the page and summarize its main content.",
+    "action": "scroll down",
+    "mode": "interactive",
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "followUp": {
+      "focus": "main content details",
+      "digestChars": 6000
+    },
+    "snapshot": "page.locator('body').ariaSnapshot({ mode: 'ai' })",
+    "snapshotMcp": "full explicit browser_snapshot-style string; automatic file-link envelopes and host artifact-read policy not measured",
+    "server": "bench/lib/qa.mjs startStaticSite(bench/tokens/pages)"
+  },
+  "pages": [
+    {
+      "id": "wikipedia",
+      "kind": "encyclopedia article",
+      "path": "/wikipedia/",
+      "sourceUrl": "https://en.wikipedia.org/wiki/Web_browser",
+      "capturedAt": "2026-11-06T14:10:31.268Z",
+      "htmlBytes": 747289,
+      "task": "Read the page and summarize its main content.",
+      "action": "scroll down",
+      "samples": {
+        "faiOpenText": {
+          "chars": 3199,
+          "tokens": {
+            "chars4": 800,
+            "openaiO200k": 890,
+            "kimiK2": 894,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenCodex": {
+          "chars": 3199,
+          "tokens": {
+            "chars4": 800,
+            "openaiO200k": 890,
+            "kimiK2": 894,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenClaude": {
+          "chars": 3199,
+          "tokens": {
+            "chars4": 800,
+            "openaiO200k": 890,
+            "kimiK2": 894,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenOpenCode": {
+          "chars": 3420,
+          "tokens": {
+            "chars4": 855,
+            "openaiO200k": 936,
+            "kimiK2": 936,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActText": {
+          "chars": 3401,
+          "tokens": {
+            "chars4": 851,
+            "openaiO200k": 964,
+            "kimiK2": 968,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActCodex": {
+          "chars": 3401,
+          "tokens": {
+            "chars4": 851,
+            "openaiO200k": 964,
+            "kimiK2": 968,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActClaude": {
+          "chars": 3401,
+          "tokens": {
+            "chars4": 851,
+            "openaiO200k": 964,
+            "kimiK2": 968,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActOpenCode": {
+          "chars": 3639,
+          "tokens": {
+            "chars4": 910,
+            "openaiO200k": 1021,
+            "kimiK2": 1020,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpText": {
+          "chars": 8087,
+          "tokens": {
+            "chars4": 2022,
+            "openaiO200k": 1942,
+            "kimiK2": 1952,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpCodex": {
+          "chars": 8087,
+          "tokens": {
+            "chars4": 2022,
+            "openaiO200k": 1942,
+            "kimiK2": 1952,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpClaude": {
+          "chars": 8087,
+          "tokens": {
+            "chars4": 2022,
+            "openaiO200k": 1942,
+            "kimiK2": 1952,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpOpenCode": {
+          "chars": 8360,
+          "tokens": {
+            "chars4": 2090,
+            "openaiO200k": 2012,
+            "kimiK2": 2019,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightOpen": {
+          "chars": 135085,
+          "tokens": {
+            "chars4": 33772,
+            "openaiO200k": 35720,
+            "kimiK2": 36375,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightAct": {
+          "chars": 135085,
+          "tokens": {
+            "chars4": 33772,
+            "openaiO200k": 35720,
+            "kimiK2": 36375,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpOpen": {
+          "chars": 135203,
+          "tokens": {
+            "chars4": 33801,
+            "openaiO200k": 35759,
+            "kimiK2": 36415,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpAct": {
+          "chars": 135203,
+          "tokens": {
+            "chars4": 33801,
+            "openaiO200k": 35759,
+            "kimiK2": 36415,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        }
+      }
+    },
+    {
+      "id": "github-repository",
+      "kind": "repository",
+      "path": "/github-repository/",
+      "sourceUrl": "https://github.com/microsoft/playwright",
+      "capturedAt": "2026-11-06T14:10:35.058Z",
+      "htmlBytes": 4116990,
+      "task": "Read the page and summarize its main content.",
+      "action": "scroll down",
+      "samples": {
+        "faiOpenText": {
+          "chars": 4949,
+          "tokens": {
+            "chars4": 1238,
+            "openaiO200k": 1525,
+            "kimiK2": 1528,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenCodex": {
+          "chars": 4949,
+          "tokens": {
+            "chars4": 1238,
+            "openaiO200k": 1525,
+            "kimiK2": 1528,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenClaude": {
+          "chars": 4949,
+          "tokens": {
+            "chars4": 1238,
+            "openaiO200k": 1525,
+            "kimiK2": 1528,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenOpenCode": {
+          "chars": 5270,
+          "tokens": {
+            "chars4": 1318,
+            "openaiO200k": 1585,
+            "kimiK2": 1581,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActText": {
+          "chars": 5245,
+          "tokens": {
+            "chars4": 1312,
+            "openaiO200k": 1712,
+            "kimiK2": 1706,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActCodex": {
+          "chars": 5245,
+          "tokens": {
+            "chars4": 1312,
+            "openaiO200k": 1712,
+            "kimiK2": 1706,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActClaude": {
+          "chars": 5245,
+          "tokens": {
+            "chars4": 1312,
+            "openaiO200k": 1712,
+            "kimiK2": 1706,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActOpenCode": {
+          "chars": 5571,
+          "tokens": {
+            "chars4": 1393,
+            "openaiO200k": 1782,
+            "kimiK2": 1766,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpText": {
+          "chars": 9595,
+          "tokens": {
+            "chars4": 2399,
+            "openaiO200k": 2747,
+            "kimiK2": 2747,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpCodex": {
+          "chars": 9595,
+          "tokens": {
+            "chars4": 2399,
+            "openaiO200k": 2747,
+            "kimiK2": 2747,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpClaude": {
+          "chars": 9595,
+          "tokens": {
+            "chars4": 2399,
+            "openaiO200k": 2747,
+            "kimiK2": 2747,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpOpenCode": {
+          "chars": 10001,
+          "tokens": {
+            "chars4": 2501,
+            "openaiO200k": 2846,
+            "kimiK2": 2839,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightOpen": {
+          "chars": 71025,
+          "tokens": {
+            "chars4": 17757,
+            "openaiO200k": 17651,
+            "kimiK2": 17444,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightAct": {
+          "chars": 71025,
+          "tokens": {
+            "chars4": 17757,
+            "openaiO200k": 17651,
+            "kimiK2": 17444,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpOpen": {
+          "chars": 71291,
+          "tokens": {
+            "chars4": 17823,
+            "openaiO200k": 17721,
+            "kimiK2": 17513,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpAct": {
+          "chars": 71291,
+          "tokens": {
+            "chars4": 17823,
+            "openaiO200k": 17721,
+            "kimiK2": 17513,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        }
+      }
+    },
+    {
+      "id": "mdn-aria",
+      "kind": "developer documentation",
+      "path": "/mdn-aria/",
+      "sourceUrl": "https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA",
+      "capturedAt": "2026-11-06T14:10:37.453Z",
+      "htmlBytes": 149400,
+      "task": "Read the page and summarize its main content.",
+      "action": "scroll down",
+      "samples": {
+        "faiOpenText": {
+          "chars": 4460,
+          "tokens": {
+            "chars4": 1115,
+            "openaiO200k": 1236,
+            "kimiK2": 1238,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenCodex": {
+          "chars": 4460,
+          "tokens": {
+            "chars4": 1115,
+            "openaiO200k": 1236,
+            "kimiK2": 1238,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenClaude": {
+          "chars": 4460,
+          "tokens": {
+            "chars4": 1115,
+            "openaiO200k": 1236,
+            "kimiK2": 1238,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenOpenCode": {
+          "chars": 4781,
+          "tokens": {
+            "chars4": 1196,
+            "openaiO200k": 1265,
+            "kimiK2": 1262,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActText": {
+          "chars": 4513,
+          "tokens": {
+            "chars4": 1129,
+            "openaiO200k": 1266,
+            "kimiK2": 1268,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActCodex": {
+          "chars": 4513,
+          "tokens": {
+            "chars4": 1129,
+            "openaiO200k": 1266,
+            "kimiK2": 1268,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActClaude": {
+          "chars": 4513,
+          "tokens": {
+            "chars4": 1129,
+            "openaiO200k": 1266,
+            "kimiK2": 1268,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActOpenCode": {
+          "chars": 4836,
+          "tokens": {
+            "chars4": 1209,
+            "openaiO200k": 1295,
+            "kimiK2": 1292,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpText": {
+          "chars": 7760,
+          "tokens": {
+            "chars4": 1940,
+            "openaiO200k": 1939,
+            "kimiK2": 1950,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpCodex": {
+          "chars": 7760,
+          "tokens": {
+            "chars4": 1940,
+            "openaiO200k": 1939,
+            "kimiK2": 1950,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpClaude": {
+          "chars": 7760,
+          "tokens": {
+            "chars4": 1940,
+            "openaiO200k": 1939,
+            "kimiK2": 1950,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpOpenCode": {
+          "chars": 8141,
+          "tokens": {
+            "chars4": 2036,
+            "openaiO200k": 1987,
+            "kimiK2": 1991,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightOpen": {
+          "chars": 45578,
+          "tokens": {
+            "chars4": 11395,
+            "openaiO200k": 11237,
+            "kimiK2": 11229,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightAct": {
+          "chars": 45578,
+          "tokens": {
+            "chars4": 11395,
+            "openaiO200k": 11237,
+            "kimiK2": 11229,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpOpen": {
+          "chars": 45698,
+          "tokens": {
+            "chars4": 11425,
+            "openaiO200k": 11280,
+            "kimiK2": 11272,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpAct": {
+          "chars": 45698,
+          "tokens": {
+            "chars4": 11425,
+            "openaiO200k": 11280,
+            "kimiK2": 11272,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        }
+      }
+    },
+    {
+      "id": "python-asyncio",
+      "kind": "language documentation",
+      "path": "/python-asyncio/",
+      "sourceUrl": "https://docs.python.org/3/library/asyncio.html",
+      "capturedAt": "2026-11-06T14:10:39.756Z",
+      "htmlBytes": 67868,
+      "task": "Read the page and summarize its main content.",
+      "action": "scroll down",
+      "samples": {
+        "faiOpenText": {
+          "chars": 4702,
+          "tokens": {
+            "chars4": 1176,
+            "openaiO200k": 1477,
+            "kimiK2": 1530,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenCodex": {
+          "chars": 4702,
+          "tokens": {
+            "chars4": 1176,
+            "openaiO200k": 1477,
+            "kimiK2": 1530,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenClaude": {
+          "chars": 4702,
+          "tokens": {
+            "chars4": 1176,
+            "openaiO200k": 1477,
+            "kimiK2": 1530,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenOpenCode": {
+          "chars": 5095,
+          "tokens": {
+            "chars4": 1274,
+            "openaiO200k": 1518,
+            "kimiK2": 1566,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActText": {
+          "chars": 5050,
+          "tokens": {
+            "chars4": 1263,
+            "openaiO200k": 1478,
+            "kimiK2": 1516,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActCodex": {
+          "chars": 5050,
+          "tokens": {
+            "chars4": 1263,
+            "openaiO200k": 1478,
+            "kimiK2": 1516,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActClaude": {
+          "chars": 5050,
+          "tokens": {
+            "chars4": 1263,
+            "openaiO200k": 1478,
+            "kimiK2": 1516,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActOpenCode": {
+          "chars": 5445,
+          "tokens": {
+            "chars4": 1362,
+            "openaiO200k": 1525,
+            "kimiK2": 1560,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpText": {
+          "chars": 7137,
+          "tokens": {
+            "chars4": 1785,
+            "openaiO200k": 2028,
+            "kimiK2": 2089,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpCodex": {
+          "chars": 7137,
+          "tokens": {
+            "chars4": 1785,
+            "openaiO200k": 2028,
+            "kimiK2": 2089,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpClaude": {
+          "chars": 7137,
+          "tokens": {
+            "chars4": 1785,
+            "openaiO200k": 2028,
+            "kimiK2": 2089,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpOpenCode": {
+          "chars": 7592,
+          "tokens": {
+            "chars4": 1898,
+            "openaiO200k": 2099,
+            "kimiK2": 2152,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightOpen": {
+          "chars": 19974,
+          "tokens": {
+            "chars4": 4994,
+            "openaiO200k": 5271,
+            "kimiK2": 5332,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightAct": {
+          "chars": 19974,
+          "tokens": {
+            "chars4": 4994,
+            "openaiO200k": 5271,
+            "kimiK2": 5332,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpOpen": {
+          "chars": 20130,
+          "tokens": {
+            "chars4": 5033,
+            "openaiO200k": 5322,
+            "kimiK2": 5384,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpAct": {
+          "chars": 20130,
+          "tokens": {
+            "chars4": 5033,
+            "openaiO200k": 5322,
+            "kimiK2": 5384,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        }
+      }
+    },
+    {
+      "id": "hacker-news",
+      "kind": "news listing",
+      "path": "/hacker-news/",
+      "sourceUrl": "https://news.ycombinator.com/",
+      "capturedAt": "2026-11-06T14:10:42.569Z",
+      "htmlBytes": 42838,
+      "task": "Read the page and summarize its main content.",
+      "action": "scroll down",
+      "samples": {
+        "faiOpenText": {
+          "chars": 2932,
+          "tokens": {
+            "chars4": 733,
+            "openaiO200k": 1040,
+            "kimiK2": 1035,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenCodex": {
+          "chars": 2932,
+          "tokens": {
+            "chars4": 733,
+            "openaiO200k": 1040,
+            "kimiK2": 1035,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenClaude": {
+          "chars": 2932,
+          "tokens": {
+            "chars4": 733,
+            "openaiO200k": 1040,
+            "kimiK2": 1035,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenOpenCode": {
+          "chars": 3231,
+          "tokens": {
+            "chars4": 808,
+            "openaiO200k": 1062,
+            "kimiK2": 1055,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActText": {
+          "chars": 3043,
+          "tokens": {
+            "chars4": 761,
+            "openaiO200k": 1086,
+            "kimiK2": 1087,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActCodex": {
+          "chars": 3043,
+          "tokens": {
+            "chars4": 761,
+            "openaiO200k": 1086,
+            "kimiK2": 1087,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActClaude": {
+          "chars": 3043,
+          "tokens": {
+            "chars4": 761,
+            "openaiO200k": 1086,
+            "kimiK2": 1087,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActOpenCode": {
+          "chars": 3344,
+          "tokens": {
+            "chars4": 836,
+            "openaiO200k": 1110,
+            "kimiK2": 1106,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpText": {
+          "chars": 2936,
+          "tokens": {
+            "chars4": 734,
+            "openaiO200k": 1041,
+            "kimiK2": 1042,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpCodex": {
+          "chars": 2936,
+          "tokens": {
+            "chars4": 734,
+            "openaiO200k": 1041,
+            "kimiK2": 1042,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpClaude": {
+          "chars": 2936,
+          "tokens": {
+            "chars4": 734,
+            "openaiO200k": 1041,
+            "kimiK2": 1042,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpOpenCode": {
+          "chars": 3235,
+          "tokens": {
+            "chars4": 809,
+            "openaiO200k": 1064,
+            "kimiK2": 1061,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightOpen": {
+          "chars": 47421,
+          "tokens": {
+            "chars4": 11856,
+            "openaiO200k": 12256,
+            "kimiK2": 12250,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightAct": {
+          "chars": 47421,
+          "tokens": {
+            "chars4": 11856,
+            "openaiO200k": 12256,
+            "kimiK2": 12250,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpOpen": {
+          "chars": 47529,
+          "tokens": {
+            "chars4": 11883,
+            "openaiO200k": 12293,
+            "kimiK2": 12288,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpAct": {
+          "chars": 47529,
+          "tokens": {
+            "chars4": 11883,
+            "openaiO200k": 12293,
+            "kimiK2": 12288,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        }
+      }
+    },
+    {
+      "id": "bbc-article",
+      "kind": "news article",
+      "path": "/bbc-article/",
+      "sourceUrl": "https://www.bbc.com/news/articles/cqg7xxg4jdv5o",
+      "capturedAt": "2026-11-06T14:10:47.192Z",
+      "htmlBytes": 133584,
+      "task": "Read the page and summarize its main content.",
+      "action": "scroll down",
+      "samples": {
+        "faiOpenText": {
+          "chars": 4641,
+          "tokens": {
+            "chars4": 1161,
+            "openaiO200k": 1264,
+            "kimiK2": 1265,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenCodex": {
+          "chars": 4641,
+          "tokens": {
+            "chars4": 1161,
+            "openaiO200k": 1264,
+            "kimiK2": 1265,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenClaude": {
+          "chars": 4641,
+          "tokens": {
+            "chars4": 1161,
+            "openaiO200k": 1264,
+            "kimiK2": 1265,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenOpenCode": {
+          "chars": 4920,
+          "tokens": {
+            "chars4": 1230,
+            "openaiO200k": 1292,
+            "kimiK2": 1290,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActText": {
+          "chars": 4463,
+          "tokens": {
+            "chars4": 1116,
+            "openaiO200k": 1240,
+            "kimiK2": 1239,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActCodex": {
+          "chars": 4463,
+          "tokens": {
+            "chars4": 1116,
+            "openaiO200k": 1240,
+            "kimiK2": 1239,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActClaude": {
+          "chars": 4463,
+          "tokens": {
+            "chars4": 1116,
+            "openaiO200k": 1240,
+            "kimiK2": 1239,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActOpenCode": {
+          "chars": 4740,
+          "tokens": {
+            "chars4": 1185,
+            "openaiO200k": 1265,
+            "kimiK2": 1261,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpText": {
+          "chars": 5735,
+          "tokens": {
+            "chars4": 1434,
+            "openaiO200k": 1492,
+            "kimiK2": 1494,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpCodex": {
+          "chars": 5735,
+          "tokens": {
+            "chars4": 1434,
+            "openaiO200k": 1492,
+            "kimiK2": 1494,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpClaude": {
+          "chars": 5735,
+          "tokens": {
+            "chars4": 1434,
+            "openaiO200k": 1492,
+            "kimiK2": 1494,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpOpenCode": {
+          "chars": 6023,
+          "tokens": {
+            "chars4": 1506,
+            "openaiO200k": 1522,
+            "kimiK2": 1521,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightOpen": {
+          "chars": 32000,
+          "tokens": {
+            "chars4": 8000,
+            "openaiO200k": 8282,
+            "kimiK2": 8364,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightAct": {
+          "chars": 32000,
+          "tokens": {
+            "chars4": 8000,
+            "openaiO200k": 8282,
+            "kimiK2": 8364,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpOpen": {
+          "chars": 32179,
+          "tokens": {
+            "chars4": 8045,
+            "openaiO200k": 8334,
+            "kimiK2": 8416,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpAct": {
+          "chars": 32179,
+          "tokens": {
+            "chars4": 8045,
+            "openaiO200k": 8334,
+            "kimiK2": 8416,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        }
+      }
+    },
+    {
+      "id": "shop-product",
+      "kind": "e-commerce product",
+      "path": "/shop-product/",
+      "sourceUrl": "https://www.amazon.com/dp/B09V3KXJPB?th=1",
+      "capturedAt": "2026-11-06T14:10:51.474Z",
+      "htmlBytes": 1898141,
+      "task": "Read the page and summarize its main content.",
+      "action": "scroll down",
+      "samples": {
+        "faiOpenText": {
+          "chars": 6090,
+          "tokens": {
+            "chars4": 1523,
+            "openaiO200k": 1702,
+            "kimiK2": 1735,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenCodex": {
+          "chars": 6090,
+          "tokens": {
+            "chars4": 1523,
+            "openaiO200k": 1702,
+            "kimiK2": 1735,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenClaude": {
+          "chars": 6090,
+          "tokens": {
+            "chars4": 1523,
+            "openaiO200k": 1702,
+            "kimiK2": 1735,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenOpenCode": {
+          "chars": 6467,
+          "tokens": {
+            "chars4": 1617,
+            "openaiO200k": 1737,
+            "kimiK2": 1765,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActText": {
+          "chars": 5979,
+          "tokens": {
+            "chars4": 1495,
+            "openaiO200k": 1700,
+            "kimiK2": 1733,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActCodex": {
+          "chars": 5979,
+          "tokens": {
+            "chars4": 1495,
+            "openaiO200k": 1700,
+            "kimiK2": 1733,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActClaude": {
+          "chars": 5979,
+          "tokens": {
+            "chars4": 1495,
+            "openaiO200k": 1700,
+            "kimiK2": 1733,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActOpenCode": {
+          "chars": 6356,
+          "tokens": {
+            "chars4": 1589,
+            "openaiO200k": 1734,
+            "kimiK2": 1764,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpText": {
+          "chars": 10876,
+          "tokens": {
+            "chars4": 2719,
+            "openaiO200k": 2929,
+            "kimiK2": 2993,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpCodex": {
+          "chars": 10876,
+          "tokens": {
+            "chars4": 2719,
+            "openaiO200k": 2929,
+            "kimiK2": 2993,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpClaude": {
+          "chars": 10876,
+          "tokens": {
+            "chars4": 2719,
+            "openaiO200k": 2929,
+            "kimiK2": 2993,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpOpenCode": {
+          "chars": 11307,
+          "tokens": {
+            "chars4": 2827,
+            "openaiO200k": 2979,
+            "kimiK2": 3037,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightOpen": {
+          "chars": 72492,
+          "tokens": {
+            "chars4": 18123,
+            "openaiO200k": 19943,
+            "kimiK2": 19933,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightAct": {
+          "chars": 72492,
+          "tokens": {
+            "chars4": 18123,
+            "openaiO200k": 19943,
+            "kimiK2": 19933,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpOpen": {
+          "chars": 72777,
+          "tokens": {
+            "chars4": 18195,
+            "openaiO200k": 20034,
+            "kimiK2": 20026,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpAct": {
+          "chars": 72777,
+          "tokens": {
+            "chars4": 18195,
+            "openaiO200k": 20034,
+            "kimiK2": 20026,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        }
+      }
+    },
+    {
+      "id": "shop-category",
+      "kind": "e-commerce search/category",
+      "path": "/shop-category/",
+      "sourceUrl": "https://www.amazon.com/s?k=headphones",
+      "capturedAt": "2026-11-06T14:13:52.841Z",
+      "htmlBytes": 1266229,
+      "task": "Read the page and summarize its main content.",
+      "action": "scroll down",
+      "samples": {
+        "faiOpenText": {
+          "chars": 6435,
+          "tokens": {
+            "chars4": 1609,
+            "openaiO200k": 1787,
+            "kimiK2": 1810,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenCodex": {
+          "chars": 6435,
+          "tokens": {
+            "chars4": 1609,
+            "openaiO200k": 1787,
+            "kimiK2": 1810,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenClaude": {
+          "chars": 6435,
+          "tokens": {
+            "chars4": 1609,
+            "openaiO200k": 1787,
+            "kimiK2": 1810,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenOpenCode": {
+          "chars": 6827,
+          "tokens": {
+            "chars4": 1707,
+            "openaiO200k": 1825,
+            "kimiK2": 1840,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActText": {
+          "chars": 6321,
+          "tokens": {
+            "chars4": 1581,
+            "openaiO200k": 1787,
+            "kimiK2": 1808,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActCodex": {
+          "chars": 6321,
+          "tokens": {
+            "chars4": 1581,
+            "openaiO200k": 1787,
+            "kimiK2": 1808,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActClaude": {
+          "chars": 6321,
+          "tokens": {
+            "chars4": 1581,
+            "openaiO200k": 1787,
+            "kimiK2": 1808,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActOpenCode": {
+          "chars": 6713,
+          "tokens": {
+            "chars4": 1679,
+            "openaiO200k": 1825,
+            "kimiK2": 1838,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpText": {
+          "chars": 9699,
+          "tokens": {
+            "chars4": 2425,
+            "openaiO200k": 2651,
+            "kimiK2": 2685,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpCodex": {
+          "chars": 9699,
+          "tokens": {
+            "chars4": 2425,
+            "openaiO200k": 2651,
+            "kimiK2": 2685,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpClaude": {
+          "chars": 9699,
+          "tokens": {
+            "chars4": 2425,
+            "openaiO200k": 2651,
+            "kimiK2": 2685,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpOpenCode": {
+          "chars": 10168,
+          "tokens": {
+            "chars4": 2542,
+            "openaiO200k": 2688,
+            "kimiK2": 2715,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightOpen": {
+          "chars": 252789,
+          "tokens": {
+            "chars4": 63198,
+            "openaiO200k": 88453,
+            "kimiK2": 87322,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightAct": {
+          "chars": 252789,
+          "tokens": {
+            "chars4": 63198,
+            "openaiO200k": 88453,
+            "kimiK2": 87322,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpOpen": {
+          "chars": 252911,
+          "tokens": {
+            "chars4": 63228,
+            "openaiO200k": 88491,
+            "kimiK2": 87361,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpAct": {
+          "chars": 252911,
+          "tokens": {
+            "chars4": 63228,
+            "openaiO200k": 88491,
+            "kimiK2": 87361,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        }
+      }
+    },
+    {
+      "id": "stackoverflow-question",
+      "kind": "Q&A",
+      "path": "/stackoverflow-question/",
+      "sourceUrl": "https://stackprinter.appspot.com/export?question=11227809&service=stackoverflow&language=en&hideAnswers=false&showAll=true&width=700",
+      "capturedAt": "2026-11-06T14:14:48.573Z",
+      "htmlBytes": 267680,
+      "task": "Read the page and summarize its main content.",
+      "action": "scroll down",
+      "samples": {
+        "faiOpenText": {
+          "chars": 2267,
+          "tokens": {
+            "chars4": 567,
+            "openaiO200k": 644,
+            "kimiK2": 650,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenCodex": {
+          "chars": 2267,
+          "tokens": {
+            "chars4": 567,
+            "openaiO200k": 644,
+            "kimiK2": 650,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenClaude": {
+          "chars": 2267,
+          "tokens": {
+            "chars4": 567,
+            "openaiO200k": 644,
+            "kimiK2": 650,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenOpenCode": {
+          "chars": 2341,
+          "tokens": {
+            "chars4": 586,
+            "openaiO200k": 679,
+            "kimiK2": 681,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActText": {
+          "chars": 2308,
+          "tokens": {
+            "chars4": 577,
+            "openaiO200k": 660,
+            "kimiK2": 666,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActCodex": {
+          "chars": 2308,
+          "tokens": {
+            "chars4": 577,
+            "openaiO200k": 660,
+            "kimiK2": 666,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActClaude": {
+          "chars": 2308,
+          "tokens": {
+            "chars4": 577,
+            "openaiO200k": 660,
+            "kimiK2": 666,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActOpenCode": {
+          "chars": 2383,
+          "tokens": {
+            "chars4": 596,
+            "openaiO200k": 693,
+            "kimiK2": 697,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpText": {
+          "chars": 6803,
+          "tokens": {
+            "chars4": 1701,
+            "openaiO200k": 1716,
+            "kimiK2": 1726,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpCodex": {
+          "chars": 6803,
+          "tokens": {
+            "chars4": 1701,
+            "openaiO200k": 1716,
+            "kimiK2": 1726,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpClaude": {
+          "chars": 6803,
+          "tokens": {
+            "chars4": 1701,
+            "openaiO200k": 1716,
+            "kimiK2": 1726,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpOpenCode": {
+          "chars": 6901,
+          "tokens": {
+            "chars4": 1726,
+            "openaiO200k": 1764,
+            "kimiK2": 1769,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightOpen": {
+          "chars": 162111,
+          "tokens": {
+            "chars4": 40528,
+            "openaiO200k": 40683,
+            "kimiK2": 40722,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightAct": {
+          "chars": 162111,
+          "tokens": {
+            "chars4": 40528,
+            "openaiO200k": 40683,
+            "kimiK2": 40722,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpOpen": {
+          "chars": 162300,
+          "tokens": {
+            "chars4": 40575,
+            "openaiO200k": 40733,
+            "kimiK2": 40773,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpAct": {
+          "chars": 162300,
+          "tokens": {
+            "chars4": 40575,
+            "openaiO200k": 40733,
+            "kimiK2": 40773,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        }
+      }
+    },
+    {
+      "id": "package-registry",
+      "kind": "package registry",
+      "path": "/package-registry/",
+      "sourceUrl": "https://pypi.org/project/playwright/",
+      "capturedAt": "2026-11-06T14:14:51.178Z",
+      "htmlBytes": 610241,
+      "task": "Read the page and summarize its main content.",
+      "action": "scroll down",
+      "samples": {
+        "faiOpenText": {
+          "chars": 3489,
+          "tokens": {
+            "chars4": 873,
+            "openaiO200k": 1058,
+            "kimiK2": 1067,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenCodex": {
+          "chars": 3489,
+          "tokens": {
+            "chars4": 873,
+            "openaiO200k": 1058,
+            "kimiK2": 1067,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenClaude": {
+          "chars": 3489,
+          "tokens": {
+            "chars4": 873,
+            "openaiO200k": 1058,
+            "kimiK2": 1067,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenOpenCode": {
+          "chars": 3681,
+          "tokens": {
+            "chars4": 921,
+            "openaiO200k": 1090,
+            "kimiK2": 1096,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActText": {
+          "chars": 3590,
+          "tokens": {
+            "chars4": 898,
+            "openaiO200k": 1095,
+            "kimiK2": 1105,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActCodex": {
+          "chars": 3590,
+          "tokens": {
+            "chars4": 898,
+            "openaiO200k": 1095,
+            "kimiK2": 1105,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActClaude": {
+          "chars": 3590,
+          "tokens": {
+            "chars4": 898,
+            "openaiO200k": 1095,
+            "kimiK2": 1105,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActOpenCode": {
+          "chars": 3778,
+          "tokens": {
+            "chars4": 945,
+            "openaiO200k": 1129,
+            "kimiK2": 1133,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpText": {
+          "chars": 4558,
+          "tokens": {
+            "chars4": 1140,
+            "openaiO200k": 1318,
+            "kimiK2": 1333,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpCodex": {
+          "chars": 4558,
+          "tokens": {
+            "chars4": 1140,
+            "openaiO200k": 1318,
+            "kimiK2": 1333,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpClaude": {
+          "chars": 4558,
+          "tokens": {
+            "chars4": 1140,
+            "openaiO200k": 1318,
+            "kimiK2": 1333,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpOpenCode": {
+          "chars": 4779,
+          "tokens": {
+            "chars4": 1195,
+            "openaiO200k": 1356,
+            "kimiK2": 1366,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightOpen": {
+          "chars": 25248,
+          "tokens": {
+            "chars4": 6312,
+            "openaiO200k": 6739,
+            "kimiK2": 6679,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightAct": {
+          "chars": 25248,
+          "tokens": {
+            "chars4": 6312,
+            "openaiO200k": 6739,
+            "kimiK2": 6679,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpOpen": {
+          "chars": 25367,
+          "tokens": {
+            "chars4": 6342,
+            "openaiO200k": 6778,
+            "kimiK2": 6717,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpAct": {
+          "chars": 25367,
+          "tokens": {
+            "chars4": 6342,
+            "openaiO200k": 6778,
+            "kimiK2": 6717,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        }
+      }
+    },
+    {
+      "id": "weather-forecast",
+      "kind": "weather results",
+      "path": "/weather-forecast/",
+      "sourceUrl": "https://forecast.weather.gov/MapClick.php?lat=40.71427&lon=-74.00597",
+      "capturedAt": "2026-11-06T14:11:17.537Z",
+      "htmlBytes": 324965,
+      "task": "Read the page and summarize its main content.",
+      "action": "scroll down",
+      "samples": {
+        "faiOpenText": {
+          "chars": 2056,
+          "tokens": {
+            "chars4": 514,
+            "openaiO200k": 639,
+            "kimiK2": 654,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenCodex": {
+          "chars": 2056,
+          "tokens": {
+            "chars4": 514,
+            "openaiO200k": 639,
+            "kimiK2": 654,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenClaude": {
+          "chars": 2056,
+          "tokens": {
+            "chars4": 514,
+            "openaiO200k": 639,
+            "kimiK2": 654,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenOpenCode": {
+          "chars": 2193,
+          "tokens": {
+            "chars4": 549,
+            "openaiO200k": 669,
+            "kimiK2": 680,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActText": {
+          "chars": 2798,
+          "tokens": {
+            "chars4": 700,
+            "openaiO200k": 850,
+            "kimiK2": 864,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActCodex": {
+          "chars": 2798,
+          "tokens": {
+            "chars4": 700,
+            "openaiO200k": 850,
+            "kimiK2": 864,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActClaude": {
+          "chars": 2798,
+          "tokens": {
+            "chars4": 700,
+            "openaiO200k": 850,
+            "kimiK2": 864,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActOpenCode": {
+          "chars": 2937,
+          "tokens": {
+            "chars4": 735,
+            "openaiO200k": 887,
+            "kimiK2": 896,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpText": {
+          "chars": 4406,
+          "tokens": {
+            "chars4": 1102,
+            "openaiO200k": 1261,
+            "kimiK2": 1285,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpCodex": {
+          "chars": 4406,
+          "tokens": {
+            "chars4": 1102,
+            "openaiO200k": 1261,
+            "kimiK2": 1285,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpClaude": {
+          "chars": 4406,
+          "tokens": {
+            "chars4": 1102,
+            "openaiO200k": 1261,
+            "kimiK2": 1285,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpOpenCode": {
+          "chars": 4602,
+          "tokens": {
+            "chars4": 1151,
+            "openaiO200k": 1308,
+            "kimiK2": 1328,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightOpen": {
+          "chars": 21806,
+          "tokens": {
+            "chars4": 5452,
+            "openaiO200k": 5992,
+            "kimiK2": 6047,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightAct": {
+          "chars": 21806,
+          "tokens": {
+            "chars4": 5452,
+            "openaiO200k": 5992,
+            "kimiK2": 6047,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpOpen": {
+          "chars": 21936,
+          "tokens": {
+            "chars4": 5484,
+            "openaiO200k": 6042,
+            "kimiK2": 6099,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpAct": {
+          "chars": 21936,
+          "tokens": {
+            "chars4": 5484,
+            "openaiO200k": 6042,
+            "kimiK2": 6099,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        }
+      }
+    },
+    {
+      "id": "government-info",
+      "kind": "government information",
+      "path": "/government-info/",
+      "sourceUrl": "https://www.usa.gov/disability-services",
+      "capturedAt": "2026-11-06T14:11:20.402Z",
+      "htmlBytes": 898736,
+      "task": "Read the page and summarize its main content.",
+      "action": "scroll down",
+      "samples": {
+        "faiOpenText": {
+          "chars": 4009,
+          "tokens": {
+            "chars4": 1003,
+            "openaiO200k": 978,
+            "kimiK2": 982,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenCodex": {
+          "chars": 4009,
+          "tokens": {
+            "chars4": 1003,
+            "openaiO200k": 978,
+            "kimiK2": 982,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenClaude": {
+          "chars": 4009,
+          "tokens": {
+            "chars4": 1003,
+            "openaiO200k": 978,
+            "kimiK2": 982,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiOpenOpenCode": {
+          "chars": 4199,
+          "tokens": {
+            "chars4": 1050,
+            "openaiO200k": 1012,
+            "kimiK2": 1012,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActText": {
+          "chars": 4085,
+          "tokens": {
+            "chars4": 1022,
+            "openaiO200k": 1010,
+            "kimiK2": 1013,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActCodex": {
+          "chars": 4085,
+          "tokens": {
+            "chars4": 1022,
+            "openaiO200k": 1010,
+            "kimiK2": 1013,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActClaude": {
+          "chars": 4085,
+          "tokens": {
+            "chars4": 1022,
+            "openaiO200k": 1010,
+            "kimiK2": 1013,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiActOpenCode": {
+          "chars": 4273,
+          "tokens": {
+            "chars4": 1069,
+            "openaiO200k": 1044,
+            "kimiK2": 1043,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpText": {
+          "chars": 4669,
+          "tokens": {
+            "chars4": 1168,
+            "openaiO200k": 1101,
+            "kimiK2": 1102,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpStructured": {
+          "chars": 0,
+          "tokens": {
+            "chars4": 0,
+            "openaiO200k": 0,
+            "kimiK2": 0,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpCodex": {
+          "chars": 4669,
+          "tokens": {
+            "chars4": 1168,
+            "openaiO200k": 1101,
+            "kimiK2": 1102,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpClaude": {
+          "chars": 4669,
+          "tokens": {
+            "chars4": 1168,
+            "openaiO200k": 1101,
+            "kimiK2": 1102,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "faiFollowUpOpenCode": {
+          "chars": 4869,
+          "tokens": {
+            "chars4": 1218,
+            "openaiO200k": 1136,
+            "kimiK2": 1136,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightOpen": {
+          "chars": 11269,
+          "tokens": {
+            "chars4": 2818,
+            "openaiO200k": 2880,
+            "kimiK2": 2885,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightAct": {
+          "chars": 11269,
+          "tokens": {
+            "chars4": 2818,
+            "openaiO200k": 2880,
+            "kimiK2": 2885,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpOpen": {
+          "chars": 11398,
+          "tokens": {
+            "chars4": 2850,
+            "openaiO200k": 2922,
+            "kimiK2": 2927,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        },
+        "playwrightMcpAct": {
+          "chars": 11398,
+          "tokens": {
+            "chars4": 2850,
+            "openaiO200k": 2922,
+            "kimiK2": 2927,
+            "claudeSonnet55": null,
+            "claudeOpus55": null
+          }
+        }
+      }
+    }
+  ],
+  "summary": {
+    "openText": {
+      "label": "Open",
+      "faiChars": 4234.5,
+      "pwChars": 46613.5,
+      "charRatio": 11.00802928326839,
+      "charReduction": 0.9091572184023942,
+      "medianPerPageCharRatio": 11.309753502903913,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 1059,
+          "pwTokens": 11654,
+          "tokenRatio": 11.004721435316336,
+          "tokenReduction": 0.909129912476403,
+          "medianPerPageTokenRatio": 11.308038098060607
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 1147,
+          "pwTokens": 11786.5,
+          "tokenRatio": 10.27593722755013,
+          "tokenReduction": 0.9026852755270861,
+          "medianPerPageTokenRatio": 10.537863464942662
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 1152.5,
+          "pwTokens": 11780,
+          "tokenRatio": 10.221258134490238,
+          "tokenReduction": 0.9021646859083192,
+          "medianPerPageTokenRatio": 10.393537753974734
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "openStructured": {
+      "label": "Open: structuredContent JSON",
+      "faiChars": 0,
+      "pwChars": 46613.5,
+      "charRatio": null,
+      "charReduction": null,
+      "medianPerPageCharRatio": null,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 0,
+          "pwTokens": 11654,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 0,
+          "pwTokens": 11786.5,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 0,
+          "pwTokens": 11780,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "openBoth": {
+      "label": "Open: text + structuredContent",
+      "faiChars": 4234.5,
+      "pwChars": 46613.5,
+      "charRatio": 11.00802928326839,
+      "charReduction": 0.9091572184023942,
+      "medianPerPageCharRatio": 11.309753502903913,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 1059,
+          "pwTokens": 11654,
+          "tokenRatio": 11.004721435316336,
+          "tokenReduction": 0.909129912476403,
+          "medianPerPageTokenRatio": 11.308038098060607
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 1147,
+          "pwTokens": 11786.5,
+          "tokenRatio": 10.27593722755013,
+          "tokenReduction": 0.9026852755270861,
+          "medianPerPageTokenRatio": 10.537863464942662
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 1152.5,
+          "pwTokens": 11780,
+          "tokenRatio": 10.221258134490238,
+          "tokenReduction": 0.9021646859083192,
+          "medianPerPageTokenRatio": 10.393537753974734
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "actText": {
+      "label": "Act",
+      "faiChars": 4274,
+      "pwChars": 46613.5,
+      "charRatio": 10.90629386991109,
+      "charReduction": 0.9083098244070924,
+      "medianPerPageCharRatio": 11.148980494438268,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 1069,
+          "pwTokens": 11654,
+          "tokenRatio": 10.90177736202058,
+          "tokenReduction": 0.908271837995538,
+          "medianPerPageTokenRatio": 11.14507170343424
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 1167.5,
+          "pwTokens": 11786.5,
+          "tokenRatio": 10.095503211991435,
+          "tokenReduction": 0.900945997539558,
+          "medianPerPageTokenRatio": 9.630502004252115
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 1172,
+          "pwTokens": 11780,
+          "tokenRatio": 10.051194539249147,
+          "tokenReduction": 0.900509337860781,
+          "medianPerPageTokenRatio": 9.577561658425818
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "actStructured": {
+      "label": "Act: structuredContent JSON",
+      "faiChars": 0,
+      "pwChars": 46613.5,
+      "charRatio": null,
+      "charReduction": null,
+      "medianPerPageCharRatio": null,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 0,
+          "pwTokens": 11654,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 0,
+          "pwTokens": 11786.5,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 0,
+          "pwTokens": 11780,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "actBoth": {
+      "label": "Act: text + structuredContent",
+      "faiChars": 4274,
+      "pwChars": 46613.5,
+      "charRatio": 10.90629386991109,
+      "charReduction": 0.9083098244070924,
+      "medianPerPageCharRatio": 11.148980494438268,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 1069,
+          "pwTokens": 11654,
+          "tokenRatio": 10.90177736202058,
+          "tokenReduction": 0.908271837995538,
+          "medianPerPageTokenRatio": 11.14507170343424
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 1167.5,
+          "pwTokens": 11786.5,
+          "tokenRatio": 10.095503211991435,
+          "tokenReduction": 0.900945997539558,
+          "medianPerPageTokenRatio": 9.630502004252115
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 1172,
+          "pwTokens": 11780,
+          "tokenRatio": 10.051194539249147,
+          "tokenReduction": 0.900509337860781,
+          "medianPerPageTokenRatio": 9.577561658425818
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "followUpText": {
+      "label": "Follow-up",
+      "faiChars": 6970,
+      "pwChars": 46613.5,
+      "charRatio": 6.6877331420373025,
+      "charReduction": 0.8504725026011778,
+      "medianPerPageCharRatio": 6.29022007219149,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 1743,
+          "pwTokens": 11654,
+          "tokenRatio": 6.686173264486517,
+          "tokenReduction": 0.8504376179852411,
+          "medianPerPageTokenRatio": 6.290486856523207
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 1827.5,
+          "pwTokens": 11786.5,
+          "tokenRatio": 6.449521203830369,
+          "tokenReduction": 0.844949730624019,
+          "medianPerPageTokenRatio": 6.134234580628349
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 1838,
+          "pwTokens": 11780,
+          "tokenRatio": 6.409140369967356,
+          "tokenReduction": 0.8439728353140916,
+          "medianPerPageTokenRatio": 6.077915674908758
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "followUpStructured": {
+      "label": "Follow-up: structuredContent JSON",
+      "faiChars": 0,
+      "pwChars": 46613.5,
+      "charRatio": null,
+      "charReduction": null,
+      "medianPerPageCharRatio": null,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 0,
+          "pwTokens": 11654,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 0,
+          "pwTokens": 11786.5,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 0,
+          "pwTokens": 11780,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "followUpBoth": {
+      "label": "Follow-up: text + structuredContent",
+      "faiChars": 6970,
+      "pwChars": 46613.5,
+      "charRatio": 6.6877331420373025,
+      "charReduction": 0.8504725026011778,
+      "medianPerPageCharRatio": 6.29022007219149,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 1743,
+          "pwTokens": 11654,
+          "tokenRatio": 6.686173264486517,
+          "tokenReduction": 0.8504376179852411,
+          "medianPerPageTokenRatio": 6.290486856523207
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 1827.5,
+          "pwTokens": 11786.5,
+          "tokenRatio": 6.449521203830369,
+          "tokenReduction": 0.844949730624019,
+          "medianPerPageTokenRatio": 6.134234580628349
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 1838,
+          "pwTokens": 11780,
+          "tokenRatio": 6.409140369967356,
+          "tokenReduction": 0.8439728353140916,
+          "medianPerPageTokenRatio": 6.077915674908758
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "openCodex": {
+      "label": "Open: Codex model view",
+      "faiChars": 4234.5,
+      "pwChars": 46613.5,
+      "charRatio": 11.00802928326839,
+      "charReduction": 0.9091572184023942,
+      "medianPerPageCharRatio": 11.309753502903913,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 1059,
+          "pwTokens": 11654,
+          "tokenRatio": 11.004721435316336,
+          "tokenReduction": 0.909129912476403,
+          "medianPerPageTokenRatio": 11.308038098060607
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 1147,
+          "pwTokens": 11786.5,
+          "tokenRatio": 10.27593722755013,
+          "tokenReduction": 0.9026852755270861,
+          "medianPerPageTokenRatio": 10.537863464942662
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 1152.5,
+          "pwTokens": 11780,
+          "tokenRatio": 10.221258134490238,
+          "tokenReduction": 0.9021646859083192,
+          "medianPerPageTokenRatio": 10.393537753974734
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "openClaude": {
+      "label": "Open: Claude model view",
+      "faiChars": 4234.5,
+      "pwChars": 46613.5,
+      "charRatio": 11.00802928326839,
+      "charReduction": 0.9091572184023942,
+      "medianPerPageCharRatio": 11.309753502903913,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 1059,
+          "pwTokens": 11654,
+          "tokenRatio": 11.004721435316336,
+          "tokenReduction": 0.909129912476403,
+          "medianPerPageTokenRatio": 11.308038098060607
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 1147,
+          "pwTokens": 11786.5,
+          "tokenRatio": 10.27593722755013,
+          "tokenReduction": 0.9026852755270861,
+          "medianPerPageTokenRatio": 10.537863464942662
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 1152.5,
+          "pwTokens": 11780,
+          "tokenRatio": 10.221258134490238,
+          "tokenReduction": 0.9021646859083192,
+          "medianPerPageTokenRatio": 10.393537753974734
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "openOpenCode": {
+      "label": "Open: OpenCode 2 whole result",
+      "faiChars": 4490,
+      "pwChars": 46613.5,
+      "charRatio": 10.38162583518931,
+      "charReduction": 0.9036759736986066,
+      "medianPerPageCharRatio": 10.628165576809296,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 1123,
+          "pwTokens": 11654,
+          "tokenRatio": 10.377560106856635,
+          "tokenReduction": 0.9036382357988674,
+          "medianPerPageTokenRatio": 10.620695073856666
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 1177.5,
+          "pwTokens": 11786.5,
+          "tokenRatio": 10.009766454352441,
+          "tokenReduction": 0.9000975692529589,
+          "medianPerPageTokenRatio": 10.105915887453849
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 1179,
+          "pwTokens": 11780,
+          "tokenRatio": 9.991518235793045,
+          "tokenReduction": 0.8999151103565365,
+          "medianPerPageTokenRatio": 10.023141998734978
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "actCodex": {
+      "label": "Act: Codex model view",
+      "faiChars": 4274,
+      "pwChars": 46613.5,
+      "charRatio": 10.90629386991109,
+      "charReduction": 0.9083098244070924,
+      "medianPerPageCharRatio": 11.148980494438268,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 1069,
+          "pwTokens": 11654,
+          "tokenRatio": 10.90177736202058,
+          "tokenReduction": 0.908271837995538,
+          "medianPerPageTokenRatio": 11.14507170343424
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 1167.5,
+          "pwTokens": 11786.5,
+          "tokenRatio": 10.095503211991435,
+          "tokenReduction": 0.900945997539558,
+          "medianPerPageTokenRatio": 9.630502004252115
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 1172,
+          "pwTokens": 11780,
+          "tokenRatio": 10.051194539249147,
+          "tokenReduction": 0.900509337860781,
+          "medianPerPageTokenRatio": 9.577561658425818
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "actClaude": {
+      "label": "Act: Claude model view",
+      "faiChars": 4274,
+      "pwChars": 46613.5,
+      "charRatio": 10.90629386991109,
+      "charReduction": 0.9083098244070924,
+      "medianPerPageCharRatio": 11.148980494438268,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 1069,
+          "pwTokens": 11654,
+          "tokenRatio": 10.90177736202058,
+          "tokenReduction": 0.908271837995538,
+          "medianPerPageTokenRatio": 11.14507170343424
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 1167.5,
+          "pwTokens": 11786.5,
+          "tokenRatio": 10.095503211991435,
+          "tokenReduction": 0.900945997539558,
+          "medianPerPageTokenRatio": 9.630502004252115
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 1172,
+          "pwTokens": 11780,
+          "tokenRatio": 10.051194539249147,
+          "tokenReduction": 0.900509337860781,
+          "medianPerPageTokenRatio": 9.577561658425818
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "actOpenCode": {
+      "label": "Act: OpenCode 2 whole result",
+      "faiChars": 4506.5,
+      "pwChars": 46613.5,
+      "charRatio": 10.343614778653057,
+      "charReduction": 0.9033219989917084,
+      "medianPerPageCharRatio": 10.44983547195072,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 1127,
+          "pwTokens": 11654,
+          "tokenRatio": 10.34072759538598,
+          "tokenReduction": 0.9032950060065214,
+          "medianPerPageTokenRatio": 10.450278251898261
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 1197,
+          "pwTokens": 11786.5,
+          "tokenRatio": 9.846700083542189,
+          "tokenReduction": 0.8984431340940907,
+          "medianPerPageTokenRatio": 9.327434577434577
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 1197,
+          "pwTokens": 11780,
+          "tokenRatio": 9.841269841269842,
+          "tokenReduction": 0.8983870967741936,
+          "medianPerPageTokenRatio": 9.320609623118486
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "followUpCodex": {
+      "label": "Follow-up: Codex model view",
+      "faiChars": 6970,
+      "pwChars": 46613.5,
+      "charRatio": 6.6877331420373025,
+      "charReduction": 0.8504725026011778,
+      "medianPerPageCharRatio": 6.29022007219149,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 1743,
+          "pwTokens": 11654,
+          "tokenRatio": 6.686173264486517,
+          "tokenReduction": 0.8504376179852411,
+          "medianPerPageTokenRatio": 6.290486856523207
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 1827.5,
+          "pwTokens": 11786.5,
+          "tokenRatio": 6.449521203830369,
+          "tokenReduction": 0.844949730624019,
+          "medianPerPageTokenRatio": 6.134234580628349
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 1838,
+          "pwTokens": 11780,
+          "tokenRatio": 6.409140369967356,
+          "tokenReduction": 0.8439728353140916,
+          "medianPerPageTokenRatio": 6.077915674908758
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "followUpClaude": {
+      "label": "Follow-up: Claude model view",
+      "faiChars": 6970,
+      "pwChars": 46613.5,
+      "charRatio": 6.6877331420373025,
+      "charReduction": 0.8504725026011778,
+      "medianPerPageCharRatio": 6.29022007219149,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 1743,
+          "pwTokens": 11654,
+          "tokenRatio": 6.686173264486517,
+          "tokenReduction": 0.8504376179852411,
+          "medianPerPageTokenRatio": 6.290486856523207
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 1827.5,
+          "pwTokens": 11786.5,
+          "tokenRatio": 6.449521203830369,
+          "tokenReduction": 0.844949730624019,
+          "medianPerPageTokenRatio": 6.134234580628349
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 1838,
+          "pwTokens": 11780,
+          "tokenRatio": 6.409140369967356,
+          "tokenReduction": 0.8439728353140916,
+          "medianPerPageTokenRatio": 6.077915674908758
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    },
+    "followUpOpenCode": {
+      "label": "Follow-up: OpenCode 2 whole result",
+      "faiChars": 7246.5,
+      "pwChars": 46613.5,
+      "charRatio": 6.432553646588008,
+      "charReduction": 0.8445407446340653,
+      "medianPerPageCharRatio": 6.024885305354887,
+      "tokenizers": {
+        "chars4": {
+          "status": "available",
+          "faiTokens": 1812,
+          "pwTokens": 11654,
+          "tokenRatio": 6.431567328918322,
+          "tokenReduction": 0.8445169040672731,
+          "medianPerPageTokenRatio": 6.023822260506497
+        },
+        "openaiO200k": {
+          "status": "available",
+          "faiTokens": 1875.5,
+          "pwTokens": 11786.5,
+          "tokenRatio": 6.284457478005865,
+          "tokenReduction": 0.8408772748483434,
+          "medianPerPageTokenRatio": 5.951766860559908
+        },
+        "kimiK2": {
+          "status": "available",
+          "faiTokens": 1880,
+          "pwTokens": 11780,
+          "tokenRatio": 6.26595744680851,
+          "tokenReduction": 0.8404074702886248,
+          "medianPerPageTokenRatio": 5.915099012834967
+        },
+        "claudeSonnet55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        },
+        "claudeOpus55": {
+          "status": "not measured in this run",
+          "faiTokens": null,
+          "pwTokens": null,
+          "tokenRatio": null,
+          "tokenReduction": null,
+          "medianPerPageTokenRatio": null
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Search flights</title>
+<style>body{font:16px sans-serif;margin:0}main{padding:16px}label{display:block;margin:8px 0}</style></head>
+<body>
+<main><h1>Search flights</h1>
+<!-- Pattern: framework-controlled inputs.
+     1. "From": React-style. The framework keeps a value tracker on the element instance; a plain `.value =` assignment
+        updates the tracker, so the following input event looks like no change and the next render puts the old state
+        back. A value set through the prototype's setter (as page.js does) is seen as a change and kept.
+     2. "To": a masked input that only accepts trusted (user) keyboard input; any synthetic input event is reverted. -->
+<label>From <input id="from" name="from" autocomplete="off"></label>
+<label>To <input id="to" name="to" autocomplete="off"></label>
+<p id="state">From: (empty) · To: (empty)</p></main>
+<script>
+const state = { from: '', to: '' };
+const show = () => { document.getElementById('state').textContent = `From: ${state.from || '(empty)'} · To: ${state.to || '(empty)'}`; };
+// React-style tracker on the "From" input.
+const from = document.getElementById('from');
+const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+let tracked = '';
+Object.defineProperty(from, 'value', {
+  configurable: true,
+  get() { return proto.get.call(this); },
+  set(v) { tracked = String(v); proto.set.call(this, v); },
+});
+const renderFrom = () => { proto.set.call(from, state.from); tracked = state.from; };
+from.addEventListener('input', () => {
+  const actual = proto.get.call(from);
+  if (actual !== tracked) { state.from = actual; tracked = actual; show(); }
+  setTimeout(renderFrom, 0);
+});
+// Trusted-input-only "To" field.
+const to = document.getElementById('to');
+to.addEventListener('input', event => {
+  if (!event.isTrusted) { setTimeout(() => { to.value = state.to; }, 0); return; }
+  state.to = to.value; show();
+});
+</script>
+</body></html>

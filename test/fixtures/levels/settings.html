@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Account settings</title></head>
+<body>
+  <h1>Account settings</h1>
+  <p id="state"><!--STATE--></p>
+  <form method="post" action="/settings">
+    <label for="display-name">Display name</label>
+    <input id="display-name" name="displayName" value="Test User">
+    <label><input type="checkbox" name="newsletter" value="on" checked> Weekly newsletter</label>
+    <button type="submit">Save</button>
+  </form>
+  <p><a href="/cart.html">Cart</a></p>
+</body>
+</html>

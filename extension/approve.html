@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="approve.css">
+  <title>FAI Browser: approve this action?</title>
+</head>
+<body class="arm-page">
+  <main class="arm approve" aria-live="polite">
+    <header class="arm-topline">
+      <span class="brand-mark" aria-hidden="true">F</span>
+      <span class="eyebrow">AGENT ACTION, NOT APPROVED YET</span>
+    </header>
+    <h1 id="headline" class="arm-headline">Approve this action?</h1>
+    <dl class="approve-facts">
+      <dt>Site</dt><dd id="origin"></dd>
+      <dt>Tab</dt><dd id="title"></dd>
+      <dt>Kind</dt><dd id="kind"></dd>
+      <dt>Control</dt><dd><q id="label"></q> <span class="page-text-note">(text from the page)</span></dd>
+      <dt id="total-term" hidden>Total</dt><dd id="total" hidden></dd>
+      <dt id="note-term" hidden>Agent says</dt><dd id="note" hidden></dd>
+    </dl>
+    <p id="detail" class="arm-detail"></p>
+    <div class="arm-actions approve-actions">
+      <button id="approve" class="primary-button" type="button">Approve once</button>
+      <button id="deny" class="secondary-button" type="button">Deny</button>
+      <p id="status" class="status"></p>
+    </div>
+  </main>
+  <script type="module" src="approve.js"></script>
+</body>
+</html>

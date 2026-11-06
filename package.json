@@ -1,0 +1,97 @@
+{
+  "name": "fai-browser",
+  "version": "0.3.2",
+  "license": "MIT",
+  "author": "jedbjorn <jedbjorn@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jedbjorn/fai-browser.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jedbjorn/fai-browser/issues"
+  },
+  "homepage": "https://github.com/jedbjorn/fai-browser#readme",
+  "keywords": [
+    "mcp",
+    "browser",
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "opencode",
+    "browser-automation",
+    "chrome-extension",
+    "firefox-addon",
+    "secret-redaction"
+  ],
+  "private": true,
+  "type": "module",
+  "description": "A safer browser for coding agents: one user-approved tab, approvals, secret redaction, lean pages (MCP server, local service and extension)",
+  "exports": {
+    "types": "./src/index.d.ts",
+    "import": "./src/index.js"
+  },
+  "bin": {
+    "fai-browser": "./src/cli.js",
+    "fai-browser-mcp": "./src/mcp-main.js"
+  },
+  "files": [
+    "src/",
+    "extension/",
+    "skills/",
+    "tasks/",
+    "domains/",
+    "scripts/setup.mjs",
+    "scripts/build-firefox.mjs",
+    "examples/",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "AGENTS.md",
+    "ARCHITECTURE.md",
+    "docs/REFERENCE.md",
+    "docs/guide/",
+    "docs/design/"
+  ],
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "test:browserless": "node scripts/test-browserless.mjs",
+    "setup": "node scripts/setup.mjs",
+    "launch": "node src/cli.js launch",
+    "start": "node src/cli.js",
+    "daemon": "node src/cli.js daemon",
+    "mcp": "node src/mcp-main.js",
+    "browser-smoke": "node scripts/browser-smoke.mjs",
+    "manual-smoke": "node scripts/manual-browser-smoke.mjs",
+    "build:firefox": "node scripts/build-firefox.mjs",
+    "build:trusted": "node scripts/build-trusted.mjs",
+    "smoke:firefox": "node scripts/firefox-smoke.mjs",
+    "smoke:launcher": "node scripts/launcher-smoke.mjs",
+    "lint:firefox": "node scripts/build-firefox.mjs && npx --yes web-ext@8 lint --self-hosted --source-dir dist/firefox",
+    "package": "node scripts/package.mjs",
+    "sign:firefox": "node scripts/sign-firefox.mjs",
+    "bench": "node scripts/bench.mjs --fake",
+    "bench:browser": "node scripts/bench.mjs --browser",
+    "bench:compare": "node bench/compare.mjs",
+    "bench:tokens": "node bench/tokens/measure.mjs",
+    "bench:tokens:capture": "node bench/tokens/capture.mjs",
+    "bench:tokens:real": "node bench/tokens/measure.mjs --corpus real",
+    "bench:tokens:anthropic": "node bench/tokens/count-anthropic.mjs",
+    "readme-chart": "node bench/report/readme-chart.mjs",
+    "update-psl": "node scripts/update-psl.mjs",
+    "demo:serve": "node scripts/demo/serve.mjs",
+    "demo:session": "node scripts/record-demo.mjs --dry-run",
+    "demo:record": "node scripts/record-demo.mjs",
+    "demo:artwork": "python3 scripts/demo/media.py"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "types": "./src/index.d.ts",
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "js-tiktoken": "^1.0.21",
+    "playwright-core": "^1.63.0"
+  }
+}

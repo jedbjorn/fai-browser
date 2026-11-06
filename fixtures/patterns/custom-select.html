@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Choose a plan</title>
+<style>body{font:16px sans-serif;margin:0}main{padding:16px}[role=listbox]{border:1px solid #999;width:220px}
+[role=option]{padding:4px;cursor:pointer}.menu{border:1px solid #999;width:220px}.menu div{padding:4px;cursor:pointer}
+.trigger{display:inline-block;border:1px solid #333;padding:4px 8px;cursor:pointer}</style></head>
+<body>
+<main><h1>Choose a plan</h1>
+<!-- Pattern: custom selects.
+     1. An ARIA combobox: a button with aria-expanded and aria-controls opens a div listbox of role=option items.
+     2. A div dropdown with no roles: a clickable div opens a div of clickable divs (only cursor and click handlers). -->
+<p>Billing period:</p>
+<button type="button" id="period" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="period-list">Monthly</button>
+<div role="listbox" id="period-list" hidden>
+  <div role="option" aria-selected="true">Monthly</div><div role="option" aria-selected="false">Yearly</div>
+  <div role="option" aria-selected="false">Two years (save 30%)</div>
+</div>
+<p>Region:</p>
+<div class="trigger" id="region">Europe</div>
+<div class="menu" id="region-menu" hidden><div>Europe</div><div>North America</div><div>Asia Pacific</div></div>
+</main>
+<script>
+const period = document.getElementById('period');
+const list = document.getElementById('period-list');
+period.addEventListener('click', () => {
+  const open = period.getAttribute('aria-expanded') !== 'true';
+  period.setAttribute('aria-expanded', String(open));
+  list.hidden = !open;
+});
+for (const option of list.querySelectorAll('[role=option]')) {
+  option.addEventListener('click', () => {
+    for (const other of list.querySelectorAll('[role=option]')) other.setAttribute('aria-selected', String(other === option));
+    period.textContent = option.textContent;
+    period.setAttribute('aria-expanded', 'false');
+    list.hidden = true;
+  });
+}
+const region = document.getElementById('region');
+const menu = document.getElementById('region-menu');
+region.addEventListener('click', () => { menu.hidden = !menu.hidden; });
+for (const item of menu.children) item.addEventListener('click', () => { region.textContent = item.textContent; menu.hidden = true; });
+</script>
+</body></html>

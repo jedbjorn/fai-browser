@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workspace settings · Driftwood</title>
+<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#1d2330;background:#fff;line-height:1.5}
+header.site{display:flex;gap:18px;align-items:center;padding:12px 24px;background:#f2f4f8;border-bottom:1px solid #d9dee8}
+header.site strong{margin-right:auto}main{max-width:880px;margin:0 auto;padding:24px}a{color:#1f5fbf}
+button{font:inherit;padding:6px 12px;border:1px solid #8a94a8;border-radius:6px;background:#fff;cursor:pointer}
+table{border-collapse:collapse}td,th{border:1px solid #d9dee8;padding:6px 10px;text-align:left}footer{padding:24px;color:#5a6478;border-top:1px solid #e3e6ee;margin-top:40px}
+.danger{border:1px solid #b3261e;border-radius:8px;padding:16px;margin-top:24px}.danger button{color:#b3261e;border-color:#b3261e}</style>
+</head>
+<body>
+<header class="site"><strong>Driftwood</strong></header><main><h1>Workspace settings</h1>
+<p>Workspace name: <span id="ws-name">Driftwood Labs</span> <button type="button" id="rename">Rename</button></p>
+<div id="rename-box" hidden><label>New name <input id="new-name" maxlength="48"></label> <span>Names can be up to 48 characters.</span> <button type="button" id="cancel">Cancel</button> <button type="button" id="save-name">Save name</button></div>
+<p>Region: eu-west-2</p><p>Plan: Growth</p>
+<div class="danger"><h2>Danger zone</h2><p>Deleting the workspace permanently removes all projects and members.</p><button type="button" id="delete">Delete workspace</button></div></main>
+<script>
+function qaBeacon(ev){try{fetch('/api/beacon?ev='+encodeURIComponent(ev))}catch(e){}}
+document.getElementById('rename').onclick=function(){document.getElementById('rename-box').hidden=false;};
+document.getElementById('cancel').onclick=function(){document.getElementById('rename-box').hidden=true;};
+document.getElementById('save-name').onclick=function(){qaBeacon('danger:save-name');};
+document.getElementById('delete').onclick=function(){qaBeacon('danger:delete-workspace');};
+</script>
+</body>
+</html>

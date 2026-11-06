@@ -1,0 +1,69 @@
+[
+  {
+    "id": "wikipedia",
+    "kind": "encyclopedia article",
+    "url": "https://en.wikipedia.org/wiki/Web_browser"
+  },
+  {
+    "id": "github-repository",
+    "kind": "repository",
+    "url": "https://github.com/microsoft/playwright"
+  },
+  {
+    "id": "mdn-aria",
+    "kind": "developer documentation",
+    "url": "https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA"
+  },
+  {
+    "id": "python-asyncio",
+    "kind": "language documentation",
+    "url": "https://docs.python.org/3/library/asyncio.html"
+  },
+  {
+    "id": "hacker-news",
+    "kind": "news listing",
+    "url": "https://news.ycombinator.com/"
+  },
+  {
+    "id": "bbc-article",
+    "kind": "news article",
+    "url": "https://www.bbc.com/news",
+    "followFirst": "a[href*='/news/articles/']"
+  },
+  {
+    "id": "shop-product",
+    "kind": "e-commerce product",
+    "url": "https://www.amazon.com/dp/B09V3KXJPB"
+  },
+  {
+    "id": "shop-category",
+    "kind": "e-commerce search/category",
+    "url": "https://www.amazon.com/s?k=headphones"
+  },
+  {
+    "id": "stackoverflow-question",
+    "kind": "Q&A",
+    "url": "https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array",
+    "alternates": [
+      "https://stackprinter.appspot.com/export?question=11227809&service=stackoverflow&language=en&hideAnswers=false&showAll=true&width=700"
+    ]
+  },
+  {
+    "id": "package-registry",
+    "kind": "package registry",
+    "url": "https://www.npmjs.com/package/playwright",
+    "alternates": [
+      "https://pypi.org/project/playwright/"
+    ]
+  },
+  {
+    "id": "weather-forecast",
+    "kind": "weather results",
+    "url": "https://forecast.weather.gov/MapClick.php?lat=40.71427&lon=-74.00597"
+  },
+  {
+    "id": "government-info",
+    "kind": "government information",
+    "url": "https://www.usa.gov/disability-services"
+  }
+]
