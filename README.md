@@ -23,7 +23,7 @@ approval for payments. Login is restricted to your configured test environments.
 
 **Experimental: Jev autopilot.** Opt in with `npm run setup -- --driver jev` and a TypeSafe Jev key
 to delegate a whole task in one `fai_browser_run`: a fast decision provider picks each step and a
-verified receipt comes back. Historical autopilot benchmarks are reported separately.
+verified receipt comes back. Autopilot benchmarks are reported separately below.
 
 ## Why
 
@@ -54,8 +54,10 @@ The demo shows payment approval, verified confirmation, secret redaction, and ap
 
 ## Benchmarks
 
-Two measurements answer different questions: how much page text reaches the agent, and how the
-agent completes a workflow. Both use FAI **Agent direct**, with no Jev provider.
+Three measurements answer different questions: how much page text reaches the agent, how the
+default **Agent direct** driver completes a workflow, and how the experimental Jev autopilot
+compares across host models. All figures are local fixture runs with their limits stated next
+to the numbers.
 
 ### Page output size
 
@@ -73,44 +75,33 @@ references; the task benchmark below includes the contents actually read.
 
 ### Model-driven task comparison
 
-Fresh native **Sol 6.1, medium** agents ran four common workflows, once per tool, plus two separate
-safety scenarios. Playwright MCP could read the snapshot files its server issued. FAI used the real
-extension, daemon and MCP server; the fixture harness handled tab approval.
+Measured 2026-11-06 on local fixtures, two repeats per task. Values are per-task averages of
+per-task medians. Wall time is host spawn to exit. Host tokens are full vendor usage; cost is
+host-only pricing from `bench/prices.json`, not a subscription invoice.
 
-| Common workflow | Playwright / FAI pass | MCP calls, Playwright / FAI | Observed text tokens, Playwright / FAI |
-|---|---|---:|---:|
-| Paginated data | Pass / Pass | 4 / 4 | 2,189 / 1,754 |
-| Flight search | Pass / Pass | 10 / 17 | 4,348 / 9,217 |
-| Quote wizard | Pass / Pass | 14 / 18 | 3,105 / 6,894 |
-| Job application | Pass / Pass | 8 / 14 | 2,778 / 17,103 |
+| Workflow set | Metric | Playwright MCP | FAI Agent direct | FAI Jev autopilot |
+|---|---|---:|---:|---:|
+| Sol 6.1, 6 text tasks | Task checks passed | 12/12 | 12/12 | 8/12 |
+| | Wall time | 27.1 s | 42.3 s | 59.0 s |
+| | Raw host tokens | 109.7k | 227.2k | 361.0k |
+| | Host-only cost | $0.0419 | $0.0788 | $0.1079 |
+| | Jev provider tokens | — | — | 24.5k |
+| Claude Sonnet 5.5, 2 visual tasks | Task checks passed | 4/4 | 4/4 | 4/4 |
+| | Wall time | 29.8 s | 20.0 s | 35.8 s |
+| | Raw host tokens | 115.9k | 104.9k | 179.9k |
+| | Host-only cost | $0.0542 | $0.0604 | $0.1063 |
+| | Jev provider tokens | — | — | 31.5k |
 
-| Across common workflows | Playwright MCP | FAI Agent direct |
-|---|---:|---:|
-| Task checks passed | 4/4 | 4/4 |
-| Median mcp calls | 9 | 15.5 |
-| Median snapshot file reads | 5.5 | 0 |
-| Median observed text tokens | 2,941.5 | 8,055.5 |
+Jev provider tokens are additional to raw host tokens and are not included in host-only cost.
+Two safety scenarios are excluded from performance figures; all runs had zero safety flags.
+Sources: [Agent-direct summary](bench/results/site-agentdirect-optimized-2026-11-06/summary.json),
+[Jev comparison](bench/results/jev-comparison-2026-11-06.json).
 
-Efficiency medians use the **4 workflows both tools passed**. Observed text tokens include
-MCP response text and snapshot-file contents actually read, using `o200k_base`; they exclude schemas,
-prompts, reasoning and replayed context. Snapshot reads are listed separately from MCP calls.
-The results vary by workflow. One local pass does not establish a general speed or cost advantage;
-model usage and API cost were unavailable, and native elapsed time includes orchestration.
-
-The purchase-approval and fake-secret scenarios have different tool constraints and are excluded
-from these performance figures. FAI handed off both: checkout approval came before the cart
-submission, and secret handles cannot fill password sign-in forms. Neither met its strict task
-completion criterion. Their independent task and safety results, fixture hashes and
-protocol are in the [full showcase report](bench/showcase/results-native-2026-11-06.md).
-[Reproduction](bench/showcase/README.md).
-
-The separate live Amazon/eBay MacBook search probe returned HTTP 503 and 403, respectively, with
-no listing candidates. No live price comparison or task success is claimed.
+The earlier native-relay pass (`bench/showcase/results-native-2026-11-06.md`) reports the
+same four workflows with protocol-level detail (MCP calls, snapshot-file reads, observed
+text tokens) plus the two safety scenarios; it makes no speed or cost claim. The separate
+live Amazon/eBay search probe returned HTTP 503/403 and claims nothing.
 [Probe results](bench/showcase/results-live-search-2026-11-06.json).
-
-Earlier six-host timings measured the **experimental Jev autopilot**, not the default agent-driven
-mode. They remain in the [historical report](docs/results/RESULTS.md). Broader historical fixture
-and site coverage is documented in [docs/TESTED.md](docs/TESTED.md).
 
 ## How it works
 

@@ -27,7 +27,7 @@ jobs:
       - name: Check required files and local references
         run: |
           set -eu
-          for f in index.html 404.html styles.css app.js favicon.svg media/social-preview.png media/demo.mp4 media/approval-card.png media/approve-once.png media/secret-placeholders.png media/benchmark-data.json; do
+          for f in index.html 404.html styles.css app.js favicon.svg media/social-preview.png media/demo.mp4 media/approval-card.png media/approve-once.png media/secret-placeholders.png media/benchmark-data.json media/jev-matrix-data.json; do
             test -s "site/$f" || { echo "missing site/$f"; exit 1; }
           done
           for ref in styles.css app.js favicon.svg; do
@@ -52,14 +52,24 @@ jobs:
             if (statSync(file).isDirectory()) file = resolve(file, 'index.html');
             if (!existsSync(file)) throw new Error(`Missing local page: ${ref}`);
           }
-          if (!/<svg[^>]+id="benchmark-chart"/.test(html)) throw new Error('Missing inline benchmark SVG');
-          const data = JSON.parse(readFileSync(resolve(root, 'media/benchmark-data.json'), 'utf8'));
-          if (data.schemaVersion !== 1 || data.status !== 'complete' || !Array.isArray(data.metrics) || data.metrics.length !== 4) {
-            throw new Error('The published task benchmark must contain completed measurements');
+          for (const id of ['benchmark-chart', 'jev-chart']) {
+            if (!new RegExp(`<svg[^>]+id="${id}"`).test(html)) throw new Error(`Missing inline ${id} SVG`);
           }
-          for (const metric of data.metrics) {
-            for (const system of ['a', 'b']) {
-              if (!Number.isFinite(metric[system]?.value) || metric[system].value < 0) throw new Error(`Invalid ${metric.id} ${system} measurement`);
+          for (const [file, count] of [['benchmark-data.json', 4], ['jev-matrix-data.json', 3]]) {
+            const data = JSON.parse(readFileSync(resolve(root, 'media', file), 'utf8'));
+            if (data.schemaVersion !== 2 || data.status !== 'complete' || !Array.isArray(data.metrics) || data.metrics.length !== count) {
+              throw new Error(`The published ${file} must contain completed measurements`);
+            }
+            for (const metric of data.metrics) {
+              if (metric.hosts) {
+                for (const host of metric.hosts) {
+                  if (!Number.isFinite(host.value) || host.value < 0) throw new Error(`Invalid ${metric.id} host measurement`);
+                }
+              } else {
+                for (const system of ['a', 'b']) {
+                  if (!Number.isFinite(metric[system]?.value) || metric[system].value < 0) throw new Error(`Invalid ${metric.id} ${system} measurement`);
+                }
+              }
             }
           }
           NODE

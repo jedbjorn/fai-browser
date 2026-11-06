@@ -1,68 +1,88 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "kind": "paired",
   "status": "complete",
-  "label": "One pass \u00b7 four common workflows \u00b7 two separate safety scenarios",
+  "label": "6 common workflows · 2 repeats each · two safety scenarios excluded",
   "run": {
-    "model": "Sol 6.1 medium",
-    "protocol": "Fresh native agents via MCP relay",
-    "taskCount": 4,
-    "repeats": 1,
-    "environment": "Local deterministic fixtures",
-    "measuredAt": "2026-11-06T17:11:39.773Z",
-    "source": "bench/showcase/results-native-2026-11-06.md"
+    "model": "Sol 6.1 medium (Codex CLI)",
+    "driver": "Agent direct",
+    "protocol": "Fresh agent per task · host harness · local fixtures",
+    "taskCount": 6,
+    "repeats": 2,
+    "attempted": 12,
+    "matchedTasks": 12,
+    "measuredAt": "2026-11-06T21:35:29.304Z",
+    "source": "bench/results/site-agentdirect-optimized-2026-11-06/summary.json"
+  },
+  "series": {
+    "a": "Playwright MCP 0.0.84",
+    "b": "FAI Agent direct 0.3.2"
   },
   "metrics": [
     {
       "id": "passes",
       "label": "Task checks passed",
-      "unit": "tasks",
-      "aggregation": "total",
-      "scaleMax": 4,
+      "unit": "runs",
       "a": {
-        "value": 4
+        "value": 12,
+        "display": "12 / 12"
       },
       "b": {
-        "value": 4
+        "value": 12,
+        "display": "12 / 12"
       }
     },
     {
-      "id": "calls",
-      "label": "MCP calls",
-      "unit": "calls",
-      "aggregation": "median",
-      "matchedTasks": 4,
+      "id": "wall",
+      "label": "Wall time per task",
+      "unit": "s",
       "a": {
-        "value": 9.0
+        "value": 27.1,
+        "display": "27.1 s"
       },
       "b": {
-        "value": 15.5
-      }
-    },
-    {
-      "id": "artifacts",
-      "label": "Snapshot file reads",
-      "unit": "reads",
-      "aggregation": "median",
-      "matchedTasks": 4,
-      "a": {
-        "value": 5.5
-      },
-      "b": {
-        "value": 0.0
+        "value": 42.3,
+        "display": "42.3 s"
       }
     },
     {
       "id": "tokens",
-      "label": "Observed text tokens",
+      "label": "Raw model tokens per task",
       "unit": "tokens",
-      "aggregation": "median",
-      "matchedTasks": 4,
       "a": {
-        "value": 2941.5
+        "value": 109713,
+        "display": "109.7k"
       },
       "b": {
-        "value": 8055.5
+        "value": 227186,
+        "display": "227.2k"
+      }
+    },
+    {
+      "id": "cost",
+      "label": "Cost per task",
+      "unit": "USD",
+      "a": {
+        "value": 0.0419,
+        "display": "$0.042"
+      },
+      "b": {
+        "value": 0.0788,
+        "display": "$0.079"
       }
     }
+  ],
+  "ratios": {
+    "wall": 0.64,
+    "tokens": 0.48,
+    "priced": 0.52,
+    "cost": 0.53,
+    "note": "A over B, above 1 favours FAI"
+  },
+  "notes": [
+    "Wall time: host process spawn to exit, approval automation included, model latency dominant.",
+    "Raw model tokens: full model usage per vendor tokenizer (input including cache reads, plus output); text only — no condition requested screenshots on these tasks.",
+    "Cost: bench/prices.json (2026-10-04), API-equivalent for Codex hosts.",
+    "Suite figures are sums of per-task medians over repeats, divided by tasks; see source summary.json for per-task cells."
   ]
 }
