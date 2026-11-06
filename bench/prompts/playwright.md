@@ -1,0 +1,1 @@
+Browser tools: use the Playwright MCP tools (for example browser_navigate, browser_snapshot, browser_click, browser_tabs, browser_wait_for). The browser starts on a blank page, so navigate to {{START}} first.

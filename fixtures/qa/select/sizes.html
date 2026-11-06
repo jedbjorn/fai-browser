@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canvas tool roll · Northwind</title>
+<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#1d2330;background:#fff;line-height:1.5}
+header.site{display:flex;gap:18px;align-items:center;padding:12px 24px;background:#f2f4f8;border-bottom:1px solid #d9dee8}
+header.site strong{margin-right:auto}main{max-width:880px;margin:0 auto;padding:24px}a{color:#1f5fbf}
+button{font:inherit;padding:6px 12px;border:1px solid #8a94a8;border-radius:6px;background:#fff;cursor:pointer}
+table{border-collapse:collapse}td,th{border:1px solid #d9dee8;padding:6px 10px;text-align:left}footer{padding:24px;color:#5a6478;border-top:1px solid #e3e6ee;margin-top:40px}
+[role=listbox]{list-style:none;padding:0;margin:4px 0;border:1px solid #8a94a8;width:180px}[role=option]{padding:6px 10px;cursor:pointer}[role=option]:hover{background:#eef}</style>
+</head>
+<body>
+<header class="site"><strong>Northwind</strong></header><main><h1>Canvas tool roll</h1><p>Waxed canvas, 12 pockets.</p>
+<button type="button" id="size-btn" aria-haspopup="listbox" aria-expanded="false">Size: choose</button>
+<ul role="listbox" id="size-list" aria-label="Size" hidden><li role="option" tabindex="0" data-size="S">S</li><li role="option" tabindex="0" data-size="M">M</li><li role="option" tabindex="0" data-size="L">L</li><li role="option" tabindex="0" data-size="XL">XL</li></ul>
+<p id="stock" aria-live="polite">Choose a size to see availability.</p></main>
+<script>
+var STOCK={S:'12 left in stock',M:'7 left in stock',L:'3 left in stock',XL:'Out of stock'};
+var btn=document.getElementById('size-btn'),list=document.getElementById('size-list');
+btn.onclick=function(){list.hidden=!list.hidden;btn.setAttribute('aria-expanded',String(!list.hidden));};
+list.querySelectorAll('[role=option]').forEach(function(o){o.onclick=function(){var s=o.dataset.size;btn.textContent='Size: '+s;list.hidden=true;btn.setAttribute('aria-expanded','false');
+document.getElementById('stock').textContent='Size '+s+': '+STOCK[s]+'.';};});
+</script>
+</body>
+</html>

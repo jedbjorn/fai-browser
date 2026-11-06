@@ -1,0 +1,280 @@
+{
+  "version": 1,
+  "site": "fixtures/site",
+  "notes": "{{ORIGIN}} is replaced with the site origin for each run. match=exact: the normalized answer must equal one expected string. match=all: every expected string must appear in the normalized answer. Normalization: NFKC, lowercase, keep only letters and digits. hopExpected (multi-hop tasks): the first-hop fact, used only to grade an auto-confirmed verdict.answer on an intermediate receipt (loose match). steps (tasks tagged steps): the hops a careful host would send, each with its own expectation; condition B gets them as hint lines (src: faiHints), R and A get only the instruction. These tasks need two runs without a step list.",
+  "tasks": [
+    {
+      "id": "about-members",
+      "difficulty": "easy",
+      "instruction": "What are the names of the members listed on the About page? Give all of them, comma-separated.",
+      "start": "{{ORIGIN}}/",
+      "allowedOrigins": [
+        "{{ORIGIN}}"
+      ],
+      "match": "all",
+      "expected": [
+        "Mira Okafor",
+        "Tomas Lindqvist",
+        "Priya Raman",
+        "Jonah Weiss",
+        "Elif Demir"
+      ]
+    },
+    {
+      "id": "pricing-pro",
+      "difficulty": "easy",
+      "instruction": "What is the monthly price of the Pro plan?",
+      "start": "{{ORIGIN}}/",
+      "allowedOrigins": [
+        "{{ORIGIN}}"
+      ],
+      "match": "exact",
+      "expected": [
+        "$37",
+        "$37 per month",
+        "$37/month",
+        "$37/mo",
+        "$37 a month",
+        "37 USD",
+        "$37.00",
+        "37 dollars"
+      ]
+    },
+    {
+      "id": "docs-auth-header",
+      "difficulty": "medium",
+      "tags": [
+        "nested-navigation"
+      ],
+      "instruction": "Which HTTP header does the API authentication page in the docs say to send your token in? Answer with the header name only.",
+      "start": "{{ORIGIN}}/",
+      "allowedOrigins": [
+        "{{ORIGIN}}"
+      ],
+      "match": "exact",
+      "expected": [
+        "X-Lanternfish-Token"
+      ]
+    },
+    {
+      "id": "catalog-p3-i5",
+      "difficulty": "medium",
+      "tags": [
+        "pagination"
+      ],
+      "instruction": "What is the name of the 5th item on page 3 of the catalog?",
+      "start": "{{ORIGIN}}/",
+      "allowedOrigins": [
+        "{{ORIGIN}}"
+      ],
+      "match": "exact",
+      "expected": [
+        "Russet Leather Wallet"
+      ]
+    },
+    {
+      "id": "slow-content",
+      "difficulty": "medium",
+      "tags": [
+        "delayed-content"
+      ],
+      "instruction": "Open {{ORIGIN}}/slow. A section on that page finishes loading after a short delay. What text appears there once it has loaded?",
+      "start": "{{ORIGIN}}/",
+      "allowedOrigins": [
+        "{{ORIGIN}}"
+      ],
+      "match": "exact",
+      "expected": [
+        "Batch 7 reconciled: 1,284 records"
+      ]
+    },
+    {
+      "id": "settings-new-tab",
+      "difficulty": "medium",
+      "tags": [
+        "new-tab"
+      ],
+      "instruction": "The home page has an Account settings link that opens in a new tab. What default timezone does that settings page show?",
+      "start": "{{ORIGIN}}/",
+      "allowedOrigins": [
+        "{{ORIGIN}}"
+      ],
+      "match": "exact",
+      "expected": [
+        "Pacific/Auckland"
+      ]
+    },
+    {
+      "id": "docs-lead-guide",
+      "difficulty": "hard",
+      "tags": [
+        "multi-hop"
+      ],
+      "instruction": "Find the team member the About page names as documentation lead. The docs home page lists a guide written by that person. What is the title of that guide?",
+      "start": "{{ORIGIN}}/",
+      "allowedOrigins": [
+        "{{ORIGIN}}"
+      ],
+      "match": "exact",
+      "expected": [
+        "Migrating Ledgers to Version Two"
+      ],
+      "hopExpected": [
+        "Priya Raman"
+      ]
+    },
+    {
+      "id": "catalog-plan-price",
+      "difficulty": "hard",
+      "tags": [
+        "multi-hop",
+        "pagination"
+      ],
+      "instruction": "The catalog item called Kestrel Field Lamp is available on exactly one plan. What is the monthly price of that plan on the Pricing page?",
+      "start": "{{ORIGIN}}/",
+      "allowedOrigins": [
+        "{{ORIGIN}}"
+      ],
+      "match": "exact",
+      "expected": [
+        "$96",
+        "$96 per month",
+        "$96/month",
+        "$96/mo",
+        "$96 a month",
+        "96 USD",
+        "$96.00",
+        "96 dollars"
+      ],
+      "hopExpected": [
+        "Team plan"
+      ]
+    },
+    {
+      "id": "billing-office-hours",
+      "difficulty": "hard",
+      "tags": [
+        "multi-hop",
+        "steps"
+      ],
+      "instruction": "The About page names the team member who handles billing and plans. The Contact page lists the offices and who leads each one. What are the opening hours of the office that person leads?",
+      "start": "{{ORIGIN}}/",
+      "allowedOrigins": [
+        "{{ORIGIN}}"
+      ],
+      "match": "all",
+      "expected": [
+        "09:00",
+        "17:30"
+      ],
+      "hopExpected": [
+        "Elif Demir"
+      ],
+      "steps": [
+        {
+          "instruction": "From the home page visit About. Read who handles billing and plans and stop there.",
+          "expectation": {
+            "urlIncludes": "/about"
+          },
+          "answerQuestion": "Who handles billing and plans?",
+          "maxActions": 3
+        },
+        {
+          "instruction": "Click Contact, then the office led by {{answer:1}}. Read its opening hours and stop there.",
+          "expectation": {
+            "urlIncludes": "/offices/",
+            "textIncludes": "{{answer:1}}"
+          },
+          "answerQuestion": "What are the office's opening hours?",
+          "maxActions": 4
+        }
+      ],
+      "notes": "Needs two runs without steps: which office to open is known only from the About page (Jev never sees an earlier page's text), so the host cannot name the link or write the second expectation up front."
+    },
+    {
+      "id": "office-plan-storage",
+      "difficulty": "hard",
+      "tags": [
+        "multi-hop",
+        "steps",
+        "reversible"
+      ],
+      "instruction": "The Oslo office page (linked from the Contact page) says which plan its workspace uses. On the Pricing page, show the plan details for that plan. How much storage does that plan include?",
+      "start": "{{ORIGIN}}/",
+      "allowedOrigins": [
+        "{{ORIGIN}}"
+      ],
+      "mode": "reversible",
+      "match": "exact",
+      "expected": [
+        "250 GB",
+        "250 GB storage",
+        "250 gigabytes"
+      ],
+      "hopExpected": [
+        "Pro"
+      ],
+      "steps": [
+        {
+          "instruction": "From the home page visit Contact, then Oslo office. Read which plan the workspace uses and stop there.",
+          "expectation": {
+            "urlIncludes": "/offices/oslo"
+          },
+          "answerQuestion": "Which plan does the Oslo office workspace use?",
+          "maxActions": 4
+        },
+        {
+          "instruction": "Click Pricing. Under Plan details choose {{answer:1}}, then click Show plan details. Read how much storage it includes and stop there.",
+          "expectation": {
+            "urlIncludes": "/pricing",
+            "textIncludes": "{{answer:1}} includes"
+          },
+          "answerQuestion": "How much storage does the plan include?",
+          "maxActions": 4
+        }
+      ],
+      "notes": "Reversible: the plan to select is known only from the office page, and only the selected plan's details are shown (Starter by default), so one run cannot pick it."
+    },
+    {
+      "id": "office-showroom-page",
+      "difficulty": "hard",
+      "tags": [
+        "multi-hop",
+        "pagination",
+        "steps"
+      ],
+      "instruction": "The Auckland office page (linked from the Contact page) says which catalog page lists its showroom items. What is the name of the first item on that catalog page?",
+      "start": "{{ORIGIN}}/",
+      "allowedOrigins": [
+        "{{ORIGIN}}"
+      ],
+      "match": "exact",
+      "expected": [
+        "Vesper Reading Light"
+      ],
+      "hopExpected": [
+        "catalog page 3"
+      ],
+      "steps": [
+        {
+          "instruction": "From the home page visit Contact, then Auckland office. Read which catalog page lists the showroom items and stop there.",
+          "expectation": {
+            "urlIncludes": "/offices/auckland"
+          },
+          "answerQuestion": "Which catalog page lists the showroom items?",
+          "maxActions": 4
+        },
+        {
+          "instruction": "Click Catalog, then Next page until the page is {{answer:1}}. Read the name of the first item and stop there.",
+          "expectation": {
+            "urlIncludes": "/catalog/page-",
+            "titleIncludes": "{{answer:1}}"
+          },
+          "answerQuestion": "What is the name of the first item on this page?",
+          "maxActions": 5
+        }
+      ],
+      "notes": "Read a number, then page to it: the catalog page is known only from the office page, so the host cannot name it or write the final expectation up front."
+    }
+  ]
+}

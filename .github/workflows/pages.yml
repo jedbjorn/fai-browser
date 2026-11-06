@@ -1,0 +1,84 @@
+name: Site (build check and Pages deploy)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Check required files and local references
+        run: |
+          set -eu
+          for f in index.html 404.html styles.css app.js favicon.svg media/social-preview.png media/demo.mp4 media/approval-card.png media/approve-once.png media/secret-placeholders.png media/benchmark-data.json; do
+            test -s "site/$f" || { echo "missing site/$f"; exit 1; }
+          done
+          for ref in styles.css app.js favicon.svg; do
+            grep -q "$ref" site/index.html || { echo "index.html does not reference $ref"; exit 1; }
+          done
+          if grep -nE '(src|href)="https?://(cdn|unpkg|fonts)' site/index.html; then
+            echo "runtime CDN reference found"; exit 1
+          fi
+          du -sk site
+      - name: Validate local assets and completed benchmark data
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, existsSync, statSync } from 'node:fs';
+          import { resolve, sep } from 'node:path';
+          const root = resolve('site');
+          const html = readFileSync(resolve(root, 'index.html'), 'utf8');
+          for (const [, ref] of html.matchAll(/(?:src|href)=["']([^"']+)["']/g)) {
+            if (/^(?:[a-z]+:|\/\/|#)/i.test(ref)) continue;
+            const local = decodeURIComponent(ref.split(/[?#]/)[0]).replace(/^\/fai-browser\//, '');
+            let file = resolve(root, local || 'index.html');
+            if (!file.startsWith(root + sep) || !existsSync(file)) throw new Error(`Missing local asset: ${ref}`);
+            if (statSync(file).isDirectory()) file = resolve(file, 'index.html');
+            if (!existsSync(file)) throw new Error(`Missing local page: ${ref}`);
+          }
+          if (!/<svg[^>]+id="benchmark-chart"/.test(html)) throw new Error('Missing inline benchmark SVG');
+          const data = JSON.parse(readFileSync(resolve(root, 'media/benchmark-data.json'), 'utf8'));
+          if (data.schemaVersion !== 1 || data.status !== 'complete' || !Array.isArray(data.metrics) || data.metrics.length !== 4) {
+            throw new Error('The published task benchmark must contain completed measurements');
+          }
+          for (const metric of data.metrics) {
+            for (const system of ['a', 'b']) {
+              if (!Number.isFinite(metric[system]?.value) || metric[system].value < 0) throw new Error(`Invalid ${metric.id} ${system} measurement`);
+            }
+          }
+          NODE
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+        if: github.event_name != 'pull_request'
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

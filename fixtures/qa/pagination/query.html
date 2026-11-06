@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seed catalogue · Greenhouse Co-op</title>
+<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#1d2330;background:#fff;line-height:1.5}
+header.site{display:flex;gap:18px;align-items:center;padding:12px 24px;background:#f2f4f8;border-bottom:1px solid #d9dee8}
+header.site strong{margin-right:auto}main{max-width:880px;margin:0 auto;padding:24px}a{color:#1f5fbf}
+button{font:inherit;padding:6px 12px;border:1px solid #8a94a8;border-radius:6px;background:#fff;cursor:pointer}
+table{border-collapse:collapse}td,th{border:1px solid #d9dee8;padding:6px 10px;text-align:left}footer{padding:24px;color:#5a6478;border-top:1px solid #e3e6ee;margin-top:40px}</style>
+</head>
+<body>
+<header class="site"><strong>Greenhouse Co-op</strong></header><main><h1 id="heading">Seed catalogue</h1><ol id="items"></ol><nav id="pager" aria-label="Pagination"></nav></main>
+<script>
+var SEEDS=["Amaranth Red Garnet","Basil Genovese","Borage","Calendula Resina","Chard Bright Lights","Chervil","Coriander Calypso","Cosmos Purity","Dill Mammoth","Fennel Florence","Kale Nero di Toscana","Leek Musselburgh","Lettuce Little Gem","Marigold French","Nasturtium Empress","Oregano Greek","Parsley Moss Curled","Pea Kelvedon Wonder","Radish French Breakfast","Rocket Wild","Sorrel Red Veined","Sunflower Velvet Queen","Thyme English","Zinnia Envy"];var PER=8,PAGES=3;
+var p=Math.min(PAGES,Math.max(1,parseInt(new URLSearchParams(location.search).get('page')||'1',10)||1));
+document.getElementById('heading').textContent='Seed catalogue: page '+p+' of '+PAGES;
+var ol=document.getElementById('items');ol.start=(p-1)*PER+1;
+SEEDS.slice((p-1)*PER,p*PER).forEach(function(s){var li=document.createElement('li');li.textContent=s;ol.appendChild(li);});
+var nav=document.getElementById('pager'),h='';if(p>1)h+='<a href="?page='+(p-1)+'">Previous</a> ';
+for(var i=1;i<=PAGES;i++)h+=(i===p?'<span aria-current="page">'+i+'</span> ':'<a href="?page='+i+'">'+i+'</a> ');
+if(p<PAGES)h+='<a href="?page='+(p+1)+'">Next</a>';nav.innerHTML=h;
+</script>
+</body>
+</html>

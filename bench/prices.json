@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "unit": "USD per million tokens",
+  "date": "2026-10-04",
+  "notes": "in = uncached input, cached = cache read, cache_write = 5-minute cache write, cache_write_1h = 1-hour cache write (Claude Code writes 1-hour cache entries), out = output (reasoning/thinking included). Codex runs bill a ChatGPT plan's quota, so their dollar cost is API-equivalent only (standard tier; batch/flex and the fast/priority tier are not modelled). OpenAI has no cache-write charge, so cache_write equals in.",
+  "sources": {
+    "openai": "https://developers.openai.com/api/docs/pricing",
+    "anthropic": "https://platform.claude.com/docs/en/about-claude/pricing"
+  },
+  "models": {
+    "gpt-6-astra": { "vendor": "codex", "basis": "api-equivalent", "in": 10, "cached": 1, "cache_write": 10, "out": 50, "note": "long-input (>272K) surcharge not modelled" },
+    "gpt-6.1-sol": { "vendor": "codex", "basis": "api-equivalent", "in": 2, "cached": 0.1, "cache_write": 2, "out": 10 },
+    "gpt-6-sol": { "vendor": "codex", "basis": "api-equivalent", "in": 2, "cached": 0.2, "cache_write": 2, "out": 10 },
+    "gpt-5.6-terra": { "vendor": "codex", "basis": "api-equivalent", "in": 2, "cached": 0.2, "cache_write": 2, "out": 12 },
+    "gpt-6-luna": { "vendor": "codex", "basis": "api-equivalent", "in": 0.1, "cached": 0.01, "cache_write": 0.1, "out": 0.5 },
+    "gpt-5.6-sol": { "vendor": "codex", "basis": "api-equivalent", "in": 4, "cached": 0.4, "cache_write": 4, "out": 20 },
+    "gpt-5.6-luna": { "vendor": "codex", "basis": "api-equivalent", "in": 0.2, "cached": 0.02, "cache_write": 0.2, "out": 1.2 },
+    "claude-opus-5-5": { "vendor": "claude", "basis": "list", "in": 4, "cached": 0.2, "cache_write": 5, "cache_write_1h": 8, "out": 20, "note": "cache_write_1h assumed 2x input; cross-check run.json cost.deltaUsd" },
+    "claude-sonnet-5-5": { "vendor": "claude", "basis": "list", "in": 2, "cached": 0.2, "cache_write": 2.5, "cache_write_1h": 4, "out": 10, "note": "cache_write_1h 2x input, matches total_cost_usd" }
+  }
+}

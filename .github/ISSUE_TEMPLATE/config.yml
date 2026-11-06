@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/jedbjorn/fai-browser/security/advisories/new
+    about: Private reporting for guardrail bypasses, secret leaks and pairing problems. Please do not open a public issue.
+  - name: Documentation
+    url: https://github.com/jedbjorn/fai-browser/tree/main/docs/guide
+    about: Getting started, safety model, troubleshooting.

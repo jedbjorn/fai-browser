@@ -1,0 +1,5485 @@
+{
+  "meta": {
+    "startedAt": "2026-10-04T07:47:13.932Z",
+    "model": "gpt-6.1-sol",
+    "effort": "medium",
+    "timeoutS": 300,
+    "repeat": 3,
+    "conditions": [
+      "b"
+    ],
+    "tasks": [
+      "about-members",
+      "pricing-pro",
+      "docs-auth-header",
+      "catalog-p3-i5",
+      "slow-content",
+      "settings-new-tab",
+      "docs-lead-guide",
+      "catalog-plan-price"
+    ],
+    "node": "v24.21.0",
+    "chromium": "/usr/bin/chromium",
+    "keepCodexTools": false,
+    "sandboxNetwork": false,
+    "codex": "codex-cli 0.160.0",
+    "chromiumVersion": "Chromium 153.0.8010.52 Arch Linux",
+    "fai": {
+      "server": {
+        "command": "/usr/bin/node",
+        "args": [
+          "~/Repos/fai-browser/src/mcp-main.js"
+        ]
+      },
+      "tools": [
+        "fai_browser_status",
+        "fai_browser_run",
+        "fai_browser_wait",
+        "fai_browser_observe",
+        "fai_browser_act",
+        "fai_browser_stop",
+        "fai_browser_evidence"
+      ],
+      "missingOptionalTools": [],
+      "extensionVersion": "0.4.0"
+    },
+    "skipped": {},
+    "finishedAt": "2026-10-04T07:55:11.277Z",
+    "interrupted": false,
+    "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786",
+    "weights": {
+      "uncached": 1,
+      "cached": 0.1,
+      "output": 5
+    }
+  },
+  "cells": {
+    "about-members|b-baseline": {
+      "taskId": "about-members",
+      "condition": "b-baseline",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 15.897,
+      "toolCalls": 1,
+      "requests": 2,
+      "tokens": 34816,
+      "cachedInput": 30208,
+      "uncachedInput": 4380,
+      "outputTokens": 229,
+      "priced": 8548.8,
+      "faiDecisions": 2,
+      "receipts": null,
+      "oversightReceipts": null,
+      "autoAnswers": null,
+      "falseAutomation": null,
+      "hopAutoAnswers": null,
+      "faiElapsedS": 0.946
+    },
+    "about-members|b": {
+      "taskId": "about-members",
+      "condition": "b",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 17.136,
+      "toolCalls": 1,
+      "requests": 2,
+      "tokens": 35331,
+      "cachedInput": 22016,
+      "uncachedInput": 13083,
+      "outputTokens": 209,
+      "priced": 16319.6,
+      "faiDecisions": 2,
+      "receipts": 3,
+      "oversightReceipts": 3,
+      "autoAnswers": 0,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 1.042
+    },
+    "pricing-pro|b-baseline": {
+      "taskId": "pricing-pro",
+      "condition": "b-baseline",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 15.178,
+      "toolCalls": 1,
+      "requests": 2,
+      "tokens": 34805,
+      "cachedInput": 30208,
+      "uncachedInput": 4407,
+      "outputTokens": 199,
+      "priced": 8442.8,
+      "faiDecisions": 2,
+      "receipts": null,
+      "oversightReceipts": null,
+      "autoAnswers": null,
+      "falseAutomation": null,
+      "hopAutoAnswers": null,
+      "faiElapsedS": 0.982
+    },
+    "pricing-pro|b": {
+      "taskId": "pricing-pro",
+      "condition": "b",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 17.525,
+      "toolCalls": 1,
+      "requests": 2,
+      "tokens": 35252,
+      "cachedInput": 22016,
+      "uncachedInput": 13046,
+      "outputTokens": 190,
+      "priced": 16197.6,
+      "faiDecisions": 2,
+      "receipts": 3,
+      "oversightReceipts": 0,
+      "autoAnswers": 3,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 0.971
+    },
+    "docs-auth-header|b-baseline": {
+      "taskId": "docs-auth-header",
+      "condition": "b-baseline",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 17.507,
+      "toolCalls": 1,
+      "requests": 2,
+      "tokens": 35076,
+      "cachedInput": 21888,
+      "uncachedInput": 12963,
+      "outputTokens": 225,
+      "priced": 16276.8,
+      "faiDecisions": 4,
+      "receipts": null,
+      "oversightReceipts": null,
+      "autoAnswers": null,
+      "falseAutomation": null,
+      "hopAutoAnswers": null,
+      "faiElapsedS": 1.856
+    },
+    "docs-auth-header|b": {
+      "taskId": "docs-auth-header",
+      "condition": "b",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 18.212,
+      "toolCalls": 1,
+      "requests": 2,
+      "tokens": 38866,
+      "cachedInput": 22016,
+      "uncachedInput": 13302,
+      "outputTokens": 188,
+      "priced": 16528.6,
+      "faiDecisions": 4,
+      "receipts": 3,
+      "oversightReceipts": 0,
+      "autoAnswers": 3,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 1.772
+    },
+    "catalog-p3-i5|b-baseline": {
+      "taskId": "catalog-p3-i5",
+      "condition": "b-baseline",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 17.668,
+      "toolCalls": 1,
+      "requests": 2,
+      "tokens": 34987,
+      "cachedInput": 21888,
+      "uncachedInput": 12973,
+      "outputTokens": 244,
+      "priced": 16419,
+      "faiDecisions": 4,
+      "receipts": null,
+      "oversightReceipts": null,
+      "autoAnswers": null,
+      "falseAutomation": null,
+      "hopAutoAnswers": null,
+      "faiElapsedS": 1.66
+    },
+    "catalog-p3-i5|b": {
+      "taskId": "catalog-p3-i5",
+      "condition": "b",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 19.368,
+      "toolCalls": 1,
+      "requests": 2,
+      "tokens": 39103,
+      "cachedInput": 27520,
+      "uncachedInput": 11359,
+      "outputTokens": 216,
+      "priced": 15211,
+      "faiDecisions": 4,
+      "receipts": 3,
+      "oversightReceipts": 3,
+      "autoAnswers": 0,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 1.796
+    },
+    "slow-content|b-baseline": {
+      "taskId": "slow-content",
+      "condition": "b-baseline",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 15.509,
+      "toolCalls": 1,
+      "requests": 2,
+      "tokens": 34632,
+      "cachedInput": 30336,
+      "uncachedInput": 4116,
+      "outputTokens": 217,
+      "priced": 8254.6,
+      "faiDecisions": 3,
+      "receipts": null,
+      "oversightReceipts": null,
+      "autoAnswers": null,
+      "falseAutomation": null,
+      "hopAutoAnswers": null,
+      "faiElapsedS": 1.496
+    },
+    "slow-content|b": {
+      "taskId": "slow-content",
+      "condition": "b",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 17.612,
+      "toolCalls": 1,
+      "requests": 2,
+      "tokens": 35051,
+      "cachedInput": 21504,
+      "uncachedInput": 15753,
+      "outputTokens": 207,
+      "priced": 18710.2,
+      "faiDecisions": 2,
+      "receipts": 3,
+      "oversightReceipts": 3,
+      "autoAnswers": 0,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 1.544
+    },
+    "settings-new-tab|b-baseline": {
+      "taskId": "settings-new-tab",
+      "condition": "b-baseline",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 15.81,
+      "toolCalls": 1,
+      "requests": 2,
+      "tokens": 34675,
+      "cachedInput": 30336,
+      "uncachedInput": 4123,
+      "outputTokens": 209,
+      "priced": 8236.6,
+      "faiDecisions": 2,
+      "receipts": null,
+      "oversightReceipts": null,
+      "autoAnswers": null,
+      "falseAutomation": null,
+      "hopAutoAnswers": null,
+      "faiElapsedS": 1.002
+    },
+    "settings-new-tab|b": {
+      "taskId": "settings-new-tab",
+      "condition": "b",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 16.347,
+      "toolCalls": 1,
+      "requests": 2,
+      "tokens": 35082,
+      "cachedInput": 22016,
+      "uncachedInput": 12858,
+      "outputTokens": 189,
+      "priced": 15984.6,
+      "faiDecisions": 2,
+      "receipts": 3,
+      "oversightReceipts": 0,
+      "autoAnswers": 3,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 0.974
+    },
+    "docs-lead-guide|b-baseline": {
+      "taskId": "docs-lead-guide",
+      "condition": "b-baseline",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 17.89,
+      "toolCalls": 1,
+      "requests": 2,
+      "tokens": 35058,
+      "cachedInput": 21888,
+      "uncachedInput": 12849,
+      "outputTokens": 240,
+      "priced": 16232.8,
+      "faiDecisions": 3,
+      "receipts": null,
+      "oversightReceipts": null,
+      "autoAnswers": null,
+      "falseAutomation": null,
+      "hopAutoAnswers": null,
+      "faiElapsedS": 1.496
+    },
+    "docs-lead-guide|b": {
+      "taskId": "docs-lead-guide",
+      "condition": "b",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 18.745,
+      "toolCalls": 1,
+      "requests": 2,
+      "tokens": 35570,
+      "cachedInput": 30464,
+      "uncachedInput": 4838,
+      "outputTokens": 247,
+      "priced": 9224.4,
+      "faiDecisions": 3,
+      "receipts": 3,
+      "oversightReceipts": 0,
+      "autoAnswers": 3,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 1.351
+    },
+    "catalog-plan-price|b-baseline": {
+      "taskId": "catalog-plan-price",
+      "condition": "b-baseline",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 24.115,
+      "toolCalls": 2,
+      "requests": 3,
+      "tokens": 48608,
+      "cachedInput": 34304,
+      "uncachedInput": 13943,
+      "outputTokens": 361,
+      "priced": 19178.4,
+      "faiDecisions": 5,
+      "receipts": null,
+      "oversightReceipts": null,
+      "autoAnswers": null,
+      "falseAutomation": null,
+      "hopAutoAnswers": null,
+      "faiElapsedS": 2.27
+    },
+    "catalog-plan-price|b": {
+      "taskId": "catalog-plan-price",
+      "condition": "b",
+      "runs": 3,
+      "skipped": 0,
+      "skipReason": null,
+      "passed": 3,
+      "attempted": 3,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 19.604,
+      "toolCalls": 1,
+      "requests": 2,
+      "tokens": 39121,
+      "cachedInput": 32128,
+      "uncachedInput": 6765,
+      "outputTokens": 228,
+      "priced": 11117.8,
+      "faiDecisions": 4,
+      "receipts": 3,
+      "oversightReceipts": 0,
+      "autoAnswers": 3,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 1.814
+    }
+  },
+  "totals": {
+    "b-baseline": {
+      "tasks": 8,
+      "passed": 24,
+      "attempted": 24,
+      "wallS": 139.574,
+      "toolCalls": 9,
+      "requests": 17,
+      "tokens": 292657,
+      "cachedInput": 221056,
+      "uncachedInput": 69754,
+      "outputTokens": 1924,
+      "priced": 101589.79999999999,
+      "receipts": null,
+      "oversightReceipts": null,
+      "autoAnswers": null,
+      "falseAutomation": null,
+      "hopAutoAnswers": null,
+      "oversightRate": null,
+      "falseAutomationRate": null
+    },
+    "b": {
+      "tasks": 8,
+      "passed": 24,
+      "attempted": 24,
+      "wallS": 144.54899999999998,
+      "toolCalls": 8,
+      "requests": 16,
+      "tokens": 293376,
+      "cachedInput": 199680,
+      "uncachedInput": 91004,
+      "outputTokens": 1674,
+      "priced": 119293.8,
+      "receipts": 24,
+      "oversightReceipts": 9,
+      "autoAnswers": 15,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "oversightRate": 0.375,
+      "falseAutomationRate": 0
+    }
+  },
+  "ratio": null,
+  "ratios": [
+    {
+      "over": "b-baseline",
+      "under": "b",
+      "tasks": [
+        "about-members",
+        "pricing-pro",
+        "docs-auth-header",
+        "catalog-p3-i5",
+        "slow-content",
+        "settings-new-tab",
+        "docs-lead-guide",
+        "catalog-plan-price"
+      ],
+      "wall": 0.9655826052065392,
+      "toolCalls": 1.125,
+      "requests": 1.0625,
+      "tokens": 0.997549220113438,
+      "priced": 0.8515932931971316
+    }
+  ],
+  "weights": {
+    "uncached": 1,
+    "cached": 0.1,
+    "output": 5
+  },
+  "runs": [
+    {
+      "taskId": "about-members",
+      "condition": "b",
+      "rep": 1,
+      "difficulty": "easy",
+      "expected": [
+        "Mira Okafor",
+        "Tomas Lindqvist",
+        "Priya Raman",
+        "Jonah Weiss",
+        "Elif Demir"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/about-members.b.1",
+      "origin": "http://127.0.0.1:41341",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 17136,
+      "firstToolCallMs": 12244,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1430,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 35099,
+        "cachedInput": 22016,
+        "output": 207,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35306
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 22016,
+        "uncachedInput": 13083,
+        "output": 207,
+        "total": 35306,
+        "priced": 16319.6
+      },
+      "answer": "Mira Okafor, Tomas Lindqvist, Priya Raman, Jonah Weiss, Elif Demir",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "8bf4213e-6727-425c-b371-35724720d24c",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1091
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3050,
+            "outputTokens": 323,
+            "elapsedMs": 1042,
+            "trace": "~/Repos/fai-browser/artifacts/8bf4213e-6727-425c-b371-35724720d24c/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1042,
+        "providerInputTokens": 3050,
+        "providerOutputTokens": 323
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12315,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 342
+        }
+      ],
+      "approvalMs": 342,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "pricing-pro",
+      "condition": "b",
+      "rep": 1,
+      "difficulty": "easy",
+      "expected": [
+        "$37",
+        "$37 per month",
+        "$37/month",
+        "$37/mo",
+        "$37 a month",
+        "37 USD",
+        "$37.00",
+        "37 dollars"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/pricing-pro.b.1",
+      "origin": "http://127.0.0.1:42295",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 20153,
+      "firstToolCallMs": 15057,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1376,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 35024,
+        "cachedInput": 21888,
+        "output": 190,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35214
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 21888,
+        "uncachedInput": 13136,
+        "output": 190,
+        "total": 35214,
+        "priced": 16274.8
+      },
+      "answer": "$37 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "4a15d968-2e56-4251-a999-12d728ef5091",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Pro | $37 per month | $370 per year | 10",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1083
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3291,
+            "outputTokens": 347,
+            "elapsedMs": 1038,
+            "trace": "~/Repos/fai-browser/artifacts/4a15d968-2e56-4251-a999-12d728ef5091/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1038,
+        "providerInputTokens": 3291,
+        "providerOutputTokens": 347
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Pro | $37 per month | $370 per year | 10",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 15076,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 342
+        }
+      ],
+      "approvalMs": 342,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "docs-auth-header",
+      "condition": "b",
+      "rep": 1,
+      "difficulty": "medium",
+      "expected": [
+        "X-Lanternfish-Token"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/docs-auth-header.b.1",
+      "origin": "http://127.0.0.1:46181",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 22645,
+      "firstToolCallMs": 16624,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2305,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 38679,
+        "cachedInput": 13056,
+        "output": 187,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 38866
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 13056,
+        "uncachedInput": 25623,
+        "output": 187,
+        "total": 38866,
+        "priced": 27863.6
+      },
+      "answer": "X-Lanternfish-Token",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "b59b22ff-dfb2-4c6f-ab15-a345fe388ae8",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Every request must carry your workspace token. Send it in the X-Lanternfish-Token HTTP header.",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1821
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6074,
+            "outputTokens": 623,
+            "elapsedMs": 1772,
+            "trace": "~/Repos/fai-browser/artifacts/b59b22ff-dfb2-4c6f-ab15-a345fe388ae8/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1772,
+        "providerInputTokens": 6074,
+        "providerOutputTokens": 623
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Every request must carry your workspace token. Send it in the X-Lanternfish-Token HTTP header.",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 16839,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 340
+        }
+      ],
+      "approvalMs": 340,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "catalog-p3-i5",
+      "condition": "b",
+      "rep": 1,
+      "difficulty": "medium",
+      "expected": [
+        "Russet Leather Wallet"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/catalog-p3-i5.b.1",
+      "origin": "http://127.0.0.1:36649",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 17180,
+      "firstToolCallMs": 12164,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2225,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 38879,
+        "cachedInput": 27520,
+        "output": 220,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 39099
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 27520,
+        "uncachedInput": 11359,
+        "output": 220,
+        "total": 39099,
+        "priced": 15211
+      },
+      "answer": "Russet Leather Wallet",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "bd5046e1-f2f1-4867-b31c-8ca347fe8fb5",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1797
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6713,
+            "outputTokens": 662,
+            "elapsedMs": 1743,
+            "trace": "~/Repos/fai-browser/artifacts/bd5046e1-f2f1-4867-b31c-8ca347fe8fb5/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1743,
+        "providerInputTokens": 6713,
+        "providerOutputTokens": 662
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12315,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 403
+        }
+      ],
+      "approvalMs": 403,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "slow-content",
+      "condition": "b",
+      "rep": 1,
+      "difficulty": "medium",
+      "expected": [
+        "Batch 7 reconciled: 1,284 records"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/slow-content.b.1",
+      "origin": "http://127.0.0.1:35801",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 18192,
+      "firstToolCallMs": 12174,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2054,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34825,
+        "cachedInput": 19072,
+        "output": 210,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35035
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 19072,
+        "uncachedInput": 15753,
+        "output": 210,
+        "total": 35035,
+        "priced": 18710.2
+      },
+      "answer": "Batch 7 reconciled: 1,284 records",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "c4fe787d-54c7-4d8d-b565-de86943344f3",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1638
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 2458,
+            "outputTokens": 273,
+            "elapsedMs": 1578,
+            "trace": "~/Repos/fai-browser/artifacts/c4fe787d-54c7-4d8d-b565-de86943344f3/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1578,
+        "providerInputTokens": 2458,
+        "providerOutputTokens": 273
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12308,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 400
+        }
+      ],
+      "approvalMs": 400,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "settings-new-tab",
+      "condition": "b",
+      "rep": 1,
+      "difficulty": "medium",
+      "expected": [
+        "Pacific/Auckland"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/settings-new-tab.b.1",
+      "origin": "http://127.0.0.1:38779",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 16624,
+      "firstToolCallMs": 11366,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1521,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 38266,
+        "cachedInput": 32128,
+        "output": 189,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 38455
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 32128,
+        "uncachedInput": 6138,
+        "output": 189,
+        "total": 38455,
+        "priced": 10295.8
+      },
+      "answer": "Pacific/Auckland",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "80399682-2688-4514-9b12-c29084ed2e59",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Pacific/Auckland",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1055
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 2983,
+            "outputTokens": 339,
+            "elapsedMs": 1005,
+            "trace": "~/Repos/fai-browser/artifacts/80399682-2688-4514-9b12-c29084ed2e59/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1005,
+        "providerInputTokens": 2983,
+        "providerOutputTokens": 339
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Pacific/Auckland",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 11562,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 397
+        }
+      ],
+      "approvalMs": 397,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "docs-lead-guide",
+      "condition": "b",
+      "rep": 1,
+      "difficulty": "hard",
+      "expected": [
+        "Migrating Ledgers to Version Two"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/docs-lead-guide.b.1",
+      "origin": "http://127.0.0.1:42813",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 18004,
+      "firstToolCallMs": 13207,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1732,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 35301,
+        "cachedInput": 30464,
+        "output": 247,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35548
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 30464,
+        "uncachedInput": 4837,
+        "output": 247,
+        "total": 35548,
+        "priced": 9118.4
+      },
+      "answer": "Migrating Ledgers to Version Two",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "dc2690d9-12cb-4f7d-8446-257fda7a9708",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Migrating Ledgers to Version Two by Priya Raman",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1332
+            },
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 4500,
+            "outputTokens": 463,
+            "elapsedMs": 1285,
+            "trace": "~/Repos/fai-browser/artifacts/dc2690d9-12cb-4f7d-8446-257fda7a9708/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 3,
+        "elapsedMs": 1285,
+        "providerInputTokens": 4500,
+        "providerOutputTokens": 463
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Migrating Ledgers to Version Two by Priya Raman",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 13320,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 406
+        }
+      ],
+      "approvalMs": 406,
+      "site": {
+        "requests": 9,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "catalog-plan-price",
+      "condition": "b",
+      "rep": 1,
+      "difficulty": "hard",
+      "expected": [
+        "$96",
+        "$96 per month",
+        "$96/month",
+        "$96/mo",
+        "$96 a month",
+        "96 USD",
+        "$96.00",
+        "96 dollars"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/catalog-plan-price.b.1",
+      "origin": "http://127.0.0.1:34395",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 19604,
+      "firstToolCallMs": 13582,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2357,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 38893,
+        "cachedInput": 32128,
+        "output": 228,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 39121
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 32128,
+        "uncachedInput": 6765,
+        "output": 228,
+        "total": 39121,
+        "priced": 11117.8
+      },
+      "answer": "$96 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "c9cc7074-1ba7-4d14-aa93-b9637198824a",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Team | $96 per month | $960 per year | 40",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1850
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6567,
+            "outputTokens": 620,
+            "elapsedMs": 1788,
+            "trace": "~/Repos/fai-browser/artifacts/c9cc7074-1ba7-4d14-aa93-b9637198824a/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1788,
+        "providerInputTokens": 6567,
+        "providerOutputTokens": 620
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Team | $96 per month | $960 per year | 40",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 13819,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 402
+        }
+      ],
+      "approvalMs": 402,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "about-members",
+      "condition": "b",
+      "rep": 2,
+      "difficulty": "easy",
+      "expected": [
+        "Mira Okafor",
+        "Tomas Lindqvist",
+        "Priya Raman",
+        "Jonah Weiss",
+        "Elif Demir"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/about-members.b.2",
+      "origin": "http://127.0.0.1:37587",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 16313,
+      "firstToolCallMs": 11325,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1636,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 35124,
+        "cachedInput": 22016,
+        "output": 224,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35348
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 22016,
+        "uncachedInput": 13108,
+        "output": 224,
+        "total": 35348,
+        "priced": 16429.6
+      },
+      "answer": "Mira Okafor, Tomas Lindqvist, Priya Raman, Jonah Weiss, Elif Demir",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "38286ef4-311e-491e-85e6-56b96117de22",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1130
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3083,
+            "outputTokens": 323,
+            "elapsedMs": 1089,
+            "trace": "~/Repos/fai-browser/artifacts/38286ef4-311e-491e-85e6-56b96117de22/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1089,
+        "providerInputTokens": 3083,
+        "providerOutputTokens": 323
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 11561,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 392
+        }
+      ],
+      "approvalMs": 392,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "pricing-pro",
+      "condition": "b",
+      "rep": 2,
+      "difficulty": "easy",
+      "expected": [
+        "$37",
+        "$37 per month",
+        "$37/month",
+        "$37/mo",
+        "$37 a month",
+        "37 USD",
+        "$37.00",
+        "37 dollars"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/pricing-pro.b.2",
+      "origin": "http://127.0.0.1:35639",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 17491,
+      "firstToolCallMs": 12402,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1444,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 35082,
+        "cachedInput": 30464,
+        "output": 200,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35282
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 30464,
+        "uncachedInput": 4618,
+        "output": 200,
+        "total": 35282,
+        "priced": 8664.4
+      },
+      "answer": "$37 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "e2efe447-777b-446d-a221-e19b6a03e9bc",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Pro | $37 per month | $370 per year | 10",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1009
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3291,
+            "outputTokens": 347,
+            "elapsedMs": 971,
+            "trace": "~/Repos/fai-browser/artifacts/e2efe447-777b-446d-a221-e19b6a03e9bc/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 971,
+        "providerInputTokens": 3291,
+        "providerOutputTokens": 347
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Pro | $37 per month | $370 per year | 10",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12558,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 400
+        }
+      ],
+      "approvalMs": 400,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "docs-auth-header",
+      "condition": "b",
+      "rep": 2,
+      "difficulty": "medium",
+      "expected": [
+        "X-Lanternfish-Token"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/docs-auth-header.b.2",
+      "origin": "http://127.0.0.1:34611",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 18212,
+      "firstToolCallMs": 12254,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2118,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 38735,
+        "cachedInput": 32128,
+        "output": 188,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 38923
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 32128,
+        "uncachedInput": 6607,
+        "output": 188,
+        "total": 38923,
+        "priced": 10759.8
+      },
+      "answer": "X-Lanternfish-Token",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "785f4fff-8e30-4fa3-be27-988b96e334d0",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Every request must carry your workspace token. Send it in the X-Lanternfish-Token HTTP header.",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1791
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6074,
+            "outputTokens": 623,
+            "elapsedMs": 1746,
+            "trace": "~/Repos/fai-browser/artifacts/785f4fff-8e30-4fa3-be27-988b96e334d0/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1746,
+        "providerInputTokens": 6074,
+        "providerOutputTokens": 623
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Every request must carry your workspace token. Send it in the X-Lanternfish-Token HTTP header.",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12311,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 390
+        }
+      ],
+      "approvalMs": 390,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "catalog-p3-i5",
+      "condition": "b",
+      "rep": 2,
+      "difficulty": "medium",
+      "expected": [
+        "Russet Leather Wallet"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/catalog-p3-i5.b.2",
+      "origin": "http://127.0.0.1:46431",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 19368,
+      "firstToolCallMs": 12078,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2634,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 38891,
+        "cachedInput": 10624,
+        "output": 212,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 39103
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 10624,
+        "uncachedInput": 28267,
+        "output": 212,
+        "total": 39103,
+        "priced": 30389.4
+      },
+      "answer": "Russet Leather Wallet",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "7c464da8-3a7b-4698-a54a-821913fe237d",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 2125
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6673,
+            "outputTokens": 662,
+            "elapsedMs": 2077,
+            "trace": "~/Repos/fai-browser/artifacts/7c464da8-3a7b-4698-a54a-821913fe237d/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 2077,
+        "providerInputTokens": 6673,
+        "providerOutputTokens": 662
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12310,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 397
+        }
+      ],
+      "approvalMs": 397,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "slow-content",
+      "condition": "b",
+      "rep": 2,
+      "difficulty": "medium",
+      "expected": [
+        "Batch 7 reconciled: 1,284 records"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/slow-content.b.2",
+      "origin": "http://127.0.0.1:40823",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 17313,
+      "firstToolCallMs": 12094,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2083,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 38208,
+        "cachedInput": 21504,
+        "output": 202,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 38410
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 21504,
+        "uncachedInput": 16704,
+        "output": 202,
+        "total": 38410,
+        "priced": 19864.4
+      },
+      "answer": "Batch 7 reconciled: 1,284 records",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "cdde5a24-976e-45f4-931b-0958f73cd840",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1594
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 2450,
+            "outputTokens": 273,
+            "elapsedMs": 1544,
+            "trace": "~/Repos/fai-browser/artifacts/cdde5a24-976e-45f4-931b-0958f73cd840/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1544,
+        "providerInputTokens": 2450,
+        "providerOutputTokens": 273
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12309,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 401
+        }
+      ],
+      "approvalMs": 401,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "settings-new-tab",
+      "condition": "b",
+      "rep": 2,
+      "difficulty": "medium",
+      "expected": [
+        "Pacific/Auckland"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/settings-new-tab.b.2",
+      "origin": "http://127.0.0.1:44027",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 16347,
+      "firstToolCallMs": 12208,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1361,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34887,
+        "cachedInput": 22016,
+        "output": 195,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35082
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 22016,
+        "uncachedInput": 12871,
+        "output": 195,
+        "total": 35082,
+        "priced": 16047.6
+      },
+      "answer": "Pacific/Auckland",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "30fa61bb-d0eb-4c83-90f8-0a557cd51e10",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Pacific/Auckland",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 982
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 2989,
+            "outputTokens": 339,
+            "elapsedMs": 939,
+            "trace": "~/Repos/fai-browser/artifacts/30fa61bb-d0eb-4c83-90f8-0a557cd51e10/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 939,
+        "providerInputTokens": 2989,
+        "providerOutputTokens": 339
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Pacific/Auckland",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12311,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 345
+        }
+      ],
+      "approvalMs": 345,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "docs-lead-guide",
+      "condition": "b",
+      "rep": 2,
+      "difficulty": "hard",
+      "expected": [
+        "Migrating Ledgers to Version Two"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/docs-lead-guide.b.2",
+      "origin": "http://127.0.0.1:43435",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 18745,
+      "firstToolCallMs": 13715,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1946,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 35302,
+        "cachedInput": 30464,
+        "output": 268,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35570
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 30464,
+        "uncachedInput": 4838,
+        "output": 268,
+        "total": 35570,
+        "priced": 9224.4
+      },
+      "answer": "Migrating Ledgers to Version Two",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "dd19ccc1-26e6-4fe5-b2c0-015e293c4ae8",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Migrating Ledgers to Version Two by Priya Raman",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1554
+            },
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 4576,
+            "outputTokens": 463,
+            "elapsedMs": 1505,
+            "trace": "~/Repos/fai-browser/artifacts/dd19ccc1-26e6-4fe5-b2c0-015e293c4ae8/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 3,
+        "elapsedMs": 1505,
+        "providerInputTokens": 4576,
+        "providerOutputTokens": 463
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Migrating Ledgers to Version Two by Priya Raman",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 13818,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 363
+        }
+      ],
+      "approvalMs": 363,
+      "site": {
+        "requests": 9,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "catalog-plan-price",
+      "condition": "b",
+      "rep": 2,
+      "difficulty": "hard",
+      "expected": [
+        "$96",
+        "$96 per month",
+        "$96/month",
+        "$96/mo",
+        "$96 a month",
+        "96 USD",
+        "$96.00",
+        "96 dollars"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/catalog-plan-price.b.2",
+      "origin": "http://127.0.0.1:36445",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 19582,
+      "firstToolCallMs": 14470,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2246,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 38937,
+        "cachedInput": 23680,
+        "output": 231,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 39168
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 23680,
+        "uncachedInput": 15257,
+        "output": 231,
+        "total": 39168,
+        "priced": 18780
+      },
+      "answer": "$96 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "80a16923-e6b4-40f0-8746-cc895d7049d8",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Team | $96 per month | $960 per year | 40",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1872
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6572,
+            "outputTokens": 620,
+            "elapsedMs": 1814,
+            "trace": "~/Repos/fai-browser/artifacts/80a16923-e6b4-40f0-8746-cc895d7049d8/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1814,
+        "providerInputTokens": 6572,
+        "providerOutputTokens": 620
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Team | $96 per month | $960 per year | 40",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 14570,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 401
+        }
+      ],
+      "approvalMs": 401,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "about-members",
+      "condition": "b",
+      "rep": 3,
+      "difficulty": "easy",
+      "expected": [
+        "Mira Okafor",
+        "Tomas Lindqvist",
+        "Priya Raman",
+        "Jonah Weiss",
+        "Elif Demir"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/about-members.b.3",
+      "origin": "http://127.0.0.1:36807",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 17745,
+      "firstToolCallMs": 13190,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1382,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 35122,
+        "cachedInput": 30464,
+        "output": 209,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35331
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 30464,
+        "uncachedInput": 4658,
+        "output": 209,
+        "total": 35331,
+        "priced": 8749.4
+      },
+      "answer": "Mira Okafor, Tomas Lindqvist, Priya Raman, Jonah Weiss, Elif Demir",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "f2d70d0d-6e6b-4c9b-ab2a-638db9f332aa",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 966
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3056,
+            "outputTokens": 323,
+            "elapsedMs": 918,
+            "trace": "~/Repos/fai-browser/artifacts/f2d70d0d-6e6b-4c9b-ab2a-638db9f332aa/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 918,
+        "providerInputTokens": 3056,
+        "providerOutputTokens": 323
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 13322,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 404
+        }
+      ],
+      "approvalMs": 404,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "pricing-pro",
+      "condition": "b",
+      "rep": 3,
+      "difficulty": "easy",
+      "expected": [
+        "$37",
+        "$37 per month",
+        "$37/month",
+        "$37/mo",
+        "$37 a month",
+        "37 USD",
+        "$37.00",
+        "37 dollars"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/pricing-pro.b.3",
+      "origin": "http://127.0.0.1:40121",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 17525,
+      "firstToolCallMs": 12416,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1348,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 35062,
+        "cachedInput": 22016,
+        "output": 190,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35252
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 22016,
+        "uncachedInput": 13046,
+        "output": 190,
+        "total": 35252,
+        "priced": 16197.6
+      },
+      "answer": "$37 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "43374b8a-a8f2-4c29-a530-cfc25b2e1ccd",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Pro | $37 per month | $370 per year | 10",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 936
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3264,
+            "outputTokens": 347,
+            "elapsedMs": 894,
+            "trace": "~/Repos/fai-browser/artifacts/43374b8a-a8f2-4c29-a530-cfc25b2e1ccd/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 894,
+        "providerInputTokens": 3264,
+        "providerOutputTokens": 347
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Pro | $37 per month | $370 per year | 10",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12554,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 394
+        }
+      ],
+      "approvalMs": 394,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "docs-auth-header",
+      "condition": "b",
+      "rep": 3,
+      "difficulty": "medium",
+      "expected": [
+        "X-Lanternfish-Token"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/docs-auth-header.b.3",
+      "origin": "http://127.0.0.1:46051",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 17713,
+      "firstToolCallMs": 12304,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2537,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 35318,
+        "cachedInput": 22016,
+        "output": 205,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35523
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 22016,
+        "uncachedInput": 13302,
+        "output": 205,
+        "total": 35523,
+        "priced": 16528.6
+      },
+      "answer": "X-Lanternfish-Token",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "d92cdde9-8b0a-4712-912e-a3679c756e0c",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Every request must carry your workspace token. Send it in the X-Lanternfish-Token HTTP header.",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 2007
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6146,
+            "outputTokens": 623,
+            "elapsedMs": 1959,
+            "trace": "~/Repos/fai-browser/artifacts/d92cdde9-8b0a-4712-912e-a3679c756e0c/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1959,
+        "providerInputTokens": 6146,
+        "providerOutputTokens": 623
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Every request must carry your workspace token. Send it in the X-Lanternfish-Token HTTP header.",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12556,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 395
+        }
+      ],
+      "approvalMs": 395,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "catalog-p3-i5",
+      "condition": "b",
+      "rep": 3,
+      "difficulty": "medium",
+      "expected": [
+        "Russet Leather Wallet"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/catalog-p3-i5.b.3",
+      "origin": "http://127.0.0.1:37101",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 19942,
+      "firstToolCallMs": 12985,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2194,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 38905,
+        "cachedInput": 32128,
+        "output": 216,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 39121
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 32128,
+        "uncachedInput": 6777,
+        "output": 216,
+        "total": 39121,
+        "priced": 11069.8
+      },
+      "answer": "Russet Leather Wallet",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "a5397b89-a8ee-47c6-a490-dcf1bf38a984",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1840
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6688,
+            "outputTokens": 662,
+            "elapsedMs": 1796,
+            "trace": "~/Repos/fai-browser/artifacts/a5397b89-a8ee-47c6-a490-dcf1bf38a984/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1796,
+        "providerInputTokens": 6688,
+        "providerOutputTokens": 662
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 13068,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 390
+        }
+      ],
+      "approvalMs": 390,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "slow-content",
+      "condition": "b",
+      "rep": 3,
+      "difficulty": "medium",
+      "expected": [
+        "Batch 7 reconciled: 1,284 records"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/slow-content.b.3",
+      "origin": "http://127.0.0.1:44861",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 17612,
+      "firstToolCallMs": 12026,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1855,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34844,
+        "cachedInput": 30464,
+        "output": 207,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35051
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 30464,
+        "uncachedInput": 4380,
+        "output": 207,
+        "total": 35051,
+        "priced": 8461.4
+      },
+      "answer": "Batch 7 reconciled: 1,284 records",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "d93ea4f7-3337-4398-a56a-6bbcadfe96ab",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1528
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 2452,
+            "outputTokens": 273,
+            "elapsedMs": 1484,
+            "trace": "~/Repos/fai-browser/artifacts/d93ea4f7-3337-4398-a56a-6bbcadfe96ab/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1484,
+        "providerInputTokens": 2452,
+        "providerOutputTokens": 273
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12063,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 413
+        }
+      ],
+      "approvalMs": 413,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "settings-new-tab",
+      "condition": "b",
+      "rep": 3,
+      "difficulty": "medium",
+      "expected": [
+        "Pacific/Auckland"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/settings-new-tab.b.3",
+      "origin": "http://127.0.0.1:45547",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 15940,
+      "firstToolCallMs": 11947,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1413,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34874,
+        "cachedInput": 22016,
+        "output": 185,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35059
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 22016,
+        "uncachedInput": 12858,
+        "output": 185,
+        "total": 35059,
+        "priced": 15984.6
+      },
+      "answer": "Pacific/Auckland",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "ecd0bc54-4a9d-4eb2-83d4-6ca9f3f169b7",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Pacific/Auckland",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1021
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 2959,
+            "outputTokens": 339,
+            "elapsedMs": 974,
+            "trace": "~/Repos/fai-browser/artifacts/ecd0bc54-4a9d-4eb2-83d4-6ca9f3f169b7/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 974,
+        "providerInputTokens": 2959,
+        "providerOutputTokens": 339
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Pacific/Auckland",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12057,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 404
+        }
+      ],
+      "approvalMs": 404,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "docs-lead-guide",
+      "condition": "b",
+      "rep": 3,
+      "difficulty": "hard",
+      "expected": [
+        "Migrating Ledgers to Version Two"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/docs-lead-guide.b.3",
+      "origin": "http://127.0.0.1:34815",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 23083,
+      "firstToolCallMs": 15381,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1873,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 38645,
+        "cachedInput": 23680,
+        "output": 225,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 38870
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 23680,
+        "uncachedInput": 14965,
+        "output": 225,
+        "total": 38870,
+        "priced": 18458
+      },
+      "answer": "Migrating Ledgers to Version Two",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "4f634b25-3cb4-4a23-98b9-f6397353d303",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Migrating Ledgers to Version Two by Priya Raman",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1405
+            },
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 4476,
+            "outputTokens": 463,
+            "elapsedMs": 1351,
+            "trace": "~/Repos/fai-browser/artifacts/4f634b25-3cb4-4a23-98b9-f6397353d303/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 3,
+        "elapsedMs": 1351,
+        "providerInputTokens": 4476,
+        "providerOutputTokens": 463
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Migrating Ledgers to Version Two by Priya Raman",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 15575,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 395
+        }
+      ],
+      "approvalMs": 395,
+      "site": {
+        "requests": 9,
+        "notFound": 0,
+        "forbidden": []
+      }
+    },
+    {
+      "taskId": "catalog-plan-price",
+      "condition": "b",
+      "rep": 3,
+      "difficulty": "hard",
+      "expected": [
+        "$96",
+        "$96 per month",
+        "$96/month",
+        "$96/mo",
+        "$96 a month",
+        "96 USD",
+        "$96.00",
+        "96 dollars"
+      ],
+      "logDir": "bench/results/2026-10-04-oversight-2/runs/catalog-plan-price.b.3",
+      "origin": "http://127.0.0.1:45103",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 23057,
+      "firstToolCallMs": 15753,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2315,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 38868,
+        "cachedInput": 32128,
+        "output": 222,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 39090
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 32128,
+        "uncachedInput": 6740,
+        "output": 222,
+        "total": 39090,
+        "priced": 11062.8
+      },
+      "answer": "$96 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "cec73741-9b4e-42e2-bf5a-088939bb8d52",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Team | $96 per month | $960 per year | 40",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1958
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6537,
+            "outputTokens": 620,
+            "elapsedMs": 1908,
+            "trace": "~/Repos/fai-browser/artifacts/cec73741-9b4e-42e2-bf5a-088939bb8d52/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1908,
+        "providerInputTokens": 6537,
+        "providerOutputTokens": 620
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Team | $96 per month | $960 per year | 40",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 15833,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 399
+        }
+      ],
+      "approvalMs": 399,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      }
+    }
+  ],
+  "baselineRuns": [
+    {
+      "taskId": "about-members",
+      "condition": "b-baseline",
+      "rep": 1,
+      "difficulty": "easy",
+      "expected": [
+        "Mira Okafor",
+        "Tomas Lindqvist",
+        "Priya Raman",
+        "Jonah Weiss",
+        "Elif Demir"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/about-members.b.1",
+      "origin": "http://127.0.0.1:39003",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 18138,
+      "firstToolCallMs": 13290,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1537,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34588,
+        "cachedInput": 30208,
+        "output": 227,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 34815
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 30208,
+        "uncachedInput": 4380,
+        "output": 227,
+        "total": 34815,
+        "priced": 8535.8
+      },
+      "answer": "Mira Okafor, Tomas Lindqvist, Priya Raman, Jonah Weiss, Elif Demir",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "70b181dc-deaf-42c2-ad55-7259057e5fbd",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3188,
+            "outputTokens": 355,
+            "elapsedMs": 946,
+            "trace": "~/Repos/fai-browser/artifacts/70b181dc-deaf-42c2-ad55-7259057e5fbd/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 946,
+        "providerInputTokens": 3188,
+        "providerOutputTokens": 355
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 13564,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 396
+        }
+      ],
+      "approvalMs": 396,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "pricing-pro",
+      "condition": "b-baseline",
+      "rep": 1,
+      "difficulty": "easy",
+      "expected": [
+        "$37",
+        "$37 per month",
+        "$37/month",
+        "$37/mo",
+        "$37 a month",
+        "37 USD",
+        "$37.00",
+        "37 dollars"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/pricing-pro.b.1",
+      "origin": "http://127.0.0.1:33935",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 15341,
+      "firstToolCallMs": 10523,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1573,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34615,
+        "cachedInput": 30208,
+        "output": 203,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 34818
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 30208,
+        "uncachedInput": 4407,
+        "output": 203,
+        "total": 34818,
+        "priced": 8442.8
+      },
+      "answer": "$37 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "0c1e97f2-49d4-4ab2-8d14-ed683b9efb32",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3320,
+            "outputTokens": 339,
+            "elapsedMs": 982,
+            "trace": "~/Repos/fai-browser/artifacts/0c1e97f2-49d4-4ab2-8d14-ed683b9efb32/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 982,
+        "providerInputTokens": 3320,
+        "providerOutputTokens": 339
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 10796,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 397
+        }
+      ],
+      "approvalMs": 397,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "docs-auth-header",
+      "condition": "b-baseline",
+      "rep": 1,
+      "difficulty": "medium",
+      "expected": [
+        "X-Lanternfish-Token"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/docs-auth-header.b.1",
+      "origin": "http://127.0.0.1:33033",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 17698,
+      "firstToolCallMs": 12070,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2432,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34867,
+        "cachedInput": 21888,
+        "output": 227,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35094
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 21888,
+        "uncachedInput": 12979,
+        "output": 227,
+        "total": 35094,
+        "priced": 16302.8
+      },
+      "answer": "X-Lanternfish-Token",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "8c32d85d-742d-48e2-89ed-3d8bce5d0a6a",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6294,
+            "outputTokens": 623,
+            "elapsedMs": 1859,
+            "trace": "~/Repos/fai-browser/artifacts/8c32d85d-742d-48e2-89ed-3d8bce5d0a6a/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1859,
+        "providerInputTokens": 6294,
+        "providerOutputTokens": 623
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12316,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 404
+        }
+      ],
+      "approvalMs": 404,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "catalog-p3-i5",
+      "condition": "b-baseline",
+      "rep": 1,
+      "difficulty": "medium",
+      "expected": [
+        "Russet Leather Wallet"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/catalog-p3-i5.b.1",
+      "origin": "http://127.0.0.1:42193",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 18100,
+      "firstToolCallMs": 13270,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2024,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34725,
+        "cachedInput": 30336,
+        "output": 244,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 34969
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 30336,
+        "uncachedInput": 4389,
+        "output": 244,
+        "total": 34969,
+        "priced": 8642.6
+      },
+      "answer": "Russet Leather Wallet",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "66088230-e993-46e1-beea-18a6384f1bdf",
+            "tool": "fai_browser_run",
+            "status": "needs_host",
+            "code": "handoff",
+            "verified": false,
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 5755,
+            "outputTokens": 555,
+            "elapsedMs": 1660,
+            "trace": "~/Repos/fai-browser/artifacts/66088230-e993-46e1-beea-18a6384f1bdf/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1660,
+        "providerInputTokens": 5755,
+        "providerOutputTokens": 555
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 13316,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 392
+        }
+      ],
+      "approvalMs": 392,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "slow-content",
+      "condition": "b-baseline",
+      "rep": 1,
+      "difficulty": "medium",
+      "expected": [
+        "Batch 7 reconciled: 1,284 records"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/slow-content.b.1",
+      "origin": "http://127.0.0.1:46757",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 15399,
+      "firstToolCallMs": 10492,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1862,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34409,
+        "cachedInput": 19712,
+        "output": 215,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 34624
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 19712,
+        "uncachedInput": 14697,
+        "output": 215,
+        "total": 34624,
+        "priced": 17743.2
+      },
+      "answer": "Batch 7 reconciled: 1,284 records",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "55df51ec-13b2-494b-8e08-bad3e425c23d",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3703,
+            "outputTokens": 396,
+            "elapsedMs": 1496,
+            "trace": "~/Repos/fai-browser/artifacts/55df51ec-13b2-494b-8e08-bad3e425c23d/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 3,
+        "elapsedMs": 1496,
+        "providerInputTokens": 3703,
+        "providerOutputTokens": 396
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 10552,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 386
+        }
+      ],
+      "approvalMs": 386,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "settings-new-tab",
+      "condition": "b-baseline",
+      "rep": 1,
+      "difficulty": "medium",
+      "expected": [
+        "Pacific/Auckland"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/settings-new-tab.b.1",
+      "origin": "http://127.0.0.1:44029",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 15276,
+      "firstToolCallMs": 11043,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1494,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34459,
+        "cachedInput": 30336,
+        "output": 216,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 34675
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 30336,
+        "uncachedInput": 4123,
+        "output": 216,
+        "total": 34675,
+        "priced": 8236.6
+      },
+      "answer": "Pacific/Auckland",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "36fbc36f-d569-4267-8cdd-b880c7232c53",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3073,
+            "outputTokens": 339,
+            "elapsedMs": 912,
+            "trace": "~/Repos/fai-browser/artifacts/36fbc36f-d569-4267-8cdd-b880c7232c53/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 912,
+        "providerInputTokens": 3073,
+        "providerOutputTokens": 339
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 11307,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 403
+        }
+      ],
+      "approvalMs": 403,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "docs-lead-guide",
+      "condition": "b-baseline",
+      "rep": 1,
+      "difficulty": "hard",
+      "expected": [
+        "Migrating Ledgers to Version Two"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/docs-lead-guide.b.1",
+      "origin": "http://127.0.0.1:45327",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 17102,
+      "firstToolCallMs": 12450,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1927,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34737,
+        "cachedInput": 21888,
+        "output": 239,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 34976
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 21888,
+        "uncachedInput": 12849,
+        "output": 239,
+        "total": 34976,
+        "priced": 16232.8
+      },
+      "answer": "Migrating Ledgers to Version Two",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "de2263b8-b150-44a9-94a8-d761587f4f96",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 4529,
+            "outputTokens": 463,
+            "elapsedMs": 1496,
+            "trace": "~/Repos/fai-browser/artifacts/de2263b8-b150-44a9-94a8-d761587f4f96/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 3,
+        "elapsedMs": 1496,
+        "providerInputTokens": 4529,
+        "providerOutputTokens": 463
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12561,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 393
+        }
+      ],
+      "approvalMs": 393,
+      "site": {
+        "requests": 9,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "catalog-plan-price",
+      "condition": "b-baseline",
+      "rep": 1,
+      "difficulty": "hard",
+      "expected": [
+        "$96",
+        "$96 per month",
+        "$96/month",
+        "$96/mo",
+        "$96 a month",
+        "96 USD",
+        "$96.00",
+        "96 dollars"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/catalog-plan-price.b.1",
+      "origin": "http://127.0.0.1:36907",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 24115,
+      "firstToolCallMs": 13080,
+      "toolCalls": 2,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 2
+      },
+      "toolErrors": 0,
+      "toolMs": 2664,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 48247,
+        "cachedInput": 34304,
+        "output": 361,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 48608
+      },
+      "requests": 3,
+      "tokenSplit": {
+        "cachedInput": 34304,
+        "uncachedInput": 13943,
+        "output": 361,
+        "total": 48608,
+        "priced": 19178.4
+      },
+      "answer": "$96 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "bbeac749-7b2c-4e47-b3c6-7b81f0c3fc22",
+            "tool": "fai_browser_run",
+            "status": "needs_host",
+            "code": "handoff",
+            "verified": false,
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 4250,
+            "outputTokens": 423,
+            "elapsedMs": 1120,
+            "trace": "~/Repos/fai-browser/artifacts/bbeac749-7b2c-4e47-b3c6-7b81f0c3fc22/trace.json",
+            "traceRead": true
+          },
+          {
+            "runId": "63f74dee-6981-4ff1-9632-af0c1ec903fa",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3290,
+            "outputTokens": 330,
+            "elapsedMs": 977,
+            "trace": "~/Repos/fai-browser/artifacts/63f74dee-6981-4ff1-9632-af0c1ec903fa/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 5,
+        "elapsedMs": 2097,
+        "providerInputTokens": 7540,
+        "providerOutputTokens": 753
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 13310,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 339
+        }
+      ],
+      "approvalMs": 339,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "about-members",
+      "condition": "b-baseline",
+      "rep": 2,
+      "difficulty": "easy",
+      "expected": [
+        "Mira Okafor",
+        "Tomas Lindqvist",
+        "Priya Raman",
+        "Jonah Weiss",
+        "Elif Demir"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/about-members.b.2",
+      "origin": "http://127.0.0.1:40947",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 15897,
+      "firstToolCallMs": 11495,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1290,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34586,
+        "cachedInput": 30208,
+        "output": 230,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 34816
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 30208,
+        "uncachedInput": 4378,
+        "output": 230,
+        "total": 34816,
+        "priced": 8548.8
+      },
+      "answer": "Mira Okafor, Tomas Lindqvist, Priya Raman, Jonah Weiss, Elif Demir",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "fece9d28-e63e-4751-b31b-34cf19766490",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3195,
+            "outputTokens": 355,
+            "elapsedMs": 920,
+            "trace": "~/Repos/fai-browser/artifacts/fece9d28-e63e-4751-b31b-34cf19766490/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 920,
+        "providerInputTokens": 3195,
+        "providerOutputTokens": 355
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 11557,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 392
+        }
+      ],
+      "approvalMs": 392,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "pricing-pro",
+      "condition": "b-baseline",
+      "rep": 2,
+      "difficulty": "easy",
+      "expected": [
+        "$37",
+        "$37 per month",
+        "$37/month",
+        "$37/mo",
+        "$37 a month",
+        "37 USD",
+        "$37.00",
+        "37 dollars"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/pricing-pro.b.2",
+      "origin": "http://127.0.0.1:38325",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 14478,
+      "firstToolCallMs": 10650,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1417,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34586,
+        "cachedInput": 21760,
+        "output": 187,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 34773
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 21760,
+        "uncachedInput": 12826,
+        "output": 187,
+        "total": 34773,
+        "priced": 15937
+      },
+      "answer": "$37 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "a2144dd6-e323-43d3-a8c3-3d88c4679afd",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3266,
+            "outputTokens": 339,
+            "elapsedMs": 945,
+            "trace": "~/Repos/fai-browser/artifacts/a2144dd6-e323-43d3-a8c3-3d88c4679afd/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 945,
+        "providerInputTokens": 3266,
+        "providerOutputTokens": 339
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 10801,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 403
+        }
+      ],
+      "approvalMs": 403,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "docs-auth-header",
+      "condition": "b-baseline",
+      "rep": 2,
+      "difficulty": "medium",
+      "expected": [
+        "X-Lanternfish-Token"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/docs-auth-header.b.2",
+      "origin": "http://127.0.0.1:34527",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 16669,
+      "firstToolCallMs": 11282,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2458,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34831,
+        "cachedInput": 30336,
+        "output": 211,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35042
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 30336,
+        "uncachedInput": 4495,
+        "output": 211,
+        "total": 35042,
+        "priced": 8583.6
+      },
+      "answer": "X-Lanternfish-Token",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "c7f5725e-d62e-4a14-8487-f532d01fe72b",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6224,
+            "outputTokens": 623,
+            "elapsedMs": 1856,
+            "trace": "~/Repos/fai-browser/artifacts/c7f5725e-d62e-4a14-8487-f532d01fe72b/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1856,
+        "providerInputTokens": 6224,
+        "providerOutputTokens": 623
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 11560,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 406
+        }
+      ],
+      "approvalMs": 406,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "catalog-p3-i5",
+      "condition": "b-baseline",
+      "rep": 2,
+      "difficulty": "medium",
+      "expected": [
+        "Russet Leather Wallet"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/catalog-p3-i5.b.2",
+      "origin": "http://127.0.0.1:38997",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 17668,
+      "firstToolCallMs": 12049,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2517,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 35183,
+        "cachedInput": 21888,
+        "output": 242,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35425
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 21888,
+        "uncachedInput": 13295,
+        "output": 242,
+        "total": 35425,
+        "priced": 16693.8
+      },
+      "answer": "Russet Leather Wallet",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "a2b7d357-cb2f-4740-bf2a-2a9a6fc4d24c",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6678,
+            "outputTokens": 662,
+            "elapsedMs": 1924,
+            "trace": "~/Repos/fai-browser/artifacts/a2b7d357-cb2f-4740-bf2a-2a9a6fc4d24c/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1924,
+        "providerInputTokens": 6678,
+        "providerOutputTokens": 662
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12312,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 407
+        }
+      ],
+      "approvalMs": 407,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "slow-content",
+      "condition": "b-baseline",
+      "rep": 2,
+      "difficulty": "medium",
+      "expected": [
+        "Batch 7 reconciled: 1,284 records"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/slow-content.b.2",
+      "origin": "http://127.0.0.1:41349",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 15509,
+      "firstToolCallMs": 10889,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1931,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34452,
+        "cachedInput": 30336,
+        "output": 221,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 34673
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 30336,
+        "uncachedInput": 4116,
+        "output": 221,
+        "total": 34673,
+        "priced": 8254.6
+      },
+      "answer": "Batch 7 reconciled: 1,284 records",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "90200826-ef5e-4e23-beba-87c261ad3122",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3709,
+            "outputTokens": 396,
+            "elapsedMs": 1441,
+            "trace": "~/Repos/fai-browser/artifacts/90200826-ef5e-4e23-beba-87c261ad3122/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 3,
+        "elapsedMs": 1441,
+        "providerInputTokens": 3709,
+        "providerOutputTokens": 396
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 11055,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 355
+        }
+      ],
+      "approvalMs": 355,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "settings-new-tab",
+      "condition": "b-baseline",
+      "rep": 2,
+      "difficulty": "medium",
+      "expected": [
+        "Pacific/Auckland"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/settings-new-tab.b.2",
+      "origin": "http://127.0.0.1:42475",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 16211,
+      "firstToolCallMs": 11742,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1539,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34475,
+        "cachedInput": 19712,
+        "output": 209,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 34684
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 19712,
+        "uncachedInput": 14763,
+        "output": 209,
+        "total": 34684,
+        "priced": 17779.2
+      },
+      "answer": "Pacific/Auckland",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "62182047-0197-4d74-a83a-2943e90f246f",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3046,
+            "outputTokens": 339,
+            "elapsedMs": 1154,
+            "trace": "~/Repos/fai-browser/artifacts/62182047-0197-4d74-a83a-2943e90f246f/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1154,
+        "providerInputTokens": 3046,
+        "providerOutputTokens": 339
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 11807,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 393
+        }
+      ],
+      "approvalMs": 393,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "docs-lead-guide",
+      "condition": "b-baseline",
+      "rep": 2,
+      "difficulty": "hard",
+      "expected": [
+        "Migrating Ledgers to Version Two"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/docs-lead-guide.b.2",
+      "origin": "http://127.0.0.1:42279",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 17890,
+      "firstToolCallMs": 12127,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1892,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34818,
+        "cachedInput": 19072,
+        "output": 240,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35058
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 19072,
+        "uncachedInput": 15746,
+        "output": 240,
+        "total": 35058,
+        "priced": 18853.2
+      },
+      "answer": "Migrating Ledgers to Version Two",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "ab34ed64-eefd-4979-8e9a-2f690003b3bb",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 4542,
+            "outputTokens": 463,
+            "elapsedMs": 1387,
+            "trace": "~/Repos/fai-browser/artifacts/ab34ed64-eefd-4979-8e9a-2f690003b3bb/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 3,
+        "elapsedMs": 1387,
+        "providerInputTokens": 4542,
+        "providerOutputTokens": 463
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12312,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 394
+        }
+      ],
+      "approvalMs": 394,
+      "site": {
+        "requests": 9,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "catalog-plan-price",
+      "condition": "b-baseline",
+      "rep": 2,
+      "difficulty": "hard",
+      "expected": [
+        "$96",
+        "$96 per month",
+        "$96/month",
+        "$96/mo",
+        "$96 a month",
+        "96 USD",
+        "$96.00",
+        "96 dollars"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/catalog-plan-price.b.2",
+      "origin": "http://127.0.0.1:46215",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 17869,
+      "firstToolCallMs": 12175,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2734,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 35061,
+        "cachedInput": 11264,
+        "output": 250,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35311
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 11264,
+        "uncachedInput": 23797,
+        "output": 250,
+        "total": 35311,
+        "priced": 26173.4
+      },
+      "answer": "$96 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "3fb674ff-cb3f-45ba-a515-e812b153542b",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6620,
+            "outputTokens": 612,
+            "elapsedMs": 2270,
+            "trace": "~/Repos/fai-browser/artifacts/3fb674ff-cb3f-45ba-a515-e812b153542b/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 2270,
+        "providerInputTokens": 6620,
+        "providerOutputTokens": 612
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 12310,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 347
+        }
+      ],
+      "approvalMs": 347,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "about-members",
+      "condition": "b-baseline",
+      "rep": 3,
+      "difficulty": "easy",
+      "expected": [
+        "Mira Okafor",
+        "Tomas Lindqvist",
+        "Priya Raman",
+        "Jonah Weiss",
+        "Elif Demir"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/about-members.b.3",
+      "origin": "http://127.0.0.1:37991",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 15875,
+      "firstToolCallMs": 11190,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1382,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34613,
+        "cachedInput": 21760,
+        "output": 229,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 34842
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 21760,
+        "uncachedInput": 12853,
+        "output": 229,
+        "total": 34842,
+        "priced": 16174
+      },
+      "answer": "Mira Okafor, Tomas Lindqvist, Priya Raman, Jonah Weiss, Elif Demir",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "ac3c9af7-6aa0-49b9-9c84-908e3c0b9634",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3192,
+            "outputTokens": 355,
+            "elapsedMs": 948,
+            "trace": "~/Repos/fai-browser/artifacts/ac3c9af7-6aa0-49b9-9c84-908e3c0b9634/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 948,
+        "providerInputTokens": 3192,
+        "providerOutputTokens": 355
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 11306,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 397
+        }
+      ],
+      "approvalMs": 397,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "pricing-pro",
+      "condition": "b-baseline",
+      "rep": 3,
+      "difficulty": "easy",
+      "expected": [
+        "$37",
+        "$37 per month",
+        "$37/month",
+        "$37/mo",
+        "$37 a month",
+        "37 USD",
+        "$37.00",
+        "37 dollars"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/pricing-pro.b.3",
+      "origin": "http://127.0.0.1:44421",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 15178,
+      "firstToolCallMs": 10955,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1454,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34606,
+        "cachedInput": 30208,
+        "output": 199,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 34805
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 30208,
+        "uncachedInput": 4398,
+        "output": 199,
+        "total": 34805,
+        "priced": 8413.8
+      },
+      "answer": "$37 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "0dc9ceba-e3f7-4e46-b0e3-02c9a10ef888",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3323,
+            "outputTokens": 339,
+            "elapsedMs": 1019,
+            "trace": "~/Repos/fai-browser/artifacts/0dc9ceba-e3f7-4e46-b0e3-02c9a10ef888/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1019,
+        "providerInputTokens": 3323,
+        "providerOutputTokens": 339
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 11055,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 406
+        }
+      ],
+      "approvalMs": 406,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "docs-auth-header",
+      "condition": "b-baseline",
+      "rep": 3,
+      "difficulty": "medium",
+      "expected": [
+        "X-Lanternfish-Token"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/docs-auth-header.b.3",
+      "origin": "http://127.0.0.1:38869",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 17507,
+      "firstToolCallMs": 11295,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2374,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34851,
+        "cachedInput": 21888,
+        "output": 225,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35076
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 21888,
+        "uncachedInput": 12963,
+        "output": 225,
+        "total": 35076,
+        "priced": 16276.8
+      },
+      "answer": "X-Lanternfish-Token",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "5b9436cd-bc88-4c01-90a9-784e8bb863c3",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6284,
+            "outputTokens": 623,
+            "elapsedMs": 1784,
+            "trace": "~/Repos/fai-browser/artifacts/5b9436cd-bc88-4c01-90a9-784e8bb863c3/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1784,
+        "providerInputTokens": 6284,
+        "providerOutputTokens": 623
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 11556,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 408
+        }
+      ],
+      "approvalMs": 408,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "catalog-p3-i5",
+      "condition": "b-baseline",
+      "rep": 3,
+      "difficulty": "medium",
+      "expected": [
+        "Russet Leather Wallet"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/catalog-p3-i5.b.3",
+      "origin": "http://127.0.0.1:38719",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 17468,
+      "firstToolCallMs": 13181,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2049,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34733,
+        "cachedInput": 21760,
+        "output": 254,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 34987
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 21760,
+        "uncachedInput": 12973,
+        "output": 254,
+        "total": 34987,
+        "priced": 16419
+      },
+      "answer": "Russet Leather Wallet",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "523201bd-8b7f-4f6a-99d2-17efa69c80bb",
+            "tool": "fai_browser_run",
+            "status": "needs_host",
+            "code": "handoff",
+            "verified": false,
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 5759,
+            "outputTokens": 555,
+            "elapsedMs": 1602,
+            "trace": "~/Repos/fai-browser/artifacts/523201bd-8b7f-4f6a-99d2-17efa69c80bb/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1602,
+        "providerInputTokens": 5759,
+        "providerOutputTokens": 555
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 13315,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 391
+        }
+      ],
+      "approvalMs": 391,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "slow-content",
+      "condition": "b-baseline",
+      "rep": 3,
+      "difficulty": "medium",
+      "expected": [
+        "Batch 7 reconciled: 1,284 records"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/slow-content.b.3",
+      "origin": "http://127.0.0.1:37487",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 16246,
+      "firstToolCallMs": 11355,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2131,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34415,
+        "cachedInput": 30336,
+        "output": 217,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 34632
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 30336,
+        "uncachedInput": 4079,
+        "output": 217,
+        "total": 34632,
+        "priced": 8197.6
+      },
+      "answer": "Batch 7 reconciled: 1,284 records",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "fc3c0e66-5294-439c-94c4-3db61fd13247",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3697,
+            "outputTokens": 396,
+            "elapsedMs": 1607,
+            "trace": "~/Repos/fai-browser/artifacts/fc3c0e66-5294-439c-94c4-3db61fd13247/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 3,
+        "elapsedMs": 1607,
+        "providerInputTokens": 3697,
+        "providerOutputTokens": 396
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 11558,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 400
+        }
+      ],
+      "approvalMs": 400,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "settings-new-tab",
+      "condition": "b-baseline",
+      "rep": 3,
+      "difficulty": "medium",
+      "expected": [
+        "Pacific/Auckland"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/settings-new-tab.b.3",
+      "origin": "http://127.0.0.1:45545",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 15810,
+      "firstToolCallMs": 11598,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1533,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34447,
+        "cachedInput": 30336,
+        "output": 209,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 34656
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 30336,
+        "uncachedInput": 4111,
+        "output": 209,
+        "total": 34656,
+        "priced": 8189.6
+      },
+      "answer": "Pacific/Auckland",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "940d2382-7afe-42ee-999d-15259f45bd79",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3052,
+            "outputTokens": 339,
+            "elapsedMs": 1002,
+            "trace": "~/Repos/fai-browser/artifacts/940d2382-7afe-42ee-999d-15259f45bd79/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1002,
+        "providerInputTokens": 3052,
+        "providerOutputTokens": 339
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 11808,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 397
+        }
+      ],
+      "approvalMs": 397,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "docs-lead-guide",
+      "condition": "b-baseline",
+      "rep": 3,
+      "difficulty": "hard",
+      "expected": [
+        "Migrating Ledgers to Version Two"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/docs-lead-guide.b.3",
+      "origin": "http://127.0.0.1:41227",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 18049,
+      "firstToolCallMs": 13353,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2071,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 34818,
+        "cachedInput": 27520,
+        "output": 253,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 35071
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 27520,
+        "uncachedInput": 7298,
+        "output": 253,
+        "total": 35071,
+        "priced": 11315
+      },
+      "answer": "Migrating Ledgers to Version Two",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "95edaf30-4f1d-4b99-9b2e-ccf5e0cb4245",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 4583,
+            "outputTokens": 463,
+            "elapsedMs": 1528,
+            "trace": "~/Repos/fai-browser/artifacts/95edaf30-4f1d-4b99-9b2e-ccf5e0cb4245/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 3,
+        "elapsedMs": 1528,
+        "providerInputTokens": 4583,
+        "providerOutputTokens": 463
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 13565,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 405
+        }
+      ],
+      "approvalMs": 405,
+      "site": {
+        "requests": 9,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    },
+    {
+      "taskId": "catalog-plan-price",
+      "condition": "b-baseline",
+      "rep": 3,
+      "difficulty": "hard",
+      "expected": [
+        "$96",
+        "$96 per month",
+        "$96/month",
+        "$96/mo",
+        "$96 a month",
+        "96 USD",
+        "$96.00",
+        "96 dollars"
+      ],
+      "logDir": "bench/results/2026-10-03T23-35-50-786/runs/catalog-plan-price.b.3",
+      "origin": "http://127.0.0.1:41193",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 27796,
+      "firstToolCallMs": 13966,
+      "toolCalls": 2,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 2
+      },
+      "toolErrors": 0,
+      "toolMs": 4408,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 48785,
+        "cachedInput": 42880,
+        "output": 426,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 49211
+      },
+      "requests": 3,
+      "tokenSplit": {
+        "cachedInput": 42880,
+        "uncachedInput": 5905,
+        "output": 426,
+        "total": 49211,
+        "priced": 12323
+      },
+      "answer": "$96 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "fai": {
+        "runs": [
+          {
+            "runId": "7de76e49-44f7-4d43-a1e7-9ef9b7bcd8e3",
+            "tool": "fai_browser_run",
+            "status": "needs_host",
+            "code": "handoff",
+            "verified": false,
+            "steps": 6,
+            "decisions": 7,
+            "provider": "jev-1.13.0",
+            "inputTokens": 11254,
+            "outputTokens": 969,
+            "elapsedMs": 3099,
+            "trace": "~/Repos/fai-browser/artifacts/7de76e49-44f7-4d43-a1e7-9ef9b7bcd8e3/trace.json",
+            "traceRead": true
+          },
+          {
+            "runId": "1533bba5-7d5a-4238-a087-b8e33226ed4c",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3305,
+            "outputTokens": 330,
+            "elapsedMs": 873,
+            "trace": "~/Repos/fai-browser/artifacts/1533bba5-7d5a-4238-a087-b8e33226ed4c/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 9,
+        "elapsedMs": 3972,
+        "providerInputTokens": 14559,
+        "providerOutputTokens": 1299
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 14067,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 388
+        }
+      ],
+      "approvalMs": 388,
+      "site": {
+        "requests": 24,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "baseline": "~/Repos/fai-browser/bench/results/2026-10-03T23-35-50-786"
+    }
+  ]
+}

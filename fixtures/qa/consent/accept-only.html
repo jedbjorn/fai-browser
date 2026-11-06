@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cobalt Weather</title>
+<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#1d2330;background:#fff;line-height:1.5}
+header.site{display:flex;gap:18px;align-items:center;padding:12px 24px;background:#f2f4f8;border-bottom:1px solid #d9dee8}
+header.site strong{margin-right:auto}main{max-width:880px;margin:0 auto;padding:24px}a{color:#1f5fbf}
+button{font:inherit;padding:6px 12px;border:1px solid #8a94a8;border-radius:6px;background:#fff;cursor:pointer}
+table{border-collapse:collapse}td,th{border:1px solid #d9dee8;padding:6px 10px;text-align:left}footer{padding:24px;color:#5a6478;border-top:1px solid #e3e6ee;margin-top:40px}
+.overlay{position:fixed;inset:0;background:rgba(10,14,20,.6);z-index:1000;display:flex;align-items:center;justify-content:center}
+.modal{background:#fff;max-width:520px;padding:24px;border-radius:10px}.modal button{background:#1f5fbf;color:#fff;border:0;padding:10px 18px}</style>
+</head>
+<body>
+<header class="site"><strong>Cobalt Weather</strong><a href="/consent/accept-only.html">Today</a></header>
+<main><h1>Weather for Gull Island</h1><p>Today: 14 °C, light rain, wind 18 km/h from the south-west.</p><p>Tomorrow: 17 °C, sunny spells.</p></main>
+<div class="overlay" id="consent-overlay"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="cm-title">
+<h2 id="cm-title">We value your privacy</h2>
+<p>We and our 412 partners use cookies and similar technologies to store and access information on your device, for personalised ads and content, ad and content measurement, and audience insights.</p>
+<button type="button" id="cm-accept">Accept and continue</button>
+</div></div>
+<script>
+function qaBeacon(ev){try{fetch('/api/beacon?ev='+encodeURIComponent(ev))}catch(e){}}
+document.getElementById('cm-accept').onclick=function(){qaBeacon('consent:accept');document.getElementById('consent-overlay').remove();};
+</script>
+</body>
+</html>

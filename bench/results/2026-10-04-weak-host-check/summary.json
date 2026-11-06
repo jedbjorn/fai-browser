@@ -1,0 +1,1604 @@
+{
+  "meta": {
+    "startedAt": "2026-10-04T11:03:37.522Z",
+    "hosts": [
+      "codex:gpt-5.6-terra:medium",
+      "codex:gpt-6-luna:medium"
+    ],
+    "model": "gpt-5.6-terra",
+    "effort": "medium",
+    "timeoutS": 300,
+    "repeat": 1,
+    "conditions": [
+      "b"
+    ],
+    "tasks": [
+      "pricing-pro",
+      "docs-auth-header",
+      "slow-content",
+      "docs-lead-guide"
+    ],
+    "tasksFile": "bench/tasks.json",
+    "site": {
+      "dir": "fixtures/site",
+      "server": "serve-site.mjs",
+      "note": null
+    },
+    "node": "v24.21.0",
+    "chromium": "/usr/bin/chromium",
+    "keepCodexTools": false,
+    "sandboxNetwork": false,
+    "prices": {
+      "file": "bench/prices.json",
+      "date": "2026-10-04"
+    },
+    "order": "contiguous",
+    "warmup": 0,
+    "warmupTask": null,
+    "abba": true,
+    "stablePaths": true,
+    "requestsNote": "requests in tables = requestsAdjusted: Codex runs with an MCP tool call count +1 for the deferred schema load; run records keep the raw count in requests",
+    "codex": "codex-cli 0.160.0",
+    "codexTrimmedFeatures": [
+      "tool_suggest",
+      "skill_search",
+      "goals",
+      "sleep_tool",
+      "realtime_conversation"
+    ],
+    "chromiumVersion": "Chromium 153.0.8010.52 Arch Linux",
+    "fai": {
+      "server": {
+        "command": "/usr/bin/node",
+        "args": [
+          "~/Repos/fai-browser/src/mcp-main.js"
+        ]
+      },
+      "tools": [
+        "fai_browser_status",
+        "fai_browser_run",
+        "fai_browser_wait",
+        "fai_browser_observe",
+        "fai_browser_act",
+        "fai_browser_stop",
+        "fai_browser_evidence"
+      ],
+      "missingOptionalTools": [],
+      "extensionVersion": "0.4.0"
+    },
+    "dangerPatterns": {
+      "source": [
+        "DANGEROUS export of src/oversight.js",
+        "COMMIT_ACTION export of src/oversight.js"
+      ],
+      "dangerous": "/\\b(save|submit|send|purchase|buy|pay|delete|remove|confirm|invite|publish|sign ?in|log ?in)\\b/i"
+    },
+    "skipped": {},
+    "hostsSkipped": {},
+    "finishedAt": "2026-10-04T11:05:34.848Z",
+    "interrupted": false,
+    "baseline": null,
+    "weights": {
+      "uncached": 1,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "output": 5
+    }
+  },
+  "cells": {
+    "pricing-pro|b/codex:gpt-5.6-terra:medium": {
+      "taskId": "pricing-pro",
+      "condition": "b/codex:gpt-5.6-terra:medium",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 9.475,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 3,
+      "tokens": 30142,
+      "cachedInput": 25856,
+      "uncachedInput": 4097,
+      "outputTokens": 189,
+      "priced": 7627.6,
+      "cacheWrite": null,
+      "costUsd": 0.0156332,
+      "costBasis": "api-equivalent",
+      "reportedCostUsd": null,
+      "dangerClicks": 0,
+      "faiDecisions": 2,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 1.031
+    },
+    "pricing-pro|b/codex:gpt-6-luna:medium": {
+      "taskId": "pricing-pro",
+      "condition": "b/codex:gpt-6-luna:medium",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 14.92,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 3,
+      "tokens": 31570,
+      "cachedInput": 25856,
+      "uncachedInput": 5533,
+      "outputTokens": 181,
+      "priced": 9023.6,
+      "cacheWrite": null,
+      "costUsd": 0.0009023600000000002,
+      "costBasis": "api-equivalent",
+      "reportedCostUsd": null,
+      "dangerClicks": 0,
+      "faiDecisions": 2,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 1.157
+    },
+    "docs-auth-header|b/codex:gpt-5.6-terra:medium": {
+      "taskId": "docs-auth-header",
+      "condition": "b/codex:gpt-5.6-terra:medium",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 8.817,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 3,
+      "tokens": 30498,
+      "cachedInput": 25856,
+      "uncachedInput": 4364,
+      "outputTokens": 278,
+      "priced": 8339.6,
+      "cacheWrite": null,
+      "costUsd": 0.0172352,
+      "costBasis": "api-equivalent",
+      "reportedCostUsd": null,
+      "dangerClicks": 0,
+      "faiDecisions": 4,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 1.814
+    },
+    "docs-auth-header|b/codex:gpt-6-luna:medium": {
+      "taskId": "docs-auth-header",
+      "condition": "b/codex:gpt-6-luna:medium",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 22.662,
+      "toolCalls": 2,
+      "requests": 3,
+      "requestsAdjusted": 4,
+      "tokens": 42655,
+      "cachedInput": 37888,
+      "uncachedInput": 4391,
+      "outputTokens": 376,
+      "priced": 10059.8,
+      "cacheWrite": null,
+      "costUsd": 0.00100598,
+      "costBasis": "api-equivalent",
+      "reportedCostUsd": null,
+      "dangerClicks": 0,
+      "faiDecisions": 4,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 2.022
+    },
+    "slow-content|b/codex:gpt-5.6-terra:medium": {
+      "taskId": "slow-content",
+      "condition": "b/codex:gpt-5.6-terra:medium",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 11.716,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 3,
+      "tokens": 29944,
+      "cachedInput": 25856,
+      "uncachedInput": 3851,
+      "outputTokens": 237,
+      "priced": 7621.6,
+      "cacheWrite": null,
+      "costUsd": 0.0157172,
+      "costBasis": "api-equivalent",
+      "reportedCostUsd": null,
+      "dangerClicks": 0,
+      "faiDecisions": 2,
+      "receipts": 1,
+      "oversightReceipts": 1,
+      "autoAnswers": 0,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 1.509
+    },
+    "slow-content|b/codex:gpt-6-luna:medium": {
+      "taskId": "slow-content",
+      "condition": "b/codex:gpt-6-luna:medium",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 14.262,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 3,
+      "tokens": 31307,
+      "cachedInput": 25856,
+      "uncachedInput": 5246,
+      "outputTokens": 205,
+      "priced": 8856.6,
+      "cacheWrite": null,
+      "costUsd": 0.00088566,
+      "costBasis": "api-equivalent",
+      "reportedCostUsd": null,
+      "dangerClicks": 0,
+      "faiDecisions": 2,
+      "receipts": 1,
+      "oversightReceipts": 1,
+      "autoAnswers": 0,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 1.541
+    },
+    "docs-lead-guide|b/codex:gpt-5.6-terra:medium": {
+      "taskId": "docs-lead-guide",
+      "condition": "b/codex:gpt-5.6-terra:medium",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 11.88,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 3,
+      "tokens": 30483,
+      "cachedInput": 25856,
+      "uncachedInput": 4336,
+      "outputTokens": 291,
+      "priced": 8376.6,
+      "cacheWrite": null,
+      "costUsd": 0.017335200000000002,
+      "costBasis": "api-equivalent",
+      "reportedCostUsd": null,
+      "dangerClicks": 0,
+      "faiDecisions": 3,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 1,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 1.292
+    },
+    "docs-lead-guide|b/codex:gpt-6-luna:medium": {
+      "taskId": "docs-lead-guide",
+      "condition": "b/codex:gpt-6-luna:medium",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 12.607,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 3,
+      "tokens": 31802,
+      "cachedInput": 20736,
+      "uncachedInput": 10841,
+      "outputTokens": 225,
+      "priced": 14039.6,
+      "cacheWrite": null,
+      "costUsd": 0.00140396,
+      "costBasis": "api-equivalent",
+      "reportedCostUsd": null,
+      "dangerClicks": 0,
+      "faiDecisions": 3,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiElapsedS": 1.395
+    }
+  },
+  "totals": {
+    "b/codex:gpt-5.6-terra:medium": {
+      "tasks": 4,
+      "passed": 4,
+      "attempted": 4,
+      "wallS": 41.888000000000005,
+      "toolCalls": 4,
+      "requests": 8,
+      "requestsAdjusted": 12,
+      "tokens": 121067,
+      "cachedInput": 103424,
+      "uncachedInput": 16648,
+      "outputTokens": 995,
+      "priced": 31965.4,
+      "cacheWrite": null,
+      "costUsd": 0.0659208,
+      "reportedCostUsd": null,
+      "dangerClicks": 0,
+      "receipts": 4,
+      "oversightReceipts": 1,
+      "autoAnswers": 3,
+      "falseAutomation": 1,
+      "hopAutoAnswers": 0,
+      "oversightRate": 0.25,
+      "falseAutomationRate": 0.3333333333333333
+    },
+    "b/codex:gpt-6-luna:medium": {
+      "tasks": 4,
+      "passed": 4,
+      "attempted": 4,
+      "wallS": 64.451,
+      "toolCalls": 5,
+      "requests": 9,
+      "requestsAdjusted": 13,
+      "tokens": 137334,
+      "cachedInput": 110336,
+      "uncachedInput": 26011,
+      "outputTokens": 987,
+      "priced": 41979.6,
+      "cacheWrite": null,
+      "costUsd": 0.004197960000000001,
+      "reportedCostUsd": null,
+      "dangerClicks": 0,
+      "receipts": 4,
+      "oversightReceipts": 1,
+      "autoAnswers": 3,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "oversightRate": 0.25,
+      "falseAutomationRate": 0
+    }
+  },
+  "ratio": null,
+  "ratios": [],
+  "ratiosWarm": [],
+  "cache": {
+    "b/codex:gpt-5.6-terra:medium": {
+      "runs": 4,
+      "uncachedMean": 4162,
+      "uncachedMedian": 4216.5,
+      "cacheWriteMean": null,
+      "cachedPct": 86.1349856752615,
+      "costMean": 0.0164802,
+      "warm": {
+        "n": 3,
+        "uncachedMean": 4183.666666666667,
+        "uncachedMedian": 4336,
+        "costMean": 0.016762533333333333
+      },
+      "cold": {
+        "n": 1,
+        "uncachedMean": 4097,
+        "uncachedMedian": 4097,
+        "costMean": 0.0156332
+      },
+      "unknown": 0,
+      "costWarm": 0.016762533333333333,
+      "costCold": 0.0156332,
+      "warmFloor": {
+        "uncached": 4093.5,
+        "costUsd": 0.0164762
+      }
+    },
+    "b/codex:gpt-6-luna:medium": {
+      "runs": 4,
+      "uncachedMean": 6502.75,
+      "uncachedMedian": 5389.5,
+      "cacheWriteMean": null,
+      "cachedPct": 80.92293926525703,
+      "costMean": 0.0010494900000000001,
+      "warm": {
+        "n": 3,
+        "uncachedMean": 6826,
+        "uncachedMedian": 5246,
+        "costMean": 0.0010985333333333334
+      },
+      "cold": {
+        "n": 1,
+        "uncachedMean": 5533,
+        "uncachedMedian": 5533,
+        "costMean": 0.0009023600000000002
+      },
+      "unknown": 0,
+      "costWarm": 0.0010985333333333334,
+      "costCold": 0.0009023600000000002,
+      "warmFloor": {
+        "uncached": 4818.5,
+        "costUsd": 0.00094582
+      }
+    }
+  },
+  "weights": {
+    "uncached": 1,
+    "cached": 0.1,
+    "cacheWrite": 1.25,
+    "output": 5
+  },
+  "runs": [
+    {
+      "taskId": "pricing-pro",
+      "condition": "b",
+      "rep": 1,
+      "host": "codex:gpt-5.6-terra:medium",
+      "hostVendor": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "medium",
+      "conditionLabel": "B/codex:gpt-5.6-terra:medium",
+      "difficulty": "easy",
+      "expected": [
+        "$37",
+        "$37 per month",
+        "$37/month",
+        "$37/mo",
+        "$37 a month",
+        "37 USD",
+        "$37.00",
+        "37 dollars"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-04T11:03:37.924Z",
+      "gapS": null,
+      "cachePhase": "cold",
+      "cachePhaseWhy": "first run of the timeline",
+      "timelineIndex": 0,
+      "stablePath": true,
+      "portReused": false,
+      "logDir": "bench/results/2026-10-04-weak-host-check/runs/pricing-pro.b.codex_gpt-5.6-terra_medium.1",
+      "origin": "http://127.0.0.1:32817",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 9475,
+      "firstToolCallMs": 6223,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1425,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 29953,
+        "cachedInput": 25856,
+        "output": 189,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 30142
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 25856,
+        "uncachedInput": 4097,
+        "output": 189,
+        "total": 30142,
+        "priced": 7627.6
+      },
+      "answer": "$37 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "requestsAdjusted": 3,
+      "cost": {
+        "usd": 0.0156332,
+        "basis": "api-equivalent",
+        "reportedUsd": null
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "963a102b-6fd7-4040-8058-8382e82bfa9e",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "$37 per month",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1072
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3617,
+            "outputTokens": 415,
+            "elapsedMs": 1031,
+            "trace": "~/Repos/fai-browser/artifacts/963a102b-6fd7-4040-8058-8382e82bfa9e/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1031,
+        "providerInputTokens": 3617,
+        "providerOutputTokens": 415
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "$37 per month",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 6285,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 410
+        }
+      ],
+      "approvalMs": 410,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-04T11:03:48.674Z"
+    },
+    {
+      "taskId": "docs-auth-header",
+      "condition": "b",
+      "rep": 1,
+      "host": "codex:gpt-5.6-terra:medium",
+      "hostVendor": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "medium",
+      "conditionLabel": "B/codex:gpt-5.6-terra:medium",
+      "difficulty": "medium",
+      "expected": [
+        "X-Lanternfish-Token"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-04T11:03:48.699Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 1,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": "bench/results/2026-10-04-weak-host-check/runs/docs-auth-header.b.codex_gpt-5.6-terra_medium.1",
+      "origin": "http://127.0.0.1:32817",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 8817,
+      "firstToolCallMs": 5079,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2355,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 30220,
+        "cachedInput": 25856,
+        "output": 278,
+        "reasoning": 58,
+        "turns": 1,
+        "total": 30498
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 25856,
+        "uncachedInput": 4364,
+        "output": 278,
+        "total": 30498,
+        "priced": 8339.6
+      },
+      "answer": "X-Lanternfish-Token",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "requestsAdjusted": 3,
+      "cost": {
+        "usd": 0.0172352,
+        "basis": "api-equivalent",
+        "reportedUsd": null
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "782a5dba-9aaf-4e2b-ac1e-8a29581de1f1",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "X-Lanternfish-Token",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1867
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6795,
+            "outputTokens": 759,
+            "elapsedMs": 1814,
+            "trace": "~/Repos/fai-browser/artifacts/782a5dba-9aaf-4e2b-ac1e-8a29581de1f1/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1814,
+        "providerInputTokens": 6795,
+        "providerOutputTokens": 759
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "X-Lanternfish-Token",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 5275,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 409
+        }
+      ],
+      "approvalMs": 409,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-04T11:03:58.847Z"
+    },
+    {
+      "taskId": "slow-content",
+      "condition": "b",
+      "rep": 1,
+      "host": "codex:gpt-5.6-terra:medium",
+      "hostVendor": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "medium",
+      "conditionLabel": "B/codex:gpt-5.6-terra:medium",
+      "difficulty": "medium",
+      "expected": [
+        "Batch 7 reconciled: 1,284 records"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-04T11:03:58.876Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 2,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": "bench/results/2026-10-04-weak-host-check/runs/slow-content.b.codex_gpt-5.6-terra_medium.1",
+      "origin": "http://127.0.0.1:32817",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 11716,
+      "firstToolCallMs": 7556,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2074,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 29707,
+        "cachedInput": 25856,
+        "output": 237,
+        "reasoning": 19,
+        "turns": 1,
+        "total": 29944
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 25856,
+        "uncachedInput": 3851,
+        "output": 237,
+        "total": 29944,
+        "priced": 7621.6
+      },
+      "answer": "Batch 7 reconciled: 1,284 records",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "requestsAdjusted": 3,
+      "cost": {
+        "usd": 0.0157172,
+        "basis": "api-equivalent",
+        "reportedUsd": null
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "1809c0aa-3e7a-4996-960c-844fd4a1fdc7",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1562
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 2820,
+            "outputTokens": 341,
+            "elapsedMs": 1509,
+            "trace": "~/Repos/fai-browser/artifacts/1809c0aa-3e7a-4996-960c-844fd4a1fdc7/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1509,
+        "providerInputTokens": 2820,
+        "providerOutputTokens": 341
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 7786,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 407
+        }
+      ],
+      "approvalMs": 407,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-04T11:04:11.972Z"
+    },
+    {
+      "taskId": "docs-lead-guide",
+      "condition": "b",
+      "rep": 1,
+      "host": "codex:gpt-5.6-terra:medium",
+      "hostVendor": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "medium",
+      "conditionLabel": "B/codex:gpt-5.6-terra:medium",
+      "difficulty": "hard",
+      "expected": [
+        "Migrating Ledgers to Version Two"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-04T11:04:12.006Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 3,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": "bench/results/2026-10-04-weak-host-check/runs/docs-lead-guide.b.codex_gpt-5.6-terra_medium.1",
+      "origin": "http://127.0.0.1:32817",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 11880,
+      "firstToolCallMs": 8219,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1679,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 30192,
+        "cachedInput": 25856,
+        "output": 291,
+        "reasoning": 48,
+        "turns": 1,
+        "total": 30483
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 25856,
+        "uncachedInput": 4336,
+        "output": 291,
+        "total": 30483,
+        "priced": 8376.6
+      },
+      "answer": "Migrating Ledgers to Version Two",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "requestsAdjusted": 3,
+      "cost": {
+        "usd": 0.017335200000000002,
+        "basis": "api-equivalent",
+        "reportedUsd": null
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "3789bd26-c9cf-4de1-9620-4b4cb72e9d1f",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Priya Raman",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1331
+            },
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 5010,
+            "outputTokens": 565,
+            "elapsedMs": 1292,
+            "trace": "~/Repos/fai-browser/artifacts/3789bd26-c9cf-4de1-9620-4b4cb72e9d1f/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 3,
+        "elapsedMs": 1292,
+        "providerInputTokens": 5010,
+        "providerOutputTokens": 565
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 1,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Priya Raman",
+        "verdictAnswerPass": false
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 8291,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 394
+        }
+      ],
+      "approvalMs": 394,
+      "site": {
+        "requests": 9,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-04T11:04:25.192Z"
+    },
+    {
+      "taskId": "pricing-pro",
+      "condition": "b",
+      "rep": 1,
+      "host": "codex:gpt-6-luna:medium",
+      "hostVendor": "codex",
+      "model": "gpt-6-luna",
+      "effort": "medium",
+      "conditionLabel": "B/codex:gpt-6-luna:medium",
+      "difficulty": "easy",
+      "expected": [
+        "$37",
+        "$37 per month",
+        "$37/month",
+        "$37/mo",
+        "$37 a month",
+        "37 USD",
+        "$37.00",
+        "37 dollars"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-04T11:04:25.224Z",
+      "gapS": null,
+      "cachePhase": "cold",
+      "cachePhaseWhy": "first run of the timeline",
+      "timelineIndex": 0,
+      "stablePath": true,
+      "portReused": false,
+      "logDir": "bench/results/2026-10-04-weak-host-check/runs/pricing-pro.b.codex_gpt-6-luna_medium.1",
+      "origin": "http://127.0.0.1:35111",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 14920,
+      "firstToolCallMs": 10690,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1582,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 31389,
+        "cachedInput": 25856,
+        "output": 181,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 31570
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 25856,
+        "uncachedInput": 5533,
+        "output": 181,
+        "total": 31570,
+        "priced": 9023.6
+      },
+      "answer": "$37 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "requestsAdjusted": 3,
+      "cost": {
+        "usd": 0.0009023600000000002,
+        "basis": "api-equivalent",
+        "reportedUsd": null
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "a75132c2-27ad-498a-8733-37847414d8f6",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "$37 per month",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1202
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3611,
+            "outputTokens": 415,
+            "elapsedMs": 1157,
+            "trace": "~/Repos/fai-browser/artifacts/a75132c2-27ad-498a-8733-37847414d8f6/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1157,
+        "providerInputTokens": 3611,
+        "providerOutputTokens": 415
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "$37 per month",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 10798,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 396
+        }
+      ],
+      "approvalMs": 396,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-04T11:04:41.433Z"
+    },
+    {
+      "taskId": "docs-auth-header",
+      "condition": "b",
+      "rep": 1,
+      "host": "codex:gpt-6-luna:medium",
+      "hostVendor": "codex",
+      "model": "gpt-6-luna",
+      "effort": "medium",
+      "conditionLabel": "B/codex:gpt-6-luna:medium",
+      "difficulty": "medium",
+      "expected": [
+        "X-Lanternfish-Token"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-04T11:04:41.455Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 1,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": "bench/results/2026-10-04-weak-host-check/runs/docs-auth-header.b.codex_gpt-6-luna_medium.1",
+      "origin": "http://127.0.0.1:35111",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 22662,
+      "firstToolCallMs": 10602,
+      "toolCalls": 2,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 2
+      },
+      "toolErrors": 1,
+      "toolMs": 2597,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 42279,
+        "cachedInput": 37888,
+        "output": 376,
+        "reasoning": 41,
+        "turns": 1,
+        "total": 42655
+      },
+      "requests": 3,
+      "tokenSplit": {
+        "cachedInput": 37888,
+        "uncachedInput": 4391,
+        "output": 376,
+        "total": 42655,
+        "priced": 10059.8
+      },
+      "answer": "X-Lanternfish-Token",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "requestsAdjusted": 4,
+      "cost": {
+        "usd": 0.00100598,
+        "basis": "api-equivalent",
+        "reportedUsd": null
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "a77544d8-5356-473e-8fe7-40bbe8b80701",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "X-Lanternfish-Token",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 2078
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6765,
+            "outputTokens": 759,
+            "elapsedMs": 2022,
+            "trace": "~/Repos/fai-browser/artifacts/a77544d8-5356-473e-8fe7-40bbe8b80701/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 2022,
+        "providerInputTokens": 6765,
+        "providerOutputTokens": 759
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "X-Lanternfish-Token",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 17596,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 352
+        }
+      ],
+      "approvalMs": 352,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-04T11:05:05.368Z"
+    },
+    {
+      "taskId": "slow-content",
+      "condition": "b",
+      "rep": 1,
+      "host": "codex:gpt-6-luna:medium",
+      "hostVendor": "codex",
+      "model": "gpt-6-luna",
+      "effort": "medium",
+      "conditionLabel": "B/codex:gpt-6-luna:medium",
+      "difficulty": "medium",
+      "expected": [
+        "Batch 7 reconciled: 1,284 records"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-04T11:05:05.395Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 2,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": "bench/results/2026-10-04-weak-host-check/runs/slow-content.b.codex_gpt-6-luna_medium.1",
+      "origin": "http://127.0.0.1:35111",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 14262,
+      "firstToolCallMs": 10207,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1955,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 31102,
+        "cachedInput": 25856,
+        "output": 205,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 31307
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 25856,
+        "uncachedInput": 5246,
+        "output": 205,
+        "total": 31307,
+        "priced": 8856.6
+      },
+      "answer": "Batch 7 reconciled: 1,284 records",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "requestsAdjusted": 3,
+      "cost": {
+        "usd": 0.00088566,
+        "basis": "api-equivalent",
+        "reportedUsd": null
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "22d5b9b5-9349-4e76-a78a-a436eb052f3e",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1586
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 2812,
+            "outputTokens": 341,
+            "elapsedMs": 1541,
+            "trace": "~/Repos/fai-browser/artifacts/22d5b9b5-9349-4e76-a78a-a436eb052f3e/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1541,
+        "providerInputTokens": 2812,
+        "providerOutputTokens": 341
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 10295,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 403
+        }
+      ],
+      "approvalMs": 403,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-04T11:05:20.937Z"
+    },
+    {
+      "taskId": "docs-lead-guide",
+      "condition": "b",
+      "rep": 1,
+      "host": "codex:gpt-6-luna:medium",
+      "hostVendor": "codex",
+      "model": "gpt-6-luna",
+      "effort": "medium",
+      "conditionLabel": "B/codex:gpt-6-luna:medium",
+      "difficulty": "hard",
+      "expected": [
+        "Migrating Ledgers to Version Two"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-04T11:05:20.966Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 3,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": "bench/results/2026-10-04-weak-host-check/runs/docs-lead-guide.b.codex_gpt-6-luna_medium.1",
+      "origin": "http://127.0.0.1:35111",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 12607,
+      "firstToolCallMs": 8512,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1751,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 31577,
+        "cachedInput": 20736,
+        "output": 225,
+        "reasoning": 0,
+        "turns": 1,
+        "total": 31802
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 20736,
+        "uncachedInput": 10841,
+        "output": 225,
+        "total": 31802,
+        "priced": 14039.6
+      },
+      "answer": "Migrating Ledgers to Version Two",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "requestsAdjusted": 3,
+      "cost": {
+        "usd": 0.00140396,
+        "basis": "api-equivalent",
+        "reportedUsd": null
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "3cf6168f-96db-49f7-8db0-8490c0fe10ea",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Migrating Ledgers to Version Two",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1441
+            },
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 4999,
+            "outputTokens": 565,
+            "elapsedMs": 1395,
+            "trace": "~/Repos/fai-browser/artifacts/3cf6168f-96db-49f7-8db0-8490c0fe10ea/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 3,
+        "elapsedMs": 1395,
+        "providerInputTokens": 4999,
+        "providerOutputTokens": 565
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Migrating Ledgers to Version Two",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 8539,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "ms": 402
+        }
+      ],
+      "approvalMs": 402,
+      "site": {
+        "requests": 9,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-04T11:05:34.816Z"
+    }
+  ],
+  "warmupRuns": [],
+  "warmupCostUsd": null,
+  "baselineRuns": []
+}

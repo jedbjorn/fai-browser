@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Photo feed</title>
+<style>body{font:16px sans-serif;margin:0}main{padding:16px}li{height:120px;border-bottom:1px solid #ddd}#sentinel{height:4px}</style></head>
+<body>
+<main><h1>Photo feed</h1>
+<!-- Pattern: an infinite list. An IntersectionObserver on a sentinel below the list appends 10 items each time the
+     sentinel comes into view, up to 40. Only scrolling loads more. -->
+<ul id="feed"></ul><div id="sentinel"></div><p id="end" hidden>You have reached the end of the feed.</p></main>
+<script>
+const feed = document.getElementById('feed');
+let count = 0;
+function more() {
+  for (let i = 0; i < 10 && count < 40; i++) {
+    count++;
+    const li = document.createElement('li');
+    li.textContent = `Photo ${count}: sunset over the bay, ${count * 3} likes`;
+    feed.append(li);
+  }
+  if (count >= 40) { observer.disconnect(); document.getElementById('end').hidden = false; }
+}
+const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) setTimeout(more, 50); });
+more();
+observer.observe(document.getElementById('sentinel'));
+</script>
+</body></html>

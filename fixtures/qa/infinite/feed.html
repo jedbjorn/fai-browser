@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Field journal · Coastal Watch</title>
+<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#1d2330;background:#fff;line-height:1.5}
+header.site{display:flex;gap:18px;align-items:center;padding:12px 24px;background:#f2f4f8;border-bottom:1px solid #d9dee8}
+header.site strong{margin-right:auto}main{max-width:880px;margin:0 auto;padding:24px}a{color:#1f5fbf}
+button{font:inherit;padding:6px 12px;border:1px solid #8a94a8;border-radius:6px;background:#fff;cursor:pointer}
+table{border-collapse:collapse}td,th{border:1px solid #d9dee8;padding:6px 10px;text-align:left}footer{padding:24px;color:#5a6478;border-top:1px solid #e3e6ee;margin-top:40px}
+.post{border-bottom:1px solid #e3e6ee;padding:18px 0;height:120px;overflow:hidden}</style>
+</head>
+<body>
+<header class="site"><strong>Coastal Watch</strong></header><main><h1>Field journal</h1><div id="feed"></div><p id="sentinel">Loading more posts…</p></main>
+<script>
+var POSTS=[{"n":1,"title":"Tide gauge calibration #1","author":"Ana Ribeiro"},{"n":2,"title":"Gull census #1","author":"Dev Patel"},{"n":3,"title":"Dune erosion #1","author":"Grace Lee"},{"n":4,"title":"Seagrass mapping #1","author":"Jonas Berg"},{"n":5,"title":"Buoy maintenance #1","author":"Chloe Martin"},{"n":6,"title":"Plankton bloom #1","author":"Felix Wagner"},{"n":7,"title":"Harbour seal count #1","author":"Ines Duarte"},{"n":8,"title":"Storm surge log #1","author":"Ben Okafor"},{"n":9,"title":"Salt marsh walk #1","author":"Eva Novak"},{"n":10,"title":"Oyster reef survey #1","author":"Hugo Silva"},{"n":11,"title":"Tide gauge calibration #2","author":"Ana Ribeiro"},{"n":12,"title":"Gull census #2","author":"Dev Patel"},{"n":13,"title":"Dune erosion #2","author":"Grace Lee"},{"n":14,"title":"Seagrass mapping #2","author":"Jonas Berg"},{"n":15,"title":"Buoy maintenance #2","author":"Chloe Martin"},{"n":16,"title":"Plankton bloom #2","author":"Felix Wagner"},{"n":17,"title":"Harbour seal count #2","author":"Ines Duarte"},{"n":18,"title":"Storm surge log #2","author":"Ben Okafor"},{"n":19,"title":"Salt marsh walk #2","author":"Eva Novak"},{"n":20,"title":"Oyster reef survey #2","author":"Hugo Silva"},{"n":21,"title":"Tide gauge calibration #3","author":"Ana Ribeiro"},{"n":22,"title":"Gull census #3","author":"Dev Patel"},{"n":23,"title":"Dune erosion #3","author":"Grace Lee"},{"n":24,"title":"Seagrass mapping #3","author":"Jonas Berg"},{"n":25,"title":"Buoy maintenance #3","author":"Chloe Martin"},{"n":26,"title":"Plankton bloom #3","author":"Felix Wagner"},{"n":27,"title":"Harbour seal count #3","author":"Ines Duarte"},{"n":28,"title":"Storm surge log #3","author":"Ben Okafor"},{"n":29,"title":"Salt marsh walk #3","author":"Eva Novak"},{"n":30,"title":"Oyster reef survey #3","author":"Hugo Silva"},{"n":31,"title":"Tide gauge calibration #4","author":"Ana Ribeiro"},{"n":32,"title":"Gull census #4","author":"Dev Patel"},{"n":33,"title":"Dune erosion #4","author":"Grace Lee"},{"n":34,"title":"Kelp forest census","author":"Ottilie Marsh"},{"n":35,"title":"Buoy maintenance #4","author":"Chloe Martin"},{"n":36,"title":"Plankton bloom #4","author":"Felix Wagner"},{"n":37,"title":"Harbour seal count #4","author":"Ines Duarte"},{"n":38,"title":"Storm surge log #4","author":"Ben Okafor"},{"n":39,"title":"Salt marsh walk #4","author":"Eva Novak"},{"n":40,"title":"Oyster reef survey #4","author":"Hugo Silva"}];var shown=0,loading=false;
+function batch(){var f=document.getElementById('feed');POSTS.slice(shown,shown+10).forEach(function(p){var d=document.createElement('article');d.className='post';
+d.innerHTML='<h2>'+p.title+'</h2><p>Post '+p.n+' by '+p.author+'</p>';f.appendChild(d);});shown+=10;
+if(shown>=POSTS.length){document.getElementById('sentinel').textContent='You have reached the end of the journal.';}}
+batch();
+function check(){if(loading||shown>=POSTS.length)return;var r=document.getElementById('sentinel').getBoundingClientRect();
+if(r.top<innerHeight+600){loading=true;setTimeout(function(){batch();loading=false;check();},400);}}
+addEventListener('scroll',check,{passive:true});
+</script>
+</body>
+</html>

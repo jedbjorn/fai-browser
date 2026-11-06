@@ -1,0 +1,193 @@
+{
+  "note": "Real-website probe tasks for bench/real/probe.mjs. answerPattern is a case-insensitive regex that the true answer matches; it is only used to grade whether the answer reached the digest, candidates, trail or final page. variants are alternative instructions for retries (--variant N). origins (optional) adds origins to the tab request beyond the start and landing origins.",
+  "tasks": [
+    {
+      "id": "wiki-tagus",
+      "startUrl": "https://en.wikipedia.org/wiki/Lisbon",
+      "instruction": "Open the article for the river that Lisbon lies on and report its length in km",
+      "variants": [
+        "Click the link to the Tagus river article, then report the river's length in km",
+        "Open the Tagus article (the river Lisbon lies on). Scroll the infobox if needed and report the length in km"
+      ],
+      "expectation": {
+        "urlIncludes": "Tagus"
+      },
+      "answerQuestion": "What is the length of the river in km?",
+      "answerPattern": "1[,.\\s]?0(07|38)\\s?km",
+      "mode": "read-only",
+      "maxActions": 6
+    },
+    {
+      "id": "hn-comments",
+      "startUrl": "https://news.ycombinator.com/",
+      "instruction": "Open the comments page of the top story and report how many comments it has",
+      "variants": [
+        "Click the 'comments' link under the first story on the list (rank 1.), then report the comment count"
+      ],
+      "expectation": {
+        "urlIncludes": "item?id="
+      },
+      "answerQuestion": "How many comments does the story have?",
+      "answerPattern": "\\d+\\s*comments?",
+      "mode": "read-only",
+      "maxActions": 4
+    },
+    {
+      "id": "mdn-array-at",
+      "startUrl": "https://developer.mozilla.org/en-US/docs/Web/JavaScript",
+      "instruction": "Navigate to the reference page for Array.prototype.at and report its syntax line",
+      "variants": [
+        "Open Reference, then Standard built-in objects, then Array, then the at() method page, and report its syntax line",
+        "Navigate to the MDN page for Array.prototype.at() (open the Array reference, then the at() method) and report the syntax"
+      ],
+      "expectation": {
+        "urlIncludes": "Array/at"
+      },
+      "answerQuestion": "What is the syntax line of Array.prototype.at?",
+      "answerPattern": "at\\(index\\)",
+      "mode": "read-only",
+      "maxActions": 8
+    },
+    {
+      "id": "github-license",
+      "startUrl": "https://github.com/microsoft/playwright",
+      "instruction": "Open the LICENSE file and report the license name",
+      "variants": [
+        "In the file list, click the LICENSE file, then report the license name shown at the top of the file",
+        "Scroll down to the repository's file list, click the file named LICENSE, then report the license name shown in the file"
+      ],
+      "expectation": {
+        "urlIncludes": "LICENSE"
+      },
+      "answerQuestion": "What is the name of the license?",
+      "answerPattern": "Apache License",
+      "mode": "read-only",
+      "maxActions": 4
+    },
+    {
+      "id": "pydocs-read-text",
+      "startUrl": "https://docs.python.org/3/",
+      "instruction": "Find the documentation for pathlib.Path.read_text and report its signature",
+      "variants": [
+        "Open the Library Reference, then 'File and Directory Access', then the pathlib module page, and report the signature of Path.read_text",
+        "Open the Library Reference, then the pathlib module page; scroll to Path.read_text and report its signature"
+      ],
+      "expectation": {
+        "urlIncludes": "pathlib"
+      },
+      "answerQuestion": "What is the signature of Path.read_text?",
+      "answerPattern": "read_text\\(\\s*encoding=None",
+      "mode": "read-only",
+      "maxActions": 8
+    },
+    {
+      "id": "booking-lisbon",
+      "startUrl": "https://www.booking.com/",
+      "instruction": "Navigate to the supplied Lisbon search results page, then report the name and nightly price of the first listed hotel",
+      "variants": [
+        "Navigate to the supplied search results URL for Lisbon, then report the name and price of the first property listed"
+      ],
+      "allowedUrls": [
+        "https://www.booking.com/searchresults.html?ss=Lisbon&checkin=2026-11-10&checkout=2026-11-12&group_adults=2&no_rooms=1&group_children=0&selected_currency=EUR&lang=en-us"
+      ],
+      "expectation": {
+        "urlIncludes": "searchresults",
+        "textIncludes": "Lisbon"
+      },
+      "answerQuestion": "What is the name and nightly price of the first listed hotel?",
+      "answerPattern": "(€|EUR|US\\$|\\$|£)\\s?\\d",
+      "mode": "read-only",
+      "maxActions": 5
+    },
+    {
+      "id": "gflights-lis-lhr",
+      "startUrl": "https://www.google.com/travel/flights?hl=en",
+      "instruction": "Report the cheapest fare shown",
+      "variants": [
+        "Navigate to the supplied flight search URL (Lisbon to London Heathrow, 10 November 2026, one way) and report the cheapest fare shown"
+      ],
+      "allowedUrls": [
+        "https://www.google.com/travel/flights?q=Flights%20from%20LIS%20to%20LHR%20on%202026-11-10%20one%20way&hl=en&curr=EUR"
+      ],
+      "expectation": {
+        "urlIncludes": "/travel/flights",
+        "titleIncludes": "Lisbon to London"
+      },
+      "answerQuestion": "What is the cheapest fare shown?",
+      "answerPattern": "(€|EUR|US\\$|\\$|£)\\s?\\d",
+      "mode": "read-only",
+      "maxActions": 5
+    },
+    {
+      "id": "gflights-week-window",
+      "note": "The 2026-10-06 live gf-week-window task (MRS to London one way, 7-13 Oct, departures 10:00-12:00) as one step list from the 7 Oct results page. With --profile on each later day is one tfs shortcut (domains/www.google.com); off, Jev has to find its own way to the next day. Each step expects the base64 of \"026-10-DD\" in the URL (the tfs date field sits at a fixed offset in a one-way search): the \"departing YYYY-MM-DD\" sentence is below the fold at 1280x900, so it is not in the observation text. preConsent answers the consent.google.com wall before the tab request.",
+      "startUrl": "https://www.google.com/travel/flights/search?tfs=CBwQAhooEgoyMDI2LTEwLTA3agwIAhIIL20vMGpkdHRyDAgCEggvbS8wNGpwbEABSAFwAYIBCwj___________8BmAEC&hl=en&curr=EUR",
+      "instruction": "For each departure date from 2026-10-07 to 2026-10-13, show the one-way Marseille to London results and list the flights departing between 10:00 AM and 12:00 PM",
+      "steps": [
+        { "instruction": "Show results for 2026-10-07", "expectation": { "urlIncludes": "MDI2LTEwLTA3" }, "answerQuestion": "Which flights depart between 10:00 AM and 12:00 PM: airline, departure, arrival, price?", "maxActions": 3 },
+        { "instruction": "Show results for 2026-10-08", "expectation": { "urlIncludes": "MDI2LTEwLTA4" }, "answerQuestion": "Which flights depart between 10:00 AM and 12:00 PM: airline, departure, arrival, price?", "maxActions": 3 },
+        { "instruction": "Show results for 2026-10-09", "expectation": { "urlIncludes": "MDI2LTEwLTA5" }, "answerQuestion": "Which flights depart between 10:00 AM and 12:00 PM: airline, departure, arrival, price?", "maxActions": 3 },
+        { "instruction": "Show results for 2026-10-10", "expectation": { "urlIncludes": "MDI2LTEwLTEw" }, "answerQuestion": "Which flights depart between 10:00 AM and 12:00 PM: airline, departure, arrival, price?", "maxActions": 3 },
+        { "instruction": "Show results for 2026-10-11", "expectation": { "urlIncludes": "MDI2LTEwLTEx" }, "answerQuestion": "Which flights depart between 10:00 AM and 12:00 PM: airline, departure, arrival, price?", "maxActions": 3 },
+        { "instruction": "Show results for 2026-10-12", "expectation": { "urlIncludes": "MDI2LTEwLTEy" }, "answerQuestion": "Which flights depart between 10:00 AM and 12:00 PM: airline, departure, arrival, price?", "maxActions": 3 },
+        { "instruction": "Show results for 2026-10-13", "expectation": { "urlIncludes": "MDI2LTEwLTEz" }, "answerQuestion": "Which flights depart between 10:00 AM and 12:00 PM: airline, departure, arrival, price?", "maxActions": 3 }
+      ],
+      "preConsent": "Reject all",
+      "answerPattern": "1[01]:\\d{2}\\s?AM",
+      "mode": "reversible",
+      "maxActions": 21,
+      "timeoutMs": 180000
+    },
+    {
+      "id": "expedia-hotels-lisbon",
+      "startUrl": "https://www.expedia.com/",
+      "instruction": "Open the search results and report the name and nightly price of the first listed hotel",
+      "variants": [
+        "Navigate to the supplied hotel search URL for Lisbon (10-12 November 2026, 2 adults), then report the name and price of the first property listed"
+      ],
+      "allowedUrls": [
+        "https://www.expedia.com/Hotel-Search?destination=Lisbon%2C%20Portugal&startDate=2026-11-10&endDate=2026-11-12&adults=2&rooms=1&sort=RECOMMENDED"
+      ],
+      "expectation": {
+        "urlIncludes": "Hotel-Search"
+      },
+      "answerQuestion": "What is the name and nightly price of the first listed hotel?",
+      "answerPattern": "(€|EUR|US\\$|\\$|£)\\s?\\d",
+      "mode": "read-only",
+      "maxActions": 5
+    },
+    {
+      "id": "expedia-flights-lis-lhr",
+      "startUrl": "https://www.expedia.com/",
+      "instruction": "Open the flight search results and report the cheapest fare shown",
+      "variants": [
+        "Navigate to the supplied flight search URL (Lisbon to London Heathrow, 10 November 2026, one way), then report the cheapest fare shown"
+      ],
+      "allowedUrls": [
+        "https://www.expedia.com/Flights-Search?trip=oneway&leg1=from%3ALIS%2Cto%3ALHR%2Cdeparture%3A11%2F10%2F2026TANYT&passengers=adults%3A1&options=cabinclass%3Aeconomy&mode=search"
+      ],
+      "expectation": {
+        "urlIncludes": "Flights-Search"
+      },
+      "answerQuestion": "What is the cheapest fare shown?",
+      "answerPattern": "(€|EUR|US\\$|\\$|£)\\s?\\d",
+      "mode": "read-only",
+      "maxActions": 5
+    },
+    {
+      "id": "herokuapp-dropdown",
+      "startUrl": "https://the-internet.herokuapp.com/",
+      "instruction": "Open the Dropdown example and report the available options",
+      "variants": [
+        "Click the 'Dropdown' link, then report every option in the dropdown list"
+      ],
+      "expectation": {
+        "urlIncludes": "/dropdown"
+      },
+      "answerQuestion": "What options does the dropdown list offer?",
+      "answerPattern": "Option 1[^]*Option 2",
+      "mode": "reversible",
+      "maxActions": 4
+    }
+  ]
+}

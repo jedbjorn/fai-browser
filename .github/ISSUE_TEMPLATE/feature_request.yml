@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest an improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that FAI Browser does not let you do well today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: Behavior from the agent's and the user's point of view.
+  - type: dropdown
+    id: safety
+    attributes:
+      label: Does it widen what an agent can do?
+      description: New action classes, looser patterns, new levels or approvals need a safety discussion first.
+      options:
+        - "No (docs, UX, performance, new restriction)"
+        - "Yes (agent gains a capability)"
+        - "Not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Contribution
+      options:
+        - label: I would like to work on this

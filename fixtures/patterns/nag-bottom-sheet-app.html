@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Local news</title>
+<style>body{font:16px sans-serif;margin:0}main{padding:16px 16px 260px}
+#sheet{position:fixed;left:0;right:0;bottom:0;height:220px;background:#fff;border-top:1px solid #999;padding:16px;z-index:20;box-shadow:0 -4px 12px rgba(0,0,0,.3)}</style></head>
+<body>
+<main><h1>Today in the city</h1>
+<article><h2>Bridge reopens after repairs</h2><p>The river bridge reopened on Monday after six weeks of work.</p></article>
+<article><h2>New library hours</h2><p>The central library now opens at 8:00 on weekdays.</p></article>
+<article><h2>Market moves to the square</h2><p>The Saturday market moves to the main square from next week.</p></article>
+</main>
+<!-- Pattern: a bottom sheet asking to install the app; "Not now" closes it. Not modal: it covers the bottom only. -->
+<div id="sheet">
+  <h2>Better in the app</h2>
+  <p>Get breaking news alerts. Download our free app from the App Store or Google Play.</p>
+  <a href="https://apps.example.com/news">Open in app</a>
+  <button type="button" id="later">Not now</button>
+</div>
+<script>document.getElementById('later').addEventListener('click', () => document.getElementById('sheet').remove());</script>
+</body></html>

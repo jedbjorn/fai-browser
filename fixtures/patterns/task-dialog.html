@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Shipping address</title>
+<style>body{font:16px sans-serif;margin:0}main{padding:16px}
+.veil{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:40}
+.panel{background:#fff;width:480px;padding:24px;position:relative}.x{position:absolute;top:6px;right:6px}
+label{display:block;margin:6px 0}</style></head>
+<body>
+<main><h1>Your account</h1><p>Default shipping address: 12 Elm Street, Springfield.</p>
+<button type="button" id="edit">Edit address</button></main>
+<!-- Pattern: a task dialog the user opened (an address form). It has a close X, but it is the task: never dismissed. -->
+<div class="veil" id="editor">
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="t">
+    <button class="x" type="button" aria-label="Close">×</button>
+    <h2 id="t">Edit your shipping address</h2>
+    <label>Street <input name="street" value="12 Elm Street"></label>
+    <label>City <input name="city" value="Springfield"></label>
+    <label>Postcode <input name="postcode" value="12345"></label>
+    <label>Country <select name="country"><option>United States</option><option>Canada</option></select></label>
+    <label>Delivery notes <textarea name="notes"></textarea></label>
+    <button type="button">Save address</button>
+  </div>
+</div>
+<script>document.querySelector('.x').addEventListener('click', () => document.getElementById('editor').remove());</script>
+</body></html>

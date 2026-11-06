@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Job listings</title>
+<style>body{font:16px sans-serif;margin:0}main{padding:16px}.job{border:1px solid #ccc;margin:6px 0;padding:6px}</style></head>
+<body>
+<main><h1>Engineering jobs</h1><p id="count">Showing 5 of 15 jobs</p>
+<!-- Pattern: a "Load more" button that appends the next page of items in place (no navigation). -->
+<div id="jobs"></div>
+<button type="button" id="more">Load more jobs</button></main>
+<script>
+const jobs = document.getElementById('jobs');
+let shown = 0;
+function add() {
+  for (let i = 0; i < 5 && shown < 15; i++) {
+    shown++;
+    const div = document.createElement('div');
+    div.className = 'job';
+    div.innerHTML = `<h3>Engineer ${shown}</h3><p>Remote · €${50 + shown}k</p>`;
+    jobs.append(div);
+  }
+  document.getElementById('count').textContent = `Showing ${shown} of 15 jobs`;
+  if (shown >= 15) document.getElementById('more').remove();
+}
+add();
+document.getElementById('more').addEventListener('click', () => setTimeout(add, 100));
+</script>
+</body></html>

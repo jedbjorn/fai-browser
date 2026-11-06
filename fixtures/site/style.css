@@ -1,0 +1,5 @@
+body{font-family:system-ui,sans-serif;max-width:52rem;margin:1.5rem auto;padding:0 1rem;line-height:1.45;color:#1d2330}
+nav a{margin-right:.9rem}nav{padding-bottom:.6rem;border-bottom:1px solid #ccd}
+table{border-collapse:collapse}td,th{border:1px solid #ccd;padding:.3rem .6rem;text-align:left}
+.card{border:1px solid #ccd;border-radius:6px;padding:.6rem 1rem;margin:.6rem 0}
+footer{margin-top:2rem;color:#667;font-size:.85rem}

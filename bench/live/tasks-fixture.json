@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "site": "fixtures",
+  "notes": "Private-mode tasks on the live-like Google Flights fixture (fixtures/long/flights-live, served at /long/flights-live/ from the fixtures dir). Prompts are written the way a user types to Claude Code and never mention FAI parameters, steps or expectations; `prompt` is sent as is ({{START}} filled). Gold facts are bench/long/tasks.json flights-live-*: the cheapest flight departing 10:00-12:00 over Mon 12 to Sun 18 Oct is easyJet 10:40 AM, EUR 58, Thu 15 Oct, and it is behind \"View more flights\". Run: node bench/live/run.mjs --private --tasks-file bench/live/tasks-fixture.json --host claude:claude-sonnet-5-5:low --fai-home <checkout> --out bench/live/results/<name>",
+  "tasks": [
+    {
+      "id": "fx-form-day",
+      "shape": "starts on the search form: one-way, origin, destination (autocomplete), departure date (calendar dialog, Done), Search, then View more flights and a read",
+      "mode": "reversible",
+      "start": "{{ORIGIN}}/long/flights-live/",
+      "allowedOrigins": ["{{ORIGIN}}"],
+      "prompt": "My browser tab is open on the Skyline Flights search page ({{START}}). Search one-way flights from Marseille to London departing Thursday 15 October 2026. Which flight departing between 10:00 and 12:00 is the cheapest that day? Check all flights, not just the top few. Give me the airline, departure time and price. Only look, don't book anything.",
+      "answerPattern": "^(?=[\\s\\S]*easyJet)(?=[\\s\\S]*10:40)(?=[\\s\\S]*58)",
+      "notes": "Gold: easyJet 10:40 AM EUR 58 (bench/long flights-live answerFacts; the week's cheapest is on Thu 15 Oct, so it is that day's cheapest too)."
+    },
+    {
+      "id": "fx-results-week",
+      "shape": "starts on the Mon 12 Oct results page: change the day six times (next-day arrow or the Departure calendar) and read each day, View more flights included",
+      "mode": "reversible",
+      "start": "{{ORIGIN}}/long/flights-live/search.html?tfs=CBwQAhoeEgoyMDI2LTEwLTEyagUSA01SU3IFEgNMT05AAUgBcAGYAQI&hl=en&curr=EUR",
+      "allowedOrigins": ["{{ORIGIN}}"],
+      "prompt": "My browser tab shows Skyline Flights results for one-way Marseille to London on Monday 12 October 2026 ({{START}}). Go through each day from Monday 12 to Sunday 18 October and find the cheapest flight departing between 10:00 and 12:00 that week. Check all flights each day, not just the top few. Give me the day, airline, departure time and price. Only look, don't book anything.",
+      "answerPattern": "^(?=[\\s\\S]*easyJet)(?=[\\s\\S]*10:40)(?=[\\s\\S]*58)(?=[\\s\\S]*(Thu|15 Oct|Oct(ober)? 15))",
+      "notes": "Gold: easyJet 10:40 AM EUR 58 on Thu 15 Oct (bench/long flights-live answerFacts)."
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marseille to London | Skyline Flights</title>
+<link rel="stylesheet" href="style.css">
+<script src="app.js"></script>
+</head>
+<body>
+<header class="site"><strong>Skyline Flights</strong><a href="/long/flights-live/">Flights</a><a href="/long/flights-live/help.html">Explore</a><a href="/long/flights-live/help.html">Help</a></header>
+<main>
+  <div class="form" role="search" aria-label="Flight search">
+    <span class="meta">One way · 1 · Economy</span>
+    <input type="text" aria-label="Where from?" value="Marseille">
+    <input type="text" aria-label="Where to?" value="London">
+    <div class="dep-wrap" id="dep-wrap">
+      <button type="button" class="arrow" id="prev"><svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button>
+      <input type="text" id="dep" aria-label="Departure" placeholder="Departure" readonly>
+      <button type="button" class="arrow" id="next"><svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button>
+    </div>
+  </div>
+  <div class="insights">
+    <button type="button" id="grid-btn" aria-expanded="false">Date grid</button>
+    <button type="button" id="graph-btn" aria-expanded="false">Price graph</button>
+    <span class="vh">Fetching results</span>
+  </div>
+  <div id="grid" class="panel" role="dialog" aria-label="Date grid" hidden>
+    <table aria-label="Lowest fare per day"><thead><tr><th>Departure</th><th>Lowest fare</th></tr></thead><tbody></tbody></table>
+    <button type="button" class="close">Close</button>
+  </div>
+  <div id="graph" class="panel" role="dialog" aria-label="Price graph" hidden>
+    <svg width="420" height="120" viewBox="0 0 420 120" aria-hidden="true"><g fill="#8ab4f8"><rect x="10" y="40" width="40" height="80"/><rect x="70" y="50" width="40" height="70"/><rect x="130" y="30" width="40" height="90"/><rect x="190" y="45" width="40" height="75"/><rect x="250" y="35" width="40" height="85"/><rect x="310" y="60" width="40" height="60"/><rect x="370" y="38" width="40" height="82"/></g></svg>
+    <button type="button" class="close">Close</button>
+  </div>
+  <div role="status" aria-live="polite" class="vh">Loading results</div>
+  <section id="results" aria-label="Flight results"></section>
+</main>
+<footer>Prices are per adult, one way, including taxes. <a href="/long/flights-live/help.html">Help centre</a><a href="/long/flights-live/help.html">Privacy</a><a href="/long/flights-live/help.html">Terms</a></footer>
+</body>
+</html>

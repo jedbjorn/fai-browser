@@ -1,0 +1,6115 @@
+{
+  "meta": {
+    "startedAt": "2026-10-06T11:39:22.980Z",
+    "hosts": [
+      "claude:claude-sonnet-5-5:low"
+    ],
+    "model": "claude-sonnet-5-5",
+    "effort": "low",
+    "timeoutS": 300,
+    "repeat": 1,
+    "conditions": [
+      "b",
+      "r"
+    ],
+    "tasks": [
+      "about-members",
+      "pricing-pro",
+      "docs-auth-header",
+      "catalog-p3-i5",
+      "slow-content",
+      "settings-new-tab",
+      "docs-lead-guide",
+      "catalog-plan-price",
+      "billing-office-hours",
+      "office-plan-storage",
+      "office-showroom-page"
+    ],
+    "tasksFile": "bench/tasks.json",
+    "site": {
+      "dir": "fixtures/site",
+      "server": "serve-site.mjs",
+      "note": null
+    },
+    "node": "v24.21.0",
+    "chromium": "/usr/bin/chromium",
+    "keepCodexTools": false,
+    "sandboxNetwork": false,
+    "claude": {
+      "maxTurns": 40,
+      "budgetUsd": 2
+    },
+    "prices": {
+      "file": "bench/prices.json",
+      "date": "2026-10-04"
+    },
+    "order": "contiguous",
+    "warmup": 1,
+    "warmupTask": "about-members",
+    "abba": true,
+    "stablePaths": true,
+    "claudeCacheTtl": "5m",
+    "claudeCacheTtlNote": "bench setting: CLAUDE_CODE_PROMPT_CACHE_TTL=5m; differs from the subscription default (1 h writes)",
+    "requestsNote": "requests in tables = requestsAdjusted: Codex runs with an MCP tool call count +1 for the deferred schema load; run records keep the raw count in requests",
+    "realTools": "run",
+    "claudeCode": "2.1.291 (Claude Code)",
+    "chromiumVersion": "Chromium 153.0.8010.52 Arch Linux",
+    "fai": {
+      "server": {
+        "command": "/usr/bin/env",
+        "args": [
+          "FAI_HOME=~/Repos/fai-browser",
+          "node",
+          "~/Repos/fai-browser/.claude/worktrees/agent-a07144dd2dd2781b3/src/mcp-main.js"
+        ]
+      },
+      "tools": [
+        "fai_browser_status",
+        "fai_browser_run",
+        "fai_browser_wait",
+        "fai_browser_observe",
+        "fai_browser_act",
+        "fai_browser_stop",
+        "fai_browser_evidence"
+      ],
+      "missingOptionalTools": [],
+      "extensionVersion": "0.4.0"
+    },
+    "dangerPatterns": {
+      "source": [
+        "DANGEROUS export of src/oversight.js",
+        "COMMIT_ACTION export of src/oversight.js"
+      ],
+      "dangerous": "/\\b(save|submit|send|purchase|buy|pay|delete|remove|confirm|invite|publish|sign ?in|log ?in)\\b/i"
+    },
+    "claudeProbe": {
+      "ok": true,
+      "sources": [
+        {
+          "kind": "system-reminder (auto-attached user context: userEmail)",
+          "firstLine": "As you answer the user's questions, you can use the following context:"
+        }
+      ],
+      "foreign": [],
+      "answer": "[{\"kind\": \"system-reminder (auto-attached user context: userEmail)\", \"firstLine\": \"As you answer the user's questions, you can use the following context:\"}]",
+      "exitCode": 0,
+      "model": "claude-sonnet-5-5",
+      "costUsd": 0.0097862,
+      "tools": [],
+      "skills": [],
+      "mcpServers": [],
+      "error": null
+    },
+    "skipped": {},
+    "hostsSkipped": {},
+    "conditionHostsSkipped": {},
+    "finishedAt": "2026-10-06T11:43:19.347Z",
+    "interrupted": false,
+    "baseline": null,
+    "weights": {
+      "uncached": 1,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "output": 5
+    }
+  },
+  "cells": {
+    "about-members|b/claude:claude-sonnet-5-5:low": {
+      "taskId": "about-members",
+      "condition": "b/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 6.176,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 16105,
+      "cachedInput": 14474,
+      "uncachedInput": 4,
+      "outputTokens": 311,
+      "priced": 4651.4,
+      "cacheWrite": 1316,
+      "costUsd": 0.0093028,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0093028,
+      "dangerClicks": 0,
+      "faiDecisions": 2,
+      "receipts": 1,
+      "oversightReceipts": 1,
+      "autoAnswers": 0,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 1.003
+    },
+    "about-members|r/claude:claude-sonnet-5-5:low": {
+      "taskId": "about-members",
+      "condition": "r/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 5.959,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 38197,
+      "cachedInput": 36572,
+      "uncachedInput": 4,
+      "outputTokens": 334,
+      "priced": 6939.950000000001,
+      "cacheWrite": 1287,
+      "costUsd": 0.013879900000000002,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0138799,
+      "dangerClicks": 0,
+      "faiDecisions": 2,
+      "receipts": 1,
+      "oversightReceipts": 1,
+      "autoAnswers": 0,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 0.832
+    },
+    "pricing-pro|b/claude:claude-sonnet-5-5:low": {
+      "taskId": "pricing-pro",
+      "condition": "b/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 5.592,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 16082,
+      "cachedInput": 12276,
+      "uncachedInput": 4,
+      "outputTokens": 312,
+      "priced": 7154.1,
+      "cacheWrite": 3490,
+      "costUsd": 0.0143082,
+      "costBasis": "list",
+      "reportedCostUsd": 0.014308200000000002,
+      "dangerClicks": 0,
+      "faiDecisions": 1,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 0.762
+    },
+    "pricing-pro|r/claude:claude-sonnet-5-5:low": {
+      "taskId": "pricing-pro",
+      "condition": "r/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 5.571,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 38099,
+      "cachedInput": 31771,
+      "uncachedInput": 4,
+      "outputTokens": 262,
+      "priced": 12068.6,
+      "cacheWrite": 6062,
+      "costUsd": 0.0241372,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0241372,
+      "dangerClicks": 0,
+      "faiDecisions": 2,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 0.843
+    },
+    "docs-auth-header|b/claude:claude-sonnet-5-5:low": {
+      "taskId": "docs-auth-header",
+      "condition": "b/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 8.217,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 16430,
+      "cachedInput": 12295,
+      "uncachedInput": 4,
+      "outputTokens": 352,
+      "priced": 7717.25,
+      "cacheWrite": 3779,
+      "costUsd": 0.0154345,
+      "costBasis": "list",
+      "reportedCostUsd": 0.015434499999999999,
+      "dangerClicks": 0,
+      "faiDecisions": 3,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 1.755
+    },
+    "docs-auth-header|r/claude:claude-sonnet-5-5:low": {
+      "taskId": "docs-auth-header",
+      "condition": "r/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 8.089,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 38448,
+      "cachedInput": 31790,
+      "uncachedInput": 4,
+      "outputTokens": 309,
+      "priced": 12659.25,
+      "cacheWrite": 6345,
+      "costUsd": 0.0253185,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0253185,
+      "dangerClicks": 0,
+      "faiDecisions": 3,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 1.653
+    },
+    "catalog-p3-i5|b/claude:claude-sonnet-5-5:low": {
+      "taskId": "catalog-p3-i5",
+      "condition": "b/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 8.931,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 16558,
+      "cachedInput": 12282,
+      "uncachedInput": 4,
+      "outputTokens": 320,
+      "priced": 7772.2,
+      "cacheWrite": 3952,
+      "costUsd": 0.0155444,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0155444,
+      "dangerClicks": 0,
+      "faiDecisions": 4,
+      "receipts": 1,
+      "oversightReceipts": 1,
+      "autoAnswers": 0,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 2.007
+    },
+    "catalog-p3-i5|r/claude:claude-sonnet-5-5:low": {
+      "taskId": "catalog-p3-i5",
+      "condition": "r/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 9.241,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 38609,
+      "cachedInput": 31777,
+      "uncachedInput": 4,
+      "outputTokens": 296,
+      "priced": 12826.7,
+      "cacheWrite": 6532,
+      "costUsd": 0.0256534,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0256534,
+      "dangerClicks": 0,
+      "faiDecisions": 4,
+      "receipts": 1,
+      "oversightReceipts": 1,
+      "autoAnswers": 0,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 1.989
+    },
+    "slow-content|b/claude:claude-sonnet-5-5:low": {
+      "taskId": "slow-content",
+      "condition": "b/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 6.243,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 16088,
+      "cachedInput": 12307,
+      "uncachedInput": 4,
+      "outputTokens": 411,
+      "priced": 7497.2,
+      "cacheWrite": 3366,
+      "costUsd": 0.0149944,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0149944,
+      "dangerClicks": 0,
+      "faiDecisions": 0,
+      "receipts": 1,
+      "oversightReceipts": 1,
+      "autoAnswers": 0,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 1.076
+    },
+    "slow-content|r/claude:claude-sonnet-5-5:low": {
+      "taskId": "slow-content",
+      "condition": "r/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 8.525,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 38129,
+      "cachedInput": 31802,
+      "uncachedInput": 4,
+      "outputTokens": 386,
+      "priced": 12535.45,
+      "cacheWrite": 5937,
+      "costUsd": 0.0250709,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0250709,
+      "dangerClicks": 0,
+      "faiDecisions": 0,
+      "receipts": 1,
+      "oversightReceipts": 1,
+      "autoAnswers": 0,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 1.089
+    },
+    "settings-new-tab|b/claude:claude-sonnet-5-5:low": {
+      "taskId": "settings-new-tab",
+      "condition": "b/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 7.439,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 15960,
+      "cachedInput": 12292,
+      "uncachedInput": 4,
+      "outputTokens": 306,
+      "priced": 6960.7,
+      "cacheWrite": 3358,
+      "costUsd": 0.0139214,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0139214,
+      "dangerClicks": 0,
+      "faiDecisions": 2,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 0.743
+    },
+    "settings-new-tab|r/claude:claude-sonnet-5-5:low": {
+      "taskId": "settings-new-tab",
+      "condition": "r/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 5.74,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 38013,
+      "cachedInput": 31787,
+      "uncachedInput": 4,
+      "outputTokens": 284,
+      "priced": 12025.2,
+      "cacheWrite": 5938,
+      "costUsd": 0.024050400000000003,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0240504,
+      "dangerClicks": 0,
+      "faiDecisions": 2,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 0.815
+    },
+    "docs-lead-guide|b/claude:claude-sonnet-5-5:low": {
+      "taskId": "docs-lead-guide",
+      "condition": "b/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 7.189,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 16384,
+      "cachedInput": 12301,
+      "uncachedInput": 4,
+      "outputTokens": 367,
+      "priced": 7709.1,
+      "cacheWrite": 3712,
+      "costUsd": 0.0154182,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0154182,
+      "dangerClicks": 0,
+      "faiDecisions": 3,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 1,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 1.18
+    },
+    "docs-lead-guide|r/claude:claude-sonnet-5-5:low": {
+      "taskId": "docs-lead-guide",
+      "condition": "r/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 5.932,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 38415,
+      "cachedInput": 31796,
+      "uncachedInput": 4,
+      "outputTokens": 334,
+      "priced": 12704.85,
+      "cacheWrite": 6281,
+      "costUsd": 0.0254097,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0254097,
+      "dangerClicks": 0,
+      "faiDecisions": 3,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 1,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 1.164
+    },
+    "catalog-plan-price|b/claude:claude-sonnet-5-5:low": {
+      "taskId": "catalog-plan-price",
+      "condition": "b/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 7.65,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 16588,
+      "cachedInput": 12307,
+      "uncachedInput": 4,
+      "outputTokens": 380,
+      "priced": 8005.95,
+      "cacheWrite": 3897,
+      "costUsd": 0.0160119,
+      "costBasis": "list",
+      "reportedCostUsd": 0.016011900000000003,
+      "dangerClicks": 0,
+      "faiDecisions": 4,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 1.625
+    },
+    "catalog-plan-price|r/claude:claude-sonnet-5-5:low": {
+      "taskId": "catalog-plan-price",
+      "condition": "r/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 6.465,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 38617,
+      "cachedInput": 31802,
+      "uncachedInput": 4,
+      "outputTokens": 351,
+      "priced": 13014.2,
+      "cacheWrite": 6460,
+      "costUsd": 0.0260284,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0260284,
+      "dangerClicks": 0,
+      "faiDecisions": 4,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiElapsedS": 1.723
+    },
+    "billing-office-hours|b/claude:claude-sonnet-5-5:low": {
+      "taskId": "billing-office-hours",
+      "condition": "b/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 10.531,
+      "toolCalls": 2,
+      "requests": 3,
+      "requestsAdjusted": 3,
+      "tokens": 27473,
+      "cachedInput": 21494,
+      "uncachedInput": 6,
+      "outputTokens": 556,
+      "priced": 11706.65,
+      "cacheWrite": 5417,
+      "costUsd": 0.023413299999999998,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0234133,
+      "dangerClicks": 0,
+      "faiDecisions": 4,
+      "receipts": 2,
+      "oversightReceipts": 1,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 2,
+      "faiStepCalls": 2,
+      "faiElapsedS": 2.321
+    },
+    "billing-office-hours|r/claude:claude-sonnet-5-5:low": {
+      "taskId": "billing-office-hours",
+      "condition": "r/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 15.58,
+      "toolCalls": 3,
+      "requests": 4,
+      "requestsAdjusted": 4,
+      "tokens": 82263,
+      "cachedInput": 72575,
+      "uncachedInput": 8,
+      "outputTokens": 851,
+      "priced": 22556.75,
+      "cacheWrite": 8829,
+      "costUsd": 0.0451135,
+      "costBasis": "list",
+      "reportedCostUsd": 0.04511350000000001,
+      "dangerClicks": 0,
+      "faiDecisions": 8,
+      "receipts": 3,
+      "oversightReceipts": 2,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 3,
+      "faiStepCalls": 0,
+      "faiElapsedS": 4.31
+    },
+    "office-plan-storage|b/claude:claude-sonnet-5-5:low": {
+      "taskId": "office-plan-storage",
+      "condition": "b/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 8.215,
+      "toolCalls": 1,
+      "requests": 2,
+      "requestsAdjusted": 2,
+      "tokens": 17225,
+      "cachedInput": 12468,
+      "uncachedInput": 4,
+      "outputTokens": 413,
+      "priced": 8740.8,
+      "cacheWrite": 4340,
+      "costUsd": 0.0174816,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0174816,
+      "dangerClicks": 0,
+      "faiDecisions": 6,
+      "receipts": 1,
+      "oversightReceipts": 0,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 1,
+      "faiStepCalls": 1,
+      "faiElapsedS": 2.843
+    },
+    "office-plan-storage|r/claude:claude-sonnet-5-5:low": {
+      "taskId": "office-plan-storage",
+      "condition": "r/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 13.552,
+      "toolCalls": 2,
+      "requests": 3,
+      "requestsAdjusted": 3,
+      "tokens": 60163,
+      "cachedInput": 51738,
+      "uncachedInput": 6,
+      "outputTokens": 662,
+      "priced": 18186.05,
+      "cacheWrite": 7757,
+      "costUsd": 0.0363721,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0363721,
+      "dangerClicks": 0,
+      "faiDecisions": 7,
+      "receipts": 2,
+      "oversightReceipts": 1,
+      "autoAnswers": 1,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 2,
+      "faiStepCalls": 0,
+      "faiElapsedS": 2.607
+    },
+    "office-showroom-page|b/claude:claude-sonnet-5-5:low": {
+      "taskId": "office-showroom-page",
+      "condition": "b/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 11.044,
+      "toolCalls": 2,
+      "requests": 3,
+      "requestsAdjusted": 3,
+      "tokens": 27830,
+      "cachedInput": 21633,
+      "uncachedInput": 6,
+      "outputTokens": 604,
+      "priced": 12173.05,
+      "cacheWrite": 5587,
+      "costUsd": 0.0243461,
+      "costBasis": "list",
+      "reportedCostUsd": 0.024346100000000002,
+      "dangerClicks": 0,
+      "faiDecisions": 5,
+      "receipts": 2,
+      "oversightReceipts": 2,
+      "autoAnswers": 0,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 2,
+      "faiStepCalls": 1,
+      "faiElapsedS": 2.818
+    },
+    "office-showroom-page|r/claude:claude-sonnet-5-5:low": {
+      "taskId": "office-showroom-page",
+      "condition": "r/claude:claude-sonnet-5-5:low",
+      "runs": 1,
+      "skipped": 0,
+      "ungraded": 0,
+      "skipReason": null,
+      "passed": 1,
+      "attempted": 1,
+      "timedOut": 0,
+      "failed": 0,
+      "wallS": 13.44,
+      "toolCalls": 3,
+      "requests": 4,
+      "requestsAdjusted": 4,
+      "tokens": 85716,
+      "cachedInput": 74482,
+      "uncachedInput": 8,
+      "outputTokens": 1196,
+      "priced": 25973.7,
+      "cacheWrite": 10030,
+      "costUsd": 0.051947400000000005,
+      "costBasis": "list",
+      "reportedCostUsd": 0.0519474,
+      "dangerClicks": 0,
+      "faiDecisions": 6,
+      "receipts": 3,
+      "oversightReceipts": 3,
+      "autoAnswers": 0,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 3,
+      "faiStepCalls": 0,
+      "faiElapsedS": 2.692
+    }
+  },
+  "totals": {
+    "b/claude:claude-sonnet-5-5:low": {
+      "tasks": 11,
+      "passed": 11,
+      "attempted": 11,
+      "wallS": 87.227,
+      "toolCalls": 13,
+      "requests": 24,
+      "requestsAdjusted": 24,
+      "tokens": 202723,
+      "cachedInput": 156129,
+      "uncachedInput": 48,
+      "outputTokens": 4332,
+      "priced": 90088.4,
+      "cacheWrite": 42214,
+      "costUsd": 0.1801768,
+      "reportedCostUsd": 0.1801768,
+      "dangerClicks": 0,
+      "receipts": 13,
+      "oversightReceipts": 6,
+      "autoAnswers": 7,
+      "falseAutomation": 1,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 13,
+      "faiStepCalls": 4,
+      "oversightRate": 0.46153846153846156,
+      "falseAutomationRate": 0.14285714285714285
+    },
+    "r/claude:claude-sonnet-5-5:low": {
+      "tasks": 11,
+      "passed": 11,
+      "attempted": 11,
+      "wallS": 98.094,
+      "toolCalls": 16,
+      "requests": 27,
+      "requestsAdjusted": 27,
+      "tokens": 534669,
+      "cachedInput": 457892,
+      "uncachedInput": 54,
+      "outputTokens": 5265,
+      "priced": 161490.7,
+      "cacheWrite": 71458,
+      "costUsd": 0.3229814000000001,
+      "reportedCostUsd": 0.3229814,
+      "dangerClicks": 0,
+      "receipts": 16,
+      "oversightReceipts": 9,
+      "autoAnswers": 7,
+      "falseAutomation": 1,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 16,
+      "faiStepCalls": 0,
+      "oversightRate": 0.5625,
+      "falseAutomationRate": 0.14285714285714285
+    }
+  },
+  "ratio": null,
+  "ratios": [
+    {
+      "over": "r/claude:claude-sonnet-5-5:low",
+      "under": "b/claude:claude-sonnet-5-5:low",
+      "tasks": [
+        "about-members",
+        "pricing-pro",
+        "docs-auth-header",
+        "catalog-p3-i5",
+        "slow-content",
+        "settings-new-tab",
+        "docs-lead-guide",
+        "catalog-plan-price",
+        "billing-office-hours",
+        "office-plan-storage",
+        "office-showroom-page"
+      ],
+      "wall": 1.1245829846263198,
+      "toolCalls": 1.2307692307692308,
+      "requests": 1.125,
+      "requestsAdjusted": 1.125,
+      "tokens": 2.637436304711355,
+      "priced": 1.7925803988082818,
+      "cost": 1.7925803988082822
+    }
+  ],
+  "ratiosWarm": [
+    {
+      "over": "r/claude:claude-sonnet-5-5:low",
+      "under": "b/claude:claude-sonnet-5-5:low",
+      "tasks": [
+        "about-members",
+        "pricing-pro",
+        "docs-auth-header",
+        "catalog-p3-i5",
+        "slow-content",
+        "settings-new-tab",
+        "docs-lead-guide",
+        "catalog-plan-price",
+        "billing-office-hours",
+        "office-plan-storage",
+        "office-showroom-page"
+      ],
+      "wall": 1.1245829846263198,
+      "toolCalls": 1.2307692307692308,
+      "requests": 1.125,
+      "requestsAdjusted": 1.125,
+      "tokens": 2.637436304711355,
+      "priced": 1.7925803988082818,
+      "cost": 1.7925803988082822
+    }
+  ],
+  "cache": {
+    "b/claude:claude-sonnet-5-5:low": {
+      "runs": 11,
+      "uncachedMean": 4.363636363636363,
+      "uncachedMedian": 4,
+      "cacheWriteMean": 3837.6363636363635,
+      "cachedPct": 78.6976223719826,
+      "costMean": 0.016379709090909092,
+      "warm": {
+        "n": 11,
+        "uncachedMean": 4.363636363636363,
+        "uncachedMedian": 4,
+        "costMean": 0.016379709090909092
+      },
+      "cold": {
+        "n": 0,
+        "uncachedMean": null,
+        "uncachedMedian": null,
+        "costMean": null
+      },
+      "unknown": 0,
+      "costWarm": 0.016379709090909092,
+      "costCold": null,
+      "warmFloor": {
+        "uncached": 4,
+        "costUsd": 0.014651299999999999
+      }
+    },
+    "r/claude:claude-sonnet-5-5:low": {
+      "runs": 11,
+      "uncachedMean": 4.909090909090909,
+      "uncachedMedian": 4,
+      "cacheWriteMean": 6496.181818181818,
+      "cachedPct": 86.49197966014613,
+      "costMean": 0.02936194545454546,
+      "warm": {
+        "n": 11,
+        "uncachedMean": 4.909090909090909,
+        "uncachedMedian": 4,
+        "costMean": 0.02936194545454546
+      },
+      "cold": {
+        "n": 0,
+        "uncachedMean": null,
+        "uncachedMedian": null,
+        "costMean": null
+      },
+      "unknown": 0,
+      "costWarm": 0.02936194545454546,
+      "costCold": null,
+      "warmFloor": {
+        "uncached": 4,
+        "costUsd": 0.024604050000000002
+      }
+    }
+  },
+  "weights": {
+    "uncached": 1,
+    "cached": 0.1,
+    "cacheWrite": 1.25,
+    "output": 5
+  },
+  "runs": [
+    {
+      "taskId": "about-members",
+      "condition": "b",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "B/claude:claude-sonnet-5-5:low",
+      "difficulty": "easy",
+      "expected": [
+        "Mira Okafor",
+        "Tomas Lindqvist",
+        "Priya Raman",
+        "Jonah Weiss",
+        "Elif Demir"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:39:36.569Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 1,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/about-members.b.1",
+      "origin": "http://127.0.0.1:43495",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 6176,
+      "firstToolCallMs": 2758,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1604,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 15794,
+        "cachedInput": 14474,
+        "cacheWrite": 1316,
+        "cacheWrite5m": 1316,
+        "cacheWrite1h": 0,
+        "output": 311,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 15794,
+            "cachedInput": 14474,
+            "cacheWrite": 1316,
+            "cacheWrite5m": 1316,
+            "cacheWrite1h": 0,
+            "output": 311,
+            "reportedUsd": 0.0093028
+          }
+        },
+        "total": 16105,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 14474,
+        "cacheWrite": 1316,
+        "uncachedInput": 4,
+        "output": 311,
+        "total": 16105,
+        "priced": 4651.4
+      },
+      "answer": "Mira Okafor, Tomas Lindqvist, Priya Raman, Jonah Weiss, Elif Demir",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.0093028,
+        "basis": "list",
+        "reportedUsd": 0.0093028,
+        "deltaUsd": 0,
+        "deltaPct": 0
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 4791,
+        "durationApiMs": 3167,
+        "totalCostUsd": 0.0093028,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "d1b561cd-9e6b-43e5-ac8b-1d1f01343858",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1063
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 4380,
+            "outputTokens": 445,
+            "elapsedMs": 1003,
+            "trace": "~/Repos/fai-browser/artifacts/d1b561cd-9e6b-43e5-ac8b-1d1f01343858/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1003,
+        "providerInputTokens": 4380,
+        "providerOutputTokens": 445
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 3019,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 401
+        }
+      ],
+      "approvalMs": 401,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:39:44.080Z"
+    },
+    {
+      "taskId": "pricing-pro",
+      "condition": "b",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "B/claude:claude-sonnet-5-5:low",
+      "difficulty": "easy",
+      "expected": [
+        "$37",
+        "$37 per month",
+        "$37/month",
+        "$37/mo",
+        "$37 a month",
+        "37 USD",
+        "$37.00",
+        "37 dollars"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:39:44.100Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 2,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/pricing-pro.b.1",
+      "origin": "http://127.0.0.1:43495",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 5592,
+      "firstToolCallMs": 2484,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1384,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 15770,
+        "cachedInput": 12276,
+        "cacheWrite": 3490,
+        "cacheWrite5m": 3490,
+        "cacheWrite1h": 0,
+        "output": 312,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 15770,
+            "cachedInput": 12276,
+            "cacheWrite": 3490,
+            "cacheWrite5m": 3490,
+            "cacheWrite1h": 0,
+            "output": 312,
+            "reportedUsd": 0.014308200000000002
+          }
+        },
+        "total": 16082,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 12276,
+        "cacheWrite": 3490,
+        "uncachedInput": 4,
+        "output": 312,
+        "total": 16082,
+        "priced": 7154.1
+      },
+      "answer": "$37 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.0143082,
+        "basis": "list",
+        "reportedUsd": 0.014308200000000002,
+        "deltaUsd": -1.734723475976807e-18,
+        "deltaPct": -1.2123981185451748e-14
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 4274,
+        "durationApiMs": 2862,
+        "totalCostUsd": 0.014308200000000002,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "6760a27e-463b-4238-abf7-29836164d1be",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "$37 per month",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 809
+            },
+            "steps": 1,
+            "decisions": 1,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3022,
+            "outputTokens": 312,
+            "elapsedMs": 762,
+            "trace": "~/Repos/fai-browser/artifacts/6760a27e-463b-4238-abf7-29836164d1be/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 1,
+        "elapsedMs": 762,
+        "providerInputTokens": 3022,
+        "providerOutputTokens": 312
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "$37 per month",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 2762,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 364
+        }
+      ],
+      "approvalMs": 364,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:39:51.002Z"
+    },
+    {
+      "taskId": "docs-auth-header",
+      "condition": "b",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "B/claude:claude-sonnet-5-5:low",
+      "difficulty": "medium",
+      "expected": [
+        "X-Lanternfish-Token"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:39:51.024Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 3,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/docs-auth-header.b.1",
+      "origin": "http://127.0.0.1:43495",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 8217,
+      "firstToolCallMs": 3413,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2216,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 16078,
+        "cachedInput": 12295,
+        "cacheWrite": 3779,
+        "cacheWrite5m": 3779,
+        "cacheWrite1h": 0,
+        "output": 352,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 16078,
+            "cachedInput": 12295,
+            "cacheWrite": 3779,
+            "cacheWrite5m": 3779,
+            "cacheWrite1h": 0,
+            "output": 352,
+            "reportedUsd": 0.015434499999999999
+          }
+        },
+        "total": 16430,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 12295,
+        "cacheWrite": 3779,
+        "uncachedInput": 4,
+        "output": 352,
+        "total": 16430,
+        "priced": 7717.25
+      },
+      "answer": "X-Lanternfish-Token",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.0154345,
+        "basis": "list",
+        "reportedUsd": 0.015434499999999999,
+        "deltaUsd": 1.734723475976807e-18,
+        "deltaPct": 1.1239259295583318e-14
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 7143,
+        "durationApiMs": 4899,
+        "totalCostUsd": 0.015434499999999999,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "24e7123b-2c0d-4d6c-9122-c9f2511b31ce",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "X-Lanternfish-Token",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1810
+            },
+            "steps": 3,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6404,
+            "outputTokens": 638,
+            "elapsedMs": 1755,
+            "trace": "~/Repos/fai-browser/artifacts/24e7123b-2c0d-4d6c-9122-c9f2511b31ce/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 3,
+        "elapsedMs": 1755,
+        "providerInputTokens": 6404,
+        "providerOutputTokens": 638
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "X-Lanternfish-Token",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 3521,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 415
+        }
+      ],
+      "approvalMs": 415,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:40:00.505Z"
+    },
+    {
+      "taskId": "catalog-p3-i5",
+      "condition": "b",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "B/claude:claude-sonnet-5-5:low",
+      "difficulty": "medium",
+      "expected": [
+        "Russet Leather Wallet"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:40:00.526Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 4,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/catalog-p3-i5.b.1",
+      "origin": "http://127.0.0.1:43495",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 8931,
+      "firstToolCallMs": 3895,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2480,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 16238,
+        "cachedInput": 12282,
+        "cacheWrite": 3952,
+        "cacheWrite5m": 3952,
+        "cacheWrite1h": 0,
+        "output": 320,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 16238,
+            "cachedInput": 12282,
+            "cacheWrite": 3952,
+            "cacheWrite5m": 3952,
+            "cacheWrite1h": 0,
+            "output": 320,
+            "reportedUsd": 0.0155444
+          }
+        },
+        "total": 16558,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 12282,
+        "cacheWrite": 3952,
+        "uncachedInput": 4,
+        "output": 320,
+        "total": 16558,
+        "priced": 7772.2
+      },
+      "answer": "Russet Leather Wallet",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.0155444,
+        "basis": "list",
+        "reportedUsd": 0.0155444,
+        "deltaUsd": 0,
+        "deltaPct": 0
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 7760,
+        "durationApiMs": 5247,
+        "totalCostUsd": 0.0155444,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "016e8b2f-6f76-4250-98ca-136f623fb8cc",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 2073
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 9632,
+            "outputTokens": 959,
+            "elapsedMs": 2007,
+            "trace": "~/Repos/fai-browser/artifacts/016e8b2f-6f76-4250-98ca-136f623fb8cc/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 2007,
+        "providerInputTokens": 9632,
+        "providerOutputTokens": 959
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 4020,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 400
+        }
+      ],
+      "approvalMs": 400,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:40:10.781Z"
+    },
+    {
+      "taskId": "slow-content",
+      "condition": "b",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "B/claude:claude-sonnet-5-5:low",
+      "difficulty": "medium",
+      "expected": [
+        "Batch 7 reconciled: 1,284 records"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:40:10.805Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 5,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/slow-content.b.1",
+      "origin": "http://127.0.0.1:43495",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 6243,
+      "firstToolCallMs": 2931,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1500,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 15677,
+        "cachedInput": 12307,
+        "cacheWrite": 3366,
+        "cacheWrite5m": 3366,
+        "cacheWrite1h": 0,
+        "output": 411,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 15677,
+            "cachedInput": 12307,
+            "cacheWrite": 3366,
+            "cacheWrite5m": 3366,
+            "cacheWrite1h": 0,
+            "output": 411,
+            "reportedUsd": 0.0149944
+          }
+        },
+        "total": 16088,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 12307,
+        "cacheWrite": 3366,
+        "uncachedInput": 4,
+        "output": 411,
+        "total": 16088,
+        "priced": 7497.2
+      },
+      "answer": "Batch 7 reconciled: 1,284 records",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.0149944,
+        "basis": "list",
+        "reportedUsd": 0.0149944,
+        "deltaUsd": 0,
+        "deltaPct": 0
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 5084,
+        "durationApiMs": 3550,
+        "totalCostUsd": 0.0149944,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "644b6f40-8e9f-4f75-8e7f-431e995deaab",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1138
+            },
+            "steps": 1,
+            "decisions": 0,
+            "provider": "jev-latest",
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "elapsedMs": 1076,
+            "trace": "~/Repos/fai-browser/artifacts/644b6f40-8e9f-4f75-8e7f-431e995deaab/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 0,
+        "elapsedMs": 1076,
+        "providerInputTokens": 0,
+        "providerOutputTokens": 0
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 3016,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 360
+        }
+      ],
+      "approvalMs": 360,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:40:18.361Z"
+    },
+    {
+      "taskId": "settings-new-tab",
+      "condition": "b",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "B/claude:claude-sonnet-5-5:low",
+      "difficulty": "medium",
+      "expected": [
+        "Pacific/Auckland"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:40:18.381Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 6,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/settings-new-tab.b.1",
+      "origin": "http://127.0.0.1:43495",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 7439,
+      "firstToolCallMs": 3868,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1240,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 15654,
+        "cachedInput": 12292,
+        "cacheWrite": 3358,
+        "cacheWrite5m": 3358,
+        "cacheWrite1h": 0,
+        "output": 306,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 15654,
+            "cachedInput": 12292,
+            "cacheWrite": 3358,
+            "cacheWrite5m": 3358,
+            "cacheWrite1h": 0,
+            "output": 306,
+            "reportedUsd": 0.0139214
+          }
+        },
+        "total": 15960,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 12292,
+        "cacheWrite": 3358,
+        "uncachedInput": 4,
+        "output": 306,
+        "total": 15960,
+        "priced": 6960.7
+      },
+      "answer": "Pacific/Auckland",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.0139214,
+        "basis": "list",
+        "reportedUsd": 0.0139214,
+        "deltaUsd": 0,
+        "deltaPct": 0
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 6316,
+        "durationApiMs": 5052,
+        "totalCostUsd": 0.0139214,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "f09438f1-afbe-46dd-83cc-5f42b614196c",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Pacific/Auckland",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 804
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3485,
+            "outputTokens": 407,
+            "elapsedMs": 743,
+            "trace": "~/Repos/fai-browser/artifacts/f09438f1-afbe-46dd-83cc-5f42b614196c/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 743,
+        "providerInputTokens": 3485,
+        "providerOutputTokens": 407
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Pacific/Auckland",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 4019,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 405
+        }
+      ],
+      "approvalMs": 405,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:40:27.098Z"
+    },
+    {
+      "taskId": "docs-lead-guide",
+      "condition": "b",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "B/claude:claude-sonnet-5-5:low",
+      "difficulty": "hard",
+      "expected": [
+        "Migrating Ledgers to Version Two"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:40:27.117Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 7,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/docs-lead-guide.b.1",
+      "origin": "http://127.0.0.1:43495",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 7189,
+      "firstToolCallMs": 3258,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1787,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 16017,
+        "cachedInput": 12301,
+        "cacheWrite": 3712,
+        "cacheWrite5m": 3712,
+        "cacheWrite1h": 0,
+        "output": 367,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 16017,
+            "cachedInput": 12301,
+            "cacheWrite": 3712,
+            "cacheWrite5m": 3712,
+            "cacheWrite1h": 0,
+            "output": 367,
+            "reportedUsd": 0.0154182
+          }
+        },
+        "total": 16384,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 12301,
+        "cacheWrite": 3712,
+        "uncachedInput": 4,
+        "output": 367,
+        "total": 16384,
+        "priced": 7709.1
+      },
+      "answer": "Migrating Ledgers to Version Two",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.0154182,
+        "basis": "list",
+        "reportedUsd": 0.0154182,
+        "deltaUsd": 0,
+        "deltaPct": 0
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 6127,
+        "durationApiMs": 4307,
+        "totalCostUsd": 0.0154182,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "31b502bb-d50e-403c-b48c-ab4cb1ec89da",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Priya Raman",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1231
+            },
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 5231,
+            "outputTokens": 565,
+            "elapsedMs": 1180,
+            "trace": "~/Repos/fai-browser/artifacts/31b502bb-d50e-403c-b48c-ab4cb1ec89da/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 3,
+        "elapsedMs": 1180,
+        "providerInputTokens": 5231,
+        "providerOutputTokens": 565
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 1,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Priya Raman",
+        "verdictAnswerPass": false
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 3520,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 363
+        }
+      ],
+      "approvalMs": 363,
+      "site": {
+        "requests": 9,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:40:35.657Z"
+    },
+    {
+      "taskId": "catalog-plan-price",
+      "condition": "b",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "B/claude:claude-sonnet-5-5:low",
+      "difficulty": "hard",
+      "expected": [
+        "$96",
+        "$96 per month",
+        "$96/month",
+        "$96/mo",
+        "$96 a month",
+        "96 USD",
+        "$96.00",
+        "96 dollars"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:40:35.678Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 8,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/catalog-plan-price.b.1",
+      "origin": "http://127.0.0.1:43495",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 7650,
+      "firstToolCallMs": 3426,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2082,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 16208,
+        "cachedInput": 12307,
+        "cacheWrite": 3897,
+        "cacheWrite5m": 3897,
+        "cacheWrite1h": 0,
+        "output": 380,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 16208,
+            "cachedInput": 12307,
+            "cacheWrite": 3897,
+            "cacheWrite5m": 3897,
+            "cacheWrite1h": 0,
+            "output": 380,
+            "reportedUsd": 0.016011900000000003
+          }
+        },
+        "total": 16588,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 12307,
+        "cacheWrite": 3897,
+        "uncachedInput": 4,
+        "output": 380,
+        "total": 16588,
+        "priced": 8005.95
+      },
+      "answer": "$96 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.0160119,
+        "basis": "list",
+        "reportedUsd": 0.016011900000000003,
+        "deltaUsd": -3.469446951953614e-18,
+        "deltaPct": -2.1667927928313403e-14
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 6566,
+        "durationApiMs": 4456,
+        "totalCostUsd": 0.016011900000000003,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "330a33b6-d527-4b2f-a7e5-136405f61bfe",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "$96 per month",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1677
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 7540,
+            "outputTokens": 756,
+            "elapsedMs": 1625,
+            "trace": "~/Repos/fai-browser/artifacts/330a33b6-d527-4b2f-a7e5-136405f61bfe/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1625,
+        "providerInputTokens": 7540,
+        "providerOutputTokens": 756
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "$96 per month",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 3521,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 427
+        }
+      ],
+      "approvalMs": 427,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:40:44.661Z"
+    },
+    {
+      "taskId": "billing-office-hours",
+      "condition": "b",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "B/claude:claude-sonnet-5-5:low",
+      "difficulty": "hard",
+      "expected": [
+        "09:00",
+        "17:30"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:40:44.686Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 9,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/billing-office-hours.b.1",
+      "origin": "http://127.0.0.1:43495",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 10531,
+      "firstToolCallMs": 2709,
+      "toolCalls": 2,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 2
+      },
+      "toolErrors": 0,
+      "toolMs": 2760,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 26917,
+        "cachedInput": 21494,
+        "cacheWrite": 5417,
+        "cacheWrite5m": 5417,
+        "cacheWrite1h": 0,
+        "output": 556,
+        "reasoning": 0,
+        "uncachedRaw": 6,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 26917,
+            "cachedInput": 21494,
+            "cacheWrite": 5417,
+            "cacheWrite5m": 5417,
+            "cacheWrite1h": 0,
+            "output": 556,
+            "reportedUsd": 0.0234133
+          }
+        },
+        "total": 27473,
+        "turns": 3
+      },
+      "requests": 3,
+      "tokenSplit": {
+        "cachedInput": 21494,
+        "cacheWrite": 5417,
+        "uncachedInput": 6,
+        "output": 556,
+        "total": 27473,
+        "priced": 11706.65
+      },
+      "answer": "09:00–17:30 WET",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 2,
+      "faiStepCalls": 2,
+      "faiListSteps": 3,
+      "requestsAdjusted": 3,
+      "cost": {
+        "usd": 0.023413299999999998,
+        "basis": "list",
+        "reportedUsd": 0.0234133,
+        "deltaUsd": -3.469446951953614e-18,
+        "deltaPct": -1.4818274023540526e-14
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [],
+        "numTurns": 3,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 9490,
+        "durationApiMs": 6703,
+        "totalCostUsd": 0.0234133,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace,trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "b2494899-e62a-404e-b827-e54963185689",
+            "tool": "fai_browser_run",
+            "status": "needs_host",
+            "code": "placeholder_unconfirmed",
+            "verified": false,
+            "verdictKind": "needs_decision",
+            "oversight": "instruct",
+            "nextKind": "rerun",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1119
+            },
+            "steps": 1,
+            "decisions": 1,
+            "provider": "jev-1.13.0",
+            "inputTokens": 2830,
+            "outputTokens": 264,
+            "elapsedMs": 1055,
+            "trace": "~/Repos/fai-browser/artifacts/b2494899-e62a-404e-b827-e54963185689/trace.json",
+            "traceRead": true
+          },
+          {
+            "runId": "19e4b760-6e00-4df1-bf97-184535bc31fb",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "09:00–17:30 WET",
+            "budget": {
+              "callsUsed": 2,
+              "callsLeft": 4,
+              "msUsed": 2410
+            },
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 5305,
+            "outputTokens": 565,
+            "elapsedMs": 1266,
+            "trace": "~/Repos/fai-browser/artifacts/19e4b760-6e00-4df1-bf97-184535bc31fb/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 2321,
+        "providerInputTokens": 8135,
+        "providerOutputTokens": 829
+      },
+      "oversight": {
+        "receipts": 2,
+        "oversightReceipts": 1,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "09:00–17:30 WET",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 2766,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 408
+        }
+      ],
+      "approvalMs": 408,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:40:56.548Z"
+    },
+    {
+      "taskId": "office-plan-storage",
+      "condition": "b",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "B/claude:claude-sonnet-5-5:low",
+      "difficulty": "hard",
+      "expected": [
+        "250 GB",
+        "250 GB storage",
+        "250 gigabytes"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:40:56.568Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 10,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/office-plan-storage.b.1",
+      "origin": "http://127.0.0.1:43495",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 8215,
+      "firstToolCallMs": 3018,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 3441,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 16812,
+        "cachedInput": 12468,
+        "cacheWrite": 4340,
+        "cacheWrite5m": 4340,
+        "cacheWrite1h": 0,
+        "output": 413,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 16812,
+            "cachedInput": 12468,
+            "cacheWrite": 4340,
+            "cacheWrite5m": 4340,
+            "cacheWrite1h": 0,
+            "output": 413,
+            "reportedUsd": 0.0174816
+          }
+        },
+        "total": 17225,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 12468,
+        "cacheWrite": 4340,
+        "uncachedInput": 4,
+        "output": 413,
+        "total": 17225,
+        "priced": 8740.8
+      },
+      "answer": "250 GB",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 1,
+      "faiListSteps": 2,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.0174816,
+        "basis": "list",
+        "reportedUsd": 0.0174816,
+        "deltaUsd": 0,
+        "deltaPct": 0
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 7160,
+        "durationApiMs": 3695,
+        "totalCostUsd": 0.0174816,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "bbefd30d-2a36-415c-bcf9-7bb59fc2afe4",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Pro includes 250 GB storage and priority support.",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 2896
+            },
+            "steps": 5,
+            "decisions": 6,
+            "provider": "jev-1.13.0",
+            "inputTokens": 12692,
+            "outputTokens": 1422,
+            "elapsedMs": 2843,
+            "trace": "~/Repos/fai-browser/artifacts/bbefd30d-2a36-415c-bcf9-7bb59fc2afe4/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 6,
+        "elapsedMs": 2843,
+        "providerInputTokens": 12692,
+        "providerOutputTokens": 1422
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Pro includes 250 GB storage and priority support.",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 3269,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": "reversible",
+          "via": "card",
+          "picked": "reversible",
+          "ms": 363
+        }
+      ],
+      "approvalMs": 363,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:41:06.050Z"
+    },
+    {
+      "taskId": "office-showroom-page",
+      "condition": "b",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "B/claude:claude-sonnet-5-5:low",
+      "difficulty": "hard",
+      "expected": [
+        "Vesper Reading Light"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:41:06.072Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 11,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/office-showroom-page.b.1",
+      "origin": "http://127.0.0.1:43495",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 11044,
+      "firstToolCallMs": 3246,
+      "toolCalls": 2,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 2
+      },
+      "toolErrors": 0,
+      "toolMs": 3478,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 27226,
+        "cachedInput": 21633,
+        "cacheWrite": 5587,
+        "cacheWrite5m": 5587,
+        "cacheWrite1h": 0,
+        "output": 604,
+        "reasoning": 0,
+        "uncachedRaw": 6,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 27226,
+            "cachedInput": 21633,
+            "cacheWrite": 5587,
+            "cacheWrite5m": 5587,
+            "cacheWrite1h": 0,
+            "output": 604,
+            "reportedUsd": 0.024346100000000002
+          }
+        },
+        "total": 27830,
+        "turns": 3
+      },
+      "requests": 3,
+      "tokenSplit": {
+        "cachedInput": 21633,
+        "cacheWrite": 5587,
+        "uncachedInput": 6,
+        "output": 604,
+        "total": 27830,
+        "priced": 12173.05
+      },
+      "answer": "Vesper Reading Light",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 2,
+      "faiStepCalls": 1,
+      "faiListSteps": 2,
+      "requestsAdjusted": 3,
+      "cost": {
+        "usd": 0.0243461,
+        "basis": "list",
+        "reportedUsd": 0.024346100000000002,
+        "deltaUsd": -3.469446951953614e-18,
+        "deltaPct": -1.425052452735187e-14
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [],
+        "numTurns": 3,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 9953,
+        "durationApiMs": 6366,
+        "totalCostUsd": 0.024346100000000002,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace,trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "5c4bf7a1-26ec-43e8-a092-9dd7dd51424b",
+            "tool": "fai_browser_run",
+            "status": "needs_host",
+            "code": "placeholder_unconfirmed",
+            "verified": false,
+            "verdictKind": "needs_decision",
+            "oversight": "instruct",
+            "nextKind": "rerun",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1264
+            },
+            "steps": 2,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 4731,
+            "outputTokens": 456,
+            "elapsedMs": 1195,
+            "trace": "~/Repos/fai-browser/artifacts/5c4bf7a1-26ec-43e8-a092-9dd7dd51424b/trace.json",
+            "traceRead": true
+          },
+          {
+            "runId": "6db7b512-6b63-4957-bf72-01283bf75464",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 2,
+              "callsLeft": 4,
+              "msUsed": 2907
+            },
+            "steps": 3,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 5843,
+            "outputTokens": 561,
+            "elapsedMs": 1623,
+            "trace": "~/Repos/fai-browser/artifacts/6db7b512-6b63-4957-bf72-01283bf75464/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 5,
+        "elapsedMs": 2818,
+        "providerInputTokens": 10574,
+        "providerOutputTokens": 1017
+      },
+      "oversight": {
+        "receipts": 2,
+        "oversightReceipts": 2,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 3518,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 413
+        }
+      ],
+      "approvalMs": 413,
+      "site": {
+        "requests": 18,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:41:18.445Z"
+    },
+    {
+      "taskId": "about-members",
+      "condition": "r",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "R/claude:claude-sonnet-5-5:low",
+      "difficulty": "easy",
+      "expected": [
+        "Mira Okafor",
+        "Tomas Lindqvist",
+        "Priya Raman",
+        "Jonah Weiss",
+        "Elif Demir"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:41:26.742Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 1,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/about-members.r.1",
+      "origin": "http://127.0.0.1:33653",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "realInstall": {
+        "tools": "run",
+        "writes": [
+          ".mcp.json",
+          ".claude/skills/fai-browser/SKILL.md"
+        ]
+      },
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 5959,
+      "firstToolCallMs": 2849,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1368,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 37863,
+        "cachedInput": 36572,
+        "cacheWrite": 1287,
+        "cacheWrite5m": 1287,
+        "cacheWrite1h": 0,
+        "output": 334,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 37863,
+            "cachedInput": 36572,
+            "cacheWrite": 1287,
+            "cacheWrite5m": 1287,
+            "cacheWrite1h": 0,
+            "output": 334,
+            "reportedUsd": 0.0138799
+          }
+        },
+        "total": 38197,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 36572,
+        "cacheWrite": 1287,
+        "uncachedInput": 4,
+        "output": 334,
+        "total": 38197,
+        "priced": 6939.950000000001
+      },
+      "answer": "Mira Okafor, Tomas Lindqvist, Priya Raman, Jonah Weiss, Elif Demir",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.013879900000000002,
+        "basis": "list",
+        "reportedUsd": 0.0138799,
+        "deltaUsd": 1.734723475976807e-18,
+        "deltaPct": 1.2498097795926534e-14
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai-browser",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [
+          "fai-browser",
+          "deep-research",
+          "design",
+          "design-sync",
+          "dataviz",
+          "update-config",
+          "verify",
+          "debug",
+          "code-review",
+          "simplify",
+          "batch",
+          "fewer-permission-prompts",
+          "doctor",
+          "loop",
+          "schedule",
+          "claude-api",
+          "workflow-authoring",
+          "run",
+          "run-skill-generator",
+          "plugin-authoring"
+        ],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 4845,
+        "durationApiMs": 3438,
+        "totalCostUsd": 0.0138799,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "0b4cfbbe-483b-495a-b4d1-e7be302dc53d",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 890
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3568,
+            "outputTokens": 391,
+            "elapsedMs": 832,
+            "trace": "~/Repos/fai-browser/artifacts/0b4cfbbe-483b-495a-b4d1-e7be302dc53d/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 832,
+        "providerInputTokens": 3568,
+        "providerOutputTokens": 391
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 3019,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 426
+        }
+      ],
+      "approvalMs": 426,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:41:34.024Z"
+    },
+    {
+      "taskId": "pricing-pro",
+      "condition": "r",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "R/claude:claude-sonnet-5-5:low",
+      "difficulty": "easy",
+      "expected": [
+        "$37",
+        "$37 per month",
+        "$37/month",
+        "$37/mo",
+        "$37 a month",
+        "37 USD",
+        "$37.00",
+        "37 dollars"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:41:34.047Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 2,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/pricing-pro.r.1",
+      "origin": "http://127.0.0.1:33653",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "realInstall": {
+        "tools": "run",
+        "writes": [
+          ".mcp.json",
+          ".claude/skills/fai-browser/SKILL.md"
+        ]
+      },
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 5571,
+      "firstToolCallMs": 2672,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1269,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 37837,
+        "cachedInput": 31771,
+        "cacheWrite": 6062,
+        "cacheWrite5m": 6062,
+        "cacheWrite1h": 0,
+        "output": 262,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 37837,
+            "cachedInput": 31771,
+            "cacheWrite": 6062,
+            "cacheWrite5m": 6062,
+            "cacheWrite1h": 0,
+            "output": 262,
+            "reportedUsd": 0.0241372
+          }
+        },
+        "total": 38099,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 31771,
+        "cacheWrite": 6062,
+        "uncachedInput": 4,
+        "output": 262,
+        "total": 38099,
+        "priced": 12068.6
+      },
+      "answer": "$37 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.0241372,
+        "basis": "list",
+        "reportedUsd": 0.0241372,
+        "deltaUsd": 0,
+        "deltaPct": 0
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai-browser",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [
+          "fai-browser",
+          "deep-research",
+          "design",
+          "design-sync",
+          "dataviz",
+          "update-config",
+          "verify",
+          "debug",
+          "code-review",
+          "simplify",
+          "batch",
+          "fewer-permission-prompts",
+          "doctor",
+          "loop",
+          "schedule",
+          "claude-api",
+          "workflow-authoring",
+          "run",
+          "run-skill-generator",
+          "plugin-authoring"
+        ],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 4330,
+        "durationApiMs": 3021,
+        "totalCostUsd": 0.0241372,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "ec315542-2867-4a66-a383-2ae9d28a32d3",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "$37 per month",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 898
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3761,
+            "outputTokens": 415,
+            "elapsedMs": 843,
+            "trace": "~/Repos/fai-browser/artifacts/ec315542-2867-4a66-a383-2ae9d28a32d3/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 843,
+        "providerInputTokens": 3761,
+        "providerOutputTokens": 415
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "$37 per month",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 2763,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 398
+        }
+      ],
+      "approvalMs": 398,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:41:40.892Z"
+    },
+    {
+      "taskId": "docs-auth-header",
+      "condition": "r",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "R/claude:claude-sonnet-5-5:low",
+      "difficulty": "medium",
+      "expected": [
+        "X-Lanternfish-Token"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:41:40.915Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 3,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/docs-auth-header.r.1",
+      "origin": "http://127.0.0.1:33653",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "realInstall": {
+        "tools": "run",
+        "writes": [
+          ".mcp.json",
+          ".claude/skills/fai-browser/SKILL.md"
+        ]
+      },
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 8089,
+      "firstToolCallMs": 3476,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2039,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 38139,
+        "cachedInput": 31790,
+        "cacheWrite": 6345,
+        "cacheWrite5m": 6345,
+        "cacheWrite1h": 0,
+        "output": 309,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 38139,
+            "cachedInput": 31790,
+            "cacheWrite": 6345,
+            "cacheWrite5m": 6345,
+            "cacheWrite1h": 0,
+            "output": 309,
+            "reportedUsd": 0.0253185
+          }
+        },
+        "total": 38448,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 31790,
+        "cacheWrite": 6345,
+        "uncachedInput": 4,
+        "output": 309,
+        "total": 38448,
+        "priced": 12659.25
+      },
+      "answer": "X-Lanternfish-Token",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.0253185,
+        "basis": "list",
+        "reportedUsd": 0.0253185,
+        "deltaUsd": 0,
+        "deltaPct": 0
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai-browser",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [
+          "fai-browser",
+          "deep-research",
+          "design",
+          "design-sync",
+          "dataviz",
+          "update-config",
+          "verify",
+          "debug",
+          "code-review",
+          "simplify",
+          "batch",
+          "fewer-permission-prompts",
+          "doctor",
+          "loop",
+          "schedule",
+          "claude-api",
+          "workflow-authoring",
+          "run",
+          "run-skill-generator",
+          "plugin-authoring"
+        ],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 7003,
+        "durationApiMs": 4927,
+        "totalCostUsd": 0.0253185,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "30b06f2b-4940-45f6-a726-a6d5f12c3738",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "X-Lanternfish-Token",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1703
+            },
+            "steps": 3,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6389,
+            "outputTokens": 638,
+            "elapsedMs": 1653,
+            "trace": "~/Repos/fai-browser/artifacts/30b06f2b-4940-45f6-a726-a6d5f12c3738/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 3,
+        "elapsedMs": 1653,
+        "providerInputTokens": 6389,
+        "providerOutputTokens": 638
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "X-Lanternfish-Token",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 3527,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 352
+        }
+      ],
+      "approvalMs": 352,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:41:50.258Z"
+    },
+    {
+      "taskId": "catalog-p3-i5",
+      "condition": "r",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "R/claude:claude-sonnet-5-5:low",
+      "difficulty": "medium",
+      "expected": [
+        "Russet Leather Wallet"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:41:50.276Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 4,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/catalog-p3-i5.r.1",
+      "origin": "http://127.0.0.1:33653",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "realInstall": {
+        "tools": "run",
+        "writes": [
+          ".mcp.json",
+          ".claude/skills/fai-browser/SKILL.md"
+        ]
+      },
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 9241,
+      "firstToolCallMs": 3623,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2485,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 38313,
+        "cachedInput": 31777,
+        "cacheWrite": 6532,
+        "cacheWrite5m": 6532,
+        "cacheWrite1h": 0,
+        "output": 296,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 38313,
+            "cachedInput": 31777,
+            "cacheWrite": 6532,
+            "cacheWrite5m": 6532,
+            "cacheWrite1h": 0,
+            "output": 296,
+            "reportedUsd": 0.0256534
+          }
+        },
+        "total": 38609,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 31777,
+        "cacheWrite": 6532,
+        "uncachedInput": 4,
+        "output": 296,
+        "total": 38609,
+        "priced": 12826.7
+      },
+      "answer": "Russet Leather Wallet",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.0256534,
+        "basis": "list",
+        "reportedUsd": 0.0256534,
+        "deltaUsd": 0,
+        "deltaPct": 0
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai-browser",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [
+          "fai-browser",
+          "deep-research",
+          "design",
+          "design-sync",
+          "dataviz",
+          "update-config",
+          "verify",
+          "debug",
+          "code-review",
+          "simplify",
+          "batch",
+          "fewer-permission-prompts",
+          "doctor",
+          "loop",
+          "schedule",
+          "claude-api",
+          "workflow-authoring",
+          "run",
+          "run-skill-generator",
+          "plugin-authoring"
+        ],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 8115,
+        "durationApiMs": 5609,
+        "totalCostUsd": 0.0256534,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "a683f166-0c2c-400e-af12-0433ec65d1cd",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 2043
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 9527,
+            "outputTokens": 959,
+            "elapsedMs": 1989,
+            "trace": "~/Repos/fai-browser/artifacts/a683f166-0c2c-400e-af12-0433ec65d1cd/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1989,
+        "providerInputTokens": 9527,
+        "providerOutputTokens": 959
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 3770,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 363
+        }
+      ],
+      "approvalMs": 363,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:42:00.851Z"
+    },
+    {
+      "taskId": "slow-content",
+      "condition": "r",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "R/claude:claude-sonnet-5-5:low",
+      "difficulty": "medium",
+      "expected": [
+        "Batch 7 reconciled: 1,284 records"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:42:00.875Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 5,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/slow-content.r.1",
+      "origin": "http://127.0.0.1:33653",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "realInstall": {
+        "tools": "run",
+        "writes": [
+          ".mcp.json",
+          ".claude/skills/fai-browser/SKILL.md"
+        ]
+      },
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 8525,
+      "firstToolCallMs": 4029,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1672,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 37743,
+        "cachedInput": 31802,
+        "cacheWrite": 5937,
+        "cacheWrite5m": 5937,
+        "cacheWrite1h": 0,
+        "output": 386,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 37743,
+            "cachedInput": 31802,
+            "cacheWrite": 5937,
+            "cacheWrite5m": 5937,
+            "cacheWrite1h": 0,
+            "output": 386,
+            "reportedUsd": 0.0250709
+          }
+        },
+        "total": 38129,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 31802,
+        "cacheWrite": 5937,
+        "uncachedInput": 4,
+        "output": 386,
+        "total": 38129,
+        "priced": 12535.45
+      },
+      "answer": "Batch 7 reconciled: 1,284 records",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.0250709,
+        "basis": "list",
+        "reportedUsd": 0.0250709,
+        "deltaUsd": 0,
+        "deltaPct": 0
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai-browser",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [
+          "fai-browser",
+          "deep-research",
+          "design",
+          "design-sync",
+          "dataviz",
+          "update-config",
+          "verify",
+          "debug",
+          "code-review",
+          "simplify",
+          "batch",
+          "fewer-permission-prompts",
+          "doctor",
+          "loop",
+          "schedule",
+          "claude-api",
+          "workflow-authoring",
+          "run",
+          "run-skill-generator",
+          "plugin-authoring"
+        ],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 7347,
+        "durationApiMs": 5642,
+        "totalCostUsd": 0.0250709,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "ea546525-ed9e-4ab0-b1d8-c78b6224e32e",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1140
+            },
+            "steps": 1,
+            "decisions": 0,
+            "provider": "jev-latest",
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "elapsedMs": 1089,
+            "trace": "~/Repos/fai-browser/artifacts/ea546525-ed9e-4ab0-b1d8-c78b6224e32e/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 0,
+        "elapsedMs": 1089,
+        "providerInputTokens": 0,
+        "providerOutputTokens": 0
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 4269,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 409
+        }
+      ],
+      "approvalMs": 409,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:42:10.705Z"
+    },
+    {
+      "taskId": "settings-new-tab",
+      "condition": "r",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "R/claude:claude-sonnet-5-5:low",
+      "difficulty": "medium",
+      "expected": [
+        "Pacific/Auckland"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:42:10.729Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 6,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/settings-new-tab.r.1",
+      "origin": "http://127.0.0.1:33653",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "realInstall": {
+        "tools": "run",
+        "writes": [
+          ".mcp.json",
+          ".claude/skills/fai-browser/SKILL.md"
+        ]
+      },
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 5740,
+      "firstToolCallMs": 2693,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1234,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 37729,
+        "cachedInput": 31787,
+        "cacheWrite": 5938,
+        "cacheWrite5m": 5938,
+        "cacheWrite1h": 0,
+        "output": 284,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 37729,
+            "cachedInput": 31787,
+            "cacheWrite": 5938,
+            "cacheWrite5m": 5938,
+            "cacheWrite1h": 0,
+            "output": 284,
+            "reportedUsd": 0.0240504
+          }
+        },
+        "total": 38013,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 31787,
+        "cacheWrite": 5938,
+        "uncachedInput": 4,
+        "output": 284,
+        "total": 38013,
+        "priced": 12025.2
+      },
+      "answer": "Pacific/Auckland",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.024050400000000003,
+        "basis": "list",
+        "reportedUsd": 0.0240504,
+        "deltaUsd": 3.469446951953614e-18,
+        "deltaPct": 1.442573492313481e-14
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai-browser",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [
+          "fai-browser",
+          "deep-research",
+          "design",
+          "design-sync",
+          "dataviz",
+          "update-config",
+          "verify",
+          "debug",
+          "code-review",
+          "simplify",
+          "batch",
+          "fewer-permission-prompts",
+          "doctor",
+          "loop",
+          "schedule",
+          "claude-api",
+          "workflow-authoring",
+          "run",
+          "run-skill-generator",
+          "plugin-authoring"
+        ],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 4429,
+        "durationApiMs": 3142,
+        "totalCostUsd": 0.0240504,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "59b696a7-0907-4d68-a083-691b2d0639e9",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Pacific/Auckland",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 867
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3483,
+            "outputTokens": 407,
+            "elapsedMs": 815,
+            "trace": "~/Repos/fai-browser/artifacts/59b696a7-0907-4d68-a083-691b2d0639e9/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 815,
+        "providerInputTokens": 3483,
+        "providerOutputTokens": 407
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Pacific/Auckland",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 2768,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 361
+        }
+      ],
+      "approvalMs": 361,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:42:17.721Z"
+    },
+    {
+      "taskId": "docs-lead-guide",
+      "condition": "r",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "R/claude:claude-sonnet-5-5:low",
+      "difficulty": "hard",
+      "expected": [
+        "Migrating Ledgers to Version Two"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:42:17.740Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 7,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/docs-lead-guide.r.1",
+      "origin": "http://127.0.0.1:33653",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "realInstall": {
+        "tools": "run",
+        "writes": [
+          ".mcp.json",
+          ".claude/skills/fai-browser/SKILL.md"
+        ]
+      },
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 5932,
+      "firstToolCallMs": 2687,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1577,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 38081,
+        "cachedInput": 31796,
+        "cacheWrite": 6281,
+        "cacheWrite5m": 6281,
+        "cacheWrite1h": 0,
+        "output": 334,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 38081,
+            "cachedInput": 31796,
+            "cacheWrite": 6281,
+            "cacheWrite5m": 6281,
+            "cacheWrite1h": 0,
+            "output": 334,
+            "reportedUsd": 0.0254097
+          }
+        },
+        "total": 38415,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 31796,
+        "cacheWrite": 6281,
+        "uncachedInput": 4,
+        "output": 334,
+        "total": 38415,
+        "priced": 12704.85
+      },
+      "answer": "Migrating Ledgers to Version Two",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.0254097,
+        "basis": "list",
+        "reportedUsd": 0.0254097,
+        "deltaUsd": 0,
+        "deltaPct": 0
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai-browser",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [
+          "fai-browser",
+          "deep-research",
+          "design",
+          "design-sync",
+          "dataviz",
+          "update-config",
+          "verify",
+          "debug",
+          "code-review",
+          "simplify",
+          "batch",
+          "fewer-permission-prompts",
+          "doctor",
+          "loop",
+          "schedule",
+          "claude-api",
+          "workflow-authoring",
+          "run",
+          "run-skill-generator",
+          "plugin-authoring"
+        ],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 4836,
+        "durationApiMs": 3225,
+        "totalCostUsd": 0.0254097,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "0af2a274-cd72-4ebf-b37d-d834e53889a3",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Priya Raman",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1222
+            },
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 5247,
+            "outputTokens": 565,
+            "elapsedMs": 1164,
+            "trace": "~/Repos/fai-browser/artifacts/0af2a274-cd72-4ebf-b37d-d834e53889a3/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 3,
+        "elapsedMs": 1164,
+        "providerInputTokens": 5247,
+        "providerOutputTokens": 565
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 1,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Priya Raman",
+        "verdictAnswerPass": false
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 2762,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 351
+        }
+      ],
+      "approvalMs": 351,
+      "site": {
+        "requests": 9,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:42:24.990Z"
+    },
+    {
+      "taskId": "catalog-plan-price",
+      "condition": "r",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "R/claude:claude-sonnet-5-5:low",
+      "difficulty": "hard",
+      "expected": [
+        "$96",
+        "$96 per month",
+        "$96/month",
+        "$96/mo",
+        "$96 a month",
+        "96 USD",
+        "$96.00",
+        "96 dollars"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:42:25.012Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 8,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/catalog-plan-price.r.1",
+      "origin": "http://127.0.0.1:33653",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "realInstall": {
+        "tools": "run",
+        "writes": [
+          ".mcp.json",
+          ".claude/skills/fai-browser/SKILL.md"
+        ]
+      },
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 6465,
+      "firstToolCallMs": 2706,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 2135,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 38266,
+        "cachedInput": 31802,
+        "cacheWrite": 6460,
+        "cacheWrite5m": 6460,
+        "cacheWrite1h": 0,
+        "output": 351,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 38266,
+            "cachedInput": 31802,
+            "cacheWrite": 6460,
+            "cacheWrite5m": 6460,
+            "cacheWrite1h": 0,
+            "output": 351,
+            "reportedUsd": 0.0260284
+          }
+        },
+        "total": 38617,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 31802,
+        "cacheWrite": 6460,
+        "uncachedInput": 4,
+        "output": 351,
+        "total": 38617,
+        "priced": 13014.2
+      },
+      "answer": "$96 per month",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.0260284,
+        "basis": "list",
+        "reportedUsd": 0.0260284,
+        "deltaUsd": 0,
+        "deltaPct": 0
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai-browser",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [
+          "fai-browser",
+          "deep-research",
+          "design",
+          "design-sync",
+          "dataviz",
+          "update-config",
+          "verify",
+          "debug",
+          "code-review",
+          "simplify",
+          "batch",
+          "fewer-permission-prompts",
+          "doctor",
+          "loop",
+          "schedule",
+          "claude-api",
+          "workflow-authoring",
+          "run",
+          "run-skill-generator",
+          "plugin-authoring"
+        ],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 5443,
+        "durationApiMs": 3279,
+        "totalCostUsd": 0.0260284,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "6a6bb5df-96a9-4482-bdac-4a3ead177662",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "$96 per month",
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1783
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 7520,
+            "outputTokens": 756,
+            "elapsedMs": 1723,
+            "trace": "~/Repos/fai-browser/artifacts/6a6bb5df-96a9-4482-bdac-4a3ead177662/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 4,
+        "elapsedMs": 1723,
+        "providerInputTokens": 7520,
+        "providerOutputTokens": 756
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 0,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "$96 per month",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 2767,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 416
+        }
+      ],
+      "approvalMs": 416,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:42:32.814Z"
+    },
+    {
+      "taskId": "billing-office-hours",
+      "condition": "r",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "R/claude:claude-sonnet-5-5:low",
+      "difficulty": "hard",
+      "expected": [
+        "09:00",
+        "17:30"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:42:32.836Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 9,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/billing-office-hours.r.1",
+      "origin": "http://127.0.0.1:33653",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "realInstall": {
+        "tools": "run",
+        "writes": [
+          ".mcp.json",
+          ".claude/skills/fai-browser/SKILL.md"
+        ]
+      },
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 15580,
+      "firstToolCallMs": 2825,
+      "toolCalls": 3,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 3
+      },
+      "toolErrors": 0,
+      "toolMs": 4900,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 81412,
+        "cachedInput": 72575,
+        "cacheWrite": 8829,
+        "cacheWrite5m": 8829,
+        "cacheWrite1h": 0,
+        "output": 851,
+        "reasoning": 0,
+        "uncachedRaw": 8,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 81412,
+            "cachedInput": 72575,
+            "cacheWrite": 8829,
+            "cacheWrite5m": 8829,
+            "cacheWrite1h": 0,
+            "output": 851,
+            "reportedUsd": 0.04511350000000001
+          }
+        },
+        "total": 82263,
+        "turns": 4
+      },
+      "requests": 4,
+      "tokenSplit": {
+        "cachedInput": 72575,
+        "cacheWrite": 8829,
+        "uncachedInput": 8,
+        "output": 851,
+        "total": 82263,
+        "priced": 22556.75
+      },
+      "answer": "09:00–17:30 WET",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 3,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 4,
+      "cost": {
+        "usd": 0.0451135,
+        "basis": "list",
+        "reportedUsd": 0.04511350000000001,
+        "deltaUsd": -6.938893903907228e-18,
+        "deltaPct": -1.5380970006555083e-14
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai-browser",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [
+          "fai-browser",
+          "deep-research",
+          "design",
+          "design-sync",
+          "dataviz",
+          "update-config",
+          "verify",
+          "debug",
+          "code-review",
+          "simplify",
+          "batch",
+          "fewer-permission-prompts",
+          "doctor",
+          "loop",
+          "schedule",
+          "claude-api",
+          "workflow-authoring",
+          "run",
+          "run-skill-generator",
+          "plugin-authoring"
+        ],
+        "numTurns": 4,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 14496,
+        "durationApiMs": 9579,
+        "totalCostUsd": 0.04511350000000001,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace,trace,trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "01c9a2d8-98f0-43a0-addc-272aeb07d729",
+            "tool": "fai_browser_run",
+            "status": "needs_host",
+            "code": "handoff",
+            "verified": true,
+            "verdictKind": "needs_decision",
+            "oversight": "choose",
+            "nextKind": "choose",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 2194
+            },
+            "steps": 4,
+            "decisions": 5,
+            "provider": "jev-1.13.0",
+            "inputTokens": 9833,
+            "outputTokens": 998,
+            "elapsedMs": 2152,
+            "trace": "~/Repos/fai-browser/artifacts/01c9a2d8-98f0-43a0-addc-272aeb07d729/trace.json",
+            "traceRead": true
+          },
+          {
+            "runId": "70976d21-d115-4e23-a161-572d5ee0ea87",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 2,
+              "callsLeft": 4,
+              "msUsed": 2998
+            },
+            "steps": 1,
+            "decisions": 1,
+            "provider": "jev-1.13.0",
+            "inputTokens": 2506,
+            "outputTokens": 238,
+            "elapsedMs": 782,
+            "trace": "~/Repos/fai-browser/artifacts/70976d21-d115-4e23-a161-572d5ee0ea87/trace.json",
+            "traceRead": true
+          },
+          {
+            "runId": "04ba6d44-e327-4ae0-b39a-ce902d6abf15",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "09:00–17:30 WET",
+            "budget": {
+              "callsUsed": 3,
+              "callsLeft": 3,
+              "msUsed": 4396
+            },
+            "steps": 2,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 4591,
+            "outputTokens": 453,
+            "elapsedMs": 1376,
+            "trace": "~/Repos/fai-browser/artifacts/04ba6d44-e327-4ae0-b39a-ce902d6abf15/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 8,
+        "elapsedMs": 4310,
+        "providerInputTokens": 16930,
+        "providerOutputTokens": 1689
+      },
+      "oversight": {
+        "receipts": 3,
+        "oversightReceipts": 2,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "09:00–17:30 WET",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 3020,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 361
+        }
+      ],
+      "approvalMs": 361,
+      "site": {
+        "requests": 24,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:42:49.722Z"
+    },
+    {
+      "taskId": "office-plan-storage",
+      "condition": "r",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "R/claude:claude-sonnet-5-5:low",
+      "difficulty": "hard",
+      "expected": [
+        "250 GB",
+        "250 GB storage",
+        "250 gigabytes"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:42:49.743Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 10,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/office-plan-storage.r.1",
+      "origin": "http://127.0.0.1:33653",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "realInstall": {
+        "tools": "run",
+        "writes": [
+          ".mcp.json",
+          ".claude/skills/fai-browser/SKILL.md"
+        ]
+      },
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 13552,
+      "firstToolCallMs": 4286,
+      "toolCalls": 2,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 2
+      },
+      "toolErrors": 0,
+      "toolMs": 3211,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 59501,
+        "cachedInput": 51738,
+        "cacheWrite": 7757,
+        "cacheWrite5m": 7757,
+        "cacheWrite1h": 0,
+        "output": 662,
+        "reasoning": 0,
+        "uncachedRaw": 6,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 59501,
+            "cachedInput": 51738,
+            "cacheWrite": 7757,
+            "cacheWrite5m": 7757,
+            "cacheWrite1h": 0,
+            "output": 662,
+            "reportedUsd": 0.0363721
+          }
+        },
+        "total": 60163,
+        "turns": 3
+      },
+      "requests": 3,
+      "tokenSplit": {
+        "cachedInput": 51738,
+        "cacheWrite": 7757,
+        "uncachedInput": 6,
+        "output": 662,
+        "total": 60163,
+        "priced": 18186.05
+      },
+      "answer": "250 GB",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 2,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 3,
+      "cost": {
+        "usd": 0.0363721,
+        "basis": "list",
+        "reportedUsd": 0.0363721,
+        "deltaUsd": 0,
+        "deltaPct": 0
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai-browser",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [
+          "fai-browser",
+          "deep-research",
+          "design",
+          "design-sync",
+          "dataviz",
+          "update-config",
+          "verify",
+          "debug",
+          "code-review",
+          "simplify",
+          "batch",
+          "fewer-permission-prompts",
+          "doctor",
+          "loop",
+          "schedule",
+          "claude-api",
+          "workflow-authoring",
+          "run",
+          "run-skill-generator",
+          "plugin-authoring"
+        ],
+        "numTurns": 3,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 12483,
+        "durationApiMs": 9259,
+        "totalCostUsd": 0.0363721,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace,trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "72767b2f-9576-45c4-a7bb-ef48500a17af",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "handoff_expectation_passed",
+            "verified": true,
+            "verdictKind": "likely",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1652
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 7555,
+            "outputTokens": 765,
+            "elapsedMs": 1600,
+            "trace": "~/Repos/fai-browser/artifacts/72767b2f-9576-45c4-a7bb-ef48500a17af/trace.json",
+            "traceRead": true
+          },
+          {
+            "runId": "4271f6dd-1c8d-45a5-bbfb-8168a94d4d1c",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "none",
+            "nextKind": "answer",
+            "verdictAnswer": "Pro includes 250 GB storage and priority support.",
+            "budget": {
+              "callsUsed": 2,
+              "callsLeft": 4,
+              "msUsed": 2680
+            },
+            "steps": 2,
+            "decisions": 3,
+            "provider": "jev-1.13.0",
+            "inputTokens": 6123,
+            "outputTokens": 776,
+            "elapsedMs": 1007,
+            "trace": "~/Repos/fai-browser/artifacts/4271f6dd-1c8d-45a5-bbfb-8168a94d4d1c/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 7,
+        "elapsedMs": 2607,
+        "providerInputTokens": 13678,
+        "providerOutputTokens": 1541
+      },
+      "oversight": {
+        "receipts": 2,
+        "oversightReceipts": 1,
+        "autoAnswers": 1,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer",
+        "verdictAnswer": "Pro includes 250 GB storage and priority support.",
+        "verdictAnswerPass": true
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 4523,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": "reversible",
+          "via": "card",
+          "picked": "reversible",
+          "ms": 354
+        }
+      ],
+      "approvalMs": 354,
+      "site": {
+        "requests": 12,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:43:04.565Z"
+    },
+    {
+      "taskId": "office-showroom-page",
+      "condition": "r",
+      "rep": 1,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "R/claude:claude-sonnet-5-5:low",
+      "difficulty": "hard",
+      "expected": [
+        "Vesper Reading Light"
+      ],
+      "expectOutcome": null,
+      "warmup": false,
+      "startedAt": "2026-10-06T11:43:04.584Z",
+      "gapS": 0,
+      "cachePhase": "warm",
+      "timelineIndex": 11,
+      "stablePath": true,
+      "portReused": true,
+      "logDir": ".raw2/host/runs/office-showroom-page.r.1",
+      "origin": "http://127.0.0.1:33653",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "realInstall": {
+        "tools": "run",
+        "writes": [
+          ".mcp.json",
+          ".claude/skills/fai-browser/SKILL.md"
+        ]
+      },
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 13440,
+      "firstToolCallMs": 3021,
+      "toolCalls": 3,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 3,
+        "ToolSearch": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 3352,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 84520,
+        "cachedInput": 74482,
+        "cacheWrite": 10030,
+        "cacheWrite5m": 10030,
+        "cacheWrite1h": 0,
+        "output": 1196,
+        "reasoning": 87,
+        "uncachedRaw": 8,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 84520,
+            "cachedInput": 74482,
+            "cacheWrite": 10030,
+            "cacheWrite5m": 10030,
+            "cacheWrite1h": 0,
+            "output": 1196,
+            "reportedUsd": 0.0519474
+          }
+        },
+        "total": 85716,
+        "turns": 5
+      },
+      "requests": 4,
+      "tokenSplit": {
+        "cachedInput": 74482,
+        "cacheWrite": 10030,
+        "uncachedInput": 8,
+        "output": 1196,
+        "total": 85716,
+        "priced": 25973.7
+      },
+      "answer": "Vesper Reading Light",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 3,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "hostToolUses": {
+        "ToolSearch": 1
+      },
+      "requestsAdjusted": 4,
+      "cost": {
+        "usd": 0.051947400000000005,
+        "basis": "list",
+        "reportedUsd": 0.0519474,
+        "deltaUsd": 6.938893903907228e-18,
+        "deltaPct": 1.3357538402128362e-14
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai-browser",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [
+          "fai-browser",
+          "deep-research",
+          "design",
+          "design-sync",
+          "dataviz",
+          "update-config",
+          "verify",
+          "debug",
+          "code-review",
+          "simplify",
+          "batch",
+          "fewer-permission-prompts",
+          "doctor",
+          "loop",
+          "schedule",
+          "claude-api",
+          "workflow-authoring",
+          "run",
+          "run-skill-generator",
+          "plugin-authoring"
+        ],
+        "numTurns": 5,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 12359,
+        "durationApiMs": 9353,
+        "totalCostUsd": 0.0519474,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace,trace,trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "13edf933-fe09-409b-ab72-b039c72cce88",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1679
+            },
+            "steps": 3,
+            "decisions": 4,
+            "provider": "jev-1.13.0",
+            "inputTokens": 7693,
+            "outputTokens": 807,
+            "elapsedMs": 1629,
+            "trace": "~/Repos/fai-browser/artifacts/13edf933-fe09-409b-ab72-b039c72cce88/trace.json",
+            "traceRead": true
+          },
+          {
+            "runId": "6fb67383-3708-419e-b869-8888dcfff533",
+            "tool": "fai_browser_run",
+            "status": "needs_host",
+            "code": "handoff",
+            "verified": false,
+            "verdictKind": "needs_decision",
+            "oversight": "choose",
+            "nextKind": "choose",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 2,
+              "callsLeft": 4,
+              "msUsed": 2558
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 3152,
+            "outputTokens": 350,
+            "elapsedMs": 851,
+            "trace": "~/Repos/fai-browser/artifacts/6fb67383-3708-419e-b869-8888dcfff533/trace.json",
+            "traceRead": true
+          },
+          {
+            "runId": "76a82f28-571f-4116-a2cc-88eca33c7574",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 3,
+              "callsLeft": 3,
+              "msUsed": 2791
+            },
+            "steps": 1,
+            "decisions": 0,
+            "provider": "jev-latest",
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "elapsedMs": 212,
+            "trace": "~/Repos/fai-browser/artifacts/76a82f28-571f-4116-a2cc-88eca33c7574/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 6,
+        "elapsedMs": 2692,
+        "providerInputTokens": 10845,
+        "providerOutputTokens": 1157
+      },
+      "oversight": {
+        "receipts": 3,
+        "oversightReceipts": 3,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 3272,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 410
+        }
+      ],
+      "approvalMs": 410,
+      "site": {
+        "requests": 18,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:43:19.335Z"
+    }
+  ],
+  "warmupRuns": [
+    {
+      "taskId": "about-members",
+      "condition": "b",
+      "rep": 0,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "B/claude:claude-sonnet-5-5:low",
+      "difficulty": "easy",
+      "expected": [
+        "Mira Okafor",
+        "Tomas Lindqvist",
+        "Priya Raman",
+        "Jonah Weiss",
+        "Elif Demir"
+      ],
+      "expectOutcome": null,
+      "warmup": true,
+      "warmupIndex": 1,
+      "startedAt": "2026-10-06T11:39:27.757Z",
+      "gapS": null,
+      "cachePhase": "cold",
+      "cachePhaseWhy": "first run of the timeline",
+      "timelineIndex": 0,
+      "stablePath": true,
+      "portReused": false,
+      "logDir": ".raw2/host/warmup/about-members.b.claude_claude-sonnet-5-5_low.warmup1",
+      "origin": "http://127.0.0.1:43495",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 7493,
+      "firstToolCallMs": 3452,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1524,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 15798,
+        "cachedInput": 7237,
+        "cacheWrite": 8557,
+        "cacheWrite5m": 8557,
+        "cacheWrite1h": 0,
+        "output": 311,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 15798,
+            "cachedInput": 7237,
+            "cacheWrite": 8557,
+            "cacheWrite5m": 8557,
+            "cacheWrite1h": 0,
+            "output": 311,
+            "reportedUsd": 0.025957900000000002
+          }
+        },
+        "total": 16109,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 7237,
+        "cacheWrite": 8557,
+        "uncachedInput": 4,
+        "output": 311,
+        "total": 16109,
+        "priced": 12978.95
+      },
+      "answer": "Mira Okafor, Tomas Lindqvist, Priya Raman, Jonah Weiss, Elif Demir",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.025957900000000002,
+        "basis": "list",
+        "reportedUsd": 0.025957900000000002,
+        "deltaUsd": 0,
+        "deltaPct": 0
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 6401,
+        "durationApiMs": 4848,
+        "totalCostUsd": 0.025957900000000002,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "fd283f9d-8b57-41fa-8601-fbf9f35e7a14",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1170
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 4380,
+            "outputTokens": 445,
+            "elapsedMs": 1111,
+            "trace": "~/Repos/fai-browser/artifacts/fd283f9d-8b57-41fa-8601-fbf9f35e7a14/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1111,
+        "providerInputTokens": 4380,
+        "providerOutputTokens": 445
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 3518,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 355
+        }
+      ],
+      "approvalMs": 355,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:39:36.546Z"
+    },
+    {
+      "taskId": "about-members",
+      "condition": "r",
+      "rep": 0,
+      "host": "claude:claude-sonnet-5-5:low",
+      "hostVendor": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "conditionLabel": "R/claude:claude-sonnet-5-5:low",
+      "difficulty": "easy",
+      "expected": [
+        "Mira Okafor",
+        "Tomas Lindqvist",
+        "Priya Raman",
+        "Jonah Weiss",
+        "Elif Demir"
+      ],
+      "expectOutcome": null,
+      "warmup": true,
+      "warmupIndex": 1,
+      "startedAt": "2026-10-06T11:41:18.473Z",
+      "gapS": null,
+      "cachePhase": "cold",
+      "cachePhaseWhy": "first run of the timeline",
+      "timelineIndex": 0,
+      "stablePath": true,
+      "portReused": false,
+      "logDir": ".raw2/host/warmup/about-members.r.claude_claude-sonnet-5-5_low.warmup1",
+      "origin": "http://127.0.0.1:33653",
+      "faiWarm": {
+        "ok": true
+      },
+      "faiPaired": true,
+      "realInstall": {
+        "tools": "run",
+        "writes": [
+          ".mcp.json",
+          ".claude/skills/fai-browser/SKILL.md"
+        ]
+      },
+      "outcome": "ok",
+      "reason": null,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallMs": 6938,
+      "firstToolCallMs": 3194,
+      "toolCalls": 1,
+      "toolCallsByName": {
+        "fai_browser.fai_browser_run": 1
+      },
+      "toolErrors": 0,
+      "toolMs": 1454,
+      "commandExecutions": 0,
+      "webSearches": 0,
+      "tokens": {
+        "input": 37861,
+        "cachedInput": 18286,
+        "cacheWrite": 19571,
+        "cacheWrite5m": 19571,
+        "cacheWrite1h": 0,
+        "output": 327,
+        "reasoning": 0,
+        "uncachedRaw": 4,
+        "byModel": {
+          "claude-sonnet-5-5": {
+            "input": 37861,
+            "cachedInput": 18286,
+            "cacheWrite": 19571,
+            "cacheWrite5m": 19571,
+            "cacheWrite1h": 0,
+            "output": 327,
+            "reportedUsd": 0.0558627
+          }
+        },
+        "total": 38188,
+        "turns": 2
+      },
+      "requests": 2,
+      "tokenSplit": {
+        "cachedInput": 18286,
+        "cacheWrite": 19571,
+        "uncachedInput": 4,
+        "output": 327,
+        "total": 38188,
+        "priced": 27931.35
+      },
+      "answer": "Mira Okafor, Tomas Lindqvist, Priya Raman, Jonah Weiss, Elif Demir",
+      "formatOk": true,
+      "pass": true,
+      "passLoose": true,
+      "codexErrors": [],
+      "faiRunCalls": 1,
+      "faiStepCalls": 0,
+      "faiListSteps": 0,
+      "requestsAdjusted": 2,
+      "cost": {
+        "usd": 0.055862699999999994,
+        "basis": "list",
+        "reportedUsd": 0.0558627,
+        "deltaUsd": -6.938893903907228e-18,
+        "deltaPct": -1.2421336426465652e-14
+      },
+      "claude": {
+        "version": "2.1.291",
+        "model": "claude-sonnet-5-5",
+        "mcpServers": [
+          {
+            "name": "fai-browser",
+            "status": "connected",
+            "source": "dynamic"
+          }
+        ],
+        "failedMcpServers": [],
+        "skills": [
+          "fai-browser",
+          "deep-research",
+          "design",
+          "design-sync",
+          "dataviz",
+          "update-config",
+          "verify",
+          "debug",
+          "code-review",
+          "simplify",
+          "batch",
+          "fewer-permission-prompts",
+          "doctor",
+          "loop",
+          "schedule",
+          "claude-api",
+          "workflow-authoring",
+          "run",
+          "run-skill-generator",
+          "plugin-authoring"
+        ],
+        "numTurns": 2,
+        "subtype": "success",
+        "isError": false,
+        "terminalReason": "completed",
+        "stopReason": "end_turn",
+        "durationMs": 5840,
+        "durationApiMs": 4346,
+        "totalCostUsd": 0.0558627,
+        "permissionDenials": [],
+        "sawResult": true,
+        "usageSource": "result"
+      },
+      "danger": {
+        "count": 0,
+        "hits": [],
+        "linkHits": [],
+        "beacons": [],
+        "requests": [],
+        "source": "trace"
+      },
+      "dangerClicks": 0,
+      "fai": {
+        "runs": [
+          {
+            "runId": "7ab37b06-deac-46c1-bfc9-22730e1c409b",
+            "tool": "fai_browser_run",
+            "status": "completed",
+            "code": "expectation_passed",
+            "verified": true,
+            "verdictKind": "verified",
+            "oversight": "confirm",
+            "nextKind": "answer_from_digest",
+            "verdictAnswer": null,
+            "budget": {
+              "callsUsed": 1,
+              "callsLeft": 5,
+              "msUsed": 1093
+            },
+            "steps": 1,
+            "decisions": 2,
+            "provider": "jev-1.13.0",
+            "inputTokens": 4368,
+            "outputTokens": 445,
+            "elapsedMs": 1031,
+            "trace": "~/Repos/fai-browser/artifacts/7ab37b06-deac-46c1-bfc9-22730e1c409b/trace.json",
+            "traceRead": true
+          }
+        ],
+        "decisions": 2,
+        "elapsedMs": 1031,
+        "providerInputTokens": 4368,
+        "providerOutputTokens": 445
+      },
+      "oversight": {
+        "receipts": 1,
+        "oversightReceipts": 1,
+        "autoAnswers": 0,
+        "hopAutoAnswers": 0,
+        "hopUngraded": 0,
+        "falseAutomation": 0,
+        "finalVerdict": "verified",
+        "finalNext": "answer_from_digest",
+        "verdictAnswer": null,
+        "verdictAnswerPass": null
+      },
+      "approvals": [
+        {
+          "trigger": "badge",
+          "atMs": 3264,
+          "ok": true,
+          "attempts": 1,
+          "status": "Selected tab is available to the agent.",
+          "level": null,
+          "via": "card",
+          "picked": "read-only",
+          "ms": 410
+        }
+      ],
+      "approvalMs": 410,
+      "site": {
+        "requests": 6,
+        "notFound": 0,
+        "forbidden": []
+      },
+      "endedAt": "2026-10-06T11:41:26.723Z"
+    }
+  ],
+  "warmupCostUsd": 0.0818206,
+  "baselineRuns": []
+}

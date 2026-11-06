@@ -1,0 +1,570 @@
+{
+  "label": "live-fixes",
+  "tree": "this checkout",
+  "repeat": 2,
+  "conditions": [
+    "a",
+    "b"
+  ],
+  "startedAt": "2026-10-06T09:08:41.379Z",
+  "origin": "http://127.0.0.1:42153",
+  "tasks": [
+    "flights-window-week",
+    "catalog-cheapest-tent",
+    "workspace-deploy-token",
+    "docs-deep-timeout",
+    "wizard-shipping-draft",
+    "flights-live-form-arrows",
+    "flights-live-landing-calendar"
+  ],
+  "node": "v24.21.0",
+  "provider": "daemon default (Jev)",
+  "steps": "on",
+  "profile": "none",
+  "retry": "default",
+  "thresholds": "default",
+  "hostCaps": {
+    "maxActions": 60,
+    "maxSteps": 15,
+    "maxCalls": 6,
+    "maxMs": 120000,
+    "callWindowMs": 43000
+  },
+  "timeoutMs": "MCP default (runtime 30 s single, 45-120 s list (6 s per step), clamped to the request budget)",
+  "finishedAt": "2026-10-06T09:12:22.704Z",
+  "runs": 28,
+  "byCondition": {
+    "a": {
+      "runs": 14,
+      "success": 10,
+      "verified": 10,
+      "answerOk": 10,
+      "meanProgress": 10.57,
+      "meanSurvival": 10.57,
+      "meanHops": 13.36,
+      "goldHops": 13,
+      "meanHostTurns": 1,
+      "meanJevRequests": 15.71,
+      "p50JevMs": 265,
+      "p90JevMs": 337,
+      "p50TaskMs": 5702,
+      "p50MsPerHop": 464,
+      "breaks": {
+        "low_confidence": 4
+      },
+      "breakCodes": {
+        "low_confidence": 4
+      },
+      "firstBreaks": {
+        "low_confidence": 4
+      },
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    "b": {
+      "runs": 14,
+      "success": 10,
+      "verified": 10,
+      "answerOk": 10,
+      "meanProgress": 9.71,
+      "meanSurvival": 9.29,
+      "meanHops": 10.86,
+      "goldHops": 13,
+      "meanHostTurns": 1.29,
+      "meanJevRequests": 22.43,
+      "p50JevMs": 257,
+      "p90JevMs": 332,
+      "p50TaskMs": 6642,
+      "p50MsPerHop": 584,
+      "breaks": {
+        "low_confidence": 2,
+        "expectation_mismatch": 2
+      },
+      "breakCodes": {
+        "low_confidence": 2,
+        "expectation_mismatch": 2
+      },
+      "firstBreaks": {
+        "low_confidence": 2,
+        "expectation_mismatch": 2
+      },
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    }
+  },
+  "rows": [
+    {
+      "task": "catalog-cheapest-tent",
+      "condition": "a",
+      "family": "catalog",
+      "runs": 2,
+      "success": 2,
+      "verified": 2,
+      "answerOk": 2,
+      "meanProgress": 12,
+      "meanSurvival": 12,
+      "meanHops": 12,
+      "goldHops": 12,
+      "meanHostTurns": 1,
+      "meanJevRequests": 14,
+      "p50JevMs": 250,
+      "p90JevMs": 336,
+      "p50TaskMs": 5569,
+      "p50MsPerHop": 464,
+      "breaks": {},
+      "breakCodes": {},
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "catalog-cheapest-tent",
+      "condition": "b",
+      "family": "catalog",
+      "runs": 2,
+      "success": 2,
+      "verified": 2,
+      "answerOk": 2,
+      "meanProgress": 12,
+      "meanSurvival": 12,
+      "meanHops": 12,
+      "goldHops": 12,
+      "meanHostTurns": 1,
+      "meanJevRequests": 38,
+      "p50JevMs": 257,
+      "p90JevMs": 324,
+      "p50TaskMs": 8883,
+      "p50MsPerHop": 741,
+      "breaks": {},
+      "breakCodes": {},
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "docs-deep-timeout",
+      "condition": "a",
+      "family": "docs",
+      "runs": 2,
+      "success": 2,
+      "verified": 2,
+      "answerOk": 2,
+      "meanProgress": 12,
+      "meanSurvival": 12,
+      "meanHops": 12,
+      "goldHops": 12,
+      "meanHostTurns": 1,
+      "meanJevRequests": 14,
+      "p50JevMs": 287,
+      "p90JevMs": 349,
+      "p50TaskMs": 5819,
+      "p50MsPerHop": 485,
+      "breaks": {},
+      "breakCodes": {},
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "docs-deep-timeout",
+      "condition": "b",
+      "family": "docs",
+      "runs": 2,
+      "success": 2,
+      "verified": 2,
+      "answerOk": 2,
+      "meanProgress": 12,
+      "meanSurvival": 12,
+      "meanHops": 12,
+      "goldHops": 12,
+      "meanHostTurns": 1,
+      "meanJevRequests": 22,
+      "p50JevMs": 238,
+      "p90JevMs": 303,
+      "p50TaskMs": 7005,
+      "p50MsPerHop": 584,
+      "breaks": {},
+      "breakCodes": {},
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "flights-live-form-arrows",
+      "condition": "a",
+      "family": "flights",
+      "runs": 2,
+      "success": 0,
+      "verified": 0,
+      "answerOk": 0,
+      "meanProgress": 6,
+      "meanSurvival": 6,
+      "meanHops": 13.5,
+      "goldHops": 19,
+      "meanHostTurns": 1,
+      "meanJevRequests": 18,
+      "p50JevMs": 265,
+      "p90JevMs": 310,
+      "p50TaskMs": 11133,
+      "p50MsPerHop": 823,
+      "breaks": {
+        "low_confidence": 2
+      },
+      "breakCodes": {
+        "low_confidence": 2
+      },
+      "firstBreaks": {
+        "low_confidence": 2
+      },
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "flights-live-form-arrows",
+      "condition": "b",
+      "family": "flights",
+      "runs": 2,
+      "success": 0,
+      "verified": 0,
+      "answerOk": 0,
+      "meanProgress": 3,
+      "meanSurvival": 0,
+      "meanHops": 7,
+      "goldHops": 19,
+      "meanHostTurns": 3,
+      "meanJevRequests": 14,
+      "p50JevMs": 278,
+      "p90JevMs": 482,
+      "p50TaskMs": 5370,
+      "p50MsPerHop": 768,
+      "breaks": {
+        "low_confidence": 2
+      },
+      "breakCodes": {
+        "low_confidence": 2
+      },
+      "firstBreaks": {
+        "low_confidence": 2
+      },
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "flights-live-landing-calendar",
+      "condition": "a",
+      "family": "flights",
+      "runs": 2,
+      "success": 0,
+      "verified": 0,
+      "answerOk": 0,
+      "meanProgress": 4,
+      "meanSurvival": 4,
+      "meanHops": 16,
+      "goldHops": 29,
+      "meanHostTurns": 1,
+      "meanJevRequests": 18,
+      "p50JevMs": 283,
+      "p90JevMs": 343,
+      "p50TaskMs": 13458,
+      "p50MsPerHop": 841,
+      "breaks": {
+        "low_confidence": 2
+      },
+      "breakCodes": {
+        "low_confidence": 2
+      },
+      "firstBreaks": {
+        "low_confidence": 2
+      },
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "flights-live-landing-calendar",
+      "condition": "b",
+      "family": "flights",
+      "runs": 2,
+      "success": 0,
+      "verified": 0,
+      "answerOk": 0,
+      "meanProgress": 1,
+      "meanSurvival": 1,
+      "meanHops": 5,
+      "goldHops": 29,
+      "meanHostTurns": 1,
+      "meanJevRequests": 10,
+      "p50JevMs": 268,
+      "p90JevMs": 336,
+      "p50TaskMs": 3466,
+      "p50MsPerHop": 693,
+      "breaks": {
+        "expectation_mismatch": 2
+      },
+      "breakCodes": {
+        "expectation_mismatch": 2
+      },
+      "firstBreaks": {
+        "expectation_mismatch": 2
+      },
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "flights-window-week",
+      "condition": "a",
+      "family": "flights",
+      "runs": 2,
+      "success": 2,
+      "verified": 2,
+      "answerOk": 2,
+      "meanProgress": 13,
+      "meanSurvival": 13,
+      "meanHops": 13,
+      "goldHops": 13,
+      "meanHostTurns": 1,
+      "meanJevRequests": 15,
+      "p50JevMs": 270,
+      "p90JevMs": 335,
+      "p50TaskMs": 4962,
+      "p50MsPerHop": 382,
+      "breaks": {},
+      "breakCodes": {},
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "flights-window-week",
+      "condition": "b",
+      "family": "flights",
+      "runs": 2,
+      "success": 2,
+      "verified": 2,
+      "answerOk": 2,
+      "meanProgress": 13,
+      "meanSurvival": 13,
+      "meanHops": 13,
+      "goldHops": 13,
+      "meanHostTurns": 1,
+      "meanJevRequests": 27,
+      "p50JevMs": 255,
+      "p90JevMs": 338,
+      "p50TaskMs": 6642,
+      "p50MsPerHop": 511,
+      "breaks": {},
+      "breakCodes": {},
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "wizard-shipping-draft",
+      "condition": "a",
+      "family": "wizard",
+      "runs": 2,
+      "success": 2,
+      "verified": 2,
+      "answerOk": 2,
+      "meanProgress": 15,
+      "meanSurvival": 15,
+      "meanHops": 15,
+      "goldHops": 15,
+      "meanHostTurns": 1,
+      "meanJevRequests": 17,
+      "p50JevMs": 252,
+      "p90JevMs": 336,
+      "p50TaskMs": 5857,
+      "p50MsPerHop": 391,
+      "breaks": {},
+      "breakCodes": {},
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "wizard-shipping-draft",
+      "condition": "b",
+      "family": "wizard",
+      "runs": 2,
+      "success": 2,
+      "verified": 2,
+      "answerOk": 2,
+      "meanProgress": 15,
+      "meanSurvival": 15,
+      "meanHops": 15,
+      "goldHops": 15,
+      "meanHostTurns": 1,
+      "meanJevRequests": 24,
+      "p50JevMs": 254,
+      "p90JevMs": 314,
+      "p50TaskMs": 7205,
+      "p50MsPerHop": 481,
+      "breaks": {},
+      "breakCodes": {},
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "workspace-deploy-token",
+      "condition": "a",
+      "family": "spa",
+      "runs": 2,
+      "success": 2,
+      "verified": 2,
+      "answerOk": 2,
+      "meanProgress": 12,
+      "meanSurvival": 12,
+      "meanHops": 12,
+      "goldHops": 12,
+      "meanHostTurns": 1,
+      "meanJevRequests": 14,
+      "p50JevMs": 261,
+      "p90JevMs": 334,
+      "p50TaskMs": 4467,
+      "p50MsPerHop": 373,
+      "breaks": {},
+      "breakCodes": {},
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    },
+    {
+      "task": "workspace-deploy-token",
+      "condition": "b",
+      "family": "spa",
+      "runs": 2,
+      "success": 2,
+      "verified": 2,
+      "answerOk": 2,
+      "meanProgress": 12,
+      "meanSurvival": 12,
+      "meanHops": 12,
+      "goldHops": 12,
+      "meanHostTurns": 1,
+      "meanJevRequests": 22,
+      "p50JevMs": 253,
+      "p90JevMs": 381,
+      "p50TaskMs": 6067,
+      "p50MsPerHop": 506,
+      "breaks": {},
+      "breakCodes": {},
+      "firstBreaks": {},
+      "caps": {
+        "steps": 0,
+        "maxActions": 0,
+        "maxCalls": 0,
+        "maxMs": 0,
+        "wait45": 0,
+        "runTimeout": 0
+      },
+      "danger": 0
+    }
+  ],
+  "p50JevMsAll": 261
+}

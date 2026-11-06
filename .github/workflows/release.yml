@@ -1,0 +1,76 @@
+name: Release
+
+# On a version tag (v0.3.0): browserless tests, web-ext lint, the reproducible package, an unlisted AMO signature,
+# then a GitHub Release with the signed .xpi, the unsigned .zip, updates.json and SHA256SUMS
+# (docs/PUBLISHING.md, "Signing and release").
+# Needs repository secrets WEB_EXT_API_KEY and WEB_EXT_API_SECRET (AMO API key: JWT issuer and JWT secret).
+# AMO signs each version once: a tag whose version was already signed fails at the signing step.
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (vX.Y.Z)"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Check the tag matches package.json and extension/manifest.json
+        run: |
+          set -eu
+          version="$(node -p "require('./package.json').version")"
+          manifest="$(node -p "require('./extension/manifest.json').version")"
+          test "$TAG" = "v$version" || { echo "tag $TAG but package.json says $version"; exit 1; }
+          test "$version" = "$manifest" || { echo "package.json $version, extension/manifest.json $manifest"; exit 1; }
+      - run: npm ci
+      - name: Browserless tests
+        run: npm run test:browserless
+      - name: web-ext lint
+        run: npm run lint:firefox
+      - name: Package (reproducible)
+        run: |
+          set -eu
+          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          npm run package
+      - name: Sign on AMO (unlisted)
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.WEB_EXT_API_KEY }}
+          WEB_EXT_API_SECRET: ${{ secrets.WEB_EXT_API_SECRET }}
+        run: npm run sign:firefox -- --yes
+      - name: Update manifest and checksums
+        run: node scripts/update-manifest.mjs
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          version="${TAG#v}"
+          cd dist
+          sha256sum -c SHA256SUMS
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "FAI Browser $version" \
+            --generate-notes \
+            "fai-browser-firefox-$version.xpi" "fai-browser-firefox-$version.zip" updates.json SHA256SUMS

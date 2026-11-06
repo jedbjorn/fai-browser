@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Marseille to London | Derived views fixture</title>
+  <style>
+    body { margin: 8px; font: 13px sans-serif; }
+    main { display: grid; grid-template-columns: 640px 600px; gap: 12px; }
+    section { border: 1px solid #ccd; padding: 6px; }
+    h2 { font-size: 15px; margin: 2px 0 6px; }
+    ul.results { list-style: none; margin: 0; padding: 0; }
+    ul.results li { display: flex; gap: 10px; padding: 3px 0; border-bottom: 1px solid #eee; }
+    ul.results li span { display: block; }
+    .card { display: flex; gap: 8px; padding: 2px 0; }
+    table { border-collapse: collapse; }
+    td, th { border: 1px solid #dde; padding: 1px 4px; }
+    [role="grid"] { display: table; }
+    [role="row"] { display: table-row; }
+    [role="row"] > div { display: table-cell; border: 1px solid #dde; padding: 1px 4px; }
+    #long td, #long th { padding: 0 3px; font-size: 10px; }
+  </style>
+</head>
+<body>
+  <!-- The four data-side losses of a Google Flights results page (live capture 2026-10-06), rebuilt in plain markup:
+       a price graph whose values exist only as bar heights against numeric y-axis ticks (bars keyed by data-id dates,
+       inside an aria-hidden SVG in a labelled region), a chart whose marks name themselves (<title>), a date grid table
+       with row and column headers, an ARIA grid with column headers, result rows whose fields are block-level spans,
+       result cards built from repeated divs, and three regions the page holds only as pixels (a canvas date grid, a
+       chart image with alt text only) or too large to send whole (an 80-row fare table). -->
+  <h1>Flight search</h1>
+  <main>
+    <div>
+      <section>
+        <h2>Price insights</h2>
+        <div role="region" aria-label="Price graph">
+          <svg aria-hidden="true" width="620" height="240" id="graph">
+            <g class="y-axis">
+              <text x="4" y="44">€180</text>
+              <text x="4" y="104">€120</text>
+              <text x="4" y="164">€60</text>
+              <text x="4" y="224">€0</text>
+            </g>
+            <g class="x-axis"><text x="60" y="238">October</text></g>
+            <g class="bars"></g>
+          </svg>
+        </div>
+        <svg width="300" height="100" aria-label="Weekly trend">
+          <circle cx="20" cy="40" r="4"><title>Mon 6: €121</title></circle>
+          <circle cx="60" cy="60" r="4"><title>Tue 7: €98</title></circle>
+          <circle cx="100" cy="30" r="4"><title>Wed 8: €140</title></circle>
+          <circle cx="140" cy="50" r="4"><title>Thu 9: €112</title></circle>
+        </svg>
+      </section>
+      <section>
+        <h2>Top departing flights</h2>
+        <ul class="results">
+          <li><span>10:25 AM – 11:40 AM</span><span>Air France</span><span>Nonstop</span><span>€121</span></li>
+          <li><span>9:50 AM – 10:45 AM</span><span>easyJet</span><span>Nonstop</span><span>€118</span></li>
+          <li><span>6:25 AM – 7:25 AM</span><span>Ryanair</span><span>1 stop</span><span>€87</span></li>
+        </ul>
+      </section>
+      <section>
+        <h2>Other departing flights</h2>
+        <div id="cards">
+          <div class="card"><a href="/booking/1">Vueling</a><span>2 hr 5 min</span><span>€140</span></div>
+          <div class="card"><a href="/booking/2">KLM</a><span>4 hr 10 min</span><span>€205</span></div>
+          <div class="card"><a href="/booking/3">Lufthansa</a><span>5 hr</span><span>€231</span></div>
+        </div>
+      </section>
+    </div>
+    <div>
+      <section>
+        <h2>Seat map</h2>
+        <canvas width="320" height="90" role="grid" aria-label="Seat map"></canvas>
+        <img alt="Price trend chart for the next 60 days" width="320" height="110"
+             src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">
+      </section>
+      <section>
+        <h2>Date grid</h2>
+        <table id="dates">
+          <caption>Date grid</caption>
+          <thead><tr><th>Depart</th><th>Oct 17</th><th>Oct 18</th><th>Oct 19</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Oct 10</th><td>€312</td><td>€298</td><td>€305</td></tr>
+            <tr><th scope="row">Oct 11</th><td>€287</td><td>€264</td><td>€279</td></tr>
+            <tr><th scope="row">Oct 12</th><td>€301</td><td>€290</td><td>€244</td></tr>
+          </tbody>
+        </table>
+      </section>
+      <section>
+        <h2>Fare classes</h2>
+        <div role="grid" aria-label="Fare classes">
+          <div role="row"><div role="columnheader">Fare</div><div role="columnheader">Bags</div><div role="columnheader">Price</div></div>
+          <div role="row"><div role="gridcell">Basic</div><div role="gridcell">0</div><div role="gridcell">€87</div></div>
+          <div role="row"><div role="gridcell">Standard</div><div role="gridcell">1</div><div role="gridcell">€118</div></div>
+        </div>
+      </section>
+      <section>
+        <h2>All fares</h2>
+        <table id="long"><caption>All fares</caption><thead><tr><th>Day</th><th>Economy</th><th>Premium</th><th>Business</th></tr></thead><tbody></tbody></table>
+      </section>
+    </div>
+  </main>
+  <script>
+    // Price graph bars: 1 px per euro above the €0 baseline at y = 220 (ticks every 60 px for €60).
+    const prices = [121, 98, 140, 112, 87, 133, 150, 104, 95, 126, 118, 99, 143, 101];
+    const bars = document.querySelector('#graph .bars');
+    prices.forEach((price, i) => {
+      const bar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bar.setAttribute('x', String(60 + i * 38));
+      bar.setAttribute('y', String(220 - price));
+      bar.setAttribute('width', '24');
+      bar.setAttribute('height', String(price));
+      bar.setAttribute('data-id', `2026-10-${String(6 + i).padStart(2, '0')}`);
+      bars.append(bar);
+    });
+    const body = document.querySelector('#long tbody');
+    for (let i = 0; i < 80; i++) {
+      const day = `Day ${i + 1}`;
+      body.insertAdjacentHTML('beforeend', `<tr><th scope="row">${day}</th><td>€${100 + i}</td><td>€${200 + i}</td><td>€${400 + i}</td></tr>`);
+    }
+  </script>
+</body>
+</html>

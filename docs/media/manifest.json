@@ -1,0 +1,220 @@
+{
+  "date": "2026-11-06",
+  "sourceCommit": "c09e1e615f1165cc305d501f485561236c2c5504",
+  "capture": "Private virtual KWin and rootful XWayland; 1920x1080; official Firefox 159.0; disposable HOME/FAI_HOME/profile; no owner display or session",
+  "provenance": {
+    "launcher": "Unmodified signed Firefox add-on 0.3.0; real launcher checks; private profilePath omitted before navigation",
+    "videoAndOtherScreenshots": "Temporary development add-on; scripted real MCP SDK calls; automated real UI clicks including Firefox Allow and Approve once",
+    "fixtures": "Loopback only; FAKE data from fixtures/secrets/fakes.js; actual payment POST, no real payment",
+    "editorial": "81-second editorial cut from genuine reviewed capture stills and video frames; labeled selected/reformatted MCP excerpts; 1.2-second quintic eased focus slides, 0.8-second dissolves; dedicated token scene; 30-second separately paced social cut and GIF; no audio",
+    "darkVariants": "Unmodified light UI on a labeled dark background; transcript excerpt rendered in light and dark",
+    "benchmark": "bench/tokens/results-real.json; 12 captured public pages; o200k_base; medians 1130 vs 11786.5, headline rounded to 11,787; offline Chromium; output size only, not task success"
+  },
+  "validation": {
+    "passedTargetedTests": 119,
+    "failedTargetedTests": 0,
+    "rehearsalSeconds": [
+      75.025,
+      75.021
+    ],
+    "finalSessionSeconds": 75.025,
+    "verifiedCompletedActions": 2,
+    "fixturePayments": 1,
+    "recordCommandCompleted": true
+  },
+  "review": {
+    "date": "2026-11-06",
+    "method": "Scene storyboard and full-resolution key frames; encoded full-cut strip every 4 seconds; social strip every 2 seconds; all five horizontal focus transitions sampled at start/middle/end, first transition sampled at 5 fps; GIF samples at native 760px width. This is sampled visual review, not real-time GUI playback.",
+    "reviewArtifacts": [
+      "artifacts/demo-edit/storyboard.png",
+      "artifacts/demo-edit/review-main.png",
+      "artifacts/demo-edit/review-social.png",
+      "artifacts/demo-edit/review-transition.png",
+      "artifacts/demo-edit/review-all-slides.png",
+      "artifacts/demo-edit/transition-preview.mp4"
+    ],
+    "gifFramesAtNativeWidthSeconds": [
+      14,
+      22
+    ],
+    "sourceEvidence": "Purchase response text checked against original source video at 40s; secret handle against original verbatim digest PNG; selected call fields against source replay script.",
+    "result": "Stable reading holds; no clipped resting terminal text, hidden approval controls, benchmark overlap, black gaps or flash cuts observed. Foreground content moves off-frame only during deliberate transitions. Header and disclosure remain stationary. Product screenshots retain original UI."
+  },
+  "limitations": [
+    "Development add-on footage requires a new owner-signed release and fresh capture before being presented as signed-release footage.",
+    "Full-page navigation time-budget issue remains unresolved; fixture shop uses same-document routes.",
+    "Advanced UI retains an existing Chrome wording reference."
+  ],
+  "files": [
+    {
+      "name": "approval-card-dark.png",
+      "bytes": 67144,
+      "sha256": "a040e90d87b788e37eb3df2ac2de3ee67ab657aa52d22e63517061fcdf1626a1",
+      "width": 752,
+      "height": 660
+    },
+    {
+      "name": "approval-card.png",
+      "bytes": 65268,
+      "sha256": "29f030019b7bcfa3c9da84406e1ba2f9fbe59cf419144d80cc95e6379e301ba5",
+      "width": 752,
+      "height": 660
+    },
+    {
+      "name": "approve-once-dark.png",
+      "bytes": 118947,
+      "sha256": "2ad59db078653018c8fd7f3f8584317f6a31c825a8427ee7328694b2cb71cbd7",
+      "width": 1376,
+      "height": 824
+    },
+    {
+      "name": "approve-once.png",
+      "bytes": 116920,
+      "sha256": "f90332abf28763c4f8ac984f630838254e0a822313eefd224d73a5ba460ba8fa",
+      "width": 1376,
+      "height": 824
+    },
+    {
+      "name": "demo-social.mp4",
+      "bytes": 2677462,
+      "sha256": "bdb730c59bdd82fc0e9f919896b4522a6b3bb310f33e2699d61d4c6ed60316b3",
+      "width": 1920,
+      "height": 1080,
+      "fps": "30/1",
+      "durationSeconds": 30.0,
+      "frames": 900,
+      "codec": "h264",
+      "crf": 18,
+      "audio": false
+    },
+    {
+      "name": "demo.gif",
+      "bytes": 2950085,
+      "sha256": "06fdec353c0f60842ed72c1dd4f6a97e2bb897ce1038f24b0403dadf99d70e43",
+      "width": 760,
+      "height": 428,
+      "frames": 360,
+      "durationSeconds": 30.0,
+      "fps": 12
+    },
+    {
+      "name": "demo.mp4",
+      "bytes": 5652362,
+      "sha256": "fe33faa9edc119fe60eb6cece469e2d46eab10a342b7626cae8597f86c7d2f25",
+      "width": 1920,
+      "height": 1080,
+      "fps": "30/1",
+      "durationSeconds": 81.0,
+      "frames": 2430,
+      "codec": "h264",
+      "crf": 18,
+      "audio": false
+    },
+    {
+      "name": "firefox-launcher.png",
+      "bytes": 474966,
+      "sha256": "7c25ecc7645aae4663a47d9c0b6926658c76d6e0888e1ef5a72ecbac0d48a58f",
+      "width": 1616,
+      "height": 3486
+    },
+    {
+      "name": "level-picker.png",
+      "bytes": 20158,
+      "sha256": "aa17ed9e86de927136b191a9451058989af49eeba463996f708a1ca9ab65b9a7",
+      "width": 692,
+      "height": 308
+    },
+    {
+      "name": "popup-advanced.png",
+      "bytes": 378724,
+      "sha256": "f99cf893230128707c30f76c03cca193e0711662d6540a58979292a1b3446d36",
+      "width": 752,
+      "height": 3544
+    },
+    {
+      "name": "redacted-screenshot.png",
+      "bytes": 329456,
+      "sha256": "75fdb59fa8e44e6c45025050d4067b848b24a26c4985ccf3a6676ed147584400",
+      "width": 3424,
+      "height": 2040
+    },
+    {
+      "name": "secret-handle.png",
+      "bytes": 131201,
+      "sha256": "29369e432bc2c1cee557fb1ce6d49a716348e415126cb32cedab2e6695081979",
+      "width": 1376,
+      "height": 820
+    },
+    {
+      "name": "secret-placeholders-dark.png",
+      "bytes": 79575,
+      "sha256": "6fc39fd2f39a4922fd9a40ac0a733ae71b359f0009af9daa110308b4d4042dd6",
+      "width": 1600,
+      "height": 810
+    },
+    {
+      "name": "secret-placeholders.png",
+      "bytes": 79552,
+      "sha256": "5cb37bc9eec1f9c4d0552cd50c1a225fb980c1b86f9d5b9fa26ea4d546bd756f",
+      "width": 1600,
+      "height": 810
+    },
+    {
+      "name": "social-preview.png",
+      "bytes": 38321,
+      "sha256": "30a1fa74832db91f3884bb801927f667363bebc2fae070a26f97ec0c751dd88c",
+      "width": 1280,
+      "height": 640
+    },
+    {
+      "name": "test-site.png",
+      "bytes": 77978,
+      "sha256": "cd3b51db0dd8176c3f645c1b91bb6e3ce650c67a5e09104c4721cad8aa0c9423",
+      "width": 752,
+      "height": 806
+    },
+    {
+      "name": "tokens.png",
+      "bytes": 193757,
+      "sha256": "61132788ffe68d0598e4c28e54d4a9cebba334553d81a8689ac98cbe7c60b31c",
+      "width": 2560,
+      "height": 2320
+    }
+  ],
+  "totalMediaBytes": 13451876,
+  "editorialSourceRevision": "a91e894",
+  "originalCaptureReview": {
+    "allFinalPngsViewed": true,
+    "mainFrameStripIntervalSeconds": 5,
+    "socialFrameStripIntervalSeconds": 2,
+    "additionalFullResolutionFramesSeconds": [
+      8,
+      32,
+      34,
+      69
+    ],
+    "gifFramesAtNativeWidthSeconds": [
+      25,
+      32,
+      55,
+      68
+    ],
+    "result": "No private paths, owner identities/session, unintended notification panels, or clipped approval/caption subjects observed. All exposed key text is explicitly FAKE fixture data."
+  },
+  "editorialValidation": {
+    "mp4CompleteDecodePassed": true,
+    "mainFrames": 2430,
+    "socialFrames": 900,
+    "mainDurationSeconds": 81,
+    "socialDurationSeconds": 30,
+    "fps": 30,
+    "gifFrames": 360,
+    "gifDurationSeconds": 30,
+    "gifFps": 12,
+    "textSafeAreaAssertionsPassed": true,
+    "memoryBudget": "Python 1 GiB address-space soft limit; sole encoder child 1.5 GiB hard limit; combined at most 2.5 GiB",
+    "newBrowserCapture": false,
+    "demoTestsPassed": 4,
+    "pythonCompileAndNodeSyntaxPassed": true
+  }
+}

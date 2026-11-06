@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shipping profile · Step 2 of 7 · Fellside Supply</title>
+<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#1d2330;background:#fff;line-height:1.5}header.site{display:flex;gap:16px;align-items:center;padding:10px 24px;background:#f2f4f8;border-bottom:1px solid #d9dee8}header.site strong{margin-right:auto}main{max-width:640px;margin:0 auto;padding:16px 24px}a{color:#1f5fbf}.field{display:flex;flex-direction:column;margin:10px 0}.field input,.field select,.field textarea{font:inherit;padding:6px 8px}button{font:inherit;padding:6px 14px;border:1px solid #8a94a8;border-radius:6px;background:#fff;cursor:pointer}.actions{display:flex;gap:10px;margin-top:16px}.err{color:#a33}dl{display:grid;grid-template-columns:160px 1fr;gap:4px 12px}dt{color:#5a6478}.side{margin-top:28px;padding:12px;border:1px dashed #b9c0cf;border-radius:8px}</style>
+</head>
+<body>
+<header class="site"><strong>Fellside Supply</strong><span>Shipping profile setup</span></header>
+<main>
+<p>Step 2 of 7: Company</p>
+<h1>Company</h1>
+<div class="field"><label for="company">Company name</label><input id="company" name="company" type="text" autocomplete="off"></div>
+<div class="field"><label for="vat_number">VAT number</label><input id="vat_number" name="vat_number" type="text" autocomplete="off"></div>
+<p class="err" id="err" role="alert"></p>
+<div class="actions"><a href="/long/wizard/step-1.html">‹ Back</a><button type="button" id="next">Next</button></div>
+</main>
+<script>
+function qaBeacon(ev){try{fetch('/api/beacon?ev='+encodeURIComponent(ev))}catch(e){}}
+var ORDER=["full_name","email","company","vat_number","street","city","postcode","delivery_speed","delivery_notes"],LABELS={"full_name":"Full name","email":"Email","company":"Company name","vat_number":"VAT number","street":"Street","city":"City","postcode":"Postcode","delivery_speed":"Delivery speed","delivery_notes":"Delivery notes"};
+function load(){try{return JSON.parse(sessionStorage.getItem('fellside-wizard')||'{}')}catch(e){return {}}}
+function save(v){try{sessionStorage.setItem('fellside-wizard',JSON.stringify(v))}catch(e){}}
+// FNV-1a 32-bit over the values in a fixed order: the draft reference proves every field was filled with its value.
+function draftRef(v){var s=ORDER.map(function(k){return String(v[k]||'').trim()}).join('|'),h=0x811c9dc5;
+  for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,0x01000193)>>>0;}return 'DR-'+h.toString(36).toUpperCase().padStart(7,'0');}
+var IDS=["company","vat_number"];var v=load();
+IDS.forEach(function(id){var el=document.getElementById(id);if(v[id])el.value=v[id];});
+document.getElementById('next').addEventListener('click',function(){var v=load(),missing=[];
+  IDS.forEach(function(id){var val=document.getElementById(id).value.trim();if(!val)missing.push(LABELS[id]);v[id]=val;});
+  save(v);if(missing.length){document.getElementById('err').textContent='Please fill in: '+missing.join(', ');return;}
+  location.href='/long/wizard/step-3.html';});
+</script>
+</body>
+</html>

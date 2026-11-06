@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quayside · Workspace</title>
+<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#1d2330;background:#fff;line-height:1.5}
+.shell{display:flex;min-height:100vh}aside{width:200px;background:#1d2330;padding:16px;display:flex;flex-direction:column;gap:6px}
+aside strong{color:#fff;margin-bottom:10px}aside button{font:inherit;background:transparent;color:#fff;border:0;text-align:left;padding:8px 10px;cursor:pointer}
+aside button[aria-current="page"]{background:#3a4458}main{flex:1;padding:20px 28px}.crumbs{color:#5a6478;font-size:13px;margin:0 0 6px}
+button{font:inherit;padding:5px 12px;border:1px solid #8a94a8;border-radius:6px;background:#fff;cursor:pointer}
+.tabs{display:flex;gap:6px;margin:10px 0 14px}.tabs button[aria-selected="true"]{background:#1f5fbf;color:#fff;border-color:#1f5fbf}
+.list{display:flex;flex-direction:column;gap:6px;align-items:flex-start}pre{background:#f6f7fa;padding:10px;border-radius:6px;white-space:pre-wrap}
+.danger{border-color:#b33;color:#b33}</style>
+</head>
+<body>
+<div class="shell">
+<aside aria-label="Workspace navigation">
+  <strong>Quayside</strong>
+  <button type="button" data-nav="overview">Overview</button>
+  <button type="button" data-nav="projects">Projects</button>
+  <button type="button" data-nav="people">People</button>
+  <button type="button" data-nav="activity">Activity</button>
+  <button type="button" data-nav="settings">Settings</button>
+</aside>
+<main id="main" aria-live="polite"></main>
+</div>
+<script>
+function qaBeacon(ev){try{fetch('/api/beacon?ev='+encodeURIComponent(ev))}catch(e){}}
+(function(){
+  // A button-driven workspace: every panel is rendered in place and the URL never changes.
+  var LOGS={
+    324:['12:40:02 build started','12:43:51 deploy finished: healthy'],323:['11:02:13 build started','11:05:40 deploy finished: healthy'],
+    322:['09:14:55 build started','09:16:02 health check failed on /ready','09:16:30 deploy rolled back automatically'],
+    321:['17:20:08 build started','17:23:44 deploy finished: healthy'],320:['15:01:19 build started','15:04:27 deploy finished: healthy'],
+    319:['10:33:41 build started','10:36:12 deploy finished: healthy'],
+    318:['14:00:03 build started','14:01:47 migration 0042_ledger_index applied','14:02:11 rollback token issued: RB-7Q2K','14:02:39 deploy finished: healthy'],
+    317:['13:21:40 build started','13:22:58 rollback token issued: RB-7Q2X','13:24:10 deploy finished: healthy']
+  };
+  var state={nav:'overview'};
+  var main=document.getElementById('main');
+  function crumbs(parts){return '<p class="crumbs">'+['Workspace'].concat(parts).join(' / ')+'</p>';}
+  function btn(label,act,extra){return '<button type="button" data-act="'+act+'"'+(extra||'')+'>'+label+'</button>';}
+  function tabs(list,current,prefix){return '<div class="tabs" role="tablist">'+list.map(function(t){
+    return '<button type="button" role="tab" data-act="'+prefix+':'+t+'" aria-selected="'+(t===current)+'">'+t+'</button>';}).join('')+'</div>';}
+  function render(){
+    var s=state, h='';
+    document.querySelectorAll('aside button').forEach(function(b){if(b.dataset.nav===s.nav)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});
+    if(s.nav==='overview'){h=crumbs(['Overview'])+'<h1>Workspace overview</h1><p>7 projects · 24 people · 3 environments per project.</p><p>Use the navigation on the left.</p>';}
+    else if(s.nav==='people'){h=crumbs(['People'])+'<h1>People</h1><p>Jun Park (Keel owner), Mira Okafor, Theo Lindqvist, Rosa Okonkwo.</p>';}
+    else if(s.nav==='activity'){h=crumbs(['Activity'])+'<h1>Activity</h1><p>Deploy #324 to Keel staging finished. Deploy #322 rolled back.</p>';}
+    else if(s.nav==='settings'){
+      var st=s.settingsTab||'General';
+      h=crumbs(['Settings'].concat(st==='General'?[]:[st]).concat(s.integration?[s.integration]:[]))+'<h1>Workspace settings</h1>'+tabs(['General','Integrations','Billing'],st,'settings');
+      if(st==='General')h+='<p>Workspace name: Quayside</p><p>Region: eu-west</p><p>'+btn('Delete workspace','delete',' class="danger"')+'</p>';
+      else if(st==='Billing')h+='<p>Plan: Team · renews 1 Nov 2026</p>';
+      else if(!s.integration)h+='<h2>Integrations</h2><div class="list">'+['Slack','GitHub','Webhooks'].map(function(n){return btn(n,'integration:'+n);}).join('')+'</div>';
+      else if(s.integration==='Webhooks')h+='<h2>Webhook endpoints</h2><p>https://hooks.quayside.test/deploys (active)</p><p>https://hooks.quayside.test/audit (paused)</p>';
+      else h+='<h2>'+s.integration+' integration</h2><p>Connected.</p>';
+    }
+    else if(s.nav==='projects'){
+      if(!s.project){
+        var names=['Halyard','Bramble','Ostrich Fern','Tern'].concat(s.allProjects?['Keel','Keelson','Sextant']:[]);
+        h=crumbs(['Projects'])+'<h1>Projects</h1><div class="list">'+names.map(function(n){return btn(n,'project:'+n);}).join('')+'</div>'
+          +(s.allProjects?'':'<p>'+btn('Show 3 more projects','more-projects')+'</p>');
+      } else if(!s.env){
+        var pt=s.projectTab||'Summary';
+        h=crumbs(['Projects',s.project])+'<h1>Project '+s.project+'</h1>'+tabs(['Summary','Environments','Members'],pt,'project');
+        if(pt==='Summary')h+='<p>Owner: '+(s.project==='Keel'?'Jun Park':'Mira Okafor')+'. Repository: quayside/'+s.project.toLowerCase().replace(/ /g,'-')+'.</p>';
+        else if(pt==='Members')h+='<p>5 members.</p>';
+        else h+='<h2>Environments</h2><div class="list">'+['Production','Staging','Preview'].map(function(n){return btn(n,'env:'+n);}).join('')+'</div>';
+      } else if(!s.deploy){
+        var et=s.envTab||'Overview';
+        h=crumbs(['Projects',s.project,s.env])+'<h1>'+s.project+' · '+s.env+'</h1>'+tabs(['Overview','Deploys','Variables'],et,'envtab');
+        if(et==='Overview')h+='<p>Status: healthy · 2 replicas.</p>';
+        else if(et==='Variables')h+='<p>14 variables (values hidden).</p>';
+        else{var ids=[324,323,322,321].concat(s.older?[320,319,318,317]:[]);
+          h+='<h2>Deploys</h2><div class="list">'+ids.map(function(n){return btn('Deploy #'+n,'deploy:'+n);}).join('')+'</div>'+(s.older?'':'<p>'+btn('Load older deploys','older')+'</p>');}
+      } else {
+        var dt=s.deployTab||'Summary';
+        h=crumbs(['Projects',s.project,s.env,'Deploy #'+s.deploy].concat(dt==='Logs'?['Logs']:[]))+'<h1>Deploy #'+s.deploy+'</h1>'+tabs(['Summary','Logs'],dt,'deploytab');
+        if(dt==='Summary')h+='<p>Commit '+(9000+s.deploy*7).toString(16)+' · triggered by Jun Park.</p>';
+        else h+='<h2>Deploy log</h2><pre>'+((s.env==='Staging'&&s.project==='Keel'&&LOGS[s.deploy])||['no log lines']).join('\n')+'</pre>';
+      }
+    }
+    main.innerHTML=h;
+  }
+  document.querySelectorAll('aside button').forEach(function(b){b.addEventListener('click',function(){state={nav:b.dataset.nav};render();});});
+  main.addEventListener('click',function(e){
+    var b=e.target.closest('button[data-act]');if(!b)return;var a=b.dataset.act,v=a.slice(a.indexOf(':')+1),k=a.split(':')[0];
+    if(a==='more-projects')state.allProjects=true;
+    else if(a==='older')state.older=true;
+    else if(a==='delete'){qaBeacon('danger:delete-workspace');main.insertAdjacentHTML('beforeend','<p role="alert">Type the workspace name to confirm deletion.</p>');return;}
+    else if(k==='project'&&!state.project){state.project=v;}
+    else if(k==='project'){state.projectTab=v;}
+    else if(k==='env'){state.env=v;state.envTab='Overview';}
+    else if(k==='envtab'){state.envTab=v;}
+    else if(k==='deploy'){state.deploy=Number(v);state.deployTab='Summary';}
+    else if(k==='deploytab'){state.deployTab=v;}
+    else if(k==='settings'){state.settingsTab=v;state.integration=null;}
+    else if(k==='integration'){state.integration=v;}
+    render();
+  });
+  render();
+})();
+</script>
+</body>
+</html>

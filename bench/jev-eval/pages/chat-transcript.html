@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Assistant - Lanternfish Chat</title><style>body{font-family:sans-serif;margin:24px} nav a{margin-right:12px} aside a{display:block;margin:4px 0} .msg{margin:8px 0;padding:8px;border:1px solid #ccc}</style></head><body>
+<nav aria-label="Main"><a href="/index.html">Home</a><a href="/about.html">About</a><a href="/pricing.html">Pricing</a><a href="/docs/index.html">Docs</a></nav>
+<aside aria-label="Conversations"><h2>Conversations</h2><a href="/jev/chat-close.html">Quarterly close checklist</a><a href="/jev/chat-fx.html">Currency rounding question</a><a href="/jev/chat-new.html">New chat</a></aside>
+<main><h1>Currency rounding question</h1>
+<div class="msg"><b>You:</b> When we convert an invoice from USD to EUR, should the rounding happen per line or on the total?</div>
+<div class="msg"><b>Assistant:</b> Round each line to two decimals, then add the lines. Rounding only the total can leave the lines and the total a cent apart, which most auditors flag. If your ledger stores four decimals internally, keep them until the last step.</div>
+<div class="msg"><b>You:</b> Thanks. Can you summarise that in one sentence for the team wiki?</div>
+<div class="msg"><b>Assistant:</b> Convert and round every invoice line to two decimals first, then total the rounded lines.</div>
+</main></body></html>

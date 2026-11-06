@@ -1,0 +1,340 @@
+# FAI Browser
+
+**Give your coding agent one browser tab you approve, with compact page summaries,
+action approvals and verified outcomes.**
+
+[![CI](https://github.com/jedbjorn/fai-browser/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jedbjorn/fai-browser/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![Node >=22](https://img.shields.io/badge/node-%3E%3D22-339933?style=flat-square&logo=node.js&logoColor=white)](package.json)
+[![Runtime deps: 0](https://img.shields.io/badge/runtime%20deps-0-brightgreen?style=flat-square)](package.json)
+<br>
+[![MCP server](https://img.shields.io/badge/MCP-server-7c3aed?style=flat-square)](docs/REFERENCE.md#coding-agents-mcp-and-skill)
+[![Chrome extension MV3](https://img.shields.io/badge/Chrome%20extension-MV3-4285F4?style=flat-square&logo=googlechrome&logoColor=white)](extension/)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](#contributing)
+
+[Website](https://jedbjorn.github.io/fai-browser/) · [Install](docs/guide/install.md) · [Measured comparisons](#benchmarks)
+
+FAI Browser lets a coding agent work in one Chrome or Firefox tab you approved, in your own signed-in browser.
+By default **your agent drives**: `fai_browser_open` asks for your approval and returns a compact
+page digest with the actions your granted level allows; your agent picks one with `fai_browser_act`
+and gets the next page back, until an expectation verifies the outcome. No key, no provider calls,
+and every action passes the same guardrails: levels, origins, forbidden labels, and explicit
+approval for payments. Login is restricted to your configured test environments.
+
+**Experimental: Jev autopilot.** Opt in with `npm run setup -- --driver jev` and a TypeSafe Jev key
+to delegate a whole task in one `fai_browser_run`: a fast decision provider picks each step and a
+verified receipt comes back. Historical autopilot benchmarks are reported separately.
+
+## Why
+
+- **Your agent drives.** Each result contains a compact page digest and allowed actions. The agent
+  chooses the next action and checks the outcome against an expectation.
+- **Less page text per turn.** On twelve captured public pages replayed locally, opening results
+  used a median 1,147 tokens versus 11,787 for full accessibility snapshots (rounded, o200k_base).
+  This measures output size, not task success; see the [method and results](bench/tokens/results-real-0.3.1.md).
+- **You stay in control.** The agent gets one tab, only after you approve its request: the page opens in
+  a new window by itself and one click on the FAI Browser icon there approves it (a request for `full` or
+  `testing` shows the FAI Browser window first, where you pick the level and **Open** the page).
+  You can pause or stop at any time.
+- **Results are receipts, not guesses.** `completed` means an independent expectation passed. Each
+  result carries a trusted `verdict` and `next {kind, text}`: answer, choose, rerun, relay to the
+  user or stop.
+- **Everything is local.** The FAI service, extension and traces stay on your machine, outside the
+  checkout; only provider calls leave it.
+
+## Demo
+
+[![Watch the Firefox demo](docs/media/social-preview.png)](https://jedbjorn.github.io/fai-browser/#demo)
+
+[Watch the demo](https://jedbjorn.github.io/fai-browser/#demo) · [Download MP4](docs/media/demo.mp4) · [30-second cut](docs/media/demo-social.mp4)
+
+Real Firefox development-build UI on local test sites, with scripted clicks and edited presentation.
+The demo shows payment approval, verified confirmation, secret redaction, and approved secret reuse.
+[Capture provenance](docs/guide/demo.md).
+
+## Benchmarks
+
+Two measurements answer different questions: how much page text reaches the agent, and how the
+agent completes a workflow. Both use FAI **Agent direct**, with no Jev provider.
+
+### Page output size
+
+Twelve captured public pages, replayed locally with 0.3.1. Median opening output with `o200k_base`:
+
+| | FAI Agent direct | Full accessibility snapshot |
+|---|---:|---:|
+| Observed text tokens | **1,147** | **11,787** |
+
+**90.3% fewer tokens** in the ratio of corpus medians (snapshot median rounded from 11,786.5).
+This compares full Playwright-style accessibility snapshots with FAI opening results. It measures
+output size, not task success or billed model usage. Current Playwright MCP may return snapshot-file
+references; the task benchmark below includes the contents actually read.
+[Method, per-page data and limits](bench/tokens/results-real-0.3.1.md).
+
+### Model-driven task comparison
+
+Fresh native **Sol 6.1, medium** agents ran four common workflows, once per tool, plus two separate
+safety scenarios. Playwright MCP could read the snapshot files its server issued. FAI used the real
+extension, daemon and MCP server; the fixture harness handled tab approval.
+
+| Common workflow | Playwright / FAI pass | MCP calls, Playwright / FAI | Observed text tokens, Playwright / FAI |
+|---|---|---:|---:|
+| Paginated data | Pass / Pass | 4 / 4 | 2,189 / 1,754 |
+| Flight search | Pass / Pass | 10 / 17 | 4,348 / 9,217 |
+| Quote wizard | Pass / Pass | 14 / 18 | 3,105 / 6,894 |
+| Job application | Pass / Pass | 8 / 14 | 2,778 / 17,103 |
+
+| Across common workflows | Playwright MCP | FAI Agent direct |
+|---|---:|---:|
+| Task checks passed | 4/4 | 4/4 |
+| Median mcp calls | 9 | 15.5 |
+| Median snapshot file reads | 5.5 | 0 |
+| Median observed text tokens | 2,941.5 | 8,055.5 |
+
+Efficiency medians use the **4 workflows both tools passed**. Observed text tokens include
+MCP response text and snapshot-file contents actually read, using `o200k_base`; they exclude schemas,
+prompts, reasoning and replayed context. Snapshot reads are listed separately from MCP calls.
+The results vary by workflow. One local pass does not establish a general speed or cost advantage;
+model usage and API cost were unavailable, and native elapsed time includes orchestration.
+
+The purchase-approval and fake-secret scenarios have different tool constraints and are excluded
+from these performance figures. FAI handed off both: checkout approval came before the cart
+submission, and secret handles cannot fill password sign-in forms. Neither met its strict task
+completion criterion. Their independent task and safety results, fixture hashes and
+protocol are in the [full showcase report](bench/showcase/results-native-2026-11-06.md).
+[Reproduction](bench/showcase/README.md).
+
+The separate live Amazon/eBay MacBook search probe returned HTTP 503 and 403, respectively, with
+no listing candidates. No live price comparison or task success is claimed.
+[Probe results](bench/showcase/results-live-search-2026-11-06.json).
+
+Earlier six-host timings measured the **experimental Jev autopilot**, not the default agent-driven
+mode. They remain in the [historical report](docs/results/RESULTS.md). Broader historical fixture
+and site coverage is documented in [docs/TESTED.md](docs/TESTED.md).
+
+## How it works
+
+```mermaid
+sequenceDiagram
+    participant H as Host agent
+    participant M as MCP server
+    participant D as Local daemon
+    participant E as Extension (approved tab)
+    H->>M: fai_browser_open(origins, reason, task, mode)
+    M->>D: request tab, wait for your approval
+    D->>E: observe the approved page
+    E-->>H: digest, offered actions, revision
+    loop agent chooses each action
+        H->>M: fai_browser_act(actionId, revision)
+        M->>D: validate permission and revision
+        D->>E: execute the offered action
+        E-->>H: next page, actions, revision
+    end
+    H->>M: final act with expectation
+    M-->>H: status, verification, next
+```
+
+The daemon on `127.0.0.1:4318` owns tab requests, leases, runs, traces and the provider key; the
+extension acts only in the approved tab. See [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Quickstart
+
+Requires Node 22+ and a Chromium-family browser 116+ (Chrome, Chromium, Brave, Edge, Vivaldi) or Firefox 140+, on
+Linux or macOS. See [Browsers](#browsers).
+
+**Try it without a key or browser:**
+
+```sh
+npm test
+node examples/fake-demo.js   # deterministic provider and in-memory bridge; prints a result
+```
+
+**Set it up for real (one time):**
+
+1. Run `npm run setup`. It saves its settings in `~/.config/fai-browser` (macOS: `~/Library/Application
+   Support/fai-browser`), installs browser pairing for every browser it finds, starts the FAI service and asks
+   whether to register FAI Browser with each coding agent on your `PATH` (Claude Code, Codex, OpenCode).
+2. Open `chrome://extensions` (or `brave://`, `edge://`), turn on Developer mode, click **Load unpacked** and
+   select `extension/`. The extension pairs by itself: nothing to copy or paste. Firefox: `npm run
+   build:firefox`, then load `dist/firefox/` ([Browsers](#browsers)).
+3. Pin the FAI Browser icon (puzzle-piece menu, then the pin): you approve each agent request by clicking it.
+4. Restart your coding agent.
+
+To try the experimental Jev autopilot, run `npm run setup -- --driver jev` instead: it asks for the Jev key at
+a hidden prompt. To register an agent later: `node src/cli.js install --host claude|codex|opencode`.
+
+With your agent driving, `fai_browser_open` requests approval and returns the first page: digest,
+offered actions and a single-use revision. Your agent answers from the digest or calls
+`fai_browser_act` with an action id and that revision; each act returns the next page and actions.
+A filled search field offers "press Enter"; a deep URL in `allowedUrls` opens directly on approval;
+screenshots are on request only. An expectation on the final act verifies the outcome. See
+[Your agent driving](docs/REFERENCE.md#agent-direct).
+
+Once a Jev key is saved, the extension's **Advanced** section switches between **Your agent** and
+**Jev autopilot (experimental)**; the choice applies on the next agent call, with no terminal
+command or agent restart.
+
+**Delegate a task from the shell (experimental Jev autopilot):**
+
+```sh
+node src/cli.js run "Open Members" --origin https://app.example.com \
+  --reason "Check the members list" --expect-url-includes /members
+```
+
+The CLI asks you to approve the request (the page opens in a new window; one click on the FAI Browser icon
+there approves it; for `--mode full`, **Open** in the FAI Browser window first), runs the task and
+prints one JSON line.
+
+**Or from your agent, through MCP (Jev autopilot):**
+
+```json
+{
+  "name": "fai_browser_run",
+  "arguments": {
+    "origins": ["https://app.example.com"],
+    "reason": "Check the members list",
+    "instruction": "From the home page open Members. Read how many members are listed.",
+    "expectation": { "urlIncludes": "/members" },
+    "answerQuestion": "How many members are listed?"
+  }
+}
+```
+
+With the Jev autopilot the result has the same shape either way (trimmed):
+
+```json
+{
+  "v": 2,
+  "status": "completed",
+  "code": "expectation_passed",
+  "verification": { "checked": true, "passed": true, "expectation": { "urlIncludes": "/members" } },
+  "page": { "url": "https://app.example.com/members", "title": "Members", "digest": ["..."] },
+  "verdict": { "kind": "verified", "oversight": "none", "answer": null, "why": ["expectation_passed"] },
+  "next": { "kind": "answer_from_digest", "text": "..." }
+}
+```
+
+The host follows `next.kind` literally. The MCP server's instructions cover a one-call task on their
+own; the [skill](skills/fai-browser/SKILL.md) installed by `install --host` teaches the full loop;
+[docs/REFERENCE.md](docs/REFERENCE.md#output-status-and-exit-codes) documents every field, status
+and exit code.
+
+## Safety model
+
+- **One tab per request, approved by you.** Each request names exact origins (or, for a task across
+  subdomains, a domain root shown to you as "all of example.com", which Chrome also asks you to allow)
+  and a reason; the agent cannot select a tab.
+- **You pick the level, per tab.** The agent asks for a `mode`; the request card offers that level
+  and those below it, preselected to what was asked: **Read** (links, scroll, wait), **Use** (also
+  buttons, selects, fills of supplied text, and search, filter, sort and paging submits on pages
+  without password or payment fields) or **Act** (also save, send, submit, delete and accept cookies).
+  Your choice is a ceiling: the run is clamped to it and the receipt's `permissions` block says what
+  ran. Nothing the agent, the page, a `policy` or `config.json` sends can raise it.
+- **Payments require your approval.** With the agent driving and the Approve gate enabled,
+  a payment action waits for your **Approve once** click. With the gate off or the experimental
+  Jev autopilot driving, purchases are refused outside testing mode. Sign-in pages are handed
+  back to you; agents may enter credentials only in your configured test environments.
+- **Testing mode is for your test environments only.** It permits sign-in and checkout and can
+  only be chosen in the popup (**Test site**) for origins you listed under Advanced, Test sites
+  (`http://localhost:3000`, exact origins, no wildcards). Secret-handle use still requires approval;
+  filling a saved secret handle into password fields on sign-in forms is currently unsupported.
+- **Cookie dialogs are rejected first**, at every level; below Act, accept-only dialogs go to you.
+- **Guardrails you can tighten at any level.** `policy: {"forbid": [...], "note": "..."}` per run or
+  in `config.json` adds refused labels, testing included; nothing removes one.
+- **Page text is untrusted.** Receipts separate trusted fields from page text; an injection guard
+  limits what runs on pages that address an agent.
+- **Local service and traces.** Agent direct makes no FAI provider calls. The optional Jev
+  autopilot sends observations to its provider and uses your locally stored Jev key to authenticate
+  those requests. Supplied values are redacted before provider requests; traces are pruned
+  (50 runs, 500 MB, 7 days).
+
+Details: [Policies and providers](docs/REFERENCE.md#policies-and-providers),
+[Guardrails](docs/REFERENCE.md#guardrails) and [Traces and
+retention](docs/REFERENCE.md#traces-and-retention).
+
+## Works with
+
+| | |
+|---|---|
+| **Coding agents** | Claude Code, Codex CLI and OpenCode via `node src/cli.js install --host claude\|codex\|opencode`; any other MCP client through the stdio server `fai-browser-mcp` |
+| **Without MCP** | the CLI (`node src/cli.js`, one JSON line per command) and the SDK client (`FaiBrowserClient`) |
+| **Decision providers** | TypeSafe Jev (default) and local SystemOne-compatible servers; custom providers implement one `decide()` method |
+| **Browser** | Chrome, Chromium, Brave, Edge or Vivaldi 116+ (Manifest V3), Firefox 140+ (a build of the same extension); pairing by native messaging. See [Browsers](#browsers) |
+
+### Browsers
+
+| Browser | Status | Load | Tested |
+|---|---|---|---|
+| Chrome, Chromium | Supported | `chrome://extensions`, Developer mode, **Load unpacked**, `extension/` | headless Chromium (`npm run browser-smoke`), headed Chrome |
+| Brave, Edge, Vivaldi | Supported (Chromium, same extension) | `brave://extensions`, `edge://extensions`, `vivaldi://extensions` | native pairing paths in unit tests |
+| Firefox 140+ | Supported, with the gaps below | `npm run build:firefox`, then `about:debugging#/runtime/this-firefox`, **Load Temporary Add-on**, `dist/firefox/manifest.json` | headless Firefox 159 (`npm run smoke:firefox`), `web-ext lint` |
+| Firefox for Android, Safari | Not supported | | |
+
+**Firefox install.** A temporary add-on is removed when Firefox restarts. To keep it: Firefox Developer Edition,
+Nightly or ESR install an unsigned add-on once `xpinstall.signatures.required` is `false` in `about:config` (release
+Firefox ignores that setting): zip the contents of `dist/firefox/` and use `about:addons`, gear menu, **Install
+Add-on From File**. Or sign it yourself as an unlisted add-on on addons.mozilla.org (`npx web-ext sign --channel
+unlisted --source-dir dist/firefox` with your own AMO API key) and install the signed `.xpi` in any Firefox. For
+development, `npx web-ext run --source-dir dist/firefox` starts a throwaway profile with it loaded. Setup installs
+the native messaging host for Firefox too (also for Firefox 147+ profiles under `~/.config/mozilla/`), so the add-on
+pairs by itself. Snap and Flatpak Firefox cannot start the host: pair by hand (`node src/cli.js pair`, then the
+popup's Advanced section).
+
+**Firefox gaps.** Firefox drops `activeTab` at a tab's first navigation, so the approval click also asks Firefox for
+the request's exact origins (one Firefox prompt per new site; the add-on removes each grant it caused when the
+request ends). Firefox's `captureVisibleTab` needs `activeTab` or all-sites access, so after the first navigation
+there is no screenshot unless you turn on **Access your data for all websites** in `about:addons`, FAI Browser,
+Permissions (page text, actions and the Approve gate work either way; the add-on never asks for it). Firefox host
+permissions take no port: approving `http://127.0.0.1:8080` grants `http://127.0.0.1` on every port. Details in
+[REFERENCE: Firefox](docs/REFERENCE.md#firefox).
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [docs/REFERENCE.md](docs/REFERENCE.md) | Full manual: setup, daemon, environment variables, MCP tools, CLI flags, status table and exit codes, screenshots, traces, SDK, policies, guardrails, limits |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Components, tab requests and leases, MCP server, receipt v2 and the oversight ladder |
+| [RESULTS.md](docs/results/RESULTS.md) | Measured before/after across six host models, with method and limits |
+| [docs/TESTED.md](docs/TESTED.md) | Every page type, task and live site FAI Browser was tested on, and the actions each mode offers |
+| [bench/README.md](bench/README.md) | The agent comparison harness and how to reproduce it |
+| [skills/fai-browser/SKILL.md](skills/fai-browser/SKILL.md) | The host-facing guide to the tool loop and `next.kind` |
+| [tasks/](tasks/) | Task sub-skills: a host guide per task (`tasks/flights/SKILL.md`, `tasks/hotels/SKILL.md`), installed with the skill, plus reviewed task engine code |
+| [AGENTS.md](AGENTS.md) | Rules for agents using FAI Browser in this repository |
+| [PROPOSAL.md](docs/design/PROPOSAL.md) | Design, roadmap and every pass to date |
+| [OVERSIGHT-SPEC.md](docs/design/OVERSIGHT-SPEC.md) | The oversight and verification specification |
+| [docs/PUBLISHING.md](docs/PUBLISHING.md) | Publication hygiene: secret scan and results sanitizing |
+
+## Status and roadmap
+
+FAI Browser is an **early release (v0.3.2)**: the daemon, MCP server, skill, guardrails and benchmark
+harness work and are tested, and interfaces may still change. Open items:
+
+- **Extension UX:** a side panel with a pending-request badge, live run view and real pause and
+  resume (today, Pause ends the run).
+- **Registered domains:** a bootstrapper skill that tests a new site and produces a domain pack
+  (host skill text, Jev policy additions, settings), proposed and not yet built.
+- **Broader real-site coverage:** additional runs to evaluate compatibility and guardrail thresholds
+  beyond the current local fixtures and recorded public-page corpus.
+
+Known limits today: one active tab lease at a time, and login, MFA, nested frames and unusual
+widgets need the user. See [Limits](docs/REFERENCE.md#limits).
+
+## Contributing
+
+Issues and pull requests are welcome. Before you open a PR:
+
+- Run `npm ci && npm test` on Node 22+.
+- Keep the safety boundaries intact: the label and field patterns in `src/guardrails.js` (`PURCHASE`,
+  `COMMIT_OTHER`, `SUBMIT_WORDS`, `DELETE_WORDS`, `SIGN_IN_WORDS`, `SAFE_SUBMIT`, `PAYMENT_AUTOCOMPLETE`,
+  `PAYMENT_FIELD`, `normalizeLabel`, `forbidPattern`) are copied byte for byte into `extension/page.js`,
+  and the level table into `extension/background.js` and `extension/permissions.js`; the drift tests
+  fail when one side changes alone.
+- For changes to the agent loop, measure with the harness in [bench/](bench/README.md), one change
+  per run.
+- Never commit `.env.local`, `client-token` or raw traces; run `node scripts/secret-scan.mjs` before
+  committing bench summaries (see [docs/PUBLISHING.md](docs/PUBLISHING.md)).
+
+## License
+
+[MIT](LICENSE) © 2026 FAI Browser contributors.
+

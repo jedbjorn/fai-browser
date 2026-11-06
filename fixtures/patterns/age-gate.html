@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Cellar wines</title>
+<style>body{font:16px sans-serif;margin:0}main{padding:16px}
+.veil{position:fixed;inset:0;background:#222;display:flex;align-items:center;justify-content:center;z-index:99}
+.panel{background:#fff;width:420px;padding:24px;position:relative}.x{position:absolute;top:6px;right:6px}</style></head>
+<body>
+<main><h1>Red wines</h1><ul><li>Rioja Reserva 2019, €18</li><li>Chianti Classico 2020, €16</li></ul></main>
+<!-- Pattern: an age gate. The user must answer it: never dismissed, even though it has a close X. -->
+<div class="veil"><div class="panel" role="dialog" aria-modal="true">
+  <button class="x" type="button" aria-label="Close">×</button>
+  <h2>Are you of legal drinking age?</h2><p>You must be over 18 to enter this site.</p>
+  <button type="button">Yes, I am over 18</button><button type="button">No</button>
+</div></div>
+<script>document.querySelector('.x').addEventListener('click', () => document.querySelector('.veil').remove());</script>
+</body></html>

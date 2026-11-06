@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Garden tools: search results</title>
+<style>body{font:16px sans-serif;margin:0}main{padding:16px}.card{border:1px solid #ccc;margin:8px 0;padding:8px}
+.veil{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:50}
+.panel{background:#fff;width:420px;padding:24px;position:relative}.x{position:absolute;top:6px;right:6px}</style></head>
+<body>
+<main><h1>Garden tools: 8 results</h1>
+<div class="card"><h3>Pruning shears</h3><p>€19.90 · 4.6 stars</p></div>
+<div class="card"><h3>Hand trowel</h3><p>€7.50 · 4.2 stars</p></div>
+<div class="card"><h3>Garden fork</h3><p>€24.00 · 4.8 stars</p></div>
+<div class="card"><h3>Hose reel</h3><p>€39.00 · 4.1 stars</p></div>
+</main>
+<!-- Pattern: an ARIA modal (role=dialog, aria-modal) inside a dimming wrapper, closed by a × button. -->
+<div class="veil" id="nag">
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="nag-title">
+    <button class="x" type="button" aria-label="Close">×</button>
+    <h2 id="nag-title">Get 10% off your first order</h2>
+    <p>Join our newsletter for weekly deals straight to your inbox.</p>
+    <label>Email <input type="email" name="email"></label>
+    <button type="button">Subscribe</button>
+  </div>
+</div>
+<script>document.querySelector('.x').addEventListener('click', () => document.getElementById('nag').remove());</script>
+</body></html>

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kontakt – Bäckerei Sonnenhof</title>
+<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#1d2330;background:#fff;line-height:1.5}
+header.site{display:flex;gap:18px;align-items:center;padding:12px 24px;background:#f2f4f8;border-bottom:1px solid #d9dee8}
+header.site strong{margin-right:auto}main{max-width:880px;margin:0 auto;padding:24px}a{color:#1f5fbf}
+button{font:inherit;padding:6px 12px;border:1px solid #8a94a8;border-radius:6px;background:#fff;cursor:pointer}
+table{border-collapse:collapse}td,th{border:1px solid #d9dee8;padding:6px 10px;text-align:left}footer{padding:24px;color:#5a6478;border-top:1px solid #e3e6ee;margin-top:40px}
+#cookie-hinweis{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:3px solid #7a4b1f;padding:16px 24px;z-index:1000}#cookie-hinweis button{margin-right:8px}</style>
+</head>
+<body>
+<header class="site"><strong>Bäckerei Sonnenhof</strong><a href="/i18n/baeckerei.html">Start</a><a href="/i18n/kontakt.html">Kontakt</a></header><main><h1>Kontakt</h1><p>Bäckerei Sonnenhof, Wiehrestraße 14, 79100 Freiburg</p><p>Telefon: 0761 5582 190</p></main><div id="cookie-hinweis" role="dialog" aria-label="Cookie-Einstellungen">
+<p>Wir verwenden Cookies, um unsere Website zu verbessern. Einige sind notwendig, andere helfen uns, Inhalte zu personalisieren. Mehr in unserer Datenschutzerklärung.</p>
+<button type="button" id="de-settings">Einstellungen</button>
+<button type="button" id="de-reject">Alle ablehnen</button>
+<button type="button" id="de-accept">Alle akzeptieren</button>
+</div>
+<script>
+function qaBeacon(ev){try{fetch('/api/beacon?ev='+encodeURIComponent(ev))}catch(e){}}
+(function(){var b=document.getElementById('cookie-hinweis');if(document.cookie.indexOf('sonnenhof_consent=')>=0){b.remove();return;}
+function close(c){document.cookie='sonnenhof_consent='+c+'; path=/';b.style.display='none';qaBeacon('consent:'+c);}
+document.getElementById('de-reject').onclick=function(){close('reject');};
+document.getElementById('de-accept').onclick=function(){close('accept');};
+document.getElementById('de-settings').onclick=function(){qaBeacon('consent:settings');};})();
+</script>
+</body>
+</html>

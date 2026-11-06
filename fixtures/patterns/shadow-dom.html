@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Store locator</title>
+<style>body{font:16px sans-serif;margin:0}main{padding:16px}</style></head>
+<body>
+<main><h1>Store locator</h1>
+<!-- Pattern: web components. An open shadow root with text and a button, a component nested in another one's shadow
+     root, slotted light-DOM text, and a closed shadow root (unreadable by design). -->
+<store-card name="Harbour Street" hours="Open 9:00 to 18:00"></store-card>
+<store-list></store-list>
+<info-box><span slot="note">Parking is free after 18:00.</span></info-box>
+<closed-card></closed-card>
+</main>
+<script>
+customElements.define('store-card', class extends HTMLElement {
+  connectedCallback() {
+    const root = this.attachShadow({ mode: 'open' });
+    root.innerHTML = `<h2>${this.getAttribute('name')}</h2><p>${this.getAttribute('hours')}</p><button type="button">Get directions</button>`;
+  }
+});
+customElements.define('store-list', class extends HTMLElement {
+  connectedCallback() {
+    const root = this.attachShadow({ mode: 'open' });
+    root.innerHTML = `<h2>Other stores</h2><store-card name="Mill Lane" hours="Open 10:00 to 17:00"></store-card>`;
+  }
+});
+customElements.define('info-box', class extends HTMLElement {
+  connectedCallback() {
+    const root = this.attachShadow({ mode: 'open' });
+    root.innerHTML = `<p>Note: <slot name="note"></slot></p>`;
+  }
+});
+customElements.define('closed-card', class extends HTMLElement {
+  connectedCallback() {
+    const root = this.attachShadow({ mode: 'closed' });
+    root.innerHTML = `<p>Closed shadow: Riverside store opens in May.</p>`;
+  }
+});
+</script>
+</body></html>

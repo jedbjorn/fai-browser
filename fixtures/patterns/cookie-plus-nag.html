@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Paris: 1,234 properties found</title>
+<style>body{font:16px sans-serif;margin:0}main{padding:16px}.card{border:1px solid #ccc;margin:8px 0;padding:8px}
+#cookies{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:2px solid #333;padding:16px;z-index:3000}
+#genius{position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center}
+#genius .shade{position:absolute;inset:0;background:rgba(0,0,0,.5)}
+#genius .panel{position:relative;background:#fff;width:520px;padding:24px}
+#genius .dismiss{position:absolute;top:8px;right:8px;width:32px;height:32px;border:0;background:none}</style></head>
+<body>
+<main><h1>Paris: 1,234 properties found</h1>
+<div class="card"><h3>Hotel Lumière</h3><p>8.7 Excellent · €412 for 3 nights</p><a href="/hotel/lumiere">See availability</a></div>
+<div class="card"><h3>Maison Verte</h3><p>8.1 Very good · €356 for 3 nights</p><a href="/hotel/verte">See availability</a></div>
+<div class="card"><h3>Le Petit Quai</h3><p>9.0 Wonderful · €498 for 3 nights</p><a href="/hotel/quai">See availability</a></div>
+</main>
+<!-- Pattern: the live Booking.com shape of 2026-10-10. A cookie banner and, under it, a membership modal ("Sign in,
+     save money") whose only close control is an unnamed-looking icon button named by aria-label. The cookie banner
+     goes first (reject), then the modal is dismissed. -->
+<div id="genius">
+  <div class="shade"></div>
+  <div class="panel" role="dialog" aria-modal="true" aria-label="Window offering discounts upon signing in">
+    <h2>Sign in, save money</h2>
+    <p>Sign in to see if you can save 10% or more with Genius, our loyalty programme.</p>
+    <a href="https://account.example.com/sign-in">Sign in or register</a>
+    <button class="dismiss" type="button" aria-label="Dismiss sign-in info."><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 2l12 12M14 2L2 14" stroke="#000"/></svg></button>
+  </div>
+</div>
+<div id="onetrust-banner-sdk">
+  <p>We use cookies and similar technologies to improve your experience. See our privacy policy.</p>
+  <button type="button" id="onetrust-reject-all-handler">Decline</button>
+  <button type="button" id="onetrust-accept-btn-handler">Accept</button>
+</div>
+<script>
+document.getElementById('onetrust-reject-all-handler').addEventListener('click', () => document.getElementById('onetrust-banner-sdk').remove());
+document.getElementById('onetrust-accept-btn-handler').addEventListener('click', () => document.getElementById('onetrust-banner-sdk').remove());
+document.querySelector('#genius .dismiss').addEventListener('click', () => document.getElementById('genius').remove());
+</script>
+</body></html>

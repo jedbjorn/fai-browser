@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' file:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>FAI Browser is ready</title>
+<!-- The FAI Browser launcher's welcome page (src/launcher/launch.js copies it to the launcher's data directory and opens
+     it with its checks in the URL fragment). Static: no network requests, nothing sent anywhere. -->
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --text: #1d1d1f; --muted: #5f6368; --line: #e3e3e0;
+    --accent: #3b5bdb; --ok: #2b8a3e; --warn: #b35c00; --code: #f0f0ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #18181b; --card: #222226; --text: #ececf1; --muted: #a1a1aa; --line: #34343a;
+      --accent: #8ea2ff; --ok: #69db7c; --warn: #ffb35c; --code: #2c2c31; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 40px 20px 64px; }
+  header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
+  header img { width: 56px; height: 56px; }
+  h1 { font-size: 1.7rem; margin: 0; letter-spacing: -0.01em; }
+  header p { margin: 2px 0 0; color: var(--muted); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin: 16px 0; }
+  h2 { font-size: 1.05rem; margin: 0 0 10px; }
+  ul.checks { list-style: none; padding: 0; margin: 0; }
+  ul.checks li { display: flex; gap: 10px; padding: 4px 0; }
+  .mark { width: 1.2em; flex: none; font-weight: 700; text-align: center; }
+  .ok .mark { color: var(--ok); }
+  .warn .mark { color: var(--warn); }
+  .muted { color: var(--muted); }
+  ol { padding-left: 1.3em; margin: 0; }
+  ol li { margin: 6px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+  th, td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+  th { border-top: none; color: var(--muted); font-weight: 600; }
+  code { background: var(--code); border-radius: 4px; padding: 1px 5px; font-size: 0.9em; }
+  .note { font-size: 0.92rem; color: var(--muted); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="fai-browser.png" alt="">
+    <div>
+      <h1>FAI Browser is ready</h1>
+      <p>This Firefox window uses the separate <b>FAI</b> profile your coding agent works in.</p>
+    </div>
+  </header>
+
+  <section aria-labelledby="checks-title">
+    <h2 id="checks-title">Setup checks</h2>
+    <ul class="checks" id="checks">
+      <li class="warn"><span class="mark">?</span><span>Open this page with <code>fai-browser launch</code> to see the checks.</span></li>
+    </ul>
+    <p class="note" id="paired-note">The add-on pairs with the FAI service by itself. Click the <b>FAI Browser</b> button on the toolbar:
+      it should say <b>Connected to the FAI service</b>.</p>
+  </section>
+
+  <section aria-labelledby="approve-title">
+    <h2 id="approve-title">How you stay in charge</h2>
+    <ol>
+      <li>Your agent asks for a site and says why. Its page opens in a new window with a small prompt.</li>
+      <li><b>Click the FAI Browser button</b> on that page to approve. Nothing happens until you do, and the agent
+        never chooses a tab by itself.</li>
+      <li>While it works, the tab sits in a <code>FAI</code> tab group. Pause or stop from the button at any time.</li>
+      <li>Risky steps (a purchase, a delete, revealing a key) also need <b>Approve once</b>: single-use, for that one control.</li>
+    </ol>
+  </section>
+
+  <section aria-labelledby="levels-title">
+    <h2 id="levels-title">Levels</h2>
+    <table>
+      <tr><th>You see</th><th>The agent may</th></tr>
+      <tr><td><b>Read</b></td><td>follow links on the site, scroll, wait</td></tr>
+      <tr><td><b>Use</b></td><td>also click buttons, pick options, fill values you supplied, search, filter, sort</td></tr>
+      <tr><td><b>Act</b></td><td>also save, send, submit, delete, accept cookies</td></tr>
+      <tr><td><b>Test site</b></td><td>everything including sign-in and checkout, only on test sites you listed</td></tr>
+    </table>
+    <p class="note">The agent asks for the lowest level that works; you can lower it when you approve.</p>
+  </section>
+
+  <section aria-labelledby="secrets-title">
+    <h2 id="secrets-title">Secrets stay hidden</h2>
+    <p>API keys, tokens, passwords and card numbers on a page reach the agent as placeholders such as
+      <code>[secret:3 …]</code>, and are blacked out in screenshots before they leave the browser. With your approval the
+      agent can paste or copy one without ever seeing it.</p>
+  </section>
+
+  <section aria-labelledby="profile-title">
+    <h2 id="profile-title">This profile</h2>
+    <p>It is separate from your everyday Firefox: other bookmarks, history and sign-ins. Sign in here only to accounts the
+      agent may use. Passwords are not saved and card autofill is off in this profile; HTTPS-Only is on. Firefox
+      updates itself from Mozilla as usual.</p>
+    <p class="note" id="profile-path"></p>
+  </section>
+
+  <p class="note">Next: ask your agent, for example <i>"Use FAI Browser to open https://example.com and tell me what it says."</i>
+    Help: <code>docs/guide/install.md</code> and <code>docs/guide/troubleshooting.md</code> in the FAI Browser repository.</p>
+</main>
+<script>
+  // Checks from the launcher, in the URL fragment (never sent anywhere): name=ok|warn|value.
+  (function () {
+    var params = new URLSearchParams(location.hash.slice(1));
+    if (!params.has('v')) return;
+    var labels = {
+      firefox: 'Firefox', addon: 'FAI Browser add-on (signed)', native: 'Pairing helper (native messaging) installed',
+      service: 'FAI service running', profile: 'Separate FAI profile'
+    };
+    var list = document.getElementById('checks');
+    list.textContent = '';
+    Object.keys(labels).forEach(function (key) {
+      if (!params.has(key)) return;
+      var value = params.get(key);
+      var ok = value !== 'warn' && value !== 'missing';
+      var item = document.createElement('li');
+      item.className = ok ? 'ok' : 'warn';
+      var mark = document.createElement('span');
+      mark.className = 'mark';
+      mark.textContent = ok ? '✓' : '!';
+      var text = document.createElement('span');
+      text.textContent = labels[key] + (ok && value !== 'ok' ? ': ' + value : ok ? '' : ': needs attention');
+      item.appendChild(mark);
+      item.appendChild(text);
+      list.appendChild(item);
+    });
+    if (params.get('profilePath')) document.getElementById('profile-path').textContent = 'Profile folder: ' + params.get('profilePath');
+  })();
+</script>
+</body>
+</html>

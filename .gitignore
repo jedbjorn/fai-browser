@@ -1,0 +1,70 @@
+node_modules/
+artifacts/
+.env
+.env.*
+!.env.example
+*.log
+*.png
+!/bench/report/out/**/*.png
+!/extension/icons/*.png
+profiles/
+
+# Local disposable credentials and atomic setup temporary files
+.env.local
+.env.local.*.tmp
+
+# Credentials, local daemon state and captures (at any depth)
+.env*
+!.env.example
+client-token
+daemon.json
+daemon.lock
+daemon.pid
+logs/
+
+# Publish only the reviewed compact benchmark records, never raw runs or warmups.
+/bench/results/*/*
+!/bench/results/*/summary.json
+!/bench/results/*/summary.md
+!/bench/results/*/config.json
+!/bench/results/*/runs.jsonl
+/bench/results/*/runs/
+/bench/results/*/warmup/
+/bench/real/results/*/
+/bench/real/results/
+
+# Git metadata must also be excluded by the offline publication scanner.
+.git/
+
+# Site profiles: local hit/miss counters written next to each profile, never shared.
+/domains/*/stats.json
+/domains/*/stats.json.*.tmp
+
+# bench/live: only the summaries are published; runs, traces, receipts, answers and grades stay local.
+/bench/live/results/*/*
+!/bench/live/results/*/summary.json
+!/bench/live/results/*/summary.md
+
+# Site-profile hit/miss counters when FAI_HOME points at a checkout
+domain-stats/
+
+# Locally saved live pages for offline tuning (never commit)
+shared/
+
+# Real-page token benchmark captures, tokenizer downloads and raw strings (never commit)
+/bench/tokens/pages/
+/bench/tokens/.cache/
+
+# Local agent state
+.mcp.json
+.playwright-mcp/
+.claude/worktrees/
+
+# Built browser packages (npm run build:firefox)
+/dist/
+
+# Reviewed release media (raw recordings stay in artifacts/).
+!/docs/media/*.png
+!/docs/media/*.gif
+!/site/media/*.png
+/scripts/demo/__pycache__/

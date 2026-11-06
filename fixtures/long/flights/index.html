@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marseille to London · Skyline Fares</title>
+<style>*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#1d2330;background:#fff;line-height:1.45}
+header.site{display:flex;gap:16px;align-items:center;padding:10px 24px;background:#f2f4f8;border-bottom:1px solid #d9dee8}header.site strong{margin-right:auto}
+main{max-width:960px;margin:0 auto;padding:16px 24px}a{color:#1f5fbf}button{font:inherit;padding:5px 10px;border:1px solid #8a94a8;border-radius:6px;background:#fff;cursor:pointer}
+.fields{display:flex;gap:12px;flex-wrap:wrap;align-items:end}.fields label{display:flex;flex-direction:column;font-size:13px}.fields input{font:inherit;padding:5px 8px}
+.days{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}.days button[aria-pressed="true"]{background:#1f5fbf;color:#fff;border-color:#1f5fbf}
+table{border-collapse:collapse;margin:8px 0}td,th{border:1px solid #d9dee8;padding:4px 10px;text-align:left}
+ol.flights{list-style:none;padding:0;margin:8px 0}ol.flights li{padding:6px 10px;border:1px solid #e3e6ee;border-radius:6px;margin:4px 0;display:flex;gap:14px}
+ol.flights .t{font-weight:600;width:52px}ol.flights .p{margin-left:auto;font-weight:600}.insights{display:flex;gap:8px;margin:12px 0}
+footer{padding:16px 24px;color:#5a6478;border-top:1px solid #e3e6ee;margin-top:32px}</style>
+</head>
+<body>
+<header class="site"><strong>Skyline Fares</strong><a href="/long/flights/">Flights</a><a href="/long/flights/hotels.html">Hotels</a><a href="/long/flights/deals.html">Deals</a></header>
+<main>
+  <h1>Marseille to London</h1>
+  <div class="fields" role="search" aria-label="Flight search">
+    <label>Where from? <input id="from" type="text" value="Marseille (MRS)"></label>
+    <label>Where to? <input id="to" type="text" value="London (all airports)"></label>
+    <label>Departure week <input id="week" type="text" value="Mon 12 Oct – Sun 18 Oct" readonly></label>
+    <span>One way · 1 passenger · Economy</span>
+  </div>
+
+  <h2>Price insights</h2>
+  <p>Lowest fares this week, any departure time.</p>
+  <div class="insights">
+    <button type="button" id="grid-btn" aria-expanded="false">Date grid</button>
+    <button type="button" id="graph-btn" aria-expanded="false">Price graph</button>
+  </div>
+  <div id="grid" hidden>
+    <table aria-label="Date grid: lowest fare per day">
+      <tr><th>Day</th><th>Mon 12</th><th>Tue 13</th><th>Wed 14</th><th>Thu 15</th><th>Fri 16</th><th>Sat 17</th><th>Sun 18</th></tr>
+      <tr><th>Lowest fare</th><td>€44</td><td>€41</td><td>€39</td><td>€42</td><td>€46</td><td>€38</td><td>€45</td></tr>
+    </table>
+  </div>
+  <div id="graph" hidden>
+    <svg width="560" height="200" viewBox="0 0 560 200" aria-hidden="true">
+      <g fill="#7aa2e3">
+        <rect x="20" y="68" width="50" height="112"></rect><rect x="100" y="76" width="50" height="104"></rect>
+        <rect x="180" y="82" width="50" height="98"></rect><rect x="260" y="74" width="50" height="106"></rect>
+        <rect x="340" y="64" width="50" height="116"></rect><rect x="420" y="84" width="50" height="96"></rect>
+        <rect x="500" y="66" width="50" height="114"></rect>
+      </g>
+      <g font-size="12" fill="#1d2330">
+        <text x="30" y="62">€44</text><text x="110" y="70">€41</text><text x="190" y="76">€39</text><text x="270" y="68">€42</text>
+        <text x="350" y="58">€46</text><text x="430" y="78">€38</text><text x="510" y="60">€45</text>
+        <text x="28" y="196">Mon</text><text x="108" y="196">Tue</text><text x="188" y="196">Wed</text><text x="268" y="196">Thu</text>
+        <text x="350" y="196">Fri</text><text x="430" y="196">Sat</text><text x="510" y="196">Sun</text>
+      </g>
+    </svg>
+  </div>
+
+  <h2>Departing flights</h2>
+  <div class="days" id="days" aria-label="Departure day"></div>
+  <p><button type="button" id="prev-day" aria-label="Previous day">‹</button> <button type="button" id="next-day" aria-label="Next day">›</button></p>
+  <h3 id="results-head"></h3>
+  <ol class="flights" id="flights"></ol>
+  <p><button type="button" id="more">Show 4 more flights</button></p>
+  <p><button type="button" role="switch" aria-checked="false" id="track">Track prices for this route</button></p>
+</main>
+<footer>Prices are per adult, one way, including taxes. <a href="/long/flights/help.html">Help</a></footer>
+<script>
+function qaBeacon(ev){try{fetch('/api/beacon?ev='+encodeURIComponent(ev))}catch(e){}}
+(function(){
+  // Every day: 8 departures sorted by time; the first 4 leave before 10:00, so the 10:00-12:00 window is only
+  // visible after "Show 4 more flights". The date grid and the price graph show the lowest fare at any time.
+  var DAYS=[
+    ['Mon 12 Oct',[['06:10','Ryanair','RY 2101',44],['07:35','easyJet','EZ 4410',52],['08:20','British Airways','BA 341',96],['09:30','Air France','AF 1180',83],
+      ['10:15','Vueling','VY 7701',79],['11:40','easyJet','EZ 4412',74],['12:05','Ryanair','RY 2105',48],['18:50','British Airways','BA 345',110]]],
+    ['Tue 13 Oct',[['06:25','Ryanair','RY 2111',41],['07:50','Vueling','VY 7703',63],['08:45','easyJet','EZ 4420',58],['09:55','British Airways','BA 351',92],
+      ['10:05','Air France','AF 1184',88],['11:20','Vueling','VY 7705',71],['13:30','Ryanair','RY 2115',45],['20:10','easyJet','EZ 4424',49]]],
+    ['Wed 14 Oct',[['06:00','easyJet','EZ 4430',47],['07:15','Ryanair','RY 2121',39],['08:40','Air France','AF 1190',81],['09:55','Vueling','VY 7707',49],
+      ['10:30','British Airways','BA 361',99],['11:50','Ryanair','RY 2125',66],['14:20','easyJet','EZ 4434',53],['19:05','Vueling','VY 7709',57]]],
+    ['Thu 15 Oct',[['06:40','Ryanair','RY 2131',43],['07:55','easyJet','EZ 4440',55],['08:30','British Airways','BA 371',101],['09:45','Air France','AF 1194',86],
+      ['10:55','Vueling','VY 7713',61],['11:35','easyJet','EZ 4442',69],['15:10','Ryanair','RY 2135',42],['21:40','British Airways','BA 375',95]]],
+    ['Fri 16 Oct',[['06:15','Vueling','VY 7715',62],['07:20','Ryanair','RY 2141',46],['08:55','easyJet','EZ 4450',60],['09:40','British Airways','BA 381',97],
+      ['10:10','Air France','AF 1198',84],['11:05','easyJet','EZ 4452',67],['12:05','Ryanair','RY 2145',52],['17:30','Vueling','VY 7719',64]]],
+    ['Sat 17 Oct',[['06:30','Ryanair','RY 2151',38],['07:45','easyJet','EZ 4460',51],['08:10','Vueling','VY 7721',58],['09:20','British Airways','BA 391',89],
+      ['10:45','Ryanair','RY 2155',72],['11:55','Air France','AF 1202',80],['13:15','easyJet','EZ 4464',47],['19:40','Vueling','VY 7725',55]]],
+    ['Sun 18 Oct',[['06:05','easyJet','EZ 4470',49],['07:30','Ryanair','RY 2161',45],['08:50','Air France','AF 1206',90],['09:35','Vueling','VY 7727',66],
+      ['10:20','British Airways','BA 401',93],['11:10','Vueling','VY 7729',64],['14:45','Ryanair','RY 2165',50],['20:30','easyJet','EZ 4474',56]]]
+  ];
+  var day=0, expanded=false;
+  var days=document.getElementById('days');
+  DAYS.forEach(function(d,i){var b=document.createElement('button');b.type='button';b.textContent=d[0];b.dataset.day=String(i);
+    b.addEventListener('click',function(){select(i);});days.appendChild(b);});
+  function select(i){day=Math.max(0,Math.min(DAYS.length-1,i));expanded=false;render();}
+  function render(){
+    var d=DAYS[day], list=expanded?d[1]:d[1].slice(0,4);
+    days.querySelectorAll('button').forEach(function(b){b.setAttribute('aria-pressed',String(Number(b.dataset.day)===day));});
+    document.getElementById('results-head').textContent=expanded?('All 8 departures on '+d[0]):('Departures on '+d[0]+' · showing 4 of 8');
+    var ol=document.getElementById('flights');ol.innerHTML='';
+    list.forEach(function(f){var li=document.createElement('li');
+      li.innerHTML='<span class="t">'+f[0]+'</span><span>'+f[1]+' '+f[2]+'</span><span>Nonstop · 1 h 40 min</span><span class="p">€'+f[3]+'</span>';ol.appendChild(li);});
+    document.getElementById('more').hidden=expanded;
+  }
+  document.getElementById('more').addEventListener('click',function(){expanded=true;render();});
+  document.getElementById('prev-day').addEventListener('click',function(){select(day-1);});
+  document.getElementById('next-day').addEventListener('click',function(){select(day+1);});
+  function toggle(btn,id){var el=document.getElementById(id);el.hidden=!el.hidden;btn.setAttribute('aria-expanded',String(!el.hidden));}
+  var gb=document.getElementById('grid-btn'),pb=document.getElementById('graph-btn');
+  gb.addEventListener('click',function(){toggle(gb,'grid');});pb.addEventListener('click',function(){toggle(pb,'graph');});
+  var tr=document.getElementById('track');tr.addEventListener('click',function(){tr.setAttribute('aria-checked',String(tr.getAttribute('aria-checked')!=='true'));qaBeacon('track-prices');});
+  render();
+})();
+</script>
+</body>
+</html>

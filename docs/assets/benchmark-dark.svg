@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="602" viewBox="0 0 1200 602" role="img" aria-labelledby="t-dark d-dark">
+<title id="t-dark">FAI Browser vs Playwright MCP: per-task wall time, cost and tool calls for six host models</title>
+<desc id="d-dark">GPT-6.1 Sol: wall 26.2 s to 18.8 s (1.40× faster), cost $0.0346 to $0.0292 (1.19× cheaper), tool calls 5.9 to 1.0; GPT-6 Astra: wall 23.9 s to 17.6 s (1.35× faster), cost $0.189 to $0.151 (1.25× cheaper), tool calls 5.8 to 1.0; Claude Opus 5.5: wall 13.1 s to 8.6 s (1.53× faster), cost $0.0432 to $0.0343 (1.26× cheaper), tool calls 4.9 to 1.1; Claude Sonnet 5.5: wall 8.8 s to 7.1 s (1.24× faster), cost $0.0213 to $0.00936 (2.28× cheaper), tool calls 5.1 to 1.0; GPT-6 Luna: wall 19.2 s to 13.5 s (1.42× faster), cost $0.00195 to $0.00140 (1.40× cheaper), tool calls 5.9 to 1.3; GPT-5.6 Terra: wall 22.1 s to 12.8 s (1.73× faster), cost $0.0447 to $0.0201 (2.23× cheaper), tool calls 6.0 to 1.0.</desc>
+<style>text{font-family:system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;fill:#9198a1}.p{fill:#e6edf3}.m{fill:#7d8590}.b{font-weight:600}.n{font-variant-numeric:tabular-nums}</style>
+<rect x="0.5" y="0.5" width="1199" height="601" rx="12" fill="#0d1117" stroke="#30363d"/>
+<text x="32" y="46" class="p b" font-size="22">FAI Browser vs Playwright MCP</text>
+<text x="32" y="72" font-size="14">8 read-only fixture tasks · per-task medians of 3 repeats · six host models · 2026-10-04 · shorter bars are better</text>
+<rect x="839.6" y="35" width="14" height="14" rx="3" fill="#6f6e68"/><text x="859.6" y="47" class="p" font-size="13">Playwright MCP (baseline)</text>
+<rect x="1064.6" y="35" width="14" height="14" rx="3" fill="#3987e5"/><text x="1084.6" y="47" class="p" font-size="13">FAI Browser</text>
+<text x="204" y="116" class="p b" font-size="15">Wall time per task</text>
+<text x="204" y="135" font-size="13">seconds · shared axis</text>
+<line x1="204.0" y1="146" x2="204.0" y2="498" stroke="#3d444d" stroke-width="1"/>
+<text x="204.0" y="514" class="m n" font-size="12" text-anchor="start">0 s</text>
+<line x1="254.7" y1="146" x2="254.7" y2="498" stroke="#1c2129" stroke-width="1"/>
+<text x="254.7" y="514" class="m n" font-size="12" text-anchor="middle">10 s</text>
+<line x1="305.3" y1="146" x2="305.3" y2="498" stroke="#1c2129" stroke-width="1"/>
+<text x="305.3" y="514" class="m n" font-size="12" text-anchor="middle">20 s</text>
+<line x1="356.0" y1="146" x2="356.0" y2="498" stroke="#1c2129" stroke-width="1"/>
+<text x="356.0" y="514" class="m n" font-size="12" text-anchor="middle">30 s</text>
+<text x="556" y="116" class="p b" font-size="15">Cost per task</text>
+<text x="556" y="135" font-size="13">% of Playwright cost, indexed per host</text>
+<line x1="556.0" y1="146" x2="556.0" y2="498" stroke="#3d444d" stroke-width="1"/>
+<text x="556.0" y="514" class="m n" font-size="12" text-anchor="start">0%</text>
+<line x1="643.0" y1="146" x2="643.0" y2="498" stroke="#1c2129" stroke-width="1"/>
+<text x="643.0" y="514" class="m n" font-size="12" text-anchor="middle">50%</text>
+<line x1="730.0" y1="146" x2="730.0" y2="498" stroke="#1c2129" stroke-width="1"/>
+<text x="730.0" y="514" class="m n" font-size="12" text-anchor="middle">100%</text>
+<text x="938" y="116" class="p b" font-size="15">Tool calls per task</text>
+<text x="938" y="135" font-size="13">host-visible calls</text>
+<line x1="938.0" y1="146" x2="938.0" y2="498" stroke="#3d444d" stroke-width="1"/>
+<text x="938.0" y="514" class="m n" font-size="12" text-anchor="start">0</text>
+<line x1="965.3" y1="146" x2="965.3" y2="498" stroke="#1c2129" stroke-width="1"/>
+<text x="965.3" y="514" class="m n" font-size="12" text-anchor="middle">2</text>
+<line x1="992.7" y1="146" x2="992.7" y2="498" stroke="#1c2129" stroke-width="1"/>
+<text x="992.7" y="514" class="m n" font-size="12" text-anchor="middle">4</text>
+<line x1="1020.0" y1="146" x2="1020.0" y2="498" stroke="#1c2129" stroke-width="1"/>
+<text x="1020.0" y="514" class="m n" font-size="12" text-anchor="middle">6</text>
+<text x="32" y="176" class="p b" font-size="15">GPT-6.1 Sol</text>
+<text x="32" y="194" class="m" font-size="13">Codex CLI · API-equivalent</text>
+<path d="M204,159h128.82a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-128.82z" fill="#6f6e68"/>
+<text x="342.8" y="171.5" class="n" font-size="13">26.2 s</text>
+<path d="M204,177h91.09a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-91.09z" fill="#3987e5"/>
+<text x="305.1" y="189.5" class="p b n" font-size="13">18.8 s</text>
+<text x="524" y="184" font-size="14" text-anchor="end"><tspan class="p b n">1.40×</tspan> faster</text>
+<path d="M556,159h170.00a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-170.00z" fill="#6f6e68"/>
+<text x="736.0" y="171.5" class="n" font-size="13">$0.0346</text>
+<path d="M556,177h142.52a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-142.52z" fill="#3987e5"/>
+<text x="708.5" y="189.5" class="p b n" font-size="13">$0.0292</text>
+<text x="906" y="184" font-size="14" text-anchor="end"><tspan class="p b n">1.19×</tspan> cheaper</text>
+<path d="M938,159h76.29a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-76.29z" fill="#6f6e68"/>
+<text x="1024.3" y="171.5" class="n" font-size="13">5.9</text>
+<path d="M938,177h9.67a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-9.67z" fill="#3987e5"/>
+<text x="957.7" y="189.5" class="p b n" font-size="13">1.0</text>
+<text x="1168" y="184" font-size="14" text-anchor="end"><tspan class="p b n">5.88×</tspan> fewer</text>
+<line x1="32" y1="208" x2="1168" y2="208" stroke="#1c2129" stroke-width="1"/>
+<text x="32" y="234" class="p b" font-size="15">GPT-6 Astra</text>
+<text x="32" y="252" class="m" font-size="13">Codex CLI · API-equivalent</text>
+<path d="M204,217h117.02a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-117.02z" fill="#6f6e68"/>
+<text x="331.0" y="229.5" class="n" font-size="13">23.9 s</text>
+<path d="M204,235h85.41a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-85.41z" fill="#3987e5"/>
+<text x="299.4" y="247.5" class="p b n" font-size="13">17.6 s</text>
+<text x="524" y="242" font-size="14" text-anchor="end"><tspan class="p b n">1.35×</tspan> faster</text>
+<path d="M556,217h170.00a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-170.00z" fill="#6f6e68"/>
+<text x="736.0" y="229.5" class="n" font-size="13">$0.189</text>
+<path d="M556,235h135.24a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-135.24z" fill="#3987e5"/>
+<text x="701.2" y="247.5" class="p b n" font-size="13">$0.151</text>
+<text x="906" y="242" font-size="14" text-anchor="end"><tspan class="p b n">1.25×</tspan> cheaper</text>
+<path d="M938,217h74.58a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-74.58z" fill="#6f6e68"/>
+<text x="1022.6" y="229.5" class="n" font-size="13">5.8</text>
+<path d="M938,235h9.67a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-9.67z" fill="#3987e5"/>
+<text x="957.7" y="247.5" class="p b n" font-size="13">1.0</text>
+<text x="1168" y="242" font-size="14" text-anchor="end"><tspan class="p b n">5.75×</tspan> fewer</text>
+<line x1="32" y1="266" x2="1168" y2="266" stroke="#1c2129" stroke-width="1"/>
+<text x="32" y="292" class="p b" font-size="15">Claude Opus 5.5</text>
+<text x="32" y="310" class="m" font-size="13">Claude Code · list price</text>
+<path d="M204,275h62.42a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-62.42z" fill="#6f6e68"/>
+<text x="276.4" y="287.5" class="n" font-size="13">13.1 s</text>
+<path d="M204,293h39.52a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-39.52z" fill="#3987e5"/>
+<text x="253.5" y="305.5" class="p b n" font-size="13">8.6 s</text>
+<text x="524" y="300" font-size="14" text-anchor="end"><tspan class="p b n">1.53×</tspan> faster</text>
+<path d="M556,275h170.00a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-170.00z" fill="#6f6e68"/>
+<text x="736.0" y="287.5" class="n" font-size="13">$0.0432</text>
+<path d="M556,293h134.04a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-134.04z" fill="#3987e5"/>
+<text x="700.0" y="305.5" class="p b n" font-size="13">$0.0343</text>
+<text x="906" y="300" font-size="14" text-anchor="end"><tspan class="p b n">1.26×</tspan> cheaper</text>
+<path d="M938,275h62.63a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-62.63z" fill="#6f6e68"/>
+<text x="1010.6" y="287.5" class="n" font-size="13">4.9</text>
+<path d="M938,293h11.38a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-11.38z" fill="#3987e5"/>
+<text x="959.4" y="305.5" class="p b n" font-size="13">1.1</text>
+<text x="1168" y="300" font-size="14" text-anchor="end"><tspan class="p b n">4.33×</tspan> fewer</text>
+<line x1="32" y1="324" x2="1168" y2="324" stroke="#1c2129" stroke-width="1"/>
+<text x="32" y="350" class="p b" font-size="15">Claude Sonnet 5.5</text>
+<text x="32" y="368" class="m" font-size="13">Claude Code · list price</text>
+<path d="M204,333h40.64a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-40.64z" fill="#6f6e68"/>
+<text x="254.6" y="345.5" class="n" font-size="13">8.8 s</text>
+<path d="M204,351h31.99a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-31.99z" fill="#3987e5"/>
+<text x="246.0" y="363.5" class="p b n" font-size="13">7.1 s</text>
+<text x="524" y="358" font-size="14" text-anchor="end"><tspan class="p b n">1.24×</tspan> faster</text>
+<path d="M556,333h170.00a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-170.00z" fill="#6f6e68"/>
+<text x="736.0" y="345.5" class="n" font-size="13">$0.0213</text>
+<path d="M556,351h72.37a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-72.37z" fill="#3987e5"/>
+<text x="638.4" y="363.5" class="p b n" font-size="13">$0.00936</text>
+<text x="906" y="358" font-size="14" text-anchor="end"><tspan class="p b n">2.28×</tspan> cheaper</text>
+<path d="M938,333h66.04a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-66.04z" fill="#6f6e68"/>
+<text x="1014.0" y="345.5" class="n" font-size="13">5.1</text>
+<path d="M938,351h9.67a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-9.67z" fill="#3987e5"/>
+<text x="957.7" y="363.5" class="p b n" font-size="13">1.0</text>
+<text x="1168" y="358" font-size="14" text-anchor="end"><tspan class="p b n">5.13×</tspan> fewer</text>
+<line x1="32" y1="382" x2="1168" y2="382" stroke="#1c2129" stroke-width="1"/>
+<text x="32" y="408" class="p b" font-size="15">GPT-6 Luna</text>
+<text x="32" y="426" class="m" font-size="13">Codex CLI · API-equivalent</text>
+<path d="M204,391h93.28a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-93.28z" fill="#6f6e68"/>
+<text x="307.3" y="403.5" class="n" font-size="13">19.2 s</text>
+<path d="M204,409h64.59a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-64.59z" fill="#3987e5"/>
+<text x="278.6" y="421.5" class="p b n" font-size="13">13.5 s</text>
+<text x="524" y="416" font-size="14" text-anchor="end"><tspan class="p b n">1.42×</tspan> faster</text>
+<path d="M556,391h170.00a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-170.00z" fill="#6f6e68"/>
+<text x="736.0" y="403.5" class="n" font-size="13">$0.00195</text>
+<path d="M556,409h120.56a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-120.56z" fill="#3987e5"/>
+<text x="686.6" y="421.5" class="p b n" font-size="13">$0.00140</text>
+<text x="906" y="416" font-size="14" text-anchor="end"><tspan class="p b n">1.40×</tspan> cheaper</text>
+<path d="M938,391h76.29a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-76.29z" fill="#6f6e68"/>
+<text x="1024.3" y="403.5" class="n" font-size="13">5.9</text>
+<path d="M938,409h13.08a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-13.08z" fill="#3987e5"/>
+<text x="961.1" y="421.5" class="p b n" font-size="13">1.3</text>
+<text x="1168" y="416" font-size="14" text-anchor="end"><tspan class="p b n">4.70×</tspan> fewer</text>
+<line x1="32" y1="440" x2="1168" y2="440" stroke="#1c2129" stroke-width="1"/>
+<text x="32" y="466" class="p b" font-size="15">GPT-5.6 Terra</text>
+<text x="32" y="484" class="m" font-size="13">Codex CLI · API-equivalent</text>
+<path d="M204,449h108.22a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-108.22z" fill="#6f6e68"/>
+<text x="322.2" y="461.5" class="n" font-size="13">22.1 s</text>
+<path d="M204,467h60.84a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-60.84z" fill="#3987e5"/>
+<text x="274.8" y="479.5" class="p b n" font-size="13">12.8 s</text>
+<text x="524" y="474" font-size="14" text-anchor="end"><tspan class="p b n">1.73×</tspan> faster</text>
+<path d="M556,449h170.00a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-170.00z" fill="#6f6e68"/>
+<text x="736.0" y="461.5" class="n" font-size="13">$0.0447</text>
+<path d="M556,467h74.15a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-74.15z" fill="#3987e5"/>
+<text x="640.1" y="479.5" class="p b n" font-size="13">$0.0201</text>
+<text x="906" y="474" font-size="14" text-anchor="end"><tspan class="p b n">2.23×</tspan> cheaper</text>
+<path d="M938,449h78.00a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-78.00z" fill="#6f6e68"/>
+<text x="1026.0" y="461.5" class="n" font-size="13">6.0</text>
+<path d="M938,467h9.67a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h-9.67z" fill="#3987e5"/>
+<text x="957.7" y="479.5" class="p b n" font-size="13">1.0</text>
+<text x="1168" y="474" font-size="14" text-anchor="end"><tspan class="p b n">6.00×</tspan> fewer</text>
+<text x="32" y="548" font-size="13">Pass rate: FAI Browser passes every repeat on every host; Playwright MCP also passes all except Luna 23/24. Ratios are Playwright ÷ FAI on the same tasks.</text>
+<text x="32" y="570" font-size="13">Codex costs are API-equivalent, not subscription charges; Claude costs are list prices (2026-10-04). Cost is indexed per host: prices differ ~100× between models.</text>
+</svg>
