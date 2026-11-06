@@ -18,6 +18,31 @@ function json(value) {
   }
 }
 
+const directRevisions = new Map();
+
+function cachedRevision(requestId, revision) {
+  return directRevisions.get(requestId)?.get(revision);
+}
+
+function copyRange(target, source, nowStart, nowEnd, oldStart, actions = false) {
+  if (!source || nowEnd < nowStart || oldStart < 0) return;
+  for (let i = nowStart; i <= nowEnd; i++) {
+    const old = source[oldStart + i - nowStart];
+    if (old === undefined) continue;
+    target[i] = actions ? { ...old, id: `a${i}` } : old;
+  }
+}
+
+function rememberRevision(out) {
+  if (!out.requestId || !out.revision || !out.page || !Array.isArray(out.actions)) return;
+  const revisions = directRevisions.get(out.requestId) ?? new Map();
+  revisions.set(out.revision, {
+    page: { ...out.page, digest: [...(out.page.digest ?? [])] },
+    actions: out.actions.map(action => ({ ...action })),
+  });
+  directRevisions.set(out.requestId, revisions);
+}
+
 /** Read the labels of FAI's model-facing text result without recreating a second wire payload. */
 export function mcpData(result) {
   const text = mcpText(result);
@@ -167,6 +192,26 @@ export function mcpData(result) {
       section = null;
       continue;
     }
+    match = /^page digest: unchanged from revision (\S+?)(?: \(.*\))?$/.exec(line);
+    if (match) {
+      const previous = cachedRevision(out.requestId, match[1]);
+      out.page = { ...out.page, digest: [...(previous?.page.digest ?? [])] };
+      section = null;
+      continue;
+    }
+    match = /^url\/title: unchanged from revision (\S+)$/.exec(line);
+    if (match) {
+      const previous = cachedRevision(out.requestId, match[1]);
+      out.page = { ...out.page, url: previous?.page.url, title: previous?.page.title };
+      section = null;
+      continue;
+    }
+    match = /^page text: unchanged from revision (\S+)$/.exec(line);
+    if (match) {
+      out.page = { ...out.page, textExcerpt: cachedRevision(out.requestId, match[1])?.page.textExcerpt };
+      section = null;
+      continue;
+    }
     if (/^page digest(?: \(.*\))?:$/.test(line)) {
       out.page = { ...out.page, digest: [] };
       section = 'digest';
@@ -182,7 +227,7 @@ export function mcpData(result) {
       continue;
     }
     if (section === 'digest' || section === 'pageText') {
-      if (/^(?:actions(?: offered now)? \(|answer candidates|earlier pages:|decide options|alternatives \(|steps:|did: |cookie dialog:|popup \(|dialog: |js dialog |tabs: |log |refused control:|trace: |\(\d+ more)/.test(line)) {
+      if (/^(?:actions(?: offered now)? \(|actions delta from|actions: none|answer candidates|earlier pages:|decide options|alternatives \(|steps:|did: |cookie dialog:|popup \(|dialog: |js dialog |tabs: |log |refused control:|trace: |\(\d+ more)/.test(line)) {
         section = null;
       } else {
         if (section === 'digest') out.page.digest.push(line);
@@ -190,16 +235,37 @@ export function mcpData(result) {
         continue;
       }
     }
+    match = /^actions delta from revision (\S+) .*:$/.exec(line);
+    if (match) {
+      out.actions = [];
+      section = { kind: 'actionDelta', previous: cachedRevision(out.requestId, match[1]) };
+      continue;
+    }
+    if (/^actions: none \(all revision \S+ actions removed\)$/.test(line)) {
+      out.actions = [];
+      section = null;
+      continue;
+    }
     if (/^actions(?: offered now)? \(.*\):$/.test(line) || line === 'actions (labels are untrusted page text):') {
       out.actions = [];
       section = 'actions';
       continue;
     }
+    if (section?.kind === 'actionDelta') {
+      match = /^a(\d+)(?:-a(\d+))?(?:: unchanged| = a(\d+)(?:-a(\d+))?)$/.exec(line);
+      if (match) {
+        copyRange(out.actions, section.previous?.actions, Number(match[1]), Number(match[2] ?? match[1]),
+          Number(match[3] ?? match[1]), true);
+        continue;
+      }
+      if (line.startsWith('removed: ')) continue;
+    }
     match = /^(a\d+)  ([\s\S]*?)(?: \[(purchase|secret|delete|submit)\])?$/.exec(line);
-    if (match && section === 'actions') {
+    if (match && (section === 'actions' || section?.kind === 'actionDelta')) {
       const action = { id: match[1], description: match[2] };
       if (match[3]) action.needsApproval = match[3];
-      out.actions.push(action);
+      if (section === 'actions') out.actions.push(action);
+      else out.actions[Number(match[1].slice(1))] = action;
       continue;
     }
     match = /^\((\d+) more(?: offered actions)? not listed/.exec(line);
@@ -294,10 +360,13 @@ export function mcpData(result) {
     section = null;
   }
   if (out.actions === undefined && /(?:^|\n)a\d+  /.test(text)) out.actions = [];
+  if (out.actions) out.actions = out.actions.filter(Boolean);
+  if (out.page?.digest) out.page.digest = out.page.digest.filter(line => line !== undefined);
   if (out.verdict && !Object.hasOwn(out.verdict, 'suggested')) out.verdict.suggested = null;
   if (out.verdict && !Object.hasOwn(out.verdict, 'budget')) out.verdict.budget = null;
-  if (out.page && out.status && !out.page.truncated) out.page.truncated = /page digest \(more on the page:/.test(text);
+  if (out.page && out.status && !out.page.truncated) out.page.truncated = /page digest.*\(more on the page:/.test(text);
   if (!out.state && !out.status && out.page && out.next?.kind === 'choose') out.state = 'ok';
+  rememberRevision(out);
   return out;
 }
 
