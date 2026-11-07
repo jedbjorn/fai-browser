@@ -452,7 +452,7 @@ test('serialized result is lean: the full observation is not enumerable', async 
     'permissions', 'verdict', 'next',
   ]);
   // Without a grant (an SDK caller with its own bridge) the run reports no user grant.
-  assert.deepEqual(json.permissions, { requested: 'read-only', granted: null, effective: 'read-only', testing: false, scope: 'origin' });
+  assert.deepEqual(json.permissions, { requested: 'read-only', granted: null, effective: 'read-only', testing: false, scope: 'origin', tabMode: 'single' });
   assert.equal(json.secrets, undefined, 'the password list is never serialized');
   assert.deepEqual(Object.keys(json.page), ['url', 'title', 'digest', 'textExcerpt', 'truncated']);
 });

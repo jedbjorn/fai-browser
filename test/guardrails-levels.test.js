@@ -249,14 +249,14 @@ test('the runtime clamps the mode to the grant; testing needs a grant; the recei
     return { result, bridge };
   };
   let { result, bridge } = await run({ mode: 'full', ...grant('reversible') });
-  assert.deepEqual(result.permissions, { requested: 'full', granted: 'reversible', effective: 'reversible', testing: false, scope: 'origin' });
+  assert.deepEqual(result.permissions, { requested: 'full', granted: 'reversible', effective: 'reversible', testing: false, scope: 'origin', tabMode: 'single' });
   assert.equal(bridge.observeOptions[0].level, 'reversible', 'the effective level goes to the extension');
   assert.equal(bridge.executions[0] !== undefined, true);
   ({ result } = await run({ mode: 'testing' }));
-  assert.deepEqual(result.permissions, { requested: 'testing', granted: null, effective: 'full', testing: false, scope: 'origin' },
+  assert.deepEqual(result.permissions, { requested: 'testing', granted: null, effective: 'full', testing: false, scope: 'origin', tabMode: 'single' },
     'without a grant testing is never effective');
   ({ result } = await run({ mode: 'testing', ...grant('testing') }));
-  assert.deepEqual(result.permissions, { requested: 'testing', granted: 'testing', effective: 'testing', testing: true, scope: 'origin' });
+  assert.deepEqual(result.permissions, { requested: 'testing', granted: 'testing', effective: 'testing', testing: true, scope: 'origin', tabMode: 'single' });
   assert.deepEqual(agentResult(result).permissions, result.permissions);
   ({ result } = await run({ mode: 'reversible', ...grant('full') }));
   assert.equal(result.permissions.effective, 'reversible', 'the grant is a ceiling, never a floor');
@@ -590,12 +590,12 @@ test('daemon: lease level is validated and stored as the grant; missing level ke
 
   const full = await ctx.request('testing');
   const reply = await ctx.hub.approve(full, { level: 'full' });
-  assert.deepEqual({ ...reply.grant, grantedAt: undefined }, { level: 'full', testing: false, grantedAt: undefined, scope: 'origin' });
+  assert.deepEqual({ ...reply.grant, grantedAt: undefined }, { level: 'full', testing: false, grantedAt: undefined, scope: 'origin', tabMode: 'single' });
   const view = (await ctx.api('GET', `/v1/requests/${full}`)).body;
   assert.equal((view.request ?? view).grant.level, 'full');
   assert.equal(ctx.hub.bound.at(-1).level, 'full', 'the hub lease carries the grant');
   const run = await ctx.api('POST', '/v1/runs', { requestId: full, instruction: 'Open About', operation: 'step', waitMs: 5000 });
-  assert.deepEqual(run.body.result.permissions, { requested: 'testing', granted: 'full', effective: 'full', testing: false, scope: 'origin' });
+  assert.deepEqual(run.body.result.permissions, { requested: 'testing', granted: 'full', effective: 'full', testing: false, scope: 'origin', tabMode: 'single' });
 
   // An older extension (no level): reversible for a reversible-or-higher request, else read-only.
   const legacy = await ctx.request('interactive');
@@ -665,7 +665,7 @@ test('daemon: the extension lowers a testing grant (lease_level); raising is ref
   assert.ok(!after.actions.some(action => action.target === '3' || action.target === '2'), 'no sign-in actions offered');
   const run = await ctx.api('POST', '/v1/runs', { ...signIn, requestId: again, operation: 'run' });
   const result = run.body.result;
-  assert.deepEqual(result.permissions, { requested: 'testing', granted: 'full', effective: 'full', testing: false, scope: 'origin' });
+  assert.deepEqual(result.permissions, { requested: 'testing', granted: 'full', effective: 'full', testing: false, scope: 'origin', tabMode: 'single' });
   assert.equal(result.code, 'refused_action');
   assert.equal(result.needs.level, 'testing');
   assert.equal(result.next.kind, 'relay');
@@ -710,7 +710,7 @@ test('runtime: a grant lowered mid-run takes effect on the next decision and in 
     mode: 'testing', ...grant('testing'), suppliedText: { username: 'tester' } });
   assert.ok(offeredTargets[0].includes('3'), 'Sign in offered before the revocation');
   assert.ok(!offeredTargets[1].includes('3') && !offeredTargets[1].includes('2'), 'not after it');
-  assert.deepEqual(result.permissions, { requested: 'testing', granted: 'full', effective: 'full', testing: false, scope: 'origin' });
+  assert.deepEqual(result.permissions, { requested: 'testing', granted: 'full', effective: 'full', testing: false, scope: 'origin', tabMode: 'single' });
   assert.ok(result.verdict.why.includes('grant:lowered:full'), JSON.stringify(result.verdict.why));
   assert.throws(() => runtime.lowerGrant('admin'), /level/);
 

@@ -116,7 +116,9 @@
   // The approval click on an armed tab (the only tabs without a popup, so the only clicks that reach onClicked). It
   // must ask synchronously, inside the click, for Firefox to count it as user input; compat.js is loaded first, so
   // this listener runs before the worker's.
+  let clickAccess = null;
   function askOnClick(tab) {
+    clickAccess = null;
     const arm = cache.armedTabs.find(item => item?.tabId === tab?.id);
     const request = arm ? cache.requests.find(item => item?.requestId === arm.requestId) : null;
     let patterns = request ? requestPatterns(request) : [];
@@ -132,7 +134,7 @@
     }
     if (!patterns.length || !api.permissions?.request) return;
     expect(patterns);
-    api.permissions.request({ origins: patterns }).catch(() => false);
+    clickAccess = { tabId: tab.id, promise: api.permissions.request({ origins: patterns }).catch(() => false) };
   }
 
   async function track(added) {
@@ -192,6 +194,8 @@
   globalThis.faiCompat = {
     originPattern,
     requestPatterns,
+    // The worker awaits this same toolbar gesture instead of opening a duplicate Firefox permission prompt.
+    approvalAccess(tabId) { return clickAccess?.tabId === tabId ? clickAccess.promise : null; },
     reconcile,
     EXPECTED_KEY,
     GRANTED_KEY,

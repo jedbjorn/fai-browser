@@ -1,6 +1,6 @@
 {
   "name": "fai-browser",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "license": "MIT",
   "author": "jedbjorn <jedbjorn@gmail.com>",
   "repository": {
@@ -65,8 +65,10 @@
     "browser-smoke": "node scripts/browser-smoke.mjs",
     "manual-smoke": "node scripts/manual-browser-smoke.mjs",
     "build:firefox": "node scripts/build-firefox.mjs",
+    "dev:firefox": "node scripts/dev-firefox.mjs",
     "build:trusted": "node scripts/build-trusted.mjs",
     "smoke:firefox": "node scripts/firefox-smoke.mjs",
+    "detect:firefox": "node scripts/manual-firefox-detection.mjs",
     "smoke:launcher": "node scripts/launcher-smoke.mjs",
     "lint:firefox": "node scripts/build-firefox.mjs && npx --yes web-ext@8 lint --self-hosted --source-dir dist/firefox",
     "package": "node scripts/package.mjs",

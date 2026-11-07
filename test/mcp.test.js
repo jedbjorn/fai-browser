@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import net from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -85,6 +86,8 @@ const INSTRUCTIONS_MAX_CHARS = 2000;
 const RUN_DESCRIPTION_MAX_CHARS = 300;
 
 test('server instructions alone cover the common path, within a token bound', () => {
+  assert.equal(createHash('sha256').update(JSON.stringify(JEV_INSTRUCTIONS)).digest('hex'),
+    '31e10389d5225e048cd7841ff1447d3937c99afeb5ba02a6c9c0338aa66550b7', 'instruction prefix bytes stay stable');
   assert.ok(JEV_INSTRUCTIONS.length <= INSTRUCTIONS_MAX_CHARS,
     `instructions are ${JEV_INSTRUCTIONS.length} chars (~${Math.round(JEV_INSTRUCTIONS.length / 4)} tokens)`);
   const required = [
@@ -156,6 +159,12 @@ test('tools/list returns exactly seven tools with closed inputs, short descripti
   assert.deepEqual(tools.map(tool => tool.name), EXPECTED_TOOLS);
   assert.deepEqual(JEV_TOOL_NAMES, EXPECTED_TOOLS);
   assert.equal(JEV_TOOLS.length, EXPECTED_TOOLS.length);
+  const serialized = JSON.stringify(tools);
+  assert.equal(serialized, JSON.stringify(JEV_TOOLS), 'wire serialization preserves the exported schema prefix and order');
+  assert.equal(createHash('sha256').update(serialized).digest('hex'),
+    '896bd065a977bb9e63b3ab45c42ff896ab39ffb659ef3a02435a6785a96f33ed', 'tool schema bytes stay stable');
+  const repeated = await mcp.request('tools/list', {});
+  assert.equal(JSON.stringify(repeated.result.tools), serialized, 'repeated tools/list reads are byte-identical');
   // 8126 bytes before step lists; `steps` adds about 420 (only its shape is declared: see src/mcp.js); the domain-root
   // clause in the `origins` description about 70 (the instructions had no room for it); "(optional with steps)" on
   // `instruction` about 22 (live Sonnet hosts sent an overall instruction with their steps); "can only lower the
@@ -360,7 +369,7 @@ test('the approval hint names the domain of a root, not its pattern', async t =>
   const pending = await mcp.callTool('fai_browser_run', { origins: ['https://*.example.com'], reason: 'Docs',
     instruction: 'Open Members' });
   assert.equal(mcpData(pending).code, 'select_tab');
-  assert.match(mcpData(pending).next.text, /approve the request for example\.com in Chrome: click Open in the FAI Browser window/);
+  assert.match(mcpData(pending).next.text, /approve the request for example\.com in the browser: click Open in the FAI Browser window/);
 });
 
 test('approval arriving during the call is picked up; without approval the call returns select_tab', async t => {
@@ -376,7 +385,7 @@ test('approval arriving during the call is picked up; without approval the call 
   assert.match(requestId, /^req_/);
   assert.equal(content.next.kind, 'relay');
   assert.match(content.next.text, new RegExp(`approve the request.*call fai_browser_run again with requestId ${requestId}`));
-  assert.match(content.next.text, /for example\.com in Chrome: click Open in the FAI Browser window, then the FAI Browser icon on the page it opens/);
+  assert.match(content.next.text, /for example\.com in the browser: click Open in the FAI Browser window, then Approve in the page request modal/);
   assert.match(pending.content[0].text, /^next \(relay\): Ask the user to approve the request/m);
   assert.equal(content.verdict.budget, null, 'nothing ran: no budget is charged');
   assert.equal(stub.callsTo('POST', '/v1/runs')[0].body.waitMs, 0, 'a blocked run is asked without waiting');
@@ -895,13 +904,13 @@ test('act returns the next offered actions and revision in readable text with a 
   stub.behavior.finalCode = 'expectation_passed';
 });
 
-test('when the page opened by itself, the approval hint says to click the icon on it (the daemon\'s request view decides)', async t => {
+test('when the page opened by itself, the approval hint offers its modal and toolbar (the daemon\'s request view decides)', async t => {
   const { mcp } = await setup(t, { approval: 'page' }, { FAI_MCP_MAX_CALL_MS: '2500' });
   const pending = await mcp.callTool('fai_browser_run', { origins: ['https://*.example.com'], reason: 'Docs',
     instruction: 'Open Members' });
   const content = summarized(pending);
   assert.equal(content.code, 'select_tab');
   assert.equal(content.next.kind, 'relay');
-  assert.match(content.next.text, /approve the request for example\.com in Chrome: its page opened in a new Chrome window; one click on the FAI Browser icon on that window approves it\. Then call fai_browser_run again with requestId/);
+  assert.match(content.next.text, /approve the request for example\.com in the browser: its task page opened in an existing browser window; click Approve in the page request modal \(grant browser site access if asked\), or use the FAI Browser toolbar icon\. Then call fai_browser_run again with requestId/);
   assert.doesNotMatch(content.next.text, /click Open/);
 });

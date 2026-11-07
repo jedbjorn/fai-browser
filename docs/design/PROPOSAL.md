@@ -410,3 +410,21 @@ The user can now relax the guardrails per tab from the extension popup, with two
 4. **Testing.** Granted only in the popup for listed exact origins, re-checked by the worker from storage; password inputs become fill targets and their values are redacted from receipts and traces.
 
 `npm test`: 754 tests, 737 pass, 2 skipped, 15 todo (documented gaps from codex pass 7); `npm run browser-smoke` passed (26 checks).
+
+## Request modal approval (2026-11-07)
+
+The request modal now has an explicit **Approve Read / Use / Act / Test site** button, with the requested level as
+its ceiling and the toolbar icon retained as an alternative. Its click requests optional browser access for the
+armed tab's scheme and host; it does not impersonate an `activeTab` toolbar gesture or adopt the modal's active tab.
+Browser host patterns cover all ports on that host; the lease and every command still enforce exact origins.
+
+The worker prepares a tab/request/arm-bound intent, then rechecks pending state, current and pending URL, host
+permission, level and test-site eligibility around lease creation. Newly acquired access follows the existing
+managed-permission lifecycle; preexisting grants are preserved. A worker restart after cancellation but before a
+native prompt resolves loses in-memory attribution: uncertain late grants are retained rather than risking removal
+of a user grant, and can be removed through browser extension settings. Approval neither bypasses purchase gates nor
+changes single/multiple task-tab consent. Native screenshots can still need a toolbar click because optional
+site permission alone is not `activeTab` or all-sites access. No broad permission is requested for screenshots.
+
+Synthetic worker and DOM tests cover gesture timing, denial, binding, stale state, level clamping, keyboard use
+and permission cleanup. Native Chrome/Firefox permission prompts still require live verification after rebuilding.

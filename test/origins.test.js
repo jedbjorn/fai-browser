@@ -289,7 +289,7 @@ test('daemon: origins accept a domain root; public suffixes, http roots and path
 test('daemon: a domain-scope lease keeps the root; a run crosses subdomains; the receipt says scope domain', async t => {
   const ctx = await daemonSetup(t);
   const id = await ctx.request([ROOT]);
-  const reply = await ctx.hub.approve(id, { origin: DEV, level: 'read-only', scope: 'domain' });
+  const reply = await ctx.hub.approve(id, { origin: DEV, level: 'read-only', scope: 'domain', tabMode: 'single' });
   assert.deepEqual(reply.origins, [ROOT]);
   assert.equal(reply.grant.scope, 'domain');
   assert.deepEqual(ctx.hub.bound.at(-1).allowedOrigins, [ROOT]);
@@ -300,7 +300,7 @@ test('daemon: a domain-scope lease keeps the root; a run crosses subdomains; the
   const result = run.body.result;
   assert.equal(result.status, 'completed', JSON.stringify(result.needs ?? result.code));
   assert.deepEqual(result.permissions, { requested: 'read-only', granted: 'read-only', effective: 'read-only',
-    testing: false, scope: 'domain' });
+    testing: false, scope: 'domain', tabMode: 'single' });
   // allowedUrls on another subdomain of the root are accepted with domain scope.
   const urls = await ctx.api('POST', '/v1/runs', { requestId: id, instruction: 'Open the team page',
     allowedUrls: [`${WWW}/team`], waitMs: 5000 });
@@ -331,10 +331,10 @@ test('daemon: an origin-scope lease narrows the root to the tab origin; a siblin
 test('daemon: a tab outside the root is not approved; a domain scope on an exact request stays origin', async t => {
   const ctx = await daemonSetup(t);
   const id = await ctx.request([ROOT]);
-  const refused = await ctx.hub.approve(id, { origin: 'https://example.net', level: 'read-only', scope: 'domain' });
+  const refused = await ctx.hub.approve(id, { origin: 'https://example.net', level: 'read-only', scope: 'domain', tabMode: 'single' });
   assert.equal(refused.error.code, 'origin_not_requested');
   const exact = await ctx.request([DEV]);
-  const reply = await ctx.hub.approve(exact, { origin: DEV, level: 'read-only', scope: 'domain' });
+  const reply = await ctx.hub.approve(exact, { origin: DEV, level: 'read-only', scope: 'domain', tabMode: 'single' });
   assert.equal(reply.grant.scope, 'origin', 'nothing to widen without a root');
   assert.deepEqual(reply.origins, [DEV]);
   const pending = await ctx.request([ROOT]);
@@ -345,15 +345,15 @@ test('daemon: a tab outside the root is not approved; a domain scope on an exact
 test('daemon: re-approving the active lease can change its scope; the hub lease follows', async t => {
   const ctx = await daemonSetup(t);
   const id = await ctx.request([ROOT]);
-  const first = await ctx.hub.approve(id, { origin: DEV, level: 'read-only', scope: 'domain' });
+  const first = await ctx.hub.approve(id, { origin: DEV, level: 'read-only', scope: 'domain', tabMode: 'single' });
   assert.deepEqual(first.origins, [ROOT]);
-  const narrowed = await ctx.hub.approve(id, { origin: DEV, level: 'read-only', scope: 'origin' });
+  const narrowed = await ctx.hub.approve(id, { origin: DEV, level: 'read-only', scope: 'origin', tabMode: 'single' });
   assert.equal(narrowed.leaseId, first.leaseId, 'the same lease');
   assert.deepEqual(narrowed.origins, [DEV]);
   assert.equal(narrowed.grant.scope, 'origin');
   assert.deepEqual(ctx.hub.lease(first.leaseId).allowedOrigins, [DEV]);
   assert.deepEqual(ctx.daemon.request(id).lease.origins, [DEV]);
-  const widened = await ctx.hub.approve(id, { origin: DEV, level: 'reversible', scope: 'domain' });
+  const widened = await ctx.hub.approve(id, { origin: DEV, level: 'reversible', scope: 'domain', tabMode: 'single' });
   assert.deepEqual(widened.origins, [ROOT]);
   assert.deepEqual(ctx.hub.lease(first.leaseId).allowedOrigins, [ROOT]);
   const run = await ctx.api('POST', '/v1/runs', { requestId: id, instruction: 'Open Team. Read who runs the team.',

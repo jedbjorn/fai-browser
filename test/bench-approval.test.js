@@ -65,7 +65,7 @@ test('harness: approves the request card at the task level', async t => {
   const clicked = await page.evaluate(approveExpression({ level: 'interactive', ...PAIRING }));
   assert.equal(clicked.via, 'card');
   assert.equal(clicked.level, 'interactive');
-  assert.deepEqual(await starts(page), [{ type: 'start', requestId: 'req_qa', level: 'interactive' }]);
+  assert.deepEqual(await starts(page), [{ type: 'start', requestId: 'req_qa', level: 'interactive', tabMode: 'single' }]);
   assert.equal(await page.evaluate(() => __local.secret), PAIRING.secret, 'the typed secret is saved');
 });
 

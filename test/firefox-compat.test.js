@@ -182,6 +182,9 @@ test('compat keeper: the approval click asks for the request\'s exact origins, a
   await settle();
   assert.equal(ff.listeners.clicked.length, 1);
   ff.listeners.clicked[0]({ id: 7, url: 'https://docs.example.com/start' });
+  assert.ok(ff.context.faiCompat.approvalAccess(7) instanceof Object);
+  assert.equal(ff.context.faiCompat.approvalAccess(8), null);
+  assert.equal(await ff.context.faiCompat.approvalAccess(7), true);
   assert.deepEqual(requested, [['https://docs.example.com/*', 'http://127.0.0.1/*']], 'portless, no domain root, synchronously');
   await settle();
   assert.deepEqual(local.compatGrantedOrigins, ['http://127.0.0.1/*']);
@@ -329,4 +332,23 @@ test('"Allow on all sites" asks only for what each manifest declares: <all_urls>
   assert.deepEqual(chromium.origins, ['https://*/*', 'http://*/*']);
   for (const origin of chromium.origins) assert.ok(chromeManifest.optional_host_permissions.includes(origin), origin);
   assert.equal(chromeManifest.optional_host_permissions.includes('<all_urls>'), false, 'Chromium never lists <all_urls>');
+});
+
+test('the manual Firefox detection matrix is loopback-only, normally approved and free of a remote protocol', async () => {
+  const [runner, matrix, fixture, manifest] = await Promise.all([
+    readFile(join(ROOT, 'scripts', 'manual-firefox-detection.mjs'), 'utf8'),
+    readFile(join(ROOT, 'scripts', 'detection-matrix.mjs'), 'utf8'),
+    readFile(join(ROOT, 'fixtures', 'detection', 'detector.html'), 'utf8'),
+    readFile(join(ROOT, 'package.json'), 'utf8'),
+  ]);
+  assert.equal(JSON.parse(manifest).scripts['detect:firefox'], 'node scripts/manual-firefox-detection.mjs');
+  assert.match(runner, /site\.listen\(0, '127\.0\.0\.1'/);
+  assert.match(runner, /mode: 'interactive'/);
+  assert.match(runner, /webdriver: false, persistentProfile: true/);
+  assert.doesNotMatch(runner, /marionette\.mjs|WebDriver:|MOZ_REMOTE|spawn\(|mode: 'testing'|trustedInput|chrome\.debugger/);
+  assert.match(matrix, /client\.observe/);
+  assert.match(matrix, /client\.act/);
+  assert.doesNotMatch(matrix, /world: 'MAIN'|navigator\.webdriver\s*=|isTrusted\s*=/);
+  assert.match(fixture, /fetch\('\/report'/);
+  assert.match(fixture, /document\.addEventListener\('DOMContentLoaded', watchMutations/);
 });

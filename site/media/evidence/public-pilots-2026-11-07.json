@@ -1,0 +1,179 @@
+{
+  "schemaVersion": 1,
+  "measuredAt": "2026-11-07",
+  "classification": "Exploratory public tasks; sequential single trials, not a controlled A/B test",
+  "provenance": {
+    "modelRequested": "gpt-6-astra",
+    "modelReported": null,
+    "cliVersion": "codex-cli 0.167.0",
+    "usageSource": "Codex JSONL turn.completed events",
+    "faiBrowser": "Firefox",
+    "playwrightBrowser": "Chromium",
+    "costUsd": null,
+    "fullTaskMachineVerified": null
+  },
+  "confounds": [
+    "Different browsers and profiles/session state",
+    "Different time and live site state",
+    "Different prompts and tool schemas",
+    "Unknown approval durations",
+    "Single trials; no reliability, causal or general ranking inference",
+    "New semantic fixes were not loaded during these trials"
+  ],
+  "pairs": [
+    {
+      "task": "flights",
+      "label": "Flights",
+      "fai": {
+        "wallMs": 174508.3562,
+        "toolCalls": 35,
+        "inputTokens": 1606472,
+        "cachedInputTokens": 1536512,
+        "uncachedInputTokens": 69960,
+        "outputTokens": 2732
+      },
+      "playwright": {
+        "wallMs": 126487.057505,
+        "toolCalls": 30,
+        "inputTokens": 917627,
+        "cachedInputTokens": 862592,
+        "uncachedInputTokens": 55035,
+        "outputTokens": 1815
+      },
+      "outcome": "Both found the same €161 itinerary. Playwright inspected 15 outbound / 8 return options; FAI inspected 15 / 5. Neither established the cheapest available trip.",
+      "recovery": {
+        "faiStale": 3,
+        "faiNoControl": 1,
+        "playwrightRecoveredInteractionErrors": 6,
+        "playwrightReportedAccessRefusals": 0
+      },
+      "verification": "Bounded partial result; full-task success unestablished"
+    },
+    {
+      "task": "amazon",
+      "label": "Amazon",
+      "fai": {
+        "wallMs": 166397.16372699998,
+        "toolCalls": 22,
+        "inputTokens": 1074364,
+        "cachedInputTokens": 1004032,
+        "uncachedInputTokens": 70332,
+        "outputTokens": 2955
+      },
+      "playwright": {
+        "wallMs": 148313.102858,
+        "toolCalls": 22,
+        "inputTokens": 931381,
+        "cachedInputTokens": 878336,
+        "uncachedInputTokens": 53045,
+        "outputTokens": 3306
+      },
+      "outcome": "Playwright captured explicit no-host-charging evidence for a €59.99 item that FAI missed on the same product. FAI’s lowest inspected item (€34.99) lacked explicit eligibility confirmation. Delivered and accessory totals remained conditional.",
+      "recovery": {
+        "faiStale": 1,
+        "faiNoControl": 0,
+        "playwrightRecoveredInteractionErrors": 1,
+        "playwrightReportedAccessRefusals": 0
+      },
+      "verification": "Bounded partial result; full-task success unestablished"
+    },
+    {
+      "task": "airbnb",
+      "label": "Airbnb",
+      "fai": {
+        "wallMs": 199317.527531,
+        "toolCalls": 42,
+        "inputTokens": 2398882,
+        "cachedInputTokens": 2305280,
+        "uncachedInputTokens": 93602,
+        "outputTokens": 3577
+      },
+      "playwright": {
+        "wallMs": 193213.19957,
+        "toolCalls": 40,
+        "inputTokens": 2078054,
+        "cachedInputTokens": 2000128,
+        "uncachedInputTokens": 77926,
+        "outputTokens": 3203
+      },
+      "outcome": "Playwright inspected five listings (lowest displayed €245); FAI inspected four options across two pages (€382). Mandatory charges and radius eligibility remained unverified. Different coverage makes these prices unsuitable as a savings comparison.",
+      "recovery": {
+        "faiStale": 5,
+        "faiNoControl": 0,
+        "playwrightRecoveredInteractionErrors": 4,
+        "playwrightReportedAccessRefusals": 0
+      },
+      "verification": "Bounded partial result; full-task success unestablished"
+    }
+  ],
+  "additionalAttempts": [
+    {
+      "id": "flight-startup",
+      "outcome": "Sandbox initialization failure",
+      "wallMs": 540.67565
+    },
+    {
+      "id": "flight-handoff",
+      "outcome": "Unrelated paused-request status blocked the flight task",
+      "wallMs": 17617.994697,
+      "inputTokens": 44989,
+      "cachedInputTokens": 28288,
+      "outputTokens": 321
+    },
+    {
+      "id": "amazon-interrupted",
+      "outcome": "Features & Specs control refused as blocked_risky; user reported interruption, cause unverified"
+    },
+    {
+      "id": "playwright-airbnb-tab-selection",
+      "driver": "playwright",
+      "outcome": "Ended on the extension welcome/connected page before Airbnb was selected; setup/tab-selection limited, not an access refusal or success",
+      "wallMs": 51226.232355,
+      "toolCalls": 1,
+      "inputTokens": 45247,
+      "cachedInputTokens": 36992,
+      "outputTokens": 301
+    }
+  ],
+  "scope": "Only public-task metrics are included. Private mailbox experiments are not a valid comparison and are excluded without publishing mailbox data.",
+  "interpretation": "All six measured runs returned bounded partial results. No cost per safe verified success or success rate can be computed. FAI receipts checked narrow price or URL expectations, not full task constraints. Playwright has no native FAI-style verification receipt. Cached volume and raw totals are diagnostics, not the optimization objective.",
+  "sourceAudits": [
+    {
+      "task": "flights",
+      "driver": "fai",
+      "artifact": "measurement-audit.json",
+      "sha256": "8489cdb8e2c2e5c0c2539e5f686752b8fdbd1c52256b6c12dc558213743d8b70"
+    },
+    {
+      "task": "flights",
+      "driver": "playwright",
+      "artifact": "comparison-audit.json",
+      "sha256": "ff3cf58b220ad7a0b1f06c20d60f344f5fdb78abcc3232d38d48a351d0d5d6af"
+    },
+    {
+      "task": "amazon",
+      "driver": "fai",
+      "artifact": "measurement-audit.json",
+      "sha256": "59a87832574493dc29ac7b1ebfcdd47b6d76e0f0d3d42de745fb34664a2c0107"
+    },
+    {
+      "task": "amazon",
+      "driver": "playwright",
+      "artifact": "measurement-audit.json",
+      "sha256": "6467283dfaf85a0df2f6d3b2b2942002171740a5080b507c57ccbbdf81edc9be"
+    },
+    {
+      "task": "airbnb",
+      "driver": "fai",
+      "artifact": "measurement-audit.json",
+      "sha256": "07f486aa0cc08dc3f382bf653cf23b004c43463476321edda1abcc3a085ccb97"
+    },
+    {
+      "task": "airbnb",
+      "driver": "playwright",
+      "artifact": "measurement-audit.json",
+      "sha256": "3ef308391674e9e0602d4c8862e7e6d7fdc92aebeaf5f4b397498cbcba432b2d"
+    }
+  ],
+  "reproducibility": "Sanitized numeric transcription of local measurement audits, identified by SHA-256. Raw browser logs are not published. This JSON reproduces the displayed charts and table; it does not independently reproduce the live trials."
+}

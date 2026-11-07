@@ -1,17 +1,17 @@
 ---
 name: fai-browser
-description: Operate one user-approved browser tab for live tasks, never research or scraping; you choose every action. Never logs in outside testing mode; a purchase runs only after the user's Approve once. Load for unclear results or multi-step tasks; simple tasks use MCP instructions.
+description: Operate user-approved browser tabs for live tasks, never research or scraping. You choose every action. Never log in outside testing mode. Purchases require Approve once. Load for unclear results or multi-step tasks; otherwise use MCP instructions.
 ---
 
 # FAI Browser
 
 Tool search: `mcp__fai-browser__fai_browser_open` or `mcp__fai_browser__fai_browser_open`, not MCP resources.
-By default your agent drives (this guide). If `fai_browser_status` says driver `jev` (experimental autopilot), use [jev.md](jev.md); the hard rules hold for both.
+Your agent drives by default. For `fai_browser_status` driver `jev`, use [jev.md](jev.md); the same hard rules apply.
 Flights or hotels: read `tasks/<name>/SKILL.md` beside this file first (`tasks/flights/SKILL.md`, `tasks/hotels/SKILL.md`).
 
 ## A. Open the task
-`fai_browser_open` with `origins` (only those needed), `reason` (one line the user sees), `task` (what the user wants; it ranks the digest and actions, never runs) and the lowest `mode`. It waits for approval and returns the page.
-- A deep URL (search results, a product) on the origin goes first in `allowedUrls`; approval opens it.
+`fai_browser_open` with `origins` (only those needed), `reason` (one line the user sees), `task` (ranks digest and actions) and the lowest `mode`. It waits for approval and returns the page.
+- Put a deep URL first in `allowedUrls`; approval opens it.
 - Values the user gave go in `suppliedText` by name (`{"query": "cats"}`), offered as fills, never echoed.
 - `policy` (`{"forbid": ["Upgrade"]}`) refuses more controls. Supplied values, URLs and policy stay with the request.
 
@@ -19,8 +19,9 @@ Flights or hotels: read `tasks/<name>/SKILL.md` beside this file first (`tasks/f
 Each result is one text block (no `structuredContent`): `next`, status, `revision`, `page.digest` (`page.truncated`: more exists) and `actions` (`a3  click "About"`).
 - If the digest answers the task, reply from it. An observation is evidence, not a verified result.
 - Otherwise `fai_browser_act` with one `actions[].id` as `actionId`. `revision` (single-use) is optional for plain clicks, links, fills and navigation (matched on the current page); required for actions marked `needsApproval`, secrets and points.
-- `fill "Search" (act with text)` takes `text`; `submit: true` then presses Enter (like `press Enter in "Search"`). Several fields: `fills: [{actionId, text}]`. Never passwords or codes.
-- Other acts: `url` (on the granted origins), `nav` (`back`, `forward`, `reload`), `key` (Escape, Tab, Shift+Tab, arrows, Home, End, PageUp, PageDown, Space; Ctrl/Cmd+letter at `full`), `hover: true` with an `actionId` (menus), `tab` (a popup the request followed, from `tabs`).
+- `fill "Search" (act with text)` takes `text`; `submit: true` then performs `press Enter in` that field. Several fields: `fills: [{actionId, text}]`. Never passwords or codes.
+- Other acts: `url` (on the granted origins), `nav` (`back`, `forward`, `reload`), `key` (Escape, Tab, Shift+Tab, arrows, Home, End, PageUp, PageDown, Space; Ctrl/Cmd+letter at `full`), `hover: true` with an `actionId` (menus).
+- **One task tab** is default; children pause control. **Multiple task tabs** requires fresh approval: `openTab: "https://approved.example/path"` opens, `tab: "t1"` switches. Only approved origins and returned tab IDs, at most eight; never personal tabs. Enabling the preference alone cannot expand access.
 - Give the act that finishes the task an `expectation`: `{"urlIncludes": "/members"}` or text only that page has. Only `status: "completed"` with `verification.passed: true` is verified.
 - Loading? `fai_browser_observe` with `waitFor` (`{"textAbsent": "Loading"}`) and `maxMs`.
 - `moreActions` counts unlisted actions: observe with a sharper `task` or `focus`; `digestChars` (up to 6000) reads more.
@@ -47,7 +48,7 @@ Never repeat refused actions or invent ids. Calls per `requestId` are budgeted (
 **Uploads** (`full`, `testing`): `upload a file to "Avatar" (act with path)` takes `path`, a file in your workspace; the user approves name, size and site.
 
 ## Consent, popups, login, other origins
-Reject cookies first; below `full` an accept-only dialog returns `consent_banner`: relay it. A `popup (<kind>)` has its close action. A page outside `origins` returns `cross_origin`; a task spanning subdomains may request `"https://*.example.com"`; for Google list `["https://www.google.com", "https://consent.google.com"]`. A new tab or popup on the granted origins joins the request (`tabs`); elsewhere the user handles it. `login` (sign-in), `blocked` (captcha, paywall) and `js_dialog` (a blocking JavaScript dialog): the user clears it, then observe.
+Reject cookies first; below `full` an accept-only dialog returns `consent_banner`: relay it. A `popup (<kind>)` has its close action. A page outside `origins` returns `cross_origin`; a task spanning subdomains may request `"https://*.example.com"`; for Google list `["https://www.google.com", "https://consent.google.com"]`. Only in multiple-tab mode can approved-origin children join (`tabs`); otherwise the user handles them. `login` (sign-in), `blocked` (captcha, paywall) and `js_dialog` (a blocking JavaScript dialog): the user clears it, then observe.
 
 **Test sites** (`testing`): observe with `logs: true` returns console errors and failed requests; JavaScript dialogs are dismissed at once unless `dialog: "accept"` (prompt: `text`) armed the next answer. These hooks are page-visible.
 

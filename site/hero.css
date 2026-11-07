@@ -85,3 +85,25 @@
 @media (prefers-reduced-motion: reduce) {
   .status-dot, .agent-wait span { animation: none; }
 }
+
+/* Conceptual illustration, deliberately distinct from recorded extension UI. */
+.control-model { padding:30px; height:auto; min-height:600px; }
+.model-top { display:flex; align-items:center; gap:8px; color:#a9ead6; font: .63rem var(--mono); letter-spacing:.09em; }
+.model-top > span:last-child { margin-left:auto; color:#a8bcb3; font-size:.54rem; }
+.model-request { padding:40px 0 28px; }
+.model-request .note-label { color:#a8bcb3; font-size:.61rem; }
+.model-request h2 { margin-top:14px; font-size:clamp(2.4rem,3.5vw,3.5rem); line-height:1.04; letter-spacing:-.055em; }
+.model-request p { color:#a8bcb3; font-size:.77rem; margin-top:18px; }
+.model-boundary { border:1px solid #6eaa92; border-radius:8px; padding:25px; background:#19392e; }
+.model-label { color:#a9ead6; font:700 .61rem var(--mono); letter-spacing:.11em; }
+.model-boundary dl { margin:20px 0; }
+.model-boundary dl > div { display:flex; gap:20px; justify-content:space-between; padding:10px 0; border-bottom:1px solid #36584a; font-size:.78rem; }
+.model-boundary dt { color:#a8bcb3; }
+.model-boundary dd { margin:0; text-align:right; }
+.model-loop { display:flex; justify-content:space-between; gap:8px; font:.7rem var(--mono); color:#a9ead6; }
+.model-loop b { font-weight:400; color:#a8bcb3; }
+.model-boundary > p { margin-top:15px; color:#a8bcb3; font-size:.7rem; }
+.model-foot { display:flex; align-items:center; gap:12px; margin-top:25px; font-size:.78rem; }
+.model-foot svg { width:28px; height:28px; color:#a9ead6; flex-shrink:0; }
+.model-foot span { color:#a8bcb3; font-size:.59rem; }
+@media(max-width:520px) { .control-model { padding:23px; min-height:0; } .model-boundary { padding:18px; } .model-top { font-size:.52rem; letter-spacing:0; } .model-top > span:last-child { font-size:.46rem; } .model-request { padding-top:30px; } .model-boundary dl > div { font-size:.7rem; gap:12px; } }

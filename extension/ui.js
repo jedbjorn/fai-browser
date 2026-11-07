@@ -20,7 +20,21 @@ export function fillLevelSelect(select, options, value) {
   return select.value;
 }
 
-export const TESTING_WARNING = 'No guardrails: the agent may log in, submit, delete and pay on this test site.';
+export function replaceCardsPreservingFocus(container, cards) {
+  const active = document.activeElement;
+  const previous = active?.closest?.('.request-card');
+  const inside = previous && container.contains(previous);
+  const key = inside ? previous.dataset.requestId ?? previous.dataset.approvalId : null;
+  const controls = inside ? [...previous.querySelectorAll('button, input, select')] : [];
+  const index = controls.indexOf(active);
+  container.replaceChildren(...cards);
+  if (key == null || index < 0) return;
+  const card = cards.find(item => (item.dataset.requestId ?? item.dataset.approvalId) === key);
+  const next = card?.querySelectorAll('button, input, select')[index];
+  if (next && !next.disabled) next.focus({ preventScroll: true });
+}
+
+export const TESTING_WARNING = 'For your test sites only. The agent may log in, submit, delete and pay. Origin and policy limits, secret redaction and approval protections still apply.';
 
 /**
  * Chrome's site-access prompt for a domain root ("All of example.org"), asked inside the click that approves or opens
@@ -29,17 +43,18 @@ export const TESTING_WARNING = 'No guardrails: the agent may log in, submit, del
  * permission arrives (Chrome's prompt can close the popup first). Resolves `{ blocked }` when a remembered grant is
  * still being ended, else `{ domain, granted: Promise<boolean> }`.
  */
-export function askSiteAccess(scope, { requestId, level, intent = false, origins = [] }) {
+export function askSiteAccess(scope, { requestId, level, intent = false, origins = [], tabMode = 'single' }) {
   const domain = scope?.value() === 'domain';
   const kind = scope?.prompt()?.kind;
   // The remembered grant is still being ended (the popup's endRemembered): approving now would skip Chrome's prompt.
   if (domain && kind === 'again') return { blocked: true };
   let granted = Promise.resolve(false);
   // Firefox build only: the request's exact origins too, in the same prompt (see exactOriginPatterns).
-  const exact = exactOriginPatterns(origins);
+  const exact = exactOriginPatterns(origins, { gecko: GECKO_BUILD || tabMode === 'multiple' });
+  if (tabMode === 'multiple' && exact.length) chrome.runtime.sendMessage({ type: 'track', patterns: exact }).catch(() => {});
   if (!domain && exact.length && chrome.permissions?.request) {
     expectOrigins(exact);
-    chrome.permissions.request({ origins: exact }).catch(() => false);
+    granted = chrome.permissions.request({ origins: exact }).then(Boolean, () => false);
   }
   if (domain && chrome.permissions?.request) {
     if (exact.length) expectOrigins(exact);

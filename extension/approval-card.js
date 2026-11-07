@@ -4,6 +4,8 @@
 // and tab (from the browser), the kind, the control's label in quotes as page text, a total the page shows and the
 // agent's one line (both marked untrusted); Approve once or Deny, neither focused first. Shared with approve.js
 // (KIND_TEXT). Everything a page or an agent wrote is set with textContent only.
+import { replaceCardsPreservingFocus } from './ui.js';
+
 export const KIND_TEXT = {
   purchase: 'A purchase or payment step: the agent may click this one button once. FAI never fills payment details.',
   secret: 'A credential action: it may create, show, copy or revoke a key, token, password or recovery codes.',
@@ -66,9 +68,12 @@ function element(tag, className, text) {
 /** One card for a pending approval; `decide(id, decision)` sends the click to the worker. */
 export function approvalCard(entry, decide) {
   const card = element('article', 'request-card approval-card');
+  card.dataset.approvalId = entry.id;
   const top = element('div', 'card-topline');
   const secretUse = entry.kind === 'fill_secret' || entry.kind === 'copy_secret';
-  top.append(element('span', 'card-label', secretUse ? 'APPROVE SECRET USE?' : `APPROVE ${String(KIND_NAME[entry.cls] ?? entry.cls).toUpperCase()}?`),
+  const uploadUse = entry.kind === 'upload' && entry.file;
+  top.append(element('span', 'card-label', secretUse ? 'APPROVE SECRET USE?' : uploadUse ? 'APPROVE UPLOAD?'
+    : `APPROVE ${String(KIND_NAME[entry.cls] ?? entry.cls).toUpperCase()}?`),
     element('span', 'request-age', entry.origin ?? ''));
   card.append(top);
   card.append(element('p', 'request-meta', entry.title || '(no title)'));
@@ -78,7 +83,15 @@ export function approvalCard(entry, decide) {
     if (use.cross) card.append(element('p', 'request-meta', `This secret came from ${use.from}, another site than ${use.to}.`));
     if (entry.kind === 'fill_secret') card.append(element('p', 'page-text-note', 'The field name is text from the page.'));
   } else {
-    card.append(element('p', 'request-meta', KIND_TEXT[entry.cls] ?? ''));
+    if (uploadUse) {
+      const size = entry.file.size >= 1024 * 1024 ? `${(entry.file.size / 1024 / 1024).toFixed(1)} MB`
+        : entry.file.size >= 1024 ? `${Math.round(entry.file.size / 1024)} KB` : `${entry.file.size} bytes`;
+      card.append(element('p', 'approval-label', `Upload ${entry.file.name} (${size}) to ${entry.origin ?? 'this site'}?`),
+        element('p', 'request-meta', "Approve once puts this one file from the agent's workspace into the file field below "
+          + '(within a minute); the site receives it when the form is sent.'));
+    } else {
+      card.append(element('p', 'request-meta', KIND_TEXT[entry.cls] ?? ''));
+    }
     const label = element('p', 'approval-label');
     label.append(element('q', '', entry.label || '(unlabelled control)'), element('span', 'page-text-note', ' (text from the page)'));
     card.append(label);
@@ -123,7 +136,7 @@ export async function mountApprovals({ list = null, settings = null } = {}) {
   const renderCards = entries => {
     if (!list) return;
     const pending = (Array.isArray(entries) ? entries : []).filter(entry => entry && typeof entry.id === 'string');
-    list.replaceChildren(...pending.map(entry => approvalCard(entry, sendDecision)));
+    replaceCardsPreservingFocus(list, pending.map(entry => approvalCard(entry, sendDecision)));
     list.hidden = pending.length === 0;
   };
   let current = normalizeApprovalSettings();
@@ -140,7 +153,7 @@ export async function mountApprovals({ list = null, settings = null } = {}) {
         current = { ...current, [key]: box.checked };
         chrome.storage.local.set({ approvals: current }).catch(() => {});
       });
-      label.append(box, ` ${name}`);
+      label.append(box, element('span', 'approval-setting-name', name));
       row.append(label, element('p', 'field-help', help));
       return row;
     });
