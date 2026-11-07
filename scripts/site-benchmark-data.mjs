@@ -177,8 +177,8 @@ function svgGrouped(data, standalone = false) {
       const barY = 10 + seriesIndex * 31;
       out.push(
         `<rect class="chart-track" x="${BAR_X}" y="${barY}" width="${BAR_W}" height="19" rx="3" aria-hidden="true"></rect>`,
-        `<rect class="chart-bar chart-bar-${name}" x="${BAR_X}" y="${barY}" width="${width}" height="19" rx="3" data-width="${width}" aria-hidden="true"></rect>`,
-        `<text class="chart-bar-label chart-bar-label-${name}" x="${BAR_X + 10}" y="${barY + 14}">${esc(data.series[name])}</text>`,
+        `<rect class="chart-bar chart-bar-${name}" fill="${name === 'playwright' ? '#a3aea7' : name === 'agent' ? '#0a9a80' : '#6558c7'}" x="${BAR_X}" y="${barY}" width="${width}" height="19" rx="3" data-width="${width}" aria-hidden="true"></rect>`,
+        `<text class="chart-bar-label chart-bar-label-${name}" fill="${name === 'playwright' ? '#12251f' : '#ffffff'}" x="${BAR_X + 10}" y="${barY + 14}">${esc(data.series[name])}</text>`,
         `<text class="chart-value" x="${VALUE_X}" y="${barY + 14}">${esc(point.display)}</text>`,
       );
     });
