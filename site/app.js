@@ -218,8 +218,8 @@
         var width = point.value / scale * BAR_W;
         var y = 10 + seriesIndex * 31;
         group.appendChild(svgElement('rect', { class: 'chart-track', x: BAR_X, y: y, width: BAR_W, height: 19, rx: 3, 'aria-hidden': 'true' }));
-        group.appendChild(svgElement('rect', { class: 'chart-bar chart-bar-' + name, x: BAR_X, y: y, width: 0, height: 19, rx: 3, 'data-width': width.toFixed(2), 'aria-hidden': 'true' }));
-        group.appendChild(svgElement('text', { class: 'chart-bar-label chart-bar-label-' + name, x: BAR_X + 10, y: y + 14 }, data.series[name]));
+        group.appendChild(svgElement('rect', { class: 'chart-bar chart-bar-' + name, fill: name === 'playwright' ? '#a3aea7' : name === 'agent' ? '#0a9a80' : '#6558c7', x: BAR_X, y: y, width: 0, height: 19, rx: 3, 'data-width': width.toFixed(2), 'aria-hidden': 'true' }));
+        group.appendChild(svgElement('text', { class: 'chart-bar-label chart-bar-label-' + name, fill: name === 'playwright' ? '#12251f' : '#ffffff', x: BAR_X + 10, y: y + 14 }, data.series[name]));
         group.appendChild(svgElement('text', { class: 'chart-value', x: 850, y: y + 14 }, groupedDisplay(metric, point)));
       });
       group.appendChild(svgElement('text', { class: 'chart-scale', x: BAR_X, y: 124 }, '0'));
