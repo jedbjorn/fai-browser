@@ -29,7 +29,7 @@ jobs:
       - name: Check required files and local references
         run: |
           set -eu
-          for f in index.html 404.html styles.css hero.css app.js favicon.svg media/social-preview.png media/demo.mp4 media/approval-card.png media/approve-once.png media/secret-placeholders.png media/evidence/public-pilots-2026-11-07.json; do
+          for f in index.html 404.html styles.css hero.css app.js favicon.svg media/social-preview.png media/demo.mp4 media/approval-card.png media/approve-once.png media/secret-placeholders.png media/evidence/public-pilots-2026-11-07.json media/evidence/gmail-case-2026-11-07.json; do
             test -s "site/$f" || { echo "missing site/$f"; exit 1; }
           done
           for ref in styles.css hero.css app.js favicon.svg; do
@@ -93,6 +93,21 @@ jobs:
           if (!Array.isArray(data.sourceAudits) || data.sourceAudits.length !== 6 ||
               tasks.some(task => drivers.some(driver => data.sourceAudits.filter(audit => audit.task === task && audit.driver === driver && /^[a-f0-9]{64}$/.test(audit.sha256)).length !== 1))) fail('Missing source audit fingerprints');
           if (/\/tmp\/|\/home\/|Bearer\s|client-token|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(dataText)) fail('Private/local evidence leaked into public data');
+          const caseText = readFileSync(resolve(root, 'media/evidence/gmail-case-2026-11-07.json'), 'utf8');
+          const gmail = JSON.parse(caseText);
+          if (gmail.schemaVersion !== 1 || gmail.outcome !== 'incomplete' || gmail.reportedAccessRefusals !== 0 ||
+              gmail.checks.searchSubmitCount !== 1 || gmail.checks.queryMatched !== true ||
+              gmail.checks.resultsVisible !== true || gmail.checks.datesVisible !== true ||
+              gmail.checks.menuOpened !== false || gmail.checks.menuClosedUnchanged !== false ||
+              gmail.checks.coverageIncomplete !== true || gmail.provenance.modelReported !== null ||
+              gmail.provenance.costUsd !== null || !gmail.classification.includes('not a paired benchmark') ||
+              !html.includes('Task not completed') || !html.includes('gmail-case-2026-11-07.json')) fail('Invalid separate Gmail case');
+          for (const field of ['wallMs', 'toolCalls', 'inputTokens', 'cachedInputTokens', 'uncachedInputTokens', 'outputTokens']) {
+            if (!Number.isFinite(gmail.metrics[field]) || gmail.metrics[field] < 0 ||
+                (field !== 'wallMs' && !Number.isSafeInteger(gmail.metrics[field]))) fail('Invalid Gmail usage');
+          }
+          if (gmail.metrics.inputTokens - gmail.metrics.cachedInputTokens !== gmail.metrics.uncachedInputTokens) fail('Gmail fresh input mismatch');
+          if (/\/tmp\/|\/home\/|Bearer\s|client-token|Profile\s*\d|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(caseText)) fail('Private metadata leaked into Gmail case');
           for (const metric of ['wall', 'fresh']) {
             if ((html.match(new RegExp(`data-chart-metric="${metric}"`, 'g')) || []).length !== 1 ||
                 !html.includes(`data-metric="${metric}"`)) fail(`Missing ${metric} chart/control`);
