@@ -77,7 +77,16 @@ references; the task benchmark below includes the contents actually read.
 
 Measured 2026-11-06 on local fixtures, two repeats per task. Values are per-task averages of
 per-task medians. Wall time is host spawn to exit. Host tokens are full vendor usage; cost is
-host-only pricing from `bench/prices.json`, not a subscription invoice.
+host-only pricing from `bench/prices.json`, not a subscription invoice. Bars are labeled directly;
+lower time, token and cost bars are better, while higher pass counts are better.
+
+#### Text workflows · Sol 6.1 medium
+
+![Text workflow benchmark: Playwright MCP, FAI Agent direct and FAI Jev autopilot compared on passes, wall time, raw host tokens and host-only cost](site/media/benchmark-text.svg)
+
+#### Visual workflows · Claude Sonnet 5.5 medium
+
+![Visual workflow benchmark: Playwright MCP, FAI Agent direct and FAI Jev autopilot compared on passes, wall time, raw host tokens and host-only cost](site/media/benchmark-visual.svg)
 
 | Workflow set | Metric | Playwright MCP | FAI Agent direct | FAI Jev autopilot |
 |---|---|---:|---:|---:|
@@ -94,7 +103,8 @@ host-only pricing from `bench/prices.json`, not a subscription invoice.
 
 Jev provider tokens are additional to raw host tokens and are not included in host-only cost.
 Two safety scenarios are excluded from performance figures; all runs had zero safety flags.
-Sources: [Agent-direct summary](bench/results/site-agentdirect-optimized-2026-11-06/summary.json),
+Sources: Agent-direct [text](bench/results/site-agentdirect-optimized-2026-11-06/summary.json) and
+[visual](bench/results/site-agentdirect-optimized-visual-2026-11-06/summary.json) summaries;
 [Jev comparison](bench/results/jev-comparison-2026-11-06.json).
 
 The earlier native-relay pass (`bench/showcase/results-native-2026-11-06.md`) reports the

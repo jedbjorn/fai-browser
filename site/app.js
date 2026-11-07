@@ -123,7 +123,7 @@
       if (started === null) started = now;
       var elapsed = now - started;
       bars.forEach(function (bar, index) {
-        var delay = Math.floor(index / 2) * 75;
+        var delay = Math.floor(index / 3) * 75;
         var progress = Math.max(0, Math.min(1, (elapsed - delay) / duration));
         var eased = 1 - Math.pow(1 - progress, 3);
         bar.setAttribute('width', (Number(bar.dataset.width) * eased).toFixed(2));
@@ -149,98 +149,89 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Paired A/B chart (schemaVersion 2, kind "paired"): one bar pair per metric.
+  // Grouped chart (schemaVersion 3): directly labeled bars for all three drivers.
   // ---------------------------------------------------------------------------
 
-  var PAIRED_METRICS = ['passes', 'wall', 'tokens', 'cost'];
+  var GROUPED_METRICS = ['passes', 'wall', 'tokens', 'cost'];
+  var GROUPED_SERIES = ['playwright', 'agent', 'jev'];
+  var BAR_X = 260;
+  var BAR_W = 560;
+  var ROW_H = 140;
 
-  function validatePaired(data) {
-    if (!data || data.schemaVersion !== 2 || data.kind !== 'paired' || data.status !== 'complete') return null;
+  function validateGrouped(data) {
+    if (!data || data.schemaVersion !== 3 || data.kind !== 'grouped' || data.status !== 'complete') return null;
     if (!data.run || !Number.isInteger(data.run.taskCount) || data.run.taskCount < 1) return null;
-    if (!data.series || typeof data.series.a !== 'string' || typeof data.series.b !== 'string') return null;
+    if (!data.series || !GROUPED_SERIES.every(function (name) { return typeof data.series[name] === 'string'; })) return null;
     if (!Array.isArray(data.metrics)) return null;
     var byId = {};
     data.metrics.forEach(function (metric) {
       if (metric && typeof metric.id === 'string') byId[metric.id] = metric;
     });
-    var ordered = PAIRED_METRICS.map(function (id) { return byId[id]; });
+    var ordered = GROUPED_METRICS.map(function (id) { return byId[id]; });
     var valid = ordered.every(function (metric, index) {
-      if (!metric || typeof metric.label !== 'string' || !validPoint(metric.a) || !validPoint(metric.b)) return false;
-      if (index === 0) {
-        var attempted = Number.isInteger(data.run.attempted) && data.run.attempted > 0 ? data.run.attempted : data.run.taskCount;
-        return metric.a.value <= attempted && metric.b.value <= attempted;
-      }
-      return true;
+      if (!metric || typeof metric.label !== 'string' || !GROUPED_SERIES.every(function (name) { return validPoint(metric[name]); })) return false;
+      if (index !== 0) return true;
+      var attempted = Number.isInteger(data.run.attempted) && data.run.attempted > 0 ? data.run.attempted : data.run.taskCount;
+      return GROUPED_SERIES.every(function (name) { return metric[name].value <= attempted; });
     });
     return valid ? { data: data, metrics: ordered } : null;
   }
 
-  function pairedDisplay(metric, point) {
+  function groupedDisplay(metric, point) {
     if (typeof point.display === 'string' && point.display.trim()) return point.display;
     if (metric.id === 'passes') return numberFormat.format(point.value);
     return numberFormat.format(point.value) + (metric.unit ? ' ' + metric.unit : '');
   }
 
-  function pairedScale(metric, taskCount, attempted) {
-    var maximum = Math.max(metric.a.value, metric.b.value);
-    if (metric.id === 'passes') return attempted || taskCount;
-    return maximum > 0 ? maximum : 1;
+  function groupedScaleLabel(metric, scale) {
+    if (metric.id === 'passes') return 'Shared max · ' + numberFormat.format(scale) + ' runs';
+    if (metric.unit === 'USD') return 'Shared max · $' + scale.toFixed(4);
+    return 'Shared max · ' + numberFormat.format(scale) + (metric.unit === 's' ? ' s' : ' ' + metric.unit);
   }
 
-  function pairedScaleLabel(metric, scale, taskCount) {
-    if (metric.id === 'passes') return 'Shared max · ' + numberFormat.format(scale) + ' tasks';
-    if (metric.unit === 'USD') return 'Shared max · $' + scale;
-    var unit = metric.unit === 's' ? ' s' : ' ' + (metric.unit || '');
-    return 'Shared max · ' + numberFormat.format(scale) + unit;
-  }
-
-  function renderPaired(result, elements) {
+  function renderGrouped(result, elements) {
     var data = result.data;
     var metrics = result.metrics;
-    var taskCount = data.run.taskCount;
     var chart = elements.chart;
-    var chartHeight = 54 + metrics.length * 114;
-    var gridDepth = chartHeight - 70;
+    var chartHeight = 44 + metrics.length * ROW_H;
     elements.figure.dataset.state = 'complete';
-    setStatus(elements.status, 'Measured results');
-    document.getElementById(elements.run).textContent = (data.run.model || 'Measured model') + ' · ' + (data.run.driver || '') + ' · ' + (data.run.protocol || '') + ' · ' + taskCount + ' tasks · ' + (data.run.repeats || 1) + ' repeat' + (data.run.repeats === 1 ? '' : 's') + ' · local fixtures';
+    setStatus(elements.status, 'Measured results · ' + (data.id === 'visual' ? 'screenshots' : 'text'));
+    document.getElementById(elements.run).textContent = (data.run.model || 'Measured model') + ' · ' + data.run.taskCount + ' tasks · ' + (data.run.repeats || 1) + ' repeats · local fixtures';
 
     chart.replaceChildren();
-    chart.setAttribute('viewBox', '0 0 960 ' + chartHeight);
-    chart.appendChild(svgElement('title', { id: elements.chartId + '-svg-title' }, data.series.b + ' compared with ' + data.series.a));
-    var description = metrics.map(function (metric) {
-      return metric.label + ': ' + data.series.a + ' ' + pairedDisplay(metric, metric.a) + ', ' + data.series.b + ' ' + pairedDisplay(metric, metric.b) + '.';
-    }).join(' ');
-    chart.appendChild(svgElement('desc', { id: elements.chartId + '-svg-desc' }, description + ' Each pair uses a common zero baseline and shared scale.'));
-    chart.appendChild(svgElement('path', { class: 'chart-grid', d: 'M270 30v' + gridDepth + 'M400 30v' + gridDepth + 'M530 30v' + gridDepth + 'M660 30v' + gridDepth + 'M790 30v' + gridDepth, 'aria-hidden': 'true' }));
+    chart.setAttribute('viewBox', '0 0 1000 ' + chartHeight);
+    chart.appendChild(svgElement('title', { id: 'benchmark-' + data.id + '-svg-title' }, data.title + ': ' + GROUPED_SERIES.map(function (name) { return data.series[name]; }).join(', ')));
+    chart.appendChild(svgElement('desc', { id: 'benchmark-' + data.id + '-svg-desc' }, metrics.map(function (metric) {
+      return metric.label + ': ' + GROUPED_SERIES.map(function (name) { return data.series[name] + ' ' + groupedDisplay(metric, metric[name]); }).join(', ');
+    }).join('. ') + '. Each metric uses a common zero baseline and shared scale.'));
+    chart.appendChild(svgElement('path', { class: 'chart-grid', d: 'M' + BAR_X + ' 24v' + (chartHeight - 64) + 'M' + (BAR_X + 140) + ' 24v' + (chartHeight - 64) + 'M' + (BAR_X + 280) + ' 24v' + (chartHeight - 64) + 'M' + (BAR_X + 420) + ' 24v' + (chartHeight - 64) + 'M' + (BAR_X + BAR_W) + ' 24v' + (chartHeight - 64), 'aria-hidden': 'true' }));
 
     metrics.forEach(function (metric, index) {
-      var scale = pairedScale(metric, taskCount, data.run.attempted);
-      var group = svgElement('g', { transform: 'translate(0 ' + (38 + index * 114) + ')' });
+      var scale = metric.id === 'passes' ? data.run.attempted : Math.max.apply(null, GROUPED_SERIES.map(function (name) { return metric[name].value; }));
+      var group = svgElement('g', { transform: 'translate(0 ' + (28 + index * ROW_H) + ')' });
       group.appendChild(svgElement('text', { class: 'metric-name', x: 0, y: 25 }, metric.label));
-      group.appendChild(svgElement('text', { class: 'metric-note', x: 0, y: 47 }, metric.id === 'passes' ? 'out of ' + (data.run.attempted || taskCount) + ' runs' : 'per task · suite of per-task medians · ' + (data.run.repeats || 1) + ' repeats'));
-      group.appendChild(svgElement('line', { class: 'chart-zero', x1: 270, y1: 5, x2: 270, y2: 72, 'aria-hidden': 'true' }));
+      group.appendChild(svgElement('text', { class: 'metric-note', x: 0, y: 47 }, metric.id === 'passes' ? data.run.taskCount + ' tasks · ' + data.run.repeats + ' repeats' : 'per task · mean of task medians'));
+      group.appendChild(svgElement('line', { class: 'chart-zero', x1: BAR_X, y1: 4, x2: BAR_X, y2: 103, 'aria-hidden': 'true' }));
 
-      [['a', 20, 'chart-bar-a', data.series.a], ['b', 58, 'chart-bar-b', data.series.b]].forEach(function (series) {
-        var key = series[0];
-        var y = series[1];
-        var point = metric[key];
-        var width = point.value / scale * 520;
-        group.appendChild(svgElement('text', { class: 'series-name', x: 222, y: y + 5 }, key.toUpperCase()));
-        group.appendChild(svgElement('rect', { class: 'chart-track', x: 270, y: y - 8, width: 520, height: 16, rx: 3, 'aria-hidden': 'true' }));
-        group.appendChild(svgElement('rect', { class: 'chart-bar ' + series[2], x: 270, y: y - 8, width: 0, height: 16, rx: 3, 'data-width': width.toFixed(2), 'aria-hidden': 'true' }));
-        group.appendChild(svgElement('text', { class: 'chart-value', x: 820, y: y + 5 }, pairedDisplay(metric, point)));
+      GROUPED_SERIES.forEach(function (name, seriesIndex) {
+        var point = metric[name];
+        var width = point.value / scale * BAR_W;
+        var y = 10 + seriesIndex * 31;
+        group.appendChild(svgElement('rect', { class: 'chart-track', x: BAR_X, y: y, width: BAR_W, height: 19, rx: 3, 'aria-hidden': 'true' }));
+        group.appendChild(svgElement('rect', { class: 'chart-bar chart-bar-' + name, x: BAR_X, y: y, width: 0, height: 19, rx: 3, 'data-width': width.toFixed(2), 'aria-hidden': 'true' }));
+        group.appendChild(svgElement('text', { class: 'chart-bar-label chart-bar-label-' + name, x: BAR_X + 10, y: y + 14 }, data.series[name]));
+        group.appendChild(svgElement('text', { class: 'chart-value', x: 850, y: y + 14 }, groupedDisplay(metric, point)));
       });
-      group.appendChild(svgElement('text', { class: 'chart-scale', x: 270, y: 94 }, '0'));
-      group.appendChild(svgElement('text', { class: 'chart-scale', x: 790, y: 94, 'text-anchor': 'end' }, pairedScaleLabel(metric, scale, taskCount)));
+      group.appendChild(svgElement('text', { class: 'chart-scale', x: BAR_X, y: 124 }, '0'));
+      group.appendChild(svgElement('text', { class: 'chart-scale', x: BAR_X + BAR_W, y: 124, 'text-anchor': 'end' }, groupedScaleLabel(metric, scale)));
       chart.appendChild(group);
     });
 
     var caption = elements.figure.querySelector('figcaption');
     caption.querySelector('span').textContent = data.label || 'Measured local fixture evidence';
-    var source = data.run.source ? ' Source: ' + data.run.source + '.' : '';
+    var source = data.run.source ? ' Sources: ' + data.run.source + '.' : '';
     var measuredAt = data.run.measuredAt ? ' Measured ' + data.run.measuredAt + '.' : '';
-    caption.querySelector('p').textContent = 'Measured values only; each pair shares a zero baseline and scale. Per-task figures are suites of per-task medians over repeats.' + measuredAt + source;
+    caption.querySelector('p').textContent = 'Directly labeled bars; lower time, tokens and cost are better. Raw host tokens only; Jev provider tokens are additional and excluded from host-only cost. Each metric shares a zero baseline and scale.' + measuredAt + source;
 
     var body = document.getElementById(elements.tableBody);
     body.replaceChildren();
@@ -250,116 +241,17 @@
       heading.scope = 'row';
       heading.textContent = metric.label;
       row.appendChild(heading);
-      [metric.a, metric.b].forEach(function (point) {
+      GROUPED_SERIES.forEach(function (name) {
         var cell = document.createElement('td');
-        cell.textContent = pairedDisplay(metric, point);
+        cell.textContent = groupedDisplay(metric, metric[name]);
         row.appendChild(cell);
       });
       var basis = document.createElement('td');
-      basis.textContent = metric.id === 'passes' ? (data.run.attempted || taskCount) + ' runs total' : 'Per task · medians over ' + (data.run.repeats || 1) + ' repeats each';
+      basis.textContent = metric.id === 'passes' ? data.run.taskCount + ' tasks × ' + data.run.repeats + ' repeats' : 'Per task · medians over ' + data.run.repeats + ' repeats';
       row.appendChild(basis);
       body.appendChild(row);
     });
-    var captionEl = document.getElementById(elements.tableCaption);
-    captionEl.textContent = 'Measured values only. Per-task figures are suites of per-task medians over repeats.' + source;
-
-    observeBars(chart, elements.figure);
-  }
-
-  // ---------------------------------------------------------------------------
-  // Ratio chart (schemaVersion 2, kind "ratio"): one bar per host per metric,
-  // value = how many times better than baseline; parity line at 1×.
-  // ---------------------------------------------------------------------------
-
-  var RATIO_METRICS = ['wall', 'tokens', 'cost'];
-
-  function validateRatio(data) {
-    if (!data || data.schemaVersion !== 2 || data.kind !== 'ratio' || data.status !== 'complete') return null;
-    if (!data.series || typeof data.series.a !== 'string' || typeof data.series.b !== 'string') return null;
-    if (!Array.isArray(data.metrics)) return null;
-    var byId = {};
-    data.metrics.forEach(function (metric) {
-      if (metric && typeof metric.id === 'string') byId[metric.id] = metric;
-    });
-    var ordered = RATIO_METRICS.map(function (id) { return byId[id]; });
-    var valid = ordered.every(function (metric) {
-      return metric && typeof metric.label === 'string' &&
-        Array.isArray(metric.hosts) && metric.hosts.length > 0 &&
-        metric.hosts.every(function (host) { return host && typeof host.name === 'string' && validPoint(host); });
-    });
-    return valid ? { data: data, metrics: ordered } : null;
-  }
-
-  function renderRatio(result, elements) {
-    var data = result.data;
-    var metrics = result.metrics;
-    var hostCount = metrics[0].hosts.length;
-    var chart = elements.chart;
-    var rowH = 40;
-    var chartHeight = 70 + metrics.length * (34 + hostCount * rowH + 20);
-    elements.figure.dataset.state = 'complete';
-    setStatus(elements.status, 'Measured results');
-    document.getElementById(elements.run).textContent = (data.run.model || 'Measured models') + ' · ' + (data.run.driver || '') + ' · ' + data.run.taskCount + ' tasks · ' + (data.run.repeats || 1) + ' repeats · local fixtures';
-
-    var max = 0;
-    metrics.forEach(function (metric) {
-      metric.hosts.forEach(function (host) { if (host.value > max) max = host.value; });
-    });
-    max = max * 1.12 || 1;
-    var x = function (v) { return 270 + (v / max) * 520; };
-
-    chart.replaceChildren();
-    chart.setAttribute('viewBox', '0 0 960 ' + chartHeight);
-    chart.appendChild(svgElement('title', { id: 'jev-svg-title' }, data.series.b + ' compared with ' + data.series.a + ' across ' + hostCount + ' host models'));
-    chart.appendChild(svgElement('desc', { id: 'jev-svg-desc' }, metrics.map(function (metric) {
-      return metric.label + ': ' + metric.hosts.map(function (host) { return host.name + ' ' + host.display; }).join(', ');
-    }).join('. ') + '. Bars pass the 1× parity line when FAI is better.'));
-
-    var y = 30;
-    metrics.forEach(function (metric) {
-      chart.appendChild(svgElement('text', { class: 'metric-name', x: 0, y: y + 16 }, metric.label));
-      chart.appendChild(svgElement('text', { class: 'metric-note', x: 0, y: y + 36 }, data.series.a + ' ÷ ' + data.series.b + ' · bars past 1× favour FAI'));
-      y += 50;
-      chart.appendChild(svgElement('line', { class: 'chart-zero', x1: x(1).toFixed(1), y1: y - 8, x2: x(1).toFixed(1), y2: y + hostCount * rowH - 8, 'aria-hidden': 'true' }));
-      metric.hosts.forEach(function (host, index) {
-        var ry = y + index * rowH;
-        var width = host.value / max * 520;
-        chart.appendChild(svgElement('text', { class: 'series-name', x: 150, y: ry + 22 }, host.name));
-        chart.appendChild(svgElement('rect', { class: 'chart-track', x: 270, y: ry + 6, width: 520, height: 16, rx: 3, 'aria-hidden': 'true' }));
-        chart.appendChild(svgElement('rect', { class: 'chart-bar chart-bar-b', x: 270, y: ry + 6, width: 0, height: 16, rx: 3, 'data-width': width.toFixed(2), 'aria-hidden': 'true' }));
-        chart.appendChild(svgElement('text', { class: 'chart-value', x: 820, y: ry + 22 }, host.display));
-      });
-      y += hostCount * rowH + 26;
-      chart.appendChild(svgElement('text', { class: 'chart-scale', x: 270, y: y - 12 }, '0'));
-      chart.appendChild(svgElement('text', { class: 'chart-scale', x: 790, y: y - 12, 'text-anchor': 'end' }, 'Shared max · ' + max.toFixed(1) + '×'));
-    });
-
-    var caption = elements.figure.querySelector('figcaption');
-    caption.querySelector('span').textContent = data.label || 'Experimental · local fixture evidence';
-    var source = data.run.source ? ' Source: ' + data.run.source + '.' : '';
-    var measuredAt = data.run.measuredAt ? ' Measured ' + data.run.measuredAt + '.' : '';
-    caption.querySelector('p').textContent = 'Bars show ' + data.series.a + ' ÷ ' + data.series.b + ' per host; a bar past the 1× parity line means FAI is faster or cheaper on that host. Raw model tokens per vendor tokenizer; cost priced from bench/prices.json.' + measuredAt + source;
-
-    var body = document.getElementById(elements.tableBody);
-    body.replaceChildren();
-    if (Array.isArray(data.hosts)) {
-      data.hosts.forEach(function (host) {
-        var row = document.createElement('tr');
-        var heading = document.createElement('th');
-        heading.scope = 'row';
-        heading.textContent = host.name;
-        row.appendChild(heading);
-        [host.wall, host.tokens, host.cost].forEach(function (value) {
-          var cell = document.createElement('td');
-          cell.textContent = Number.isFinite(value) ? value.toFixed(2) + '×' : '—';
-          row.appendChild(cell);
-        });
-        var pass = document.createElement('td');
-        pass.textContent = (host.pass && host.pass.a ? host.pass.a + ' → ' : '') + (host.pass && host.pass.b ? host.pass.b : '—');
-        row.appendChild(pass);
-        body.appendChild(row);
-      });
-    }
+    document.getElementById(elements.tableCaption).textContent = 'Measured values only. Jev provider tokens are additional and excluded from host-only cost.' + source;
 
     observeBars(chart, elements.figure);
   }
@@ -391,15 +283,11 @@
       .catch(function (error) { console.error('benchmark chart fallback:', error); /* static fallback stays */ });
   }
 
-  setupFigure({
-    figure: 'task-benchmark', chart: '#benchmark-chart', url: 'media/benchmark-data.json',
-    validate: validatePaired, render: renderPaired,
-    status: 'benchmark-status', run: 'benchmark-run', tableBody: 'benchmark-table-body', tableCaption: 'benchmark-table-caption',
-  });
-
-  setupFigure({
-    figure: 'jev-benchmark', chart: '#jev-chart', url: 'media/jev-matrix-data.json',
-    validate: validateRatio, render: renderRatio,
-    status: 'jev-status', run: 'jev-run', tableBody: 'jev-table-body', tableCaption: 'jev-table-caption',
+  ['text', 'visual'].forEach(function (id) {
+    setupFigure({
+      figure: id + '-benchmark', chart: '#benchmark-' + id + '-chart', url: 'media/benchmark-' + id + '-data.json',
+      validate: validateGrouped, render: renderGrouped,
+      status: id + '-status', run: id + '-run', tableBody: id + '-table-body', tableCaption: id + '-table-caption',
+    });
   });
 })();
