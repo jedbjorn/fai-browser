@@ -308,8 +308,8 @@ const OUTCOMES = {
     status: 'needs_user',
     who: 'user',
     reason: 'No tab has been selected for this request yet',
-    message: 'Not approved yet. Ask the user to click Open on the request in the FAI Browser window in Chrome, then '
-      + 'the FAI Browser icon on the page it opens.',
+    message: 'Not approved yet. Ask the user to click Open on the request in the FAI Browser window, then '
+      + 'Approve in the page request modal (grant browser site access if asked), or use the FAI Browser toolbar icon.',
   },
   request_closed: {
     status: 'needs_host',
@@ -1042,33 +1042,24 @@ function nextKindOf(result) {
   return buildVerdict(result).nextKind ?? NEXT_FOR_OVERSIGHT[verdict?.oversight] ?? 'stop';
 }
 
-/**
- * What the user does to approve a pending request, by how the extension presents it (the daemon's request view
- * `approval`): `page` when its page opened by itself in a new window (the extension's "Open requested pages right
- * away", on by default, for Interactive or less), where one click on the FAI Browser icon approves; else `window`
- * (a Full or Testing request, the setting off, no page to open, or the FAI tab already covers it): Open in the FAI
- * Browser window, then the icon click on the page it opens.
- */
+/** Approval instructions for an automatically opened task page or the request window. */
 export function approvalSteps(approval) {
   if (approval === 'page') {
-    return 'its page opened in a new Chrome window; one click on the FAI Browser icon on that window approves it';
+    return 'its task page opened in an existing browser window; click Approve in the page request modal (grant browser site access if asked), or use the FAI Browser toolbar icon';
   }
-  return 'click Open in the FAI Browser window, then the FAI Browser icon on the page it opens';
+  return 'click Open in the FAI Browser window, then Approve in the page request modal (grant browser site access if asked), or use the FAI Browser toolbar icon';
 }
 
 /** The select_tab needs.message for how the request is presented (see approvalSteps). */
 export function selectTabMessage(approval) {
-  if (approval === 'page') {
-    return 'Not approved yet. The page opened in a new Chrome window: ask the user to click the FAI Browser icon on '
-      + 'that window to approve.';
-  }
+  if (approval === 'page') return `Not approved yet. Ask the user to approve: ${approvalSteps(approval)}.`;
   return OUTCOMES.select_tab.message;
 }
 
 function approveText(origin, requestId, approval) {
   const root = siteRoot(origin);
   const site = root ?? (origin ? origin.replace(/^https:\/\//, '') : null);
-  return `Ask the user to approve the request${site ? ` for ${site}` : ''} in Chrome: ${approvalSteps(approval)}. `
+  return `Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: ${approvalSteps(approval)}. `
     + `Then call fai_browser_run again with requestId ${requestId}; no origins needed.`;
 }
 
@@ -1315,7 +1306,7 @@ function directChooseText(revision) {
 function directApproveText(origin, requestId, approval) {
   const root = siteRoot(origin);
   const site = root ?? (origin ? origin.replace(/^https:\/\//, '') : null);
-  return `Ask the user to approve the request${site ? ` for ${site}` : ''} in Chrome: ${approvalSteps(approval)}. `
+  return `Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: ${approvalSteps(approval)}. `
     + `Then call fai_browser_open again with requestId ${requestId}.`;
 }
 

@@ -524,7 +524,7 @@ function notActiveResult(outcome, requestId, leaseTimeoutMs, expectation, elapse
       code: 'select_tab',
       reason: `No tab was approved for request ${requestId} within ${seconds(leaseTimeoutMs)}`,
       who: 'user',
-      message: `Ask the user to approve request ${requestId} in Chrome: ${approvalSteps(outcome.request?.approval)}. `
+      message: `Ask the user to approve request ${requestId} in the browser: ${approvalSteps(outcome.request?.approval)}. `
         + `Then rerun with --request ${requestId}.`,
       expectation,
       elapsedMs,
@@ -670,7 +670,7 @@ async function executeThin(operation, flags, instruction, options, optionsPath) 
       });
       requestId = created.requestId;
       createdRequest = requestId;
-      log(`ACTION NEEDED: approve request ${requestId} for ${origins.join(' or ')} in Chrome: `
+      log(`ACTION NEEDED: approve request ${requestId} for ${origins.join(' or ')} in the browser: `
         + `${approvalSteps(created.request?.approval)}. Waiting up to ${seconds(leaseTimeoutMs)}.`);
       if (created.extensionConnected === false) {
         log('note: the extension is not connected to the daemon; open it and check Setup & connection.');
@@ -786,7 +786,7 @@ async function commandRequestTab(flags) {
   const url = requestStartUrl(flags.origin, [], [flags.instruction]);
   if (url) body.url = url;
   const created = await client.requestTab(body);
-  log(`ACTION NEEDED: approve request ${created.requestId} for ${flags.origin.join(' or ')} in Chrome: `
+  log(`ACTION NEEDED: approve request ${created.requestId} for ${flags.origin.join(' or ')} in the browser: `
     + `${approvalSteps(created.request?.approval)}. Then run: fai-browser wait ${created.requestId}`);
   return created;
 }
