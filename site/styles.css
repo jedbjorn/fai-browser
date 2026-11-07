@@ -424,3 +424,10 @@ html:not(.js) .metric-toolbar { display:none; }
 html:not(.js) [data-chart-metric][hidden] { display:block !important; margin-top:30px; }
 @media(max-width:1000px) { .pilot-grid { grid-template-columns:1fr; } .pilot-card { display:grid; grid-template-columns:1fr 1fr; gap:0 36px; } .pilot-card-heading { grid-column:1/-1; margin-bottom:0; } .pilot-outcome { grid-column:1/-1; } .pilot-scale { grid-column:1/-1; } }
 @media(max-width:650px) { .evidence-intro,.evidence-verdict,.method-grid { grid-template-columns:1fr; gap:20px; } .metric-toolbar { align-items:start; flex-direction:column; } .pilot-card { display:block; padding:23px; } .pilot-card-heading { margin-bottom:24px; } .evidence-verdict { padding:32px 0; } }
+
+/* Unpaired field observation, visually separate from the comparison charts. */
+.gmail-case { margin-top: 2.5rem; padding: clamp(1.25rem, 3vw, 2rem); border: 1px solid var(--line); border-radius: 16px; }
+.gmail-case h3 { margin: .75rem 0; font-size: clamp(1.4rem, 2.5vw, 2rem); letter-spacing: -.035em; }
+.gmail-case > p:not(.eyebrow) { max-width: 78ch; line-height: 1.7; }
+.gmail-case .case-basis { font-size: .875rem; color: var(--muted); }
+.case-status { display: inline-block; margin: .35rem 0 .35rem .75rem; padding: .3rem .55rem; border: 1px solid currentColor; border-radius: 4px; }

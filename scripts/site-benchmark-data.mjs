@@ -29,3 +29,18 @@ const end = '<!-- public-pilots:end -->';
 if (!html.includes(begin) || !html.includes(end)) throw new Error('Missing public trial figure markers');
 writeFileSync(path, html.slice(0, html.indexOf(begin) + begin.length) + '\n' + charts + '\n' + table + '\n      ' + html.slice(html.indexOf(end)));
 console.log('Reproduced public trial charts and exact-value table from sanitized measurements.');
+
+// Keep the unpaired mailbox case separate from the six public comparison rows.
+const gmail = JSON.parse(readFileSync(resolve(root, 'site/media/evidence/gmail-case-2026-11-07.json'), 'utf8'));
+const g = gmail.metrics;
+for (const key of ['wallMs', 'toolCalls', 'inputTokens', 'cachedInputTokens', 'uncachedInputTokens', 'outputTokens']) {
+  if (!Number.isFinite(g[key]) || g[key] < 0) throw new Error(`Invalid Gmail metric: ${key}`);
+}
+if (g.inputTokens - g.cachedInputTokens !== g.uncachedInputTokens) throw new Error('Gmail fresh input mismatch');
+const caseHtml = `<article class="gmail-case" aria-labelledby="gmail-case-title"><p class="eyebrow">Separate case / ${esc(gmail.label)} <span class="case-status">Task not completed</span></p><h3 id="gmail-case-title">${esc(gmail.headline)}</h3><p>${esc(gmail.observation)}</p><p class="case-basis">${esc(gmail.evidenceBasis)}</p><details class="pilot-method"><summary>Task scope, usage and comparison limits</summary><p>${esc(gmail.task)}</p><p>${(g.wallMs / 1000).toFixed(2)} seconds · ${number(g.toolCalls)} tool calls · ${number(g.uncachedInputTokens)} fresh input tokens · ${number(g.cachedInputTokens)} cached input tokens · ${number(g.inputTokens)} total input tokens · ${number(g.outputTokens)} output tokens.</p><p>${esc(gmail.interpretation)}</p><p>${esc(gmail.comparisonLimit)}</p><p>${esc(gmail.excludedSetupAttempts)} The requested model was <code>${esc(gmail.provenance.modelRequested)}</code>; actual model identity was not independently reported. Dollar costs are unavailable.</p><p>${esc(gmail.privacy)}</p><p class="evidence-links"><a href="media/evidence/gmail-case-2026-11-07.json">Download sanitized Gmail case (JSON)</a></p></details></article>`;
+const updated = readFileSync(path, 'utf8');
+const caseBegin = '<!-- gmail-case:begin -->';
+const caseEnd = '<!-- gmail-case:end -->';
+if (!updated.includes(caseBegin) || !updated.includes(caseEnd)) throw new Error('Missing Gmail case markers');
+writeFileSync(path, updated.slice(0, updated.indexOf(caseBegin) + caseBegin.length) + '\n' + caseHtml + '\n      ' + updated.slice(updated.indexOf(caseEnd)));
+console.log('Reproduced separate Gmail case from sanitized outcomes and usage.');
