@@ -78,9 +78,9 @@ const ACT_KEYS = new Set(['requestId', 'actionId', 'point', 'revision', 'expecta
   'prune', 'outputDir', 'answerQuestion', 'approvalWaitMs', 'reason',
   // Host-composed acts (src/runtime.js checkActChoice): typed text, batched fills, keys, hover, URLs, history, tabs,
   // dialog answers and uploads.
-  'text', 'submit', 'fills', 'hover', 'key', 'url', 'nav', 'tab', 'dialog', 'file']);
+  'text', 'submit', 'fills', 'hover', 'key', 'url', 'openTab', 'nav', 'tab', 'dialog', 'file']);
 // The parts of an act body that make up the runtime's choice.
-const CHOICE_KEYS = ['actionId', 'point', 'text', 'submit', 'fills', 'hover', 'key', 'url', 'nav', 'tab', 'dialog', 'file'];
+const CHOICE_KEYS = ['actionId', 'point', 'text', 'submit', 'fills', 'hover', 'key', 'url', 'openTab', 'nav', 'tab', 'dialog', 'file'];
 const OBSERVE_KEYS = new Set(['requestId', 'mode', 'allowedUrls', 'suppliedText', 'capture', 'prune', 'outputDir',
   'instruction', 'expectation', 'answerQuestion', 'policy', 'focus', 'digestChars', 'waitFor', 'maxMs', 'logs']);
 // observe {waitFor, maxMs}: the conditions a host may wait for (matched on the redacted page), the default and longest
@@ -212,7 +212,8 @@ function permissionsOf(mode, record) {
   // scope: what the approved tab covers, `origin` (exact origins) or `domain` (the request's domain roots); null
   // before approval.
   const scope = record.grant ? (record.grant.scope === 'domain' ? 'domain' : 'origin') : null;
-  return { requested: mode, granted, effective, testing: effective === 'testing', scope };
+  return { requested: mode, granted, effective, testing: effective === 'testing', scope,
+    tabMode: record.grant?.tabMode ?? 'single' };
 }
 
 // Refusal text for a lease_level message that would raise the grant (src/bridge.js refuses it the same way).
@@ -224,13 +225,14 @@ const LEVEL_RAISE_MESSAGE = 'A lease_level message can only lower the level; rai
  * keeps the old behaviour: reversible when the request asked for at least that, else read-only. Null for an
  * invalid level (the lease is refused).
  */
-export function grantFor(level, record, grantedAt, scope = 'origin') {
+export function grantFor(level, record, grantedAt, scope = 'origin', tabMode = 'single') {
+  if (!['single', 'multiple'].includes(tabMode)) return null;
   if (level === undefined || level === null) {
     const fallback = levelRank(record.mode) >= MODE_RANK.reversible ? 'reversible' : 'read-only';
-    return { level: fallback, testing: false, grantedAt, scope };
+    return { level: fallback, testing: false, grantedAt, scope, tabMode };
   }
   if (!isLevel(level)) return null;
-  return { level, testing: level === 'testing', grantedAt, scope };
+  return { level, testing: level === 'testing', grantedAt, scope, tabMode };
 }
 
 function checkAllowedUrls(body, record) {
@@ -708,7 +710,7 @@ export function createDaemon(options = {}) {
     if (record.state === 'active' && event.requestId && record.lease?.tabId === event.tabId
       && originCovered(event.origin, record.origins) && event.level !== undefined && event.level !== null) {
       const scope = leaseScope(event, record);
-      const grant = grantFor(event.level, record, iso(now()), scope);
+      const grant = grantFor(event.level, record, iso(now()), scope, event.tabMode ?? 'single');
       if (!grant) {
         return replyTo(event, { error: { code: 'bad_request', message: `level must be one of ${LEVELS.join(', ')}` } });
       }
@@ -716,6 +718,7 @@ export function createDaemon(options = {}) {
       record.grant = grant;
       record.lease = { ...record.lease, origin: event.origin, origins };
       hub.setLeaseLevel?.(record.lease.leaseId, grant.level);
+      hub.setLeaseTabMode?.(record.lease.leaseId, grant.tabMode);
       hub.setLeaseOrigins?.(record.lease.leaseId, event.origin, origins);
       record.lastCallAt = now();
       log('lease_regranted', { requestId: record.requestId, level: grant.level, scope });
@@ -740,7 +743,7 @@ export function createDaemon(options = {}) {
     // The scope the user approved: `domain` (the request's domain roots, with Chrome's host permission granted in the
     // extension) or `origin` (the tab's exact origin in place of a root, as for any exact request).
     const scope = leaseScope(event, record);
-    const grant = grantFor(event.level, record, iso(now()), scope);
+    const grant = grantFor(event.level, record, iso(now()), scope, event.tabMode ?? 'single');
     if (!grant) {
       return replyTo(event, { error: { code: 'bad_request', message: `level must be one of ${LEVELS.join(', ')}` } });
     }
@@ -762,6 +765,7 @@ export function createDaemon(options = {}) {
       origin: event.origin,
       allowedOrigins: [...origins],
       level: grant.level,
+      tabMode: grant.tabMode,
     });
     record.runtime = new BrowserRuntime({ bridge: hub.bridgeFor(leaseId), asks: () => approvalAsks });
     // Password values filled at testing stay redacted in every later result, across leases (a re-approval at another
@@ -791,7 +795,7 @@ export function createDaemon(options = {}) {
       return { error: { code: 'level_not_granted', message: LEVEL_RAISE_MESSAGE } };
     }
     if (level === current) return null;
-    record.grant = { level, testing: level === 'testing', grantedAt: record.grant?.grantedAt ?? iso(now()), loweredAt: iso(now()) };
+    record.grant = { ...record.grant, level, testing: level === 'testing', grantedAt: record.grant?.grantedAt ?? iso(now()), loweredAt: iso(now()) };
     if (record.lease?.leaseId) hub.setLeaseLevel?.(record.lease.leaseId, level);
     record.runtime?.lowerGrant?.(level);
     log('lease_lowered', { requestId: record.requestId, from: current, level, source });
@@ -1284,7 +1288,7 @@ export function createDaemon(options = {}) {
         ...common,
         // The runtime clamps the mode to the grant again; the extension intersects with the user's choice too.
         mode: spec.mode,
-        grant: { level: record.grant?.level ?? 'read-only' },
+        grant: { level: record.grant?.level ?? 'read-only', tabMode: record.grant?.tabMode ?? 'single' },
         allowedOrigins: coveredOrigins(record),
         allowedUrls: spec.allowedUrls,
         suppliedText: spec.suppliedText,
@@ -1795,7 +1799,7 @@ export function createDaemon(options = {}) {
     try {
       const look = () => record.runtime.observe({
         mode: spec.mode,
-        grant: { level: record.grant?.level ?? 'read-only' },
+        grant: { level: record.grant?.level ?? 'read-only', tabMode: record.grant?.tabMode ?? 'single' },
         allowedOrigins: coveredOrigins(record),
         allowedUrls: terms.allowedUrls,
         suppliedText: terms.suppliedText,

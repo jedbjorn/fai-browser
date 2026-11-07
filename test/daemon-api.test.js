@@ -70,6 +70,24 @@ async function approved(ctx, body = {}) {
   return requestId;
 }
 
+test('tab access comes only from extension approval, never host request or action fields', async t => {
+  const ctx = await setup(t);
+  const requestId = await requestTab(ctx, { mode: 'interactive' });
+  const denied = await ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Tamper', tabMode: 'multiple' });
+  assert.equal(denied.status, 400);
+  const invalid = await ctx.hub.emit({ type: 'lease', requestId, tabId: 7, origin: ORIGIN, level: 'interactive', tabMode: 'unlimited' });
+  assert.equal(invalid.error.code, 'bad_request');
+  const grant = await ctx.hub.emit({ type: 'lease', requestId, tabId: 7, origin: ORIGIN, level: 'interactive', tabMode: 'multiple' });
+  assert.equal(grant.grant.tabMode, 'multiple');
+  assert.equal(ctx.hub.bound.at(-1).tabMode, 'multiple');
+  const observed = await ctx.api('POST', '/v1/observe', { requestId, capture: false });
+  assert.equal(observed.body.permissions.tabMode, 'multiple');
+  const tamper = await ctx.api('POST', '/v1/act', { requestId, openTab: ORIGIN, tabMode: 'multiple' });
+  assert.equal(tamper.status, 400);
+  const foreign = await ctx.api('POST', '/v1/act', { requestId, openTab: 'https://foreign.example/', capture: 'none', waitMs: 5000 });
+  assert.equal(foreign.body.result.code, 'cross_origin');
+});
+
 test('client API rejects Origin, foreign Host, missing or wrong token; health is open', async t => {
   const ctx = await setup(t);
   const health = await call(ctx.daemon.port, 'GET', '/v1/health');
@@ -559,11 +577,11 @@ test('authority checks: mode, provider options, allowedUrls, expectation and unk
   const clamped = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open', mode: 'testing', waitMs: 5000 });
   assert.equal(clamped.status, 200, JSON.stringify(clamped.body));
   assert.deepEqual(clamped.body.result.permissions,
-    { requested: 'testing', granted: 'read-only', effective: 'read-only', testing: false, scope: 'origin' });
+    { requested: 'testing', granted: 'read-only', effective: 'read-only', testing: false, scope: 'origin', tabMode: 'single' });
   const observed = await ctx.api('POST', '/v1/observe', { requestId, mode: 'reversible', capture: false });
   assert.equal(observed.status, 200, JSON.stringify(observed.body));
   assert.deepEqual(observed.body.permissions,
-    { requested: 'reversible', granted: 'read-only', effective: 'read-only', testing: false, scope: 'origin' });
+    { requested: 'reversible', granted: 'read-only', effective: 'read-only', testing: false, scope: 'origin', tabMode: 'single' });
   assert.equal((await ctx.api('POST', '/v1/observe', { requestId, mode: 'admin' })).body.error.code, 'invalid_options');
   assert.equal((await ctx.api('POST', '/v1/wait', { maxMs: 10 })).body.error.code, 'invalid_options');
   assert.equal((await ctx.api('POST', '/v1/wait', { requestId, while: ['bogus'] })).body.error.code, 'invalid_options');

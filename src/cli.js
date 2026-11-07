@@ -30,6 +30,8 @@ const USAGE = `Usage (your agent chooses each action; the default driver):
   fai-browser observe --request ID [--mode M] [--capture last]   (--capture last: also a screenshot)
   fai-browser act --request ID --action a3 --revision R [--expect-* ...]
   fai-browser act --request ID --point X,Y --revision R      (pixels of the observe screenshot; a guarded click)
+  fai-browser act --request ID --open-tab URL --revision R   (Multiple task tabs grant required)
+  fai-browser act --request ID --tab t0 --revision R
   fai-browser release <requestId>
 Experimental Jev autopilot (driver jev: select it in the extension or npm run setup -- --driver jev):
   fai-browser step|run "instruction" [options.json] [flags]
@@ -169,6 +171,8 @@ function parseCli(argv) {
         'max-ms': { type: 'string' },
         action: { type: 'string' },
         point: { type: 'string' },
+        'open-tab': { type: 'string' },
+        tab: { type: 'string' },
         revision: { type: 'string' },
         limit: { type: 'string' },
         step: { type: 'string' },
@@ -705,10 +709,12 @@ async function executeAct(flags) {
       throw new ConfigError(`act needs --${name}`);
     }
   }
-  if (Boolean(flags.action) === Boolean(flags.point)) throw new ConfigError('act needs --action or --point, not both');
+  if (['action', 'point', 'open-tab', 'tab'].filter(key => flags[key]).length !== 1) throw new ConfigError('act needs exactly one of --action, --point, --open-tab, or --tab');
   const options = applyOverrides({}, flags);
   const body = { requestId: flags.request, revision: flags.revision, waitMs: 0 };
   if (flags.point) body.point = parsePoint(flags.point);
+  else if (flags['open-tab']) body.openTab = flags['open-tab'];
+  else if (flags.tab) body.tab = flags.tab;
   else body.actionId = flags.action;
   for (const key of ['expectation', 'capture', 'timeoutMs']) {
     if (options[key] !== undefined) {

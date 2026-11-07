@@ -1,6 +1,6 @@
 // The waiting prompt for a page that opened by itself (arm.html?tab=<tabId>, opened by the worker's showPrompt next
-// to the page's window): says to click the FAI Browser icon on that window, at which level, with a level choice and
-// Deny. The choice never goes above what the agent asked for (permissions.js levelChoices; the worker checks again).
+// to the page's window): approves its bound task tab using native optional host access, with a level choice and
+// Deny. The toolbar remains an alternative and provides the activeTab gesture needed for screenshots. The choice never goes above what the agent asked for (permissions.js levelChoices; the worker checks again).
 // It renders from chrome.storage.session (armedTabs, requests) and closes itself once its tab is no longer armed
 // (approved, denied, expired or closed). Everything an agent wrote is rendered with textContent only.
 import { LEVEL_TEXT, levelChoices, normalizePermissions, startTarget } from './permissions.js';
@@ -11,6 +11,11 @@ const detail = document.getElementById('detail');
 const select = document.getElementById('level');
 const help = document.getElementById('level-help');
 const warning = document.getElementById('level-warning');
+const approve = document.getElementById('approve');
+let approval = null;
+let preparing = false;
+let approving = false;
+let restoreApprovalFocus = false;
 const deny = document.getElementById('deny');
 const status = document.getElementById('status');
 const pinHint = document.getElementById('pin-hint');
@@ -38,25 +43,81 @@ function render() {
   const host = request ? startTarget(request)?.host ?? '' : '';
   const reason = typeof request?.reason === 'string' && request.reason ? ` "${request.reason}"` : '';
   detail.textContent = `${client} asks for ${host || 'that page'}:${reason}. Click the FAI Browser icon there`
-    + `${orShortcut(shortcut)} to let it use that tab at the level below. Nothing happens until you do.`;
+    + `${orShortcut(shortcut)}, or approve here at the level below. Your browser may ask for site access.`
+    + ' Screenshots may still need a click on the toolbar icon. Browser site access covers this host on all ports; agent access stays within the approved origins.'
+    + (arm.tabMode === 'multiple' ? ' Multiple task tabs: up to eight tabs on the approved site; allow browser site access when asked.'
+      : ' One task tab: a new tab or popup pauses the task.');
   // The levels the request card would offer: at or below what the agent asked for (Test site only when every
   // requested origin is a listed test site). Without the request yet, only the armed level itself.
   const options = request ? levelChoices(request, permissions).options
     : [{ level: arm.level, ...LEVEL_TEXT[arm.level] }];
   const current = fillLevelSelect(select, options, arm.level);
-  select.disabled = options.length < 2;
+  select.disabled = approving || options.length < 2;
   const chosen = options.find(option => option.level === current);
   help.textContent = chosen?.description ?? '';
   warning.hidden = current !== 'testing';
+  select.setAttribute('aria-describedby', current === 'testing' ? 'level-help level-warning' : 'level-help');
   document.body.dataset.level = current;
+  approve.textContent = `Approve ${chosen?.name ?? 'request'}`;
+  approve.disabled = approving || !approval || !request;
+  if (!approval && !preparing && !approving && request) prepare(arm);
 }
+
+async function prepare(arm) {
+  preparing = true;
+  try {
+    const reply = await chrome.runtime.sendMessage({ type: 'arm_prepare', tabId, requestId: arm.requestId, at: arm.at });
+    if (reply?.error) throw new Error(reply.error);
+    if (!reply?.approval?.pattern || !reply.approval.token) throw new Error('Use the toolbar icon to approve this request.');
+    if (!arms.some(item => item.tabId === tabId && item.requestId === arm.requestId && item.at === arm.at)) return;
+    approval = { ...reply.approval, requestId: arm.requestId, at: arm.at };
+    approve.disabled = false;
+    if (restoreApprovalFocus) { approve.focus(); restoreApprovalFocus = false; }
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    preparing = false;
+  }
+}
+
+approve.addEventListener('click', async () => {
+  if (!approval || approving) return;
+  const intent = approval;
+  const level = select.value;
+  approving = true;
+  approve.disabled = true;
+  select.disabled = true;
+  // Native user gesture: no await, messaging or storage read before permissions.request.
+  let access;
+  try { access = chrome.permissions.request({ origins: [intent.pattern] }); }
+  catch { access = Promise.resolve(false); }
+  chrome.runtime.sendMessage({ type: 'arm_begin', tabId, token: intent.token }).catch(() => {});
+  status.textContent = 'Waiting for browser site access…';
+  try {
+    const granted = await Promise.resolve(access).catch(() => false);
+    const reply = await chrome.runtime.sendMessage({ type: 'arm_approve', tabId, ...intent, level, granted });
+    if (reply?.error) throw new Error(reply.error);
+    if (reply?.status !== 'active' || reply?.session?.requestId !== intent.requestId || reply?.session?.tabId !== tabId) {
+      throw new Error('Approval was not confirmed. Use the toolbar icon to check this request.');
+    }
+    close();
+  } catch (error) {
+    status.textContent = error.message;
+    approval = null;
+    restoreApprovalFocus = true;
+  } finally {
+    approving = false;
+    render();
+    if (!closing) approve.focus();
+  }
+});
 
 select.addEventListener('change', async () => {
   const level = select.value;
   try {
     const reply = await chrome.runtime.sendMessage({ type: 'arm_level', tabId, level });
     if (reply?.error) throw new Error(reply.error);
-    status.textContent = `The icon click will approve ${LEVEL_TEXT[level]?.name ?? level}.`;
+    status.textContent = `Your approval will approve ${LEVEL_TEXT[level]?.name ?? level}.`;
   } catch (error) {
     status.textContent = error.message;
   }
@@ -87,6 +148,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'session') return;
   if (changes.armedTabs) arms = Array.isArray(changes.armedTabs.newValue) ? changes.armedTabs.newValue : [];
   if (changes.requests) requests = Array.isArray(changes.requests.newValue) ? changes.requests.newValue : [];
+  if (approval && !arms.some(item => item.tabId === tabId && item.requestId === approval.requestId && item.at === approval.at)) approval = null;
   if (changes.armedTabs || changes.requests) render();
 });
 

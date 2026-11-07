@@ -7,7 +7,8 @@
 // Two shapes: the full in-memory runtime result (createResult, written to trace.json by writeRun) and the lean
 // agent result (agentResult) that CLI stdout and toAgentResult return and MCP summarizes as readable text. The lean result has
 // no per-step observations, screenshots, probabilities or control bounds; they stay in the trace.
-import { buildDigest } from './digest.js';
+import { buildDigest, recordsOf, scoreBlocks } from './digest.js';
+import { ratingValue } from './facts.js';
 import { siteRoot } from './origins.js';
 import { LEVEL_NAMES } from './oversight.js';
 import { capOffer, relevanceHints } from './relevance.js';
@@ -525,23 +526,144 @@ function clip(value, limit) {
   return String(value ?? '').slice(0, limit);
 }
 
+const RESULT_DATE = /\b(?:\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b|20\d{2}-\d{2}-\d{2})/i;
+
+function resultStateOf(raw) {
+  if (!raw || typeof raw !== 'object') return {};
+  const state = {};
+  const count = raw.resultCount;
+  if (Number.isSafeInteger(count?.value) && count.value >= 0) {
+    state.resultCount = { value: count.value, ...(count.approximate === true ? { approximate: true } : {}) };
+  }
+  const label = typeof raw.sort?.label === 'string' ? raw.sort.label.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+  if (label) {
+    state.sort = { label };
+    if (['ascending', 'descending'].includes(raw.sort.direction)) state.sort.direction = raw.sort.direction;
+  }
+  if (raw.pagination && typeof raw.pagination === 'object') {
+    const pagination = {};
+    const current = raw.pagination.current;
+    const total = raw.pagination.total;
+    if (Number.isInteger(current) && current > 0) pagination.current = current;
+    if (Number.isInteger(total) && total > 0 && (!pagination.current || total >= pagination.current)) pagination.total = total;
+    else if (pagination.current && total !== undefined) delete pagination.current;
+    for (const key of ['next', 'previous']) {
+      const value = raw.pagination[key];
+      if (value === true || (typeof value === 'string' && value)) pagination[key] = value === true ? true : clip(value, 20);
+    }
+    if (Object.keys(pagination).length) state.pagination = pagination;
+  }
+  return state;
+}
+
+function resultFields(record, date) {
+  const hints = record.hints ?? {};
+  return record.fields.filter(field => {
+    if (date && field === date) return false;
+    if (hints.price && field.replace(/^(?:price|total)\s*:?\s*/i, '') === hints.price) return false;
+    const rating = ratingValue(field);
+    if (rating && rating.value === hints.rating && (hints.scale === undefined || rating.scale === undefined
+      || rating.scale === hints.scale)) return false;
+    if (hints.reviews !== undefined && /^\(?\d[\d,. ]*\)?\s+(?:reviews?|ratings?)$/i.test(field)
+      && Number(field.replace(/\D/g, '')) === hints.reviews) return false;
+    return true;
+  });
+}
+
+const DIRECT_RESULT_CHARS = PAGE_TEXT_LIMIT;
+
+/**
+ * The primary detected record list in a compact structured form. `total` is the detected rows on this page;
+ * `resultCount` is the page's own global count when explicit. At most 600 characters of task-relevant rows are
+ * projected, with omitted rows left to the digest. `complete` is false for a capped/projected list, either pagination
+ * direction, an approximate or contradictory global count. Raw open/pagination refs become action ids for Agent direct.
+ */
+export function recordResultsOf(observation, instruction = '') {
+  const members = recordsOf(observation).filter(record => record.list === 0);
+  if (members.length < 3) return null;
+  const rawMeta = (Array.isArray(observation?.recordLists) ? observation.recordLists : [])
+    .find(entry => entry?.list === 0) ?? {};
+  const total = Number.isInteger(rawMeta.total) && rawMeta.total >= members.length ? rawMeta.total : members.length;
+  const state = resultStateOf(observation?.recordState);
+  const pagination = state.pagination;
+  const count = state.resultCount;
+  const { blocks, scores } = scoreBlocks(observation, instruction);
+  const relevance = new Map(blocks.map((block, index) => [block.rec, scores[index]]).filter(([id]) => id));
+  const candidates = members.map((record, index) => {
+    const hints = record.hints ?? {};
+    const date = hints.when?.find(text => RESULT_DATE.test(text));
+    const fields = resultFields(record, date);
+    const projected = {
+      id: record.id,
+      title: record.title,
+      ...(date ? { date } : {}),
+      ...(hints.price ? { price: hints.price } : {}),
+      ...(hints.rating !== undefined ? { rating: hints.rating, ...(hints.scale !== undefined ? { scale: hints.scale } : {}) } : {}),
+      ...(hints.reviews !== undefined ? { reviews: hints.reviews } : {}),
+      ...(fields.length ? { fields } : {}),
+      ...(record.ref !== undefined ? { openRef: record.ref } : {}),
+      ...Object.fromEntries(['sponsored', 'unavailable', 'offscreen'].filter(flag => record[flag] === true).map(flag => [flag, true])),
+    };
+    const { id, ...row } = projected;
+    return { projected, index, score: relevance.get(record.id) ?? 0, chars: `result ${id}: ${JSON.stringify(row)}\n`.length };
+  }).sort((a, b) => b.score - a.score || a.index - b.index);
+  const selected = [];
+  let chars = 0;
+  for (const candidate of candidates) {
+    if (chars + candidate.chars > DIRECT_RESULT_CHARS) continue;
+    selected.push(candidate);
+    chars += candidate.chars;
+  }
+  const records = selected.sort((a, b) => a.index - b.index).map(candidate => candidate.projected);
+  const truncated = records.length < members.length;
+  const complete = !truncated && observation?.recordsTruncated !== true && total === members.length
+    && !pagination?.next && !pagination?.previous && (!count || (!count.approximate && count.value === total));
+  return { list: 0, shown: records.length, total, ...state, ...(truncated ? { truncated: true } : {}), complete, records };
+}
+
+function withResultActions(results, actions) {
+  if (!results) return null;
+  const byRef = new Map((actions ?? []).filter(action => action?.id && action.target !== undefined
+    && (action.type === 'click' || action.type === 'navigate_allowed_url')).map(action => [String(action.target), action.id]));
+  const records = results.records.map(({ openRef, ...record }) => ({
+    ...record, ...(openRef !== undefined && byRef.has(openRef) ? { open: byRef.get(openRef) } : {}),
+  }));
+  const out = { ...results, records };
+  if (results.pagination) {
+    out.pagination = Object.fromEntries(Object.entries(results.pagination).map(([key, value]) => {
+      if (!['next', 'previous'].includes(key) || value === true) return [key, value];
+      return [key, byRef.get(value) ?? true];
+    }));
+  }
+  return out;
+}
+
+function withoutProjectedRows(digest, results) {
+  if (!results) return digest;
+  const ids = new Set(results.records.map(record => record.id));
+  return digest.filter(block => typeof block === 'string' || !block?.rec || !ids.has(block.rec));
+}
+
 /**
  * Final page summary for the host: a digest of the blocks most relevant to `question` (at most 25 blocks and
- * about 1500 characters, in document order) and a 600-character text excerpt as a fallback. Controls are not
- * included; they stay in observe() results and in the trace. `truncated` is true when page content was left out
+ * about 1500 characters, in document order), structured primary records for Agent-direct projection, and a
+ * 600-character text excerpt as a fallback. Controls are not included; they stay in observe() results and in the
+ * trace. `truncated` is true when page content was left out
  * of both (excerpt cut, relevant blocks over the digest budget, or the page script's own limits hit).
  */
 export function compactPage(observation, question = '') {
   if (!observation) return null;
   const text = String(observation.text ?? '');
   const { digest, truncated } = buildDigest(observation, question);
+  const results = recordResultsOf(observation, question);
   return {
     url: String(observation.url ?? ''),
     title: clip(observation.title, 500),
     digest,
+    ...(results ? { results } : {}),
     textExcerpt: text.slice(0, PAGE_TEXT_LIMIT),
-    truncated: text.length > PAGE_TEXT_LIMIT || truncated || observation.textTruncated === true
-      || observation.blocksTruncated === true,
+    truncated: text.length > PAGE_TEXT_LIMIT || truncated || results?.truncated === true
+      || observation.textTruncated === true || observation.blocksTruncated === true,
   };
 }
 
@@ -1282,7 +1404,7 @@ export function directMessage(message, requestId = null) {
 
 /**
  * The lean result a host driving the tab itself reads (open, observe and act in Agent direct):
- * `{status, code, requestId, verification, page{url,title,digest,truncated}, granted{level, asked}, revision,
+ * `{status, code, requestId, verification, page{url,title,digest,results?,truncated}, granted{level, asked}, revision,
  *   actions, moreActions, consent?, overlay?, needs?, warnings?, callsLeft?, next}`. No verdict, answer candidates,
  * cost or step list: the host chose the action and reads the page itself. `source` is an agentResult/observe
  * structure as the MCP server builds it (its `next` already direct).
@@ -1301,12 +1423,14 @@ export function directResult(source) {
   }
   const page = result.page;
   if (page && typeof page === 'object') {
-    out.page = { url: page.url, title: page.title, digest: Array.isArray(page.digest) ? page.digest : [] };
-    if (!out.page.digest.length && page.textExcerpt) out.page.textExcerpt = page.textExcerpt;
+    out.page = { url: page.url, title: page.title, digest: Array.isArray(page.digest) ? page.digest : [],
+      ...(page.results ? { results: page.results } : {}) };
+    if (!out.page.digest.length && !page.results && page.textExcerpt) out.page.textExcerpt = page.textExcerpt;
     out.page.truncated = page.truncated === true;
   }
   const permissions = cleanPermissions(result.permissions);
-  if (permissions) out.granted = { level: permissions.effective, asked: permissions.requested };
+  if (permissions) out.granted = { level: permissions.effective, asked: permissions.requested,
+    ...(permissions.tabMode ? { tabMode: permissions.tabMode } : {}) };
   if (typeof result.revision === 'string') out.revision = result.revision;
   if (Array.isArray(result.actions)) out.actions = result.actions;
   if (Number.isInteger(result.moreActions) && result.moreActions > 0) out.moreActions = result.moreActions;
@@ -1594,9 +1718,9 @@ function leanStepResults(entries) {
  * The lean agent result (receipt v2): what a host model reads. Accepts a runtime result, a trace record or an
  * already lean result (the function is idempotent). Shape:
  * `{v: 2, runId, status, code, reason, needs?, verification, verdict{kind, oversight, answer, why, decide, suggested,
- *   budget, plan?}, page{url,title,digest,textExcerpt?,truncated}, answer, trail?, steps:[{i, action:{type,label,
- *   toUrl}, class?, confidence?, ms}], cost, warnings?, next{kind, text}, lease?, trace}`.
- * `page.digest` is a list of block texts and `page.textExcerpt` is sent only when the digest is empty;
+ *   budget, plan?}, page{url,title,digest,results?,textExcerpt?,truncated}, answer, trail?, steps:[{i, action:{type,label,
+ *   toUrl}, class?, confidence?, ms}], cost, warnings?, next{kind, text}, lease?, trace}`. `results` is Agent-direct only.
+ * `page.digest` is a list of block texts and `page.textExcerpt` is sent only when both it and `results` are empty;
  * `answer.candidates` are the top three `{text, confidence}`.
  */
 export function agentResult(source) {
@@ -1633,10 +1757,17 @@ export function agentResult(source) {
   }
   const page = result.page;
   if (page && typeof page === 'object') {
-    const digest = Array.isArray(page.digest) ? page.digest.map(digestText).filter(Boolean) : [];
-    out.page = { url: page.url, title: page.title, digest };
-    // The excerpt is the fallback for pages without a digest; with one it would mostly repeat it.
-    if (!digest.length) out.page.textExcerpt = page.textExcerpt ?? '';
+    const offered = result.offer && Array.isArray(result.offer.actions)
+      ? (Array.isArray(result.offer.listed)
+        ? result.offer.actions.filter(action => result.offer.listed.includes(action.id)) : result.offer.actions)
+      : null;
+    const results = page.results && offered ? withResultActions(page.results, offered)
+      : page.results && Array.isArray(result.actions) ? page.results : null;
+    const rawDigest = Array.isArray(page.digest) ? page.digest : [];
+    const digest = withoutProjectedRows(rawDigest, results).map(digestText).filter(Boolean);
+    out.page = { url: page.url, title: page.title, digest, ...(results ? { results } : {}) };
+    // The excerpt is the fallback for pages without a digest or structured rows; with either it would mostly repeat them.
+    if (!digest.length && !results) out.page.textExcerpt = page.textExcerpt ?? '';
     out.page.truncated = page.truncated === true;
   } else {
     out.page = null;
@@ -1728,6 +1859,7 @@ export function cleanPermissions(value) {
   };
   // `origin` (exact origins) or `domain` (the request's domain roots, approved by the user); left out when unknown.
   if (value.scope === 'origin' || value.scope === 'domain') out.scope = value.scope;
+  if (value.tabMode === 'single' || value.tabMode === 'multiple') out.tabMode = value.tabMode;
   return out;
 }
 
@@ -1786,7 +1918,7 @@ function actionBriefOf(action) {
 }
 
 /**
- * The lean observe result: `{revision, page{url,title,digest}, actions:[{id, description}], moreActions?, warnings?}`.
+ * The lean observe result: `{revision, page{url,title,digest,results?}, actions:[{id, description}], moreActions?, warnings?}`.
  * The listing is the daemon's `offer.listed` (at most 40 control actions at read-only and reversible, 80 from
  * interactive up, the most relevant to the task when there are more; page actions always listed), else capOffer at
  * the result's level with `options` (instruction, answerQuestion, expectation) as relevance hints. Ids keep their
@@ -1817,10 +1949,14 @@ export function leanObserve(response, options = {}) {
     const kept = new Set([...all.filter(action => !isPageAction(action)).slice(0, room), ...pageActions]);
     listed = all.filter(action => kept.has(action));
   }
-  const digest = Array.isArray(response?.digest) ? response.digest : buildDigest(page, '').digest;
+  const instruction = options.instruction || options.answerQuestion || '';
+  const results = withResultActions(recordResultsOf(page, instruction), listed);
+  const rawDigest = Array.isArray(response?.digest) ? response.digest : buildDigest(page, instruction).digest;
+  const digest = withoutProjectedRows(rawDigest, results).map(digestText).filter(Boolean);
   const out = {
     revision: response?.revision ?? page.revision,
-    page: { url: page.url, title: page.title, digest: digest.map(digestText).filter(Boolean) },
+    page: { url: page.url, title: page.title, digest, ...(results ? { results } : {}),
+      ...(results?.truncated ? { truncated: true } : {}) },
     actions: listed.map(listedAction),
   };
   const left = all.length - listed.length;

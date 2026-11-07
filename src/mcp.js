@@ -476,6 +476,7 @@ export const TOOLS = [
       key: { type: 'string', minLength: 1, maxLength: 20, description: 'Press a key (in actionId\'s control if given): Escape, Tab, Shift+Tab, arrows, Home, End, PageUp, PageDown, Space, Enter; Ctrl/Cmd+letter at full.' },
       hover: { type: 'boolean', description: 'Hover over actionId\'s control instead of acting on it (menus, tooltips).' },
       url: { type: 'string', minLength: 1, maxLength: 2048, description: 'Open this URL (on the granted origins) in the tab.' },
+      openTab: { type: 'string', minLength: 1, maxLength: 2048, description: 'Open an additional task tab on approved origins. Requires the user-approved Multiple task tabs grant; at most eight task tabs.' },
       nav: { type: 'string', enum: ['back', 'forward', 'reload'] },
       tab: { type: 'string', pattern: '^t\\d{1,3}$', description: 'Switch to this tab of the request (tabs[].id).' },
       path: { type: 'string', minLength: 1, maxLength: 4096, description: 'For an upload action (Act or Test site; the user approves it): a file in your workspace.' },
@@ -963,6 +964,7 @@ function directState(result) {
       url: page.url ? oneLine(page.url, 1000) : undefined,
       title: page.title ? oneLine(page.title, 300) : undefined,
       digest: Array.isArray(page.digest) ? page.digest.map(digestLine).filter(Boolean) : [],
+      results: page.results,
       textExcerpt: page.textExcerpt,
       truncated: page.truncated === true,
     } : null,
@@ -1039,14 +1041,24 @@ function fullActionLines(current, revision) {
   return lines;
 }
 
+function sameActions(current, previous) {
+  return current.length === previous.length && current.every((action, i) => action.id === previous[i].id
+    && action.description === previous[i].description && action.needsApproval === previous[i].needsApproval);
+}
+
 function actionDeltaLines(current, previous, revision) {
   const full = fullActionLines(current, current.revision);
   if (!previous.actions || !current.actions) return full;
+  if (sameActions(current.actions, previous.actions)) {
+    const lines = [`actions: unchanged from revision ${revision}`];
+    if (current.moreActions) lines.push(`(${current.moreActions} more not listed; these are the most relevant)`);
+    return lines;
+  }
   if (!current.actions.length) {
     return previous.actions.length ? [`actions: none (all revision ${revision} actions removed)`] : full;
   }
   if (!previous.actions.length) return full;
-  const delta = [`actions delta from revision ${revision} (current ids; old on right of =):`];
+  const delta = [`actions delta from revision ${revision} (changes only; omitted actions keep their ids; old ids on right of =):`];
   const key = action => `${action.description}\0${action.needsApproval ?? ''}`;
   for (const run of diffRuns(previous.actions, current.actions, key)) {
     if (run.kind === 'add') {
@@ -1059,8 +1071,11 @@ function actionDeltaLines(current, previous, revision) {
         .map(action => action.id).join(' ')}`);
       continue;
     }
+    const currentRun = current.actions.slice(run.afterStart, run.afterStart + run.length);
+    const previousRun = previous.actions.slice(run.beforeStart, run.beforeStart + run.length);
+    if (currentRun.every((action, i) => action.id === previousRun[i].id)) continue;
     const now = actionIdRange(current.actions, run.afterStart, run.length);
-    if (now && before) delta.push(now === before ? `${now}: unchanged` : `${now} = ${before}`);
+    if (now && before) delta.push(`${now} = ${before}`);
     else {
       for (let i = 0; i < run.length; i++) {
         delta.push(`${current.actions[run.afterStart + i].id} = ${previous.actions[run.beforeStart + i].id}`);
@@ -1072,13 +1087,45 @@ function actionDeltaLines(current, previous, revision) {
 }
 
 const DIRECT_DELTA_MIN_ACTIONS = 40;
+const DIRECT_COMPACT_ERROR_CODES = new Set([
+  'stale', 'target_unavailable', 'unsupported', 'point_outside', 'no_control', 'point_frame',
+]);
+
+function structuredResultLines(results) {
+  if (!results) return [];
+  const count = results.resultCount;
+  const summary = [`${results.shown} shown`];
+  if (results.total !== results.shown) summary.push(`${results.total} rows on this page`);
+  if (count) summary.push(`${count.approximate ? 'approximately ' : ''}${count.value} results`);
+  summary.push(results.complete ? 'complete' : 'incomplete');
+  if (results.truncated) summary.push('truncated');
+  const lines = [`results: ${summary.join(', ')}`];
+  if (results.sort) lines.push(`result sort: ${results.sort.label}${results.sort.direction ? ` (${results.sort.direction})` : ''}`);
+  if (results.pagination) {
+    const page = results.pagination;
+    const position = page.current ? `page ${page.current}${page.total ? ` of ${page.total}` : ''}` : 'position unknown';
+    const previous = page.previous === true ? 'previous not listed' : page.previous ? `previous ${page.previous}` : '';
+    const next = page.next === true ? 'next not listed' : page.next ? `next ${page.next}` : '';
+    lines.push(`result pagination: ${[position, previous, next].filter(Boolean).join('; ')}`);
+  }
+  for (const { id, ...record } of results.records) lines.push(`result ${id}: ${JSON.stringify(record)}`);
+  return lines;
+}
+
+function structuredResultDeltaLines(current, previous, revision) {
+  if (!current && !previous) return [];
+  if (!current) return [`results: none (all revision ${revision} results removed)`];
+  if (JSON.stringify(current) === JSON.stringify(previous)) return [`results: unchanged from revision ${revision}`];
+  return structuredResultLines(current);
+}
 
 /**
  * The text block of an Agent direct result (open, observe, act): trusted lines first (next, status, the level when
  * the user granted less than asked, needs, warnings), then the page under one untrusted heading: url, title, digest,
- * a cookie dialog or popup, and one line per offered action (`a3  click "About"`). With `previous` and at least 40
- * actions, unchanged page sections refer to that result on the same request and actions are a delta; smaller offers
- * and larger deltas stay complete so the saving does not make a short listing harder to read.
+ * structured results, a cookie dialog or popup, and one line per offered action (`a3  click "About"`). With `previous`
+ * and at least 40 actions, unchanged page sections refer to that result on the same request and action deltas omit
+ * same-id entries; smaller offers and larger deltas stay complete so the saving does not make a short listing harder
+ * to read. A pre-dispatch error whose trusted next step is to observe needs only its receipt and current revision.
  */
 export function directText(structured, previous = null) {
   const result = structured ?? {};
@@ -1096,7 +1143,7 @@ export function directText(structured, previous = null) {
   if (result.verification?.expectation) lines.push(`expectation: ${JSON.stringify(result.verification.expectation)}`);
   if (result.verification?.hint) lines.push(`verification: ${oneLine(result.verification.hint, 300)}`);
   const granted = result.granted;
-  if (granted?.level) lines.push(`granted: ${granted.level}${granted.asked ? ` (asked ${granted.asked})` : ''}`);
+  if (granted?.level) lines.push(`granted: ${granted.level}${granted.asked ? ` (asked ${granted.asked})` : ''}${granted.tabMode ? `; task tabs: ${granted.tabMode}` : ''}`);
   if (result.needs?.message) lines.push(`needs: ${result.needs.message}${result.needs.level ? ` (level ${result.needs.level})` : ''}`);
   if (result.waited) lines.push(`waited: ${result.waited.passed ? 'condition met' : 'condition not met'} after ${result.waited.ms} ms`);
   for (const warning of result.warnings ?? []) lines.push(`warning: ${oneLine(warning, 200)}`);
@@ -1107,6 +1154,10 @@ export function directText(structured, previous = null) {
   if (result.image) lines.push(imageLine(result.image));
   for (const image of Array.isArray(result.images) ? result.images : []) lines.push(imageLine(image));
   for (const item of result.imagesOmitted ?? []) lines.push(`image omitted: ${item.reason}`);
+  const compactError = result.status === 'needs_host' && DIRECT_COMPACT_ERROR_CODES.has(result.code)
+    && result.next?.kind === 'observe' && result.revision && !result.did?.length && !result.consent && !result.overlay
+    && !result.needs?.dialog && !result.needs?.control?.label && !pageExtraLines(result).length;
+  if (compactError) return lines.join('\n');
   const untrusted = [];
   for (const line of result.did ?? []) untrusted.push(`did: ${oneLine(line, 200)}`);
   const location = [];
@@ -1123,6 +1174,8 @@ export function directText(structured, previous = null) {
   } else if (current.page?.textExcerpt) {
     untrusted.push('page text:', String(current.page.textExcerpt));
   }
+  untrusted.push(...(before ? structuredResultDeltaLines(current.page?.results, before.page.results, before.revision)
+    : structuredResultLines(current.page?.results)));
   if (result.consent) {
     const buttons = (result.consent.buttons ?? []).map(button => `${oneLine(button.label, 80)}${button.kind ? ` (${button.kind})` : ''}`);
     untrusted.push(`cookie dialog: ${oneLine(result.consent.text, 120)}${buttons.length ? `; buttons: ${buttons.join(', ')}` : ''}`);
@@ -1189,7 +1242,7 @@ function imageLine(image) {
     : 'badges are control refs (not action ids)';
   // Secret boxes are deliberate: the agent must not try to read under them or ask the user for what they hide.
   const boxes = image.redaction === 'withheld'
-    ? '; the frame is blurred on purpose (the page kept changing while secrets were on it): use page.digest'
+    ? '; the frame is covered on purpose (the page changed or the secret scan was incomplete): use page.digest'
     : image.redactions ? `; ${image.redactions} black box${image.redactions === 1 ? '' : 'es'} hide secrets on purpose ([secret:N] in the text)` : '';
   return `image: ${step}revision ${image.revision ?? '-'}, ${size}; ${tags}${boxes}; a point {x, y} for fai_browser_act is in these pixels`;
 }
@@ -2347,7 +2400,7 @@ class McpServer {
     if (refusal) return refusal;
     const hasAction = typeof args.actionId === 'string' && args.actionId.length > 0;
     const hasPoint = args.point !== undefined && args.point !== null;
-    const composed = ['url', 'nav', 'tab', 'fills', 'key', 'dialog'].filter(key => args[key] !== undefined);
+    const composed = ['url', 'openTab', 'nav', 'tab', 'fills', 'key', 'dialog'].filter(key => args[key] !== undefined);
     if (hasAction && hasPoint) throw new ToolError('invalid_params', 'fai_browser_act takes one of actionId and point, not both');
     if (!hasAction && !hasPoint && !composed.length) {
       throw new ToolError('invalid_params', 'fai_browser_act needs an actionId (or point, url, nav, key, tab or fills)');
@@ -2364,6 +2417,7 @@ class McpServer {
       key: args.key,
       hover: args.hover === true ? true : undefined,
       url: args.url,
+      openTab: args.openTab,
       nav: args.nav,
       tab: args.tab,
       dialog: args.dialog,

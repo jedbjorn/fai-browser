@@ -1,0 +1,28 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Independent result modules</title></head><body>
+<h1>Catalog</h1>
+<main>
+  <section id="primary" aria-label="Primary results">
+    <p>3 results</p>
+    <label>Sort by <select><option selected>Primary order</option><option>Another order</option></select></label>
+    <ul>
+      <li><article><h3><a href="/primary/1">Primary result one</a></h3><p>1 Jan 2026</p><p>$10</p></article></li>
+      <li><article><h3><a href="/primary/2">Primary result two</a></h3><p>2 Jan 2026</p><p>$20</p></article></li>
+      <li><article><h3><a href="/primary/3">Primary result three</a></h3><p>3 Jan 2026</p><p>$30</p></article></li>
+    </ul>
+    <nav aria-label="Primary pagination"><span>Page 1 of 3</span> <a href="/primary?page=2" rel="next">Next</a></nav>
+  </section>
+</main>
+<aside>
+  <section id="secondary" aria-label="Secondary results">
+    <h2>Recommended</h2>
+    <label>Sort by <select><option selected>Secondary order</option><option>Another order</option></select></label>
+    <ul>
+      <li><article><h3><a href="/secondary/1">Secondary result one</a></h3><p>4 Jan 2026</p><p>$40</p></article></li>
+      <li><article><h3><a href="/secondary/2">Secondary result two</a></h3><p>5 Jan 2026</p><p>$50</p></article></li>
+      <li><article><h3><a href="/secondary/3">Secondary result three</a></h3><p>6 Jan 2026</p><p>$60</p></article></li>
+    </ul>
+    <nav aria-label="Secondary pagination"><span>Page 7 of 9</span><a href="/secondary?page=6" rel="prev">Previous</a><a href="/secondary?page=8" rel="next">Next</a></nav>
+  </section>
+</aside>
+</body></html>

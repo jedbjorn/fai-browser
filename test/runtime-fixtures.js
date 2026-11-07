@@ -98,6 +98,11 @@ export class FakeBridge {
       blocks: blocksFor(page),
       blocksTruncated: page.blocksTruncated ?? false,
       controls: page.controls.map(control => ({ ...control })),
+      ...(page.records ? {
+        records: structuredClone(page.records), recordLists: structuredClone(page.recordLists),
+        recordsTruncated: page.recordsTruncated === true,
+        ...(page.recordState ? { recordState: structuredClone(page.recordState) } : {}),
+      } : {}),
       viewport: { width: 1280, height: 800, dpr: 1 },
       consent: page.consent ? structuredClone(page.consent) : null,
       warnings: [...(page.warnings ?? [])],

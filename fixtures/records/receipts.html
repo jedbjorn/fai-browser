@@ -1,0 +1,53 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Receipt archive</title>
+<style>
+  body { font: 14px sans-serif; margin: 20px; }
+  .rows { display: grid; gap: 12px; }
+  .receipt { border-bottom: 1px solid #ddd; padding: 10px; }
+  .receipt p { margin: 5px 0; }
+  .pager { display: flex; gap: 16px; margin-top: 20px; }
+</style></head><body>
+<main>
+  <h1>Receipt archive</h1>
+  <p>128 results</p>
+  <label for="order">Sort by</label>
+  <select id="order"><option selected>Newest first</option><option>Oldest first</option></select>
+  <button type="button">Next</button>
+  <section class="rows" aria-label="Receipts">
+    <article class="receipt">
+      <h2><a href="/receipts/104">Northwind Office</a></h2>
+      <time datetime="2026-10-30">30 Oct 2026</time>
+      <p>Receipt for ergonomic keyboard · order NW-104</p>
+      <div>Total $84.20</div>
+      <a href="/receipts/104">View receipt</a>
+    </article>
+    <article class="receipt">
+      <h2><a href="/receipts/103">City Cycle Works</a></h2>
+      <time datetime="2026-09-18">18 Sep 2026</time>
+      <p>Receipt for replacement lights · order CC-103</p>
+      <div>Total $36.00</div>
+      <a href="/receipts/103">View receipt</a>
+    </article>
+    <article class="receipt">
+      <h2><a href="/receipts/102">Paper &amp; Parcel</a></h2>
+      <time datetime="2026-08-02">2 Aug 2026</time>
+      <p>Receipt for recycled stationery · order PP-102</p>
+      <div>Total $19.75</div>
+      <a href="/receipts/102">View receipt</a>
+    </article>
+    <article class="receipt">
+      <h2><a href="/receipts/101">Harbour Hardware</a></h2>
+      <time datetime="2026-06-14">14 Jun 2026</time>
+      <p>Receipt for stainless hinges · order HH-101</p>
+      <div>Total $12.40</div>
+      <a href="/receipts/101">View receipt</a>
+    </article>
+  </section>
+  <nav class="pager" aria-label="Pagination">
+    <a href="/receipts?page=1">Previous</a>
+    <span aria-current="page">2</span>
+    <span>Page 2 of 6</span>
+    <a href="/receipts?page=3">Next</a>
+  </nav>
+</main>
+</body></html>

@@ -64,7 +64,7 @@ const WAIT_ACTION_MS = 500;
 // back, forward or reload of the leased tab (same-origin entries only where the page can tell); switch_tab: another tab
 // of this lease (a popup or new tab it followed); dialog: a JavaScript dialog's answer (Test site, the main-world hook).
 const ACTION_TYPES = new Set(['click', 'fill_supplied_text', 'select', 'scroll', 'navigate_allowed_url', 'wait', 'dismiss_overlay',
-  'submit_field', 'fill_secret', 'copy_secret', 'press', 'hover', 'history', 'switch_tab', 'dialog', 'upload']);
+  'submit_field', 'fill_secret', 'copy_secret', 'press', 'hover', 'history', 'switch_tab', 'open_tab', 'dialog', 'upload']);
 const HISTORY_MOVES = new Set(['back', 'forward', 'reload']);
 // Errors that mean the grant no longer covers what the user selected; they end the session.
 // Everything else (stale, target_unavailable, cross_origin, blocked_risky, a blocked child-tab link, ...) is
@@ -488,7 +488,7 @@ const MAX_REMEMBERED_SITES = 50;
 const SITE_PERMISSION = /^https:\/\/\*\.[a-z0-9.-]+\/\*$/;
 /** A host permission pattern this extension may request, track and remove: a domain root's only. */
 function managedPattern(pattern) {
-  return typeof pattern === 'string' && SITE_PERMISSION.test(pattern);
+  return typeof pattern === 'string' && (SITE_PERMISSION.test(pattern) || /^https?:\/\/[^/*]+\/\*$/.test(pattern));
 }
 
 // Where "Open <host>" opens a request: its `url` when http(s) on one of its origins, else the first exact origin
@@ -539,6 +539,13 @@ let driverControl = null; // Daemon-owned choice; never replayed from extension 
 // "Open requested pages right away" (chrome.storage.local.openRightAway): on unless the user turned it off (an absent
 // value is on). Reported with the budget, so the daemon can tell the agent whether the page opened by itself.
 let openRightAway = true;
+let tabMode = 'single';
+const cleanTabMode = value => value === 'multiple' ? 'multiple' : 'single';
+// Browser match patterns omit ports; runtime origin checks still require the exact approved origin.
+function taskOriginPattern(origin) {
+  const url = new URL(origin);
+  return `${url.protocol}//${url.hostname}/*`;
+}
 // {endpoint, secret}: the saved FAI service address and pairing secret.
 let pairing = null;
 let socket = null;
@@ -670,14 +677,40 @@ function setRequests(list) {
   promptChain = promptChain.then(showApproval).catch(() => {});
 }
 
-// The approval window: the popup page (popup.html?window=1) in a small window of its own, opened once per new pending
-// request so the user need not notice the badge. Requests already shown are kept in storage.session, so a worker
-// restart does not show them again; one window at a time (a new request focuses it; its page re-renders from storage).
-// Off under Permissions (approvalWindow: false), where the badge stays the only signal.
+// The approval UI opens in the real toolbar popup when the browser permits it. Chrome before 127 has no openPopup;
+// Firefox before 149 rejects it without a user gesture. Their fallback is the same popup page in a small window near
+// the last-focused browser window's toolbar, never a centered dialog. Requests already shown are kept in
+// storage.session, so a worker restart does not show them again. Off under Permissions (approvalWindow: false).
 const APPROVAL_PAGE = 'popup.html?window=1';
 const APPROVAL_SIZE = { width: 420, height: 620 };
+const POPUP_WINDOW_INSET = { right: 24, top: 90 };
 const SHOWN_KEEP = 100;
 let promptChain = Promise.resolve();
+
+async function openToolbarPopup() {
+  if (typeof chrome.action?.openPopup !== 'function') return false;
+  try {
+    await chrome.action.openPopup();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function popupWindowPlacement(size) {
+  const parent = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => null);
+  const left = Number.isInteger(parent?.left) ? parent.left : 0;
+  const top = Number.isInteger(parent?.top) ? parent.top : 0;
+  const width = Number.isInteger(parent?.width) ? parent.width : 1280;
+  return {
+    left: Math.max(left, left + width - size.width - POPUP_WINDOW_INSET.right),
+    top: top + POPUP_WINDOW_INSET.top,
+  };
+}
+
+async function createPopupWindow(url, size) {
+  return chrome.windows.create({ url, type: 'popup', ...size, ...await popupWindowPlacement(size), focused: true });
+}
 
 async function showApproval() {
   const stored = (await chrome.storage.session?.get?.(['shownRequests', 'approvalWindowId'])) ?? {};
@@ -707,13 +740,13 @@ async function showApproval() {
     }
   }
   if (!left.length || settings.approvalWindow === false) return;
+  if (await openToolbarPopup()) return;
   const id = stored.approvalWindowId;
   if (Number.isInteger(id) && await chrome.windows.get(id).then(Boolean, () => false)) {
-    await chrome.windows.update(id, { focused: true });
+    await chrome.windows.update(id, { ...await popupWindowPlacement(APPROVAL_SIZE), focused: true });
     return;
   }
-  const created = await chrome.windows.create({ url: chrome.runtime.getURL(APPROVAL_PAGE), type: 'popup',
-    ...APPROVAL_SIZE, focused: true });
+  const created = await createPopupWindow(chrome.runtime.getURL(APPROVAL_PAGE), APPROVAL_SIZE);
   await chrome.storage.session?.set?.({ approvalWindowId: created?.id ?? null });
 }
 
@@ -819,7 +852,11 @@ async function unmark(target, tab) {
   if (target.groupId == null) return;
   const groupId = target.groupId;
   target.groupId = null;
-  if (tab?.groupId === groupId) await chrome.tabs.ungroup([tab.id]);
+  const ids = [...new Set([tab?.id, ...(target.tabs ?? []).map(entry => entry.tabId)].filter(Number.isInteger))];
+  for (const id of ids) {
+    const member = await chrome.tabs.get(id).catch(() => null);
+    if (member?.groupId === groupId) await chrome.tabs.ungroup([id]);
+  }
   await chrome.storage.session?.set?.({ markedTab: null });
 }
 
@@ -829,7 +866,7 @@ function unmarkLeftover() {
     if (Number.isInteger(badgeTab) && badgeTab !== badgeTabId) ignore(chrome.action.setBadgeText({ tabId: badgeTab, text: null }));
     if (!Number.isInteger(markedTab?.tabId)) return;
     const tab = await chrome.tabs.get(markedTab.tabId).catch(() => null);
-    await unmark({ groupId: markedTab.groupId }, tab);
+    await unmark({ groupId: markedTab.groupId, tabs: (markedTab.tabIds ?? []).map(tabId => ({ tabId })) }, tab);
   }).catch(() => {});
 }
 
@@ -947,7 +984,8 @@ function reconcileSites() {
       await chrome.storage.local.set({ rememberedSites: remembered });
     }
     const keep = new Set([...remembered.map(entry => sitePattern(entry.root)),
-      ...pendingPatterns, ...[...armed.values()].flatMap(arm => arm.patterns ?? [])]);
+      ...pendingPatterns, ...[...armed.values()].flatMap(arm => arm.patterns ?? []),
+      ...[...modalIntents.values()].filter(intent => armed.get(intent.arm.tabId) === intent.arm && Date.now() - intent.arm.at <= ARM_MS).map(intent => intent.pattern)]);
     for (const [pattern, at] of recentGrants) {
       if (Date.now() - at < RECENT_GRANT_MS) keep.add(pattern);
       else recentGrants.delete(pattern);
@@ -967,7 +1005,7 @@ function reconcileSites() {
 function sessionView() {
   if (!session) return null;
   const { requestId, leaseId, tabId, origin, status } = session;
-  return { requestId, leaseId, tabId, origin, status, level: grantedLevel(), scope: session.scope ?? 'origin' };
+  return { requestId, leaseId, tabId, origin, status, level: grantedLevel(), scope: session.scope ?? 'origin', tabMode: session.tabMode ?? 'single' };
 }
 
 // --- permission levels -------------------------------------------------------------------------------------------
@@ -1000,9 +1038,10 @@ function cleanBudget(value) {
 }
 
 async function loadBudget() {
-  const saved = await chrome.storage.local.get(['budget', 'openRightAway']);
+  const saved = await chrome.storage.local.get(['budget', 'openRightAway', 'tabMode']);
   budget = cleanBudget(saved.budget);
   openRightAway = saved.openRightAway !== false;
+  tabMode = cleanTabMode(saved.tabMode);
   budgetLoaded = true;
   return budget;
 }
@@ -1010,7 +1049,7 @@ async function loadBudget() {
 // The popup settings the daemon is told about: the budget, whether a request's page opens by itself, and which Approve
 // gate asks are on (booleans only), so the agent's offer marks an action "(asks the user)" only when it will ask.
 function reportedSettings() {
-  return { budget, openRightAway, approvals: { ...approvalSettings } };
+  return { budget, openRightAway, tabMode, approvals: { ...approvalSettings } };
 }
 
 // Tells the daemon a popup setting changed (settings reply: the budget now in effect, shown by the popup).
@@ -1847,7 +1886,11 @@ function leaseTabsView(observation) {
 async function followChild(tab) {
   const current = session;
   const opener = leaseTab(tab.openerTabId);
-  if (!opener || current?.status !== 'active') return;
+  if (!opener || current?.status !== 'active' || leaseTab(tab.id)) return;
+  if (current.tabMode !== 'multiple' || tabMode !== 'multiple') {
+    await endSession('paused', 'child_tab');
+    return;
+  }
   let url = tab.pendingUrl || tab.url || '';
   const deadline = Date.now() + CHILD_URL_WAIT_MS;
   while ((!url || url === 'about:blank') && Date.now() < deadline && session === current) {
@@ -1861,24 +1904,87 @@ async function followChild(tab) {
     await endSession('paused', 'child_tab');
     return;
   }
-  const entry = { id: `t${current.tabs.length ? Math.max(...current.tabs.map(item => Number(item.id.slice(1)))) + 1 : 0}`,
+  const permitted = await hasSitePermission([taskOriginPattern(new URL(url).origin)]);
+  if (session !== current || current.status !== 'active' || tabMode !== 'multiple') return;
+  if (!permitted || current.tabs.length >= MAX_LEASE_TABS) {
+    await endSession('paused', 'child_tab');
+    return;
+  }
+  if (session !== current || current.status !== 'active' || tabMode !== 'multiple') return;
+  if (leaseTab(tab.id)) return;
+  const entry = { id: `t${Math.max(...current.tabs.map(item => Number(item.id.slice(1)))) + 1}`,
     tabId: tab.id, opener: opener.tabId, url: reportedUrl(url), title: '' };
   current.tabs.push(entry);
+  await groupLeaseTab(current, tab.id);
+  if (session === current && current.status === 'active') current.tabId = tab.id;
+}
+
+// Only tabs recorded in this lease can join its group. Personal tabs are never adopted by group membership.
+async function groupLeaseTab(current, tabId) {
+  if (!chrome.tabs.group || !chrome.tabGroups) return;
+  await markChain;
+  if (session !== current || current.status !== 'active') return;
+  const home = await chrome.tabs.get(current.homeTabId).catch(() => null);
+  if (!home || current.groupId == null || home.groupId !== current.groupId) return;
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab || (tab.groupId ?? NO_GROUP) !== NO_GROUP) return;
+  if (session !== current || current.status !== 'active' || tabMode !== 'multiple') return;
+  if (tab.windowId !== home.windowId) await chrome.tabs.move(tabId, { windowId: home.windowId, index: -1 });
+  if (session !== current || current.status !== 'active') return;
+  await chrome.tabs.group({ groupId: current.groupId, tabIds: [tabId] });
+  if (session !== current || current.status !== 'active') return;
+  await chrome.storage.session?.set?.({ markedTab: { tabId: current.homeTabId, tabIds: current.tabs.map(entry => entry.tabId), groupId: current.groupId } });
+}
+
+async function openLeaseTab(url) {
+  const current = session;
+  if (current?.tabMode !== 'multiple' || tabMode !== 'multiple') {
+    throw new ExtensionError('blocked_risky', 'This request allows one task tab; approve Multiple task tabs first');
+  }
+  if (current.tabs.length >= MAX_LEASE_TABS) throw new ExtensionError('blocked_risky', 'This request already has eight task tabs');
+  const parsed = new URL(url);
+  if (parsed.username || parsed.password || !sameSessionSite(url)) throw new ExtensionError('cross_origin', 'Tab outside approved site');
+  if (!(await hasSitePermission([taskOriginPattern(parsed.origin)]))) {
+    throw new ExtensionError('blocked_risky', 'Browser site access is required for another task tab; approve again');
+  }
+  const home = await chrome.tabs.get(current.homeTabId);
+  if (session !== current || current.status !== 'active' || tabMode !== 'multiple') throw inactiveError();
+  // Inactive until registered: onActivated must not mistake our own new tab for a personal-tab switch.
+  const tab = await chrome.tabs.create({ windowId: home.windowId, url, active: false });
+  if (session !== current || current.status !== 'active' || tabMode !== 'multiple' || current.tabs.length >= MAX_LEASE_TABS) {
+    await ignore(chrome.tabs.remove(tab.id));
+    throw new ExtensionError('blocked_risky', 'This request changed while opening its tab');
+  }
+  const id = `t${Math.max(...current.tabs.map(item => Number(item.id.slice(1)))) + 1}`;
+  current.tabs.push({ id, tabId: tab.id, opener: current.tabId, url: reportedUrl(url), title: '' });
+  await groupLeaseTab(current, tab.id);
+  if (session !== current || current.status !== 'active' || tabMode !== 'multiple') throw inactiveError();
   current.tabId = tab.id;
+  await chrome.tabs.update(tab.id, { active: true });
+  await waitTabComplete(tab.id, OPEN_LOAD_MS);
+  if (session !== current || current.status !== 'active' || tabMode !== 'multiple') throw inactiveError();
+  return assertTab();
 }
 
 // The command target moves to another tab of the lease (switch_tab): it is brought to the front of its window.
 async function switchLeaseTab(id) {
-  const entry = session?.tabs?.find(item => item.id === id);
+  const current = session;
+  const entry = current?.tabs?.find(item => item.id === id);
   if (!entry) throw new ExtensionError('target_unavailable', 'That tab is not part of this request');
-  const tab = await chrome.tabs.update(entry.tabId, { active: true }).catch(() => null);
+  const tab = await chrome.tabs.get(entry.tabId).catch(() => null);
+  if (session !== current || current.status !== 'active' || current.tabMode !== 'multiple' || tabMode !== 'multiple') throw inactiveError();
   if (!tab) {
-    session.tabs = session.tabs.filter(item => item !== entry);
+    current.tabs = current.tabs.filter(item => item !== entry);
     throw new ExtensionError('target_unavailable', 'That tab was closed');
   }
-  if (!sessionCovers(tab.url)) throw new ExtensionError('cross_origin', 'That tab left the approved site');
-  session.tabId = entry.tabId;
-  return tab;
+  if (!sameSessionSite(tab.url)) throw new ExtensionError('cross_origin', 'That tab left the approved site');
+  if (!(await hasSitePermission([taskOriginPattern(new URL(tab.url).origin)]))) throw new ExtensionError('blocked_risky', 'Browser site access was removed');
+  if (session !== current || current.status !== 'active' || tabMode !== 'multiple') throw inactiveError();
+  const active = await chrome.tabs.update(entry.tabId, { active: true }).catch(() => null);
+  if (session !== current || current.status !== 'active' || tabMode !== 'multiple') throw inactiveError();
+  if (!active || !sessionCovers(active.url)) throw new ExtensionError('cross_origin', 'That tab left the approved site');
+  current.tabId = entry.tabId;
+  return active;
 }
 
 // A lease tab closed: dropped; when it was the current one, commands go back to the tab that opened it (an OAuth
@@ -2000,7 +2106,7 @@ function validateAction(action) {
     || !['controls', 'submit'].includes(action.intentCleared))) {
     throw new ExtensionError('unsupported', 'Invalid cleared click');
   }
-  if (action.type === 'navigate_allowed_url' && !sameSessionSite(action.url)) {
+  if (['navigate_allowed_url', 'open_tab'].includes(action.type) && !sameSessionSite(action.url)) {
     throw new ExtensionError('cross_origin', 'Navigation outside selected origin');
   }
   if (action.type === 'dismiss_overlay' && (action.target !== undefined || !['escape', 'backdrop'].includes(action.method))) {
@@ -2129,7 +2235,7 @@ async function waitTabComplete(tabId, ms) {
 // --- Approve gate (docs/REFERENCE.md "Approve gate") ----------------------------------------------------------
 // An agent's act on a gated control (purchase, secret, delete, submit) sends an `approve` command first. The worker
 // reads the control from the page itself (page.js approvalInfo: label, label hash, gate class, a detected total),
-// shows a small "Approve this action?" window, a badge and a popup card, and waits for the user's click. Approve once
+// opens the toolbar popup or a small top-right fallback window, shows a badge and waits for the user's click. Approve once
 // mints a random single-use approvalId bound to the tab, lease, document, revision, target, class and label hash, valid
 // for 60 s; Deny refuses. The execute that follows carries the id: only an id this worker minted, unused, unexpired and
 // bound to that very dispatch lets page.js run the control (it rechecks the label and class itself). The daemon only
@@ -2213,8 +2319,8 @@ function expireApprovals(leaseId = null) {
 
 async function showApprovalWindow(entry) {
   try {
-    const created = await chrome.windows.create({ url: chrome.runtime.getURL(`${APPROVAL_PROMPT_PAGE}?id=${entry.id}`), type: 'popup',
-      ...APPROVAL_PROMPT_SIZE, focused: true });
+    if (await openToolbarPopup()) return;
+    const created = await createPopupWindow(chrome.runtime.getURL(`${APPROVAL_PROMPT_PAGE}?id=${entry.id}`), APPROVAL_PROMPT_SIZE);
     if (Number.isInteger(created?.id) && approvals.get(entry.id) === entry && entry.status === 'pending') entry.windowId = created.id;
     else if (Number.isInteger(created?.id)) ignore(chrome.windows.remove(created.id));
   } catch {
@@ -2373,6 +2479,10 @@ async function writeClipboard(text) {
 async function executeCommand(command) {
   const { action, expectedRevision, capture } = command.args ?? {};
   validateAction(action);
+  if (['open_tab', 'switch_tab'].includes(action.type) && (command.lease?.tabMode !== 'multiple'
+    || session?.tabMode !== 'multiple' || tabMode !== 'multiple')) {
+    throw new ExtensionError('blocked_risky', 'This request allows one task tab');
+  }
   if (typeof expectedRevision !== 'string') throw new ExtensionError('unsupported', 'expectedRevision is required');
   if (cancelled.has(command.id)) throw new ExtensionError('timeout', 'Command cancelled');
   const { valid } = await send('validate', { id: command.id, leaseId: session.leaseId });
@@ -2429,8 +2539,9 @@ async function executeCommand(command) {
       await armDialog(tab.id, action.answer, action.text, approval);
       const observation = await callPage(tab.id, 'observe', [{ terms, forbid, allow, sites, expectText }]);
       outcome = { observation, settle: { reason: 'none' }, fromUrl: reportedUrl(tab.url), target: null };
-    } else if (action.type === 'switch_tab') {
-      const next = await switchLeaseTab(action.tab);
+    } else if (action.type === 'switch_tab' || action.type === 'open_tab') {
+      if (!allow.includes('navigate')) throw new ExtensionError('blocked_risky', 'Navigation is not allowed at this level');
+      const next = action.type === 'open_tab' ? await openLeaseTab(action.url) : await switchLeaseTab(action.tab);
       const observation = await callPage(next.id, 'observe', [{ terms, forbid, allow, sites, expectText }]);
       outcome = { observation, settle: { reason: 'none' }, fromUrl: reportedUrl(tab.url), target: null };
       navigated = true;
@@ -2540,7 +2651,7 @@ async function ensureOffscreen() {
 // --- screenshot redaction (docs/REFERENCE.md "Screenshot redaction") ------------------------------------------
 // The secret boxes are asked of page.js right before and right after captureVisibleTab, with its dirty watch armed in
 // between; the image gets the union of both sets. A frame that changed meanwhile (dirty, or boxes that moved) is taken
-// again once; still unstable, or a scan that could not look at everything, and the whole frame is blurred
+// again once; still unstable, or a scan that could not look at everything, and the whole frame is filled solid black
 // (`withheld`). A query that fails or does not answer in time means no image at all (fail closed).
 const REDACT_QUERY_MS = 2_000;
 const REDACT_TOLERANCE_PX = 2;
@@ -2651,7 +2762,7 @@ async function takeScreenshot(observation, details, labelRevision = observation?
       width: annotated.width,
       height: annotated.height,
       // How many boxes hide secrets on the image, and `withheld` when the page would not hold still long enough to
-      // trust the boxes (the whole frame is blurred).
+      // trust the boxes (the whole frame is filled solid black).
       redactions: redaction.rects.length,
       ...(redaction.withheld ? { redaction: 'withheld' } : {}),
       ...(Array.isArray(annotated.tags) ? { tags: annotated.tags } : {}),
@@ -2803,10 +2914,24 @@ function pickRequest(origin) {
   return matching('pending')[0]?.requestId ?? matching('paused')[0]?.requestId ?? null;
 }
 
-// Opens the start URL in its own new normal window (no permission needed to create a tab) and returns that tab and
-// the window. A dedicated window keeps the leased tab its window's active tab (assertTab) while the user works in
-// their own window.
-async function openWindow(url) {
+// Open a fresh task tab in the most recently focused normal, non-private window. Approval popups must never
+// become task windows, and a private window must never inherit an ordinary request. Creating a tab grants no
+// page access: the icon click still approves it. The existing active-tab guard pauses work if the user switches tabs.
+async function openTaskTab(url) {
+  const suitable = win => Number.isInteger(win?.id) && win.id >= 0 && win.type === 'normal' && !win.incognito;
+  let win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => null);
+  if (!suitable(win)) {
+    const candidates = await chrome.windows.getAll({ windowTypes: ['normal'] }).catch(() => []);
+    win = candidates.find(candidate => suitable(candidate) && candidate.focused) ?? candidates.find(suitable);
+  }
+  if (suitable(win)) {
+    // A window can close between lookup and create; only a failed create falls back to a new window.
+    const tab = await chrome.tabs.create({ windowId: win.id, url, active: true }).catch(() => null);
+    if (Number.isInteger(tab?.id)) {
+      await ignore(chrome.windows.update(win.id, { focused: true }));
+      return { tab, window: win };
+    }
+  }
   const created = await chrome.windows.create({ url, focused: true });
   const tab = created?.tabs?.[0];
   if (!tab?.id) throw new Error('Could not open the page.');
@@ -2846,20 +2971,32 @@ async function startSession(message, given = null) {
   const request = requests.find(item => item.requestId === requestId);
   const askedSites = (Array.isArray(request?.origins) ? request.origins : []).filter(entry => siteRoot(entry));
   const askedPatterns = askedSites.map(entry => sitePattern(siteRoot(entry)));
+  const requestedTabs = cleanTabMode(message.tabMode);
+  const liveSettings = await chrome.storage.local.get(['tabMode']);
+  const taskPattern = taskOriginPattern(origin);
+  const approvedTabMode = requestedTabs === 'multiple' && liveSettings.tabMode === 'multiple'
+    && await hasSitePermission([taskPattern]) ? 'multiple' : 'single';
+  if (requestedTabs === 'multiple' && approvedTabMode !== 'multiple') {
+    recentGrants.delete(taskPattern);
+    ignore(reconcileSites());
+    throw new Error('Multiple task tabs needs browser site access. Allow access, or choose One task tab and approve again.');
+  }
   let scope = 'origin';
   let data;
   // This approval claims (or declines) what the popup obtained for it: pending until the session holds it.
   const settlePending = () => {
     pendingPatterns = [];
-    for (const pattern of askedPatterns) recentGrants.delete(pattern);
+    for (const pattern of [...askedPatterns, taskPattern]) recentGrants.delete(pattern);
   };
+  pendingPatterns = approvedTabMode === 'multiple' ? [taskPattern] : [];
   try {
     if (message.scope === 'domain' && askedPatterns.length) {
-      pendingPatterns = askedPatterns;
+      pendingPatterns = [...pendingPatterns, ...askedPatterns];
       if (await hasSitePermission(askedPatterns)) scope = 'domain';
     }
     const asked = askedSites.length ? { scope } : {};
-    data = await send('lease', { requestId, tabId: tab.id, origin, title: reportedText(String(tab.title ?? '').slice(0, 300)), level, ...asked });
+    if (given?.approvalGuard) await given.approvalGuard();
+    data = await send('lease', { requestId, tabId: tab.id, origin, title: reportedText(String(tab.title ?? '').slice(0, 300)), level, tabMode: approvedTabMode, ...asked });
   } catch (error) {
     settlePending();
     // A failed start (refused lease, daemon unreachable) never leaves the permission it just obtained behind.
@@ -2877,6 +3014,14 @@ async function startSession(message, given = null) {
   // The roots the lease covers (the daemon keeps them only for a `domain` lease) whose permission Chrome holds.
   const sites = scope === 'domain' && data.grant?.scope !== 'origin' ? leaseOrigins.filter(entry => siteRoot(entry)) : [];
   const patterns = sites.map(entry => sitePattern(siteRoot(entry)));
+  const leaseScope = sites.length && (await hasSitePermission(patterns)) ? 'domain' : 'origin';
+  if (given?.approvalGuard) {
+    try { await given.approvalGuard(data); } catch (error) {
+      settlePending();
+      await send('status', { leaseId: data.leaseId ?? data.id, status: 'stopped', reason: 'stopped' }).catch(() => {});
+      throw error;
+    }
+  }
   const previous = session;
   session = {
     requestId: data.requestId ?? requestId,
@@ -2885,13 +3030,14 @@ async function startSession(message, given = null) {
     // The tab the daemon's lease names, and every tab the lease covers: this one, and a popup or new tab it opened on
     // the approved origins (followChild). `tabId` is the one commands act on.
     homeTabId: tab.id,
+    tabMode: approvedTabMode === 'multiple' && data.grant?.tabMode === 'multiple' ? 'multiple' : 'single',
     tabs: [{ id: 't0', tabId: tab.id, url: reportedUrl(tab.url ?? ''), title: reportedText(String(tab.title ?? '')).slice(0, 120) }],
     origin,
     // The lease's approved origins, for following a consent wall's redirect (followConsentRedirect).
     origins: leaseOrigins,
     level,
     status: 'active',
-    scope: sites.length && (await hasSitePermission(patterns)) ? 'domain' : 'origin',
+    scope: leaseScope,
     sites,
     patterns,
   };
@@ -2899,6 +3045,8 @@ async function startSession(message, given = null) {
     session.sites = [];
     session.patterns = [];
   }
+  if (given?.modalPattern && !session.patterns.includes(given.modalPattern)) session.patterns.push(given.modalPattern);
+  if (session.tabMode === 'multiple' && !session.patterns.includes(taskPattern)) session.patterns.push(taskPattern);
   // An armed tab's FAI ? group becomes the session's FAI mark (markTab retitles it).
   if (Number.isInteger(given?.armGroupId)) session.groupId = given.armGroupId;
   // Other tabs armed for this request (Open clicked twice) are done: it is served now.
@@ -2932,8 +3080,8 @@ async function startSession(message, given = null) {
 }
 
 // --- armed tabs: "Open <host>" opens the page, the toolbar icon click on it is the approval ------------------------
-// A session is leased only under activeTab (what captureVisibleTab needs), and only a click on the toolbar icon (or
-// Ctrl+Shift+Y) grants it. So "Open <host>" opens the request's start URL in its own window and arms that tab:
+// Toolbar approval grants activeTab (needed by captureVisibleTab). Modal approval instead requests explicit host
+// access, bound to the same armed task tab. Thus "Open <host>" opens the request's start URL in a new task tab and arms it:
 // { tabId, requestId, level, scope, patterns, client, at, groupId, promptWindowId } here and in
 // storage.session.armedTabs (a worker restart keeps it; `patterns`: the roots' host permissions a domain arm holds
 // until it is approved or ends; `promptWindowId`: the prompt window of a page that opened by itself). An armed tab
@@ -2968,7 +3116,7 @@ function rightAwayLevel(request) {
   return minLevel(requested, RIGHT_AWAY_MAX) === requested ? requested : null;
 }
 
-// Opens the request's start URL in its own window and arms that tab. `domain` only when Chrome holds every root's
+// Opens the request's start URL in a new task tab and arms that tab. `domain` only when Chrome holds every root's
 // host permission (the popup requested it in the click); else the arm's scope is origin. A small prompt window next
 // to the page says to click the icon (showPrompt): the popup that said so has closed, or there was none.
 async function openAndArm(requestId, level, wantDomain) {
@@ -2978,10 +3126,11 @@ async function openAndArm(requestId, level, wantDomain) {
   if (!target) throw new Error('This request has no page to open.');
   const roots = request.origins.filter(entry => siteRoot(entry)).map(entry => sitePattern(siteRoot(entry)));
   const scope = wantDomain && roots.length && await hasSitePermission(roots) ? 'domain' : 'origin';
-  const { tab, window: opened } = await openWindow(target.url);
-  const arm = { tabId: tab.id, requestId, level: cleanLevel(level) ?? 'read-only', scope, patterns: scope === 'domain' ? roots : [],
+  const armSettings = await chrome.storage.local.get(['tabMode']);
+  const { tab, window: opened } = await openTaskTab(target.url);
+  const arm = { tabId: tab.id, requestId, tabMode: cleanTabMode(armSettings.tabMode), level: cleanLevel(level) ?? 'read-only', scope, patterns: scope === 'domain' ? roots : [],
     client: typeof request.client === 'string' ? request.client.slice(0, 80) : '', at: Date.now(), groupId: null,
-    promptWindowId: null };
+    promptWindowId: null, origin: target.origin };
   armed.set(tab.id, arm);
   saveArms();
   setTimeout(() => expireArms(), ARM_MS + 1_000);
@@ -2999,7 +3148,7 @@ async function openAndArm(requestId, level, wantDomain) {
 // window is the one unmissable sign that needs no further permission. It closes when the arm ends (disarm, and the
 // page itself when its arm leaves storage.session.armedTabs).
 const PROMPT_PAGE = 'arm.html';
-const PROMPT_SIZE = { width: 400, height: 290 };
+const PROMPT_SIZE = { width: 440, height: 430 };
 const PROMPT_INSET = { right: 24, top: 90 };
 async function showPrompt(arm, win) {
   const placed = Number.isInteger(win?.left) && Number.isInteger(win?.width)
@@ -3053,6 +3202,11 @@ async function disarm(tabId, { notice = null, keepGroup = false } = {}) {
   const arm = armed.get(tabId);
   if (!arm) return null;
   armed.delete(tabId);
+  const modal = modalIntents.get(tabId);
+  if (modal && !keepGroup) {
+    recentGrants.delete(modal.pattern);
+    if (!modal.started) modalIntents.delete(tabId);
+  }
   saveArms();
   closePrompt(arm);
   try {
@@ -3080,14 +3234,111 @@ async function disarm(tabId, { notice = null, keepGroup = false } = {}) {
 async function expireArms(byRequest = false) {
   await loadArms();
   const now = Date.now();
+  for (const [tabId, intent] of modalIntents) {
+    if (now - (intent.started || intent.arm.at) > ARM_MS && armed.get(tabId) !== intent.arm) modalIntents.delete(tabId);
+  }
   for (const arm of [...armed.values()]) {
     const live = requests.some(item => item.requestId === arm.requestId && ['pending', 'paused'].includes(item.state));
-    if ((byRequest && !live) || now - arm.at > ARM_MS) await disarm(arm.tabId);
+    const leasing = modalIntents.get(arm.tabId)?.running && requests.some(item => item.requestId === arm.requestId && item.state === 'active');
+    if ((byRequest && !live && !leasing) || now - arm.at > ARM_MS) await disarm(arm.tabId);
+  }
+}
+
+// Modal approval uses optional host access, never an activeTab grant from the extension window.
+// Preparation happens before enabling Approve; permissions.request itself must run in that button's gesture.
+const modalIntents = new Map();
+function modalSender(message, sender) {
+  const arm = armed.get(message.tabId);
+  if (sender.url !== chrome.runtime.getURL(`arm.html?tab=${message.tabId}`)
+    || (sender.tab && Number.isInteger(arm?.promptWindowId) && sender.tab.windowId !== arm.promptWindowId)) {
+    throw new Error('Approve from this request window only.');
+  }
+}
+function modalArmState(message, ownLease = null) {
+  const arm = armed.get(message.tabId);
+  const request = requests.find(item => item.requestId === message.requestId && (['pending', 'paused'].includes(item.state)
+    || (item.state === 'active' && ownLease?.requestId === message.requestId && typeof ownLease.leaseId === 'string')));
+  if (!arm || arm.requestId !== message.requestId || arm.at !== message.at || !request || Date.now() - arm.at > ARM_MS) {
+    throw new Error(ARM_DECLINED);
+  }
+  return { arm, request };
+}
+async function modalArm(message, ownLease = null) {
+  await loadArms();
+  return modalArmState(message, ownLease);
+}
+async function prepareModalApproval(message, sender) {
+  modalSender(message, sender);
+  const { arm, request } = await modalArm(message);
+  const existing = modalIntents.get(arm.tabId);
+  if (existing?.arm === arm) return { approval: { token: existing.token, pattern: existing.pattern } };
+  const tab = await chrome.tabs.get(arm.tabId);
+  // Without activeTab Chrome may omit url. A freshly opened arm records its original origin; after permission
+  // is granted, approval always reads and verifies the actual tab URL, including pending navigations.
+  const origin = originOf(tab.url ?? '') || arm.origin || requestTarget(request)?.origin;
+  if (!origin || !originCovered(origin, request.origins) || tab.incognito) throw new Error(ARM_DECLINED);
+  const pattern = taskOriginPattern(origin);
+  const owned = !await hasSitePermission([pattern]);
+  if (armed.get(arm.tabId) !== arm) throw new Error(ARM_DECLINED);
+  const intent = { arm, origin, pattern, owned, token: randomId(), running: false,
+    addedPattern: !arm.patterns.includes(pattern) };
+  modalIntents.set(arm.tabId, intent);
+  if (owned) await trackSites([pattern]);
+  if (armed.get(arm.tabId) !== arm || modalIntents.get(arm.tabId) !== intent) {
+    modalIntents.delete(arm.tabId);
+    recentGrants.delete(pattern);
+    await reconcileSites();
+    throw new Error(ARM_DECLINED);
+  }
+  if (!arm.patterns.includes(pattern)) arm.patterns.push(pattern);
+  await saveArms();
+  return { approval: { token: intent.token, pattern } };
+}
+async function finishModalApproval(message, sender) {
+  modalSender(message, sender);
+  const intent = modalIntents.get(message.tabId);
+  if (!intent || intent.token !== message.token || intent.running) throw new Error(ARM_DECLINED);
+  intent.running = true;
+  const { arm, pattern } = intent;
+  const validate = async (ownLease = null) => {
+    await modalArm(message, ownLease);
+    const level = cleanLevel(message.level);
+    if (!await hasSitePermission([pattern])) throw new Error('Browser site access was not granted. Nothing was approved.');
+    if (level === 'testing') await loadTestingOrigins();
+    // Read the bound tab last, then check current in-memory consent without another asynchronous gap.
+    const tab = await chrome.tabs.get(arm.tabId);
+    const fresh = modalArmState(message, ownLease);
+    const asked = cleanLevel(fresh.request.mode ?? fresh.request.level) ?? 'read-only';
+    if (fresh.arm !== arm || !level || minLevel(level, asked) !== level) throw new Error('The agent did not ask for that level.');
+    if (tab.incognito || originOf(tab.url ?? '') !== intent.origin
+      || (tab.pendingUrl && originOf(tab.pendingUrl) !== intent.origin)) throw new Error('The page changed. Nothing was approved.');
+    if (level === 'testing' && (!allListed(fresh.request.origins, testingOrigins) || !testingOrigins.includes(intent.origin))) {
+      throw new Error('Testing mode needs every requested origin listed under Testing environments.');
+    }
+    return tab;
+  };
+  try {
+    if (message.granted !== true) throw new Error('Browser site access was not granted. You can try again or use the toolbar icon.');
+    const tab = await validate();
+    // Focus the exact task tab, never the extension window's active tab.
+    await chrome.tabs.update(tab.id, { active: true });
+    await chrome.windows.update(tab.windowId, { focused: true });
+    await startSession({ requestId: arm.requestId, level: message.level, scope: arm.scope, tabMode: arm.tabMode },
+      { ...tab, armGroupId: arm.groupId, modalPattern: pattern, approvalGuard: validate });
+    await disarm(arm.tabId, { keepGroup: true });
+    return popupState();
+  } finally {
+    modalIntents.delete(arm.tabId);
+    if (intent.addedPattern) arm.patterns = arm.patterns.filter(item => item !== pattern);
+    recentGrants.delete(pattern);
+    await saveArms();
+    await reconcileSites();
   }
 }
 
 // The toolbar icon click on an armed tab (activeTab is now granted on it, so its url is readable): the approval.
-async function approveArmed(tab) {
+async function approveArmed(tab, access = Promise.resolve()) {
+  await access;
   await loadArms();
   if (!armed.has(tab?.id)) {
     // Only an armed tab has no popup: one left without its arm gets the popup back for the next click.
@@ -3106,7 +3357,7 @@ async function approveArmed(tab) {
   if (arm.patterns?.length) pendingPatterns = arm.patterns;
   await disarm(tab.id, { keepGroup: true });
   const given = { ...tab, armGroupId: arm.groupId };
-  await startSession({ type: 'start', requestId: arm.requestId, level: arm.level, scope: arm.scope }, given).catch(async error => {
+  await startSession({ type: 'start', requestId: arm.requestId, level: arm.level, scope: arm.scope, tabMode: arm.tabMode }, given).catch(async error => {
     if (arm.patterns?.length) {
       pendingPatterns = [];
       ignore(reconcileSites());
@@ -3126,7 +3377,7 @@ function openFromIntent(added) {
   intent.running = openAndArm(intent.requestId, intent.level, true).catch(error => error);
 }
 
-// The popup's `open`: when the intent already opened the page, that open is the answer (exactly one window).
+// The popup's `open`: when the intent already opened the page, that open is the answer (exactly one task tab).
 async function openRequest(message) {
   const fresh = openIntent && Date.now() - openIntent.at <= OPEN_INTENT_MS;
   const intent = fresh && openIntent.requestId === message.requestId ? openIntent : null;
@@ -3152,7 +3403,7 @@ async function approveOnSessionTab(message) {
   } catch {
     const request = requests.find(item => item.requestId === message.requestId && ['pending', 'paused'].includes(item.state));
     if (!request) throw new Error('This request is no longer waiting.');
-    const arm = { tabId, requestId: request.requestId, level: cleanLevel(message.level) ?? 'read-only',
+    const arm = { tabId, requestId: request.requestId, tabMode, level: cleanLevel(message.level) ?? 'read-only',
       scope: message.scope === 'domain' ? 'domain' : 'origin', patterns: [], client: String(request.client ?? '').slice(0, 80),
       at: Date.now(), groupId: null };
     armed.set(tabId, arm);
@@ -3179,7 +3430,16 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id) return;
   (async () => {
     let note = null;
-    if (message.type === 'start') {
+    if (message.type === 'arm_begin') {
+      modalSender(message, sender);
+      const intent = modalIntents.get(message.tabId);
+      if (!intent || intent.token !== message.token || armed.get(message.tabId) !== intent.arm) throw new Error(ARM_DECLINED);
+      intent.started = Date.now();
+    } else if (message.type === 'arm_prepare') {
+      return await prepareModalApproval(message, sender);
+    } else if (message.type === 'arm_approve') {
+      return await finishModalApproval(message, sender);
+    } else if (message.type === 'start') {
       // `onSessionTab`: "Approve on the FAI tab" (approveOnSessionTab); else the popup's own activeTab gesture.
       if (message.onSessionTab === true) note = await approveOnSessionTab(message);
       else await startSession(message);
@@ -3198,7 +3458,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       await forgetSites(message.root ? [message.root] : []);
       await reconcileSites();
     } else if (message.type === 'open') {
-      // "Open <host>": open the request's page in its own window and arm that tab (see openAndArm).
+      // "Open <host>": open the request's page in a new task tab and arm it (see openAndArm).
       if (typeof message.requestId !== 'string') throw new Error('No request to open');
       await openRequest(message);
     } else if (message.type === 'track') {
@@ -3227,6 +3487,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       ignore(showArm(arm));
     } else if (message.type === 'deny') {
       if (typeof message.requestId !== 'string') throw new Error('No request to deny');
+      for (const arm of [...armed.values()]) if (arm.requestId === message.requestId) await disarm(arm.tabId);
       await send('deny', { requestId: message.requestId });
     } else if (message.type === 'connect') {
       // Sent when the popup opens or its permissions change: connect with the saved pairing if not connected yet,
@@ -3287,6 +3548,9 @@ chrome.tabs.onCreated.addListener(tab => {
   }
 });
 chrome.tabs.onActivated.addListener(async info => {
+  const current = session;
+  if (current?.childFollow) await current.childFollow;
+  if (session !== current) return;
   if (session?.status !== 'active' || info.tabId === session.tabId) return;
   // The user brought another tab of the lease forward: commands follow it.
   if (leaseTab(info.tabId)) {
@@ -3312,7 +3576,18 @@ chrome.tabs.onUpdated?.addListener(async (tabId, info) => {
   if (info.url && request && !(origin && originCovered(origin, request.origins))) ignore(disarm(tabId));
   else if (info.status === 'complete') ignore(showArm(arm));
 });
-chrome.action?.onClicked?.addListener(tab => ignore(approveArmed(tab)));
+chrome.action?.onClicked?.addListener(tab => {
+  // Request native site access synchronously inside the toolbar gesture, before any await.
+  const arm = armed.get(tab?.id);
+  const request = arm && requests.find(item => item.requestId === arm.requestId);
+  let access = globalThis.faiCompat?.approvalAccess?.(tab?.id) ?? null;
+  if (arm?.tabMode === 'multiple' && tabMode === 'multiple' && originCovered(originOf(tab.url ?? ''), request?.origins ?? [])) {
+    const pattern = taskOriginPattern(new URL(tab.url).origin);
+    ignore(trackSites([pattern]));
+    access ??= chrome.permissions?.request?.({ origins: [pattern] }).catch(() => false) ?? null;
+  }
+  ignore(approveArmed(tab, access ?? Promise.resolve()));
+});
 
 chrome.tabs.onRemoved?.addListener(tabId => {
   if (session?.status !== 'active' || !leaseTab(tabId)) return;
@@ -3380,10 +3655,14 @@ chrome.storage.onChanged?.addListener((changes, area) => {
   // "Remember domain approvals" turned off: every remembered domain's host permission goes at once.
   if (area === 'local' && changes.domainMemory) ignore(reconcileSites());
   // The per-request budget changed in the popup: the daemon applies it to every later call.
-  if (area === 'local' && (changes.budget || changes.openRightAway)) {
+  if (area === 'local' && (changes.budget || changes.openRightAway || changes.tabMode)) {
     if (changes.budget) {
       budget = cleanBudget(changes.budget.newValue);
       budgetLoaded = true;
+    }
+    if (changes.tabMode) {
+      tabMode = cleanTabMode(changes.tabMode.newValue);
+      if (tabMode === 'single' && session?.tabMode === 'multiple') ignore(endSession('paused', 'tab_changed'));
     }
     if (changes.openRightAway) openRightAway = changes.openRightAway.newValue !== false;
     ignore(reportSettings());
@@ -3398,7 +3677,16 @@ chrome.storage.onChanged?.addListener((changes, area) => {
 
 // A host permission the popup just obtained for an approval in progress (see recentGrants).
 chrome.permissions?.onAdded?.addListener?.(added => {
-  for (const pattern of added?.origins ?? []) if (SITE_PERMISSION.test(pattern)) recentGrants.set(pattern, Date.now());
+  for (const pattern of added?.origins ?? []) {
+    if (SITE_PERMISSION.test(pattern)) recentGrants.set(pattern, Date.now());
+    const modal = [...modalIntents.values()].find(intent => intent.owned && intent.started && Date.now() - intent.started < ARM_MS && intent.pattern === pattern);
+    if (modal && armed.get(modal.arm.tabId) !== modal.arm) ignore(trackSites([pattern]).then(() => {
+      if (armed.get(modal.arm.tabId) !== modal.arm) {
+        recentGrants.delete(pattern);
+        return reconcileSites();
+      }
+    }));
+  }
   openFromIntent(added?.origins ?? []);
 });
 

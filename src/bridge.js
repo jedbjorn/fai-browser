@@ -304,7 +304,16 @@ export function createHub({
   }
 
   function takeCommand() {
-    return queue.shift() ?? null;
+    for (let command = queue.shift(); command; command = queue.shift()) {
+      const lease = leases.get(command.lease.id);
+      if (['open_tab', 'switch_tab'].includes(command.args?.action?.type) && lease?.tabMode !== 'multiple') {
+        pending.get(command.id)?.reject(new BridgeError('blocked_risky', 'This request allows one task tab'));
+        continue;
+      }
+      command.lease.tabMode = lease?.tabMode ?? 'single';
+      return command;
+    }
+    return null;
   }
 
   function wakeWaiters({ requestsChanged = false } = {}) {
@@ -425,7 +434,7 @@ export function createHub({
         deadline: Date.now() + timeoutMs,
         method,
         args,
-        lease: { id: lease.leaseId, tabId: lease.tabId, requestId: lease.requestId },
+        lease: { id: lease.leaseId, tabId: lease.tabId, requestId: lease.requestId, tabMode: lease.tabMode ?? 'single' },
         allowedOrigins: [...lease.allowedOrigins],
       });
       if (signal?.aborted) abort();
@@ -435,6 +444,9 @@ export function createHub({
   }
 
   async function execute(leaseId, action, expectedRevision, options = {}, signal) {
+    if (['open_tab', 'switch_tab'].includes(action?.type) && leases.get(leaseId)?.tabMode !== 'multiple') {
+      throw new BridgeError('blocked_risky', 'This request allows one task tab; approve Multiple task tabs first');
+    }
     const capture = options?.capture !== false;
     let screenshot = Promise.resolve(null);
     const args = { action, expectedRevision, capture };
@@ -652,6 +664,10 @@ export function createHub({
           reply({ error: { code: 'bad_request', message: `level must be one of ${LEVELS.join(', ')}` } });
           return;
         }
+        if (message.tabMode !== undefined && !['single', 'multiple'].includes(message.tabMode)) {
+          reply({ error: { code: 'bad_request', message: 'tabMode must be single or multiple' } });
+          return;
+        }
         const event = {
           type: 'lease',
           requestId: typeof message.requestId === 'string' ? message.requestId : null,
@@ -662,6 +678,7 @@ export function createHub({
           // `domain` when the user approved the request's domain roots and Chrome granted the host permission;
           // anything else is the exact-origin scope.
           scope: message.scope === 'domain' ? 'domain' : 'origin',
+          tabMode: message.tabMode ?? 'single',
           reply,
         };
         if (!emit(event)) reply({ error: { code: 'no_request', message: 'No tab request is pending' } });
@@ -904,7 +921,7 @@ export function createHub({
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    bindLease({ leaseId, requestId = null, tabId, origin, allowedOrigins = [], level }) {
+    bindLease({ leaseId, requestId = null, tabId, origin, allowedOrigins = [], level, tabMode = 'single' }) {
       if (typeof leaseId !== 'string' || !leaseId) throw new TypeError('leaseId is required');
       if (level !== undefined && level !== null && !isLevel(level)) throw new TypeError('level must be a level');
       const lease = {
@@ -919,6 +936,7 @@ export function createHub({
       };
       // The user's grant: a ceiling for the level every command of this lease carries.
       if (level) lease.level = level;
+      lease.tabMode = tabMode === 'multiple' ? 'multiple' : 'single';
       leases.set(leaseId, lease);
       dispatch();
       return leaseSnapshot(lease);
@@ -929,6 +947,12 @@ export function createHub({
       const lease = leases.get(leaseId);
       if (!lease || !isLevel(level)) return false;
       lease.level = level;
+      return true;
+    },
+    setLeaseTabMode(leaseId, tabMode) {
+      const lease = leases.get(leaseId);
+      if (!lease || !['single', 'multiple'].includes(tabMode)) return false;
+      lease.tabMode = tabMode;
       return true;
     },
     // Changes what an active lease covers (the user re-approved the tab with another scope).

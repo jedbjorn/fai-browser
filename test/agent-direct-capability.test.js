@@ -66,10 +66,10 @@ async function pendingRequest(hub) {
   throw new Error('No pending request');
 }
 
-export async function opened(ctx, level = 'reversible', args = {}) {
+export async function opened(ctx, level = 'reversible', args = {}, grant = {}) {
   const opening = ctx.mcp.callTool('fai_browser_open', { origins: [ORIGIN], reason: 'Test task', mode: level, ...args });
   const pending = await pendingRequest(ctx.hub);
-  await ctx.hub.approve(pending.requestId, { level });
+  await ctx.hub.approve(pending.requestId, { level, ...grant });
   const result = await opening;
   return mcpDirect(result);
 }
@@ -114,6 +114,32 @@ test('agent text: fill with text and submit in one act; the echo carries the len
   // The trace keeps the length only.
   const trace = await ctx.mcp.callTool('fai_browser_evidence', { runId: done.runId, kind: 'trace' });
   assert.ok(!trace.content.map(block => block.text ?? '').join('').includes(typed), 'the trace never holds the typed text');
+});
+
+test('supplied text: fill and search submit survive one rerender without echoing the value', async t => {
+  const ctx = await setup(t);
+  const page = await opened(ctx, 'interactive', { suppliedText: { query: 'blue kettle!' } });
+  const search = find(page, /^fill textbox "Search" with supplied query$/);
+  assert.ok(search, page.text);
+  // A dynamic search control was replaced after the host observed it. The first dispatch is stale; exactly one
+  // compatible supplied-text fill remains on the fresh revision.
+  ctx.bridge().version++;
+  const done = await act(ctx, {
+    actionId: search.id, submit: true, revision: page.revision, expectation: { urlIncludes: '/results' },
+  });
+  assert.equal(done.status, 'completed', done.text);
+  assert.equal(done.verification.passed, true);
+  assert.deepEqual(done.did, ['fill "Search" with supplied query', 'press Enter in "Search"']);
+  assert.ok(!JSON.stringify(done).includes('blue kettle!'), 'the supplied value is never echoed');
+  const executions = ctx.bridge().executions.map(entry => entry.action);
+  assert.deepEqual(executions.map(action => action.type), ['fill_supplied_text', 'fill_supplied_text', 'submit_field']);
+  assert.equal(executions[0].text, 'blue kettle!');
+  assert.equal(executions[1].text, 'blue kettle!');
+  assert.equal(executions[0].typed, undefined);
+  assert.equal(ctx.bridge().executions[0].expectedRevision, '/#1');
+  assert.equal(ctx.bridge().executions[1].expectedRevision, '/#2');
+  const trace = await ctx.mcp.callTool('fai_browser_evidence', { runId: done.runId, kind: 'trace' });
+  assert.ok(!trace.content.map(block => block.text ?? '').join('').includes('blue kettle!'), 'the trace never holds the value');
 });
 
 test('agent text: submit needs the level its form submit needs; text is refused outside a fill', async t => {
@@ -316,7 +342,7 @@ test('observe waitFor polls until the redacted page meets the condition, and say
 
 test('tabs: a popup the lease followed is listed; switch_tab moves to it; an unknown tab is refused', async t => {
   const ctx = await setup(t);
-  await opened(ctx, 'read-only');
+  await opened(ctx, 'read-only', {}, { tabMode: 'multiple' });
   ctx.bridge().tabs = [
     { id: 't0', path: '/', url: `${ORIGIN}/`, title: 'Shop' },
     { id: 't1', path: '/contact', url: `${ORIGIN}/contact`, title: 'Contact', current: true },

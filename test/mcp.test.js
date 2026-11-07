@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import net from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -85,6 +86,8 @@ const INSTRUCTIONS_MAX_CHARS = 2000;
 const RUN_DESCRIPTION_MAX_CHARS = 300;
 
 test('server instructions alone cover the common path, within a token bound', () => {
+  assert.equal(createHash('sha256').update(JSON.stringify(JEV_INSTRUCTIONS)).digest('hex'),
+    '31e10389d5225e048cd7841ff1447d3937c99afeb5ba02a6c9c0338aa66550b7', 'instruction prefix bytes stay stable');
   assert.ok(JEV_INSTRUCTIONS.length <= INSTRUCTIONS_MAX_CHARS,
     `instructions are ${JEV_INSTRUCTIONS.length} chars (~${Math.round(JEV_INSTRUCTIONS.length / 4)} tokens)`);
   const required = [
@@ -156,6 +159,12 @@ test('tools/list returns exactly seven tools with closed inputs, short descripti
   assert.deepEqual(tools.map(tool => tool.name), EXPECTED_TOOLS);
   assert.deepEqual(JEV_TOOL_NAMES, EXPECTED_TOOLS);
   assert.equal(JEV_TOOLS.length, EXPECTED_TOOLS.length);
+  const serialized = JSON.stringify(tools);
+  assert.equal(serialized, JSON.stringify(JEV_TOOLS), 'wire serialization preserves the exported schema prefix and order');
+  assert.equal(createHash('sha256').update(serialized).digest('hex'),
+    '896bd065a977bb9e63b3ab45c42ff896ab39ffb659ef3a02435a6785a96f33ed', 'tool schema bytes stay stable');
+  const repeated = await mcp.request('tools/list', {});
+  assert.equal(JSON.stringify(repeated.result.tools), serialized, 'repeated tools/list reads are byte-identical');
   // 8126 bytes before step lists; `steps` adds about 420 (only its shape is declared: see src/mcp.js); the domain-root
   // clause in the `origins` description about 70 (the instructions had no room for it); "(optional with steps)" on
   // `instruction` about 22 (live Sonnet hosts sent an overall instruction with their steps); "can only lower the

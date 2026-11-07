@@ -12,14 +12,22 @@ When an agent calls `fai_browser_open`, a card appears in the extension (and a `
   as the agent's words and rendered as text.
 - **Allow:** a level selector offering the asked level and everything below it, preselected to what was asked. Test site is
   never preselected and appears only for origins you listed as test sites. **Preselect up to** (Advanced) caps the default.
-- **Approve:** the click is the browser's `activeTab` gesture, which is what actually binds one tab to the request.
+- **Approve:** approve the opened task tab directly in its request modal, or click the toolbar icon. The modal asks
+  the browser for access to that host; the toolbar click grants `activeTab`.
 
 How you get there depends on the level asked:
 
 | Asked | What happens |
 |---|---|
-| Read, Use | The page opens by itself in a new window with a small prompt next to it. Click the FAI Browser icon on that page to approve at the preselected level (change it in the prompt) |
-| Act, Test site | The FAI Browser window opens with the request card; confirm the level and click **Open**, then click the icon on the opened page |
+| Read, Use | The page opens in a fresh task tab in an existing normal window, with a request modal. Choose the level and click **Approve** there, or click the FAI Browser icon on the task tab |
+| Act, Test site | The FAI Browser window opens with the request card; confirm the level and click **Open**, then **Approve** in the request modal (or click the icon on the task tab) |
+
+The modal's browser permission covers the exact scheme and host across all ports; the agent remains restricted to
+the approved origins and task tab(s). Access acquired for this approval is removed when no live task needs it;
+existing browser grants remain. If the worker restarts while a canceled native permission prompt is still open,
+late access cannot always be attributed safely and may remain until removed in browser extension settings.
+Screenshots may still require the toolbar click because a host grant alone does
+not grant screenshot access. The modal never asks for all-sites access to work around that limit.
 
 "Open requested pages right away" and "Show a window when an agent asks" are settings under Advanced. While the agent holds the
 tab it sits in a tab group titled `FAI` and the icon shows `ON`. **Pause** ends the run, **Stop** releases the tab. Domain
