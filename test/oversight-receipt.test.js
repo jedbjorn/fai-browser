@@ -402,17 +402,17 @@ test('a host act with an offer: step_complete is a choose next naming the new re
 
 test('select_tab wording follows how the request is approved: on its page (opened right away) or in the window', async () => {
   const { approvalSteps, selectTabMessage, LEASE_MESSAGES } = await import('../src/result.js');
-  assert.equal(approvalSteps('page'), 'its page opened in a new Chrome window; one click on the FAI Browser icon on that window approves it');
-  assert.equal(approvalSteps('window'), 'click Open in the FAI Browser window, then the FAI Browser icon on the page it opens');
+  assert.equal(approvalSteps('page'), 'its task page opened in an existing browser window; click Approve in the page request modal (grant browser site access if asked), or use the FAI Browser toolbar icon');
+  assert.match(approvalSteps('window'), /click Open in the FAI Browser window, then Approve in the page request modal/);
   assert.equal(approvalSteps(null), approvalSteps('window'));
   assert.equal(selectTabMessage('window'), LEASE_MESSAGES.select_tab);
-  assert.match(selectTabMessage('page'), /^Not approved yet\. The page opened in a new Chrome window: ask the user to click the FAI Browser icon on that window to approve\.$/);
+  assert.match(selectTabMessage('page'), /^Not approved yet\. Ask the user to approve: its task page opened in an existing browser window/);
   const page = outcomeResult('select_tab', { lease: { requestId: 'req_9', state: 'pending' }, approval: 'page' });
   assert.equal(page.needs.message, selectTabMessage('page'));
   assert.equal(page.next.kind, 'relay');
-  assert.match(page.next.text, /in Chrome: its page opened in a new Chrome window; one click on the FAI Browser icon on that window approves it\. Then call fai_browser_run again with requestId req_9/);
+  assert.match(page.next.text, /in the browser: its task page opened in an existing browser window; click Approve in the page request modal \(grant browser site access if asked\), or use the FAI Browser toolbar icon\. Then call fai_browser_run again with requestId req_9/);
   assert.equal(JSON.parse(JSON.stringify(page)).approval, undefined, 'not a result field');
   const window = outcomeResult('select_tab', { lease: { requestId: 'req_9', state: 'pending' }, approval: 'window' });
   assert.equal(window.needs.message, LEASE_MESSAGES.select_tab);
-  assert.match(window.next.text, /click Open in the FAI Browser window, then the FAI Browser icon on the page it opens/);
+  assert.match(window.next.text, /click Open in the FAI Browser window, then Approve in the page request modal/);
 });

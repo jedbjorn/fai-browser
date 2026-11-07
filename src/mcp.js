@@ -1283,7 +1283,7 @@ function waitHint(runId) {
 function approveHint(origin, requestId, approval = null, driver = 'agent') {
   const root = siteRoot(origin);
   const site = root ?? (origin ? origin.replace(/^https:\/\//, '') : null);
-  return `Ask the user to approve the request${site ? ` for ${site}` : ''} in Chrome: ${approvalSteps(approval)}. `
+  return `Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: ${approvalSteps(approval)}. `
     + `Then call ${openTool(driver)} again with requestId ${requestId}; no origins needed.`;
 }
 

@@ -935,8 +935,8 @@ test('without config.json or a popup setting the budget in effect is the default
 
 test('a request is approved on its page when the extension opens pages right away (Interactive or less, a page to open); the wording follows', async t => {
   const ctx = await setup(t);
-  const PAGE = /its page opened in a new Chrome window; one click on the FAI Browser icon on that window approves it/;
-  const WINDOW = /click Open in the FAI Browser window, then the FAI Browser icon on the page it opens/;
+  const PAGE = /its task page opened in an existing browser window; click Approve in the page request modal \(grant browser site access if asked\), or use the FAI Browser toolbar icon/;
+  const WINDOW = /click Open in the FAI Browser window, then Approve in the page request modal/;
   const viewOf = async requestId => (await ctx.api('GET', `/v1/requests/${requestId}`)).body;
   const blocked = async requestId => (await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open', expectation: { urlIncludes: '/x' } })).body.result;
   // An extension that reports nothing about the setting (older): the window wording.
@@ -953,7 +953,7 @@ test('a request is approved on its page when the extension opens pages right awa
   assert.equal((await viewOf(pageId)).approval, 'page');
   let result = await blocked(pageId);
   assert.equal(result.code, 'select_tab');
-  assert.match(result.needs.message, /The page opened in a new Chrome window: ask the user to click the FAI Browser icon on that window to approve/);
+  assert.match(result.needs.message, /task page opened in an existing browser window; click Approve in the page request modal/);
   assert.match(result.next.text, PAGE);
   assert.deepEqual(result.lease, { requestId: pageId, state: 'pending' }, 'the lease block is unchanged');
   // Interactive still opens by itself; an exact origin without a url has a page to open too.

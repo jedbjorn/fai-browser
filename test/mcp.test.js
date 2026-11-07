@@ -369,7 +369,7 @@ test('the approval hint names the domain of a root, not its pattern', async t =>
   const pending = await mcp.callTool('fai_browser_run', { origins: ['https://*.example.com'], reason: 'Docs',
     instruction: 'Open Members' });
   assert.equal(mcpData(pending).code, 'select_tab');
-  assert.match(mcpData(pending).next.text, /approve the request for example\.com in Chrome: click Open in the FAI Browser window/);
+  assert.match(mcpData(pending).next.text, /approve the request for example\.com in the browser: click Open in the FAI Browser window/);
 });
 
 test('approval arriving during the call is picked up; without approval the call returns select_tab', async t => {
@@ -385,7 +385,7 @@ test('approval arriving during the call is picked up; without approval the call 
   assert.match(requestId, /^req_/);
   assert.equal(content.next.kind, 'relay');
   assert.match(content.next.text, new RegExp(`approve the request.*call fai_browser_run again with requestId ${requestId}`));
-  assert.match(content.next.text, /for example\.com in Chrome: click Open in the FAI Browser window, then the FAI Browser icon on the page it opens/);
+  assert.match(content.next.text, /for example\.com in the browser: click Open in the FAI Browser window, then Approve in the page request modal/);
   assert.match(pending.content[0].text, /^next \(relay\): Ask the user to approve the request/m);
   assert.equal(content.verdict.budget, null, 'nothing ran: no budget is charged');
   assert.equal(stub.callsTo('POST', '/v1/runs')[0].body.waitMs, 0, 'a blocked run is asked without waiting');
@@ -904,13 +904,13 @@ test('act returns the next offered actions and revision in readable text with a 
   stub.behavior.finalCode = 'expectation_passed';
 });
 
-test('when the page opened by itself, the approval hint says to click the icon on it (the daemon\'s request view decides)', async t => {
+test('when the page opened by itself, the approval hint offers its modal and toolbar (the daemon\'s request view decides)', async t => {
   const { mcp } = await setup(t, { approval: 'page' }, { FAI_MCP_MAX_CALL_MS: '2500' });
   const pending = await mcp.callTool('fai_browser_run', { origins: ['https://*.example.com'], reason: 'Docs',
     instruction: 'Open Members' });
   const content = summarized(pending);
   assert.equal(content.code, 'select_tab');
   assert.equal(content.next.kind, 'relay');
-  assert.match(content.next.text, /approve the request for example\.com in Chrome: its page opened in a new Chrome window; one click on the FAI Browser icon on that window approves it\. Then call fai_browser_run again with requestId/);
+  assert.match(content.next.text, /approve the request for example\.com in the browser: its task page opened in an existing browser window; click Approve in the page request modal \(grant browser site access if asked\), or use the FAI Browser toolbar icon\. Then call fai_browser_run again with requestId/);
   assert.doesNotMatch(content.next.text, /click Open/);
 });
