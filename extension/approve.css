@@ -9,5 +9,7 @@
 .approve-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .approve-actions .primary-button { flex: 1; width: auto; }
 .approval-settings { margin: 8px 0; }
-.approval-setting label { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-.approval-setting .field-help { margin: 0 0 6px 22px; }
+.approval-setting label { display: flex; align-items: center; justify-content: flex-start; gap: 8px; margin: 10px 0 4px; text-align: left; font-size: 12px; }
+.approval-setting input[type="checkbox"] { flex: 0 0 auto; width: 31px; height: 31px; margin: 0; }
+.approval-setting-name { flex: 0 1 auto; }
+.approval-setting .field-help { margin: 0 0 8px 39px; }

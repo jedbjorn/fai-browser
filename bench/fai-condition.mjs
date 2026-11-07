@@ -8,7 +8,7 @@
 //        FAI_BRIDGE_PORT    extension-facing port (random per run, so a real daemon on 4318 is untouched)
 //        FAI_BRIDGE_SECRET  disposable pairing secret; must take precedence over .env.local
 //        FAI_DAEMON_DIR     per-run state dir for the daemon's lock / socket / pid file (isolation from a user daemon)
-//      FAI_HOME is not overridden, so the daemon still loads the Jev key from the package .env.local itself;
+//      FAI_HOME is isolated unless explicitly supplied; Jev benchmarks must supply their own FAI_HOME;
 //      the harness never reads that file.
 //   3. The extension popup (popup.html) keeps #endpoint and #secret (under Advanced; the secret is saved on change and
 //      never shown back) and a pending request card per request. The harness pairs the popup during setup, before the
@@ -84,7 +84,7 @@ export async function resolveFaiMcp(explicit = process.env.FAI_BENCH_MCP_COMMAND
 export async function mcpProbe(server, { env = {}, call = null, timeoutMs = 20_000 } = {}) {
   const child = spawn(server.command, server.args, {
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, ...env },
+    env: probeEnvironment(env),
   });
   let stderr = '';
   child.stderr.setEncoding('utf8').on('data', chunk => {
@@ -202,8 +202,15 @@ export async function preflightFai({ mcpCommand } = {}) {
   };
 }
 
-function isolatedEnv(daemonDir, port, secret) {
-  return { FAI_BRIDGE_PORT: String(port), FAI_BRIDGE_SECRET: secret, FAI_DAEMON_DIR: daemonDir, FAI_BENCH: '1' };
+// Preserve an explicit benchmark settings root without forwarding the whole parent environment.
+export function probeEnvironment(env = {}, inherited = process.env) {
+  return { PATH: inherited.PATH, HOME: inherited.HOME,
+    ...(inherited.FAI_HOME ? { FAI_HOME: inherited.FAI_HOME } : {}), ...env };
+}
+
+export function isolatedEnv(daemonDir, port, secret, inherited = process.env) {
+  return { FAI_BRIDGE_PORT: String(port), FAI_BRIDGE_SECRET: secret, FAI_DAEMON_DIR: daemonDir, FAI_BENCH: '1',
+    FAI_HOME: inherited.FAI_HOME || join(daemonDir, 'settings') };
 }
 
 function freePort() {
@@ -627,11 +634,20 @@ export class FaiRun {
 // Summarizes FAI results seen in the Codex tool calls, then fills in from trace.json where a path is given.
 export async function faiEvidence(calls) {
   const byRun = new Map();
+  let final = null;
   for (const call of calls) {
     if (!call.tool?.startsWith('fai_browser_')) {
       continue;
     }
     const result = faiResultFrom(call.result);
+    // Direct receipts have a requestId, not a runId. Track the actual last task receipt separately
+    // from per-run cost aggregation; an unreadable task result must not reuse earlier success.
+    if (['fai_browser_open', 'fai_browser_act', 'fai_browser_observe', 'fai_browser_run',
+      'fai_browser_step', 'fai_browser_wait', 'fai_browser_stop'].includes(call.tool)) {
+      final = result ? { runId: result.runId ?? null, requestId: result.requestId ?? null, tool: call.tool,
+        status: result.status, code: result.code,
+        verified: typeof result.verification?.passed === 'boolean' ? result.verification.passed : null } : null;
+    }
     if (result?.runId) {
       byRun.set(result.runId, { tool: call.tool, result });
     }
@@ -656,7 +672,7 @@ export async function faiEvidence(calls) {
       tool,
       status: result.status,
       code: result.code,
-      verified: Boolean(result.verification?.passed),
+      verified: typeof result.verification?.passed === 'boolean' ? result.verification.passed : null,
       // Receipt v2 (absent on v1 results).
       verdictKind: result.verdict?.kind ?? null,
       oversight: result.verdict?.oversight ?? null,
@@ -676,6 +692,7 @@ export async function faiEvidence(calls) {
   const total = key => runs.reduce((sum, run) => sum + (Number(run[key]) || 0), 0);
   return {
     runs,
+    final,
     decisions: runs.length ? total('decisions') : null,
     elapsedMs: runs.length ? total('elapsedMs') : null,
     providerInputTokens: runs.length ? total('inputTokens') : null,

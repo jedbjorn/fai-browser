@@ -3,7 +3,9 @@
 // host ids and directory names leave this module: answers, prompts and page text from traces are never copied.
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
-import { adjustedRequests, countModelRequests, costUsd, quantile, tokenBreakdown } from '../lib/metrics.mjs';
+import {
+  adjustedRequests, completeCostUsd, countModelRequests, quantile, safeVerifiedStats, safeVerifiedSuccess, tokenBreakdown, tokenCoverage,
+} from '../lib/metrics.mjs';
 import { LEGACY_HOST, hostModel, loadPrices, parseHost } from '../lib/hosts.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
@@ -97,7 +99,8 @@ function loadBench(dir, summary, prices) {
     const requestsAdjusted = adjustedRequests({ ...row, host, requests });
     const split = tokenBreakdown(row.tokens);
     const recorded = Number.isFinite(row.cost?.usd) ? { usd: row.cost.usd, basis: row.cost.basis ?? null } : null;
-    const computed = recorded ? null : costUsd(row.tokens, hostModel(host), prices);
+    const coverage = tokenCoverage(row.tokens);
+    const computed = recorded ? null : completeCostUsd(row.tokens, hostModel(host), prices);
     return {
       taskId: row.taskId,
       condition: row.condition,
@@ -108,17 +111,22 @@ function loadBench(dir, summary, prices) {
       skipped: row.outcome === 'skipped',
       ungraded: Boolean(row.ungraded),
       pass: Boolean(row.pass),
+      safeVerified: safeVerifiedSuccess(row),
       timedOut: Boolean(row.timedOut),
       wallS: Number.isFinite(row.wallMs) ? row.wallMs / 1000 : null,
       toolCalls: row.toolCalls ?? null,
       requests,
       requestsAdjusted,
       tokens: split?.total ?? null,
+      tokenSplit: split,
+      usageCoverage: coverage,
+      usagePartial: row.claude?.usageSource === 'messages (partial)',
       uncached: split?.uncachedInput ?? null,
       // Older result sets have no cache phase: unknown, never counted as cold.
       cachePhase: row.cachePhase === 'warm' || row.cachePhase === 'cold' ? row.cachePhase : null,
       priced: split?.priced ?? null,
       costUsd: recorded?.usd ?? computed?.usd ?? null,
+      costPartial: Boolean(row.costPartial || row.cost?.unpriced?.length),
       costBasis: recorded?.basis ?? computed?.basis ?? null,
       costSource: recorded ? 'recorded' : computed ? 'prices.json' : null,
       dangerClicks: row.dangerClicks ?? null,
@@ -175,6 +183,8 @@ function cellStats(runs) {
     runs: runs.length,
     attempted: done.length,
     passed: done.filter(run => run.pass).length,
+    safeVerified: done.filter(run => run.safeVerified === true).length,
+    safeVerifiedUnknown: done.filter(run => run.safeVerified == null).length,
     skipped: runs.filter(run => run.skipped).length,
     timedOut: done.filter(run => run.timedOut).length,
     wallS: median(done.map(run => run.wallS)),
@@ -182,6 +192,10 @@ function cellStats(runs) {
     requests: median(done.map(run => run.requests)),
     requestsAdjusted: median(done.map(run => run.requestsAdjusted)),
     tokens: median(done.map(run => run.tokens)),
+    cachedInput: median(done.map(run => run.tokenSplit?.cachedInput ?? null)),
+    uncachedInput: median(done.map(run => run.tokenSplit?.uncachedInput ?? null)),
+    cacheWrite: median(done.map(run => run.tokenSplit?.cacheWrite ?? null)),
+    outputTokens: median(done.map(run => run.tokenSplit?.output ?? null)),
     priced: median(done.map(run => run.priced)),
     costUsd: median(done.map(run => run.costUsd)),
     dangerClicks: sum(done.map(run => run.dangerClicks)),
@@ -195,7 +209,8 @@ function cellStats(runs) {
   };
 }
 
-const TOTAL_KEYS = ['wallS', 'toolCalls', 'requests', 'requestsAdjusted', 'tokens', 'priced', 'costUsd'];
+const TOTAL_KEYS = ['wallS', 'toolCalls', 'requests', 'requestsAdjusted', 'tokens', 'cachedInput', 'uncachedInput',
+  'cacheWrite', 'outputTokens', 'priced', 'costUsd'];
 
 const mean = values => {
   const finite = values.filter(Number.isFinite);
@@ -321,6 +336,8 @@ export function buildData(dirs, { prices = loadPrices(), title = 'FAI Browser Be
         costBasis: [...new Set(records.filter(r => r.host === host && r.condition === condition).map(r => r.costBasis)
           .filter(Boolean))].join('+') || null,
       };
+      const measured = records.filter(r => r.host === host && r.condition === condition && !r.skipped && !r.ungraded);
+      Object.assign(total, safeVerifiedStats(measured));
       total.passRate = total.attempted ? total.passed / total.attempted : null;
       const cache = cacheView(records.filter(r => r.host === host && r.condition === condition));
       Object.assign(total, {
@@ -364,6 +381,12 @@ export function buildData(dirs, { prices = loadPrices(), title = 'FAI Browser Be
       const b = pick('b', key);
       ratio[name] = a != null && b ? a / b : null;
     }
+    const successCost = condition => safeVerifiedStats(records.filter(record => record.host === host
+      && record.condition === condition && shared.includes(record.taskId) && !record.skipped && !record.ungraded))
+      .costUsdPerSafeVerified;
+    const a = successCost('a');
+    const b = successCost('b');
+    ratio.costSafeVerified = a != null && b ? a / b : null;
     ratios[host] = ratio;
   }
 

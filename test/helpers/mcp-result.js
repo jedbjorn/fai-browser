@@ -24,15 +24,6 @@ function cachedRevision(requestId, revision) {
   return directRevisions.get(requestId)?.get(revision);
 }
 
-function copyRange(target, source, nowStart, nowEnd, oldStart, actions = false) {
-  if (!source || nowEnd < nowStart || oldStart < 0) return;
-  for (let i = nowStart; i <= nowEnd; i++) {
-    const old = source[oldStart + i - nowStart];
-    if (old === undefined) continue;
-    target[i] = actions ? { ...old, id: `a${i}` } : old;
-  }
-}
-
 function rememberRevision(out) {
   if (!out.requestId || !out.revision || !out.page || !Array.isArray(out.actions)) return;
   const revisions = directRevisions.get(out.requestId) ?? new Map();
@@ -49,6 +40,7 @@ export function mcpData(result) {
   const out = { text };
   const lines = text.split('\n');
   let section = null;
+  let actionDelta = null;
   for (const line of lines) {
     let match = /^next \(([^)]+)\): ([\s\S]*)$/.exec(line);
     if (match) {
@@ -117,8 +109,8 @@ export function mcpData(result) {
       continue;
     }
     if (line.startsWith('granted: ')) {
-      match = /^granted: (\S+)(?: \(asked (\S+)\))?$/.exec(line);
-      out.granted = { level: match[1], asked: match[2] };
+      match = /^granted: (\S+)(?: \(asked (\S+)\))?(?:; task tabs: (single|multiple))?$/.exec(line);
+      out.granted = { level: match[1], asked: match[2], ...(match[3] ? { tabMode: match[3] } : {}) };
       continue;
     }
     if (line.startsWith('needs who: ')) {
@@ -227,7 +219,7 @@ export function mcpData(result) {
       continue;
     }
     if (section === 'digest' || section === 'pageText') {
-      if (/^(?:actions(?: offered now)? \(|actions delta from|actions: none|answer candidates|earlier pages:|decide options|alternatives \(|steps:|did: |cookie dialog:|popup \(|dialog: |js dialog |tabs: |log |refused control:|trace: |\(\d+ more)/.test(line)) {
+      if (/^(?:results:|result |actions(?: offered now)? \(|actions delta from|actions: (?:none|unchanged)|answer candidates|earlier pages:|decide options|alternatives \(|steps:|did: |cookie dialog:|popup \(|dialog: |js dialog |tabs: |log |refused control:|trace: |\(\d+ more)/.test(line)) {
         section = null;
       } else {
         if (section === 'digest') out.page.digest.push(line);
@@ -235,10 +227,17 @@ export function mcpData(result) {
         continue;
       }
     }
+    match = /^actions: unchanged from revision (\S+)$/.exec(line);
+    if (match) {
+      out.actions = (cachedRevision(out.requestId, match[1])?.actions ?? []).map(action => ({ ...action }));
+      section = null;
+      continue;
+    }
     match = /^actions delta from revision (\S+) .*:$/.exec(line);
     if (match) {
-      out.actions = [];
-      section = { kind: 'actionDelta', previous: cachedRevision(out.requestId, match[1]) };
+      const previous = cachedRevision(out.requestId, match[1]);
+      actionDelta = { previous: previous?.actions ?? [], removed: new Set(), changed: new Map() };
+      section = { kind: 'actionDelta' };
       continue;
     }
     if (/^actions: none \(all revision \S+ actions removed\)$/.test(line)) {
@@ -254,18 +253,35 @@ export function mcpData(result) {
     if (section?.kind === 'actionDelta') {
       match = /^a(\d+)(?:-a(\d+))?(?:: unchanged| = a(\d+)(?:-a(\d+))?)$/.exec(line);
       if (match) {
-        copyRange(out.actions, section.previous?.actions, Number(match[1]), Number(match[2] ?? match[1]),
-          Number(match[3] ?? match[1]), true);
+        const start = Number(match[1]);
+        const oldStart = Number(match[3] ?? match[1]);
+        for (let i = start; i <= Number(match[2] ?? match[1]); i++) {
+          const oldId = `a${oldStart + i - start}`;
+          const previous = actionDelta.previous.find(action => action.id === oldId);
+          if (!previous) continue;
+          actionDelta.removed.add(oldId);
+          actionDelta.changed.set(`a${i}`, { ...previous, id: `a${i}` });
+        }
         continue;
       }
-      if (line.startsWith('removed: ')) continue;
+      if (line.startsWith('removed: ')) {
+        for (const range of line.matchAll(/a(\d+)(?:-a(\d+))?/g)) {
+          const start = Number(range[1]);
+          const end = Number(range[2] ?? range[1]);
+          for (const action of actionDelta.previous) {
+            const id = Number(action.id.slice(1));
+            if (id >= start && id <= end) actionDelta.removed.add(action.id);
+          }
+        }
+        continue;
+      }
     }
     match = /^(a\d+)  ([\s\S]*?)(?: \[(purchase|secret|delete|submit)\])?$/.exec(line);
     if (match && (section === 'actions' || section?.kind === 'actionDelta')) {
       const action = { id: match[1], description: match[2] };
       if (match[3]) action.needsApproval = match[3];
       if (section === 'actions') out.actions.push(action);
-      else out.actions[Number(match[1].slice(1))] = action;
+      else actionDelta.changed.set(action.id, action);
       continue;
     }
     match = /^\((\d+) more(?: offered actions)? not listed/.exec(line);
@@ -358,6 +374,14 @@ export function mcpData(result) {
       continue;
     }
     section = null;
+  }
+  if (actionDelta) {
+    // Delta removals and mapping sources name the old revision. Apply them before new ids,
+    // so sparse ids and overlapping old/new ranges never shift or erase a current action.
+    const actions = new Map(actionDelta.previous.filter(action => !actionDelta.removed.has(action.id))
+      .map(action => [action.id, { ...action }]));
+    for (const [id, action] of actionDelta.changed) actions.set(id, action);
+    out.actions = [...actions.values()].sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
   }
   if (out.actions === undefined && /(?:^|\n)a\d+  /.test(text)) out.actions = [];
   if (out.actions) out.actions = out.actions.filter(Boolean);

@@ -107,13 +107,20 @@ test('PNG step writes the full page and the social crop', async t => {
 function syntheticData(n) {
   const names = ['Sol', 'Astra', 'Opus 5.5', 'Sonnet 5.5', 'Luna', 'Terra', 'Nova', 'Vega'].slice(0, n);
   const hosts = names.map((short, i) => ({ id: `h${i}:${short}`, name: `GPT ${short}`, short, effort: 'medium' }));
-  const tot = (k, pass) => ({ tasks: 8, taskCount: 8, attempted: 24, passed: Math.round(24 * pass), passRate: pass, wallS: 100 * k, toolCalls: 40 * k, requests: 50 * k,
-    costUsd: 0.4 * k, tokens: 1e5, priced: 5e4, wallPerTask: 12 * k, costPerTask: 0.05 * k, warmFloor: { costUsd: 0.04 * k, uncached: 1000 }, uncachedWarm: { n: 3 } });
+  const tot = (k, pass) => {
+    const passed = Math.round(24 * pass);
+    return { tasks: 8, taskCount: 8, attempted: 24, passed, safeVerified: passed, safeVerifiedUnknown: 0, passRate: pass,
+      wallS: 100 * k, toolCalls: 40 * k, requests: 50 * k, costUsd: 0.4 * k, costUsdPerSafeVerified: 0.4 * k / passed,
+      cachedInputPerSafeVerified: 2000, cacheWritePerSafeVerified: 100, uncachedInputPerSafeVerified: 500,
+      outputTokensPerSafeVerified: 50, tokens: 1e5, priced: 5e4, wallPerTask: 12 * k, costPerTask: 0.05 * k,
+      warmFloor: { costUsd: 0.04 * k, uncached: 1000 }, uncachedWarm: { n: 3 } };
+  };
   const data = { title: 'Synthetic Bench', date: '2026-10-04', hosts, taskIds: ['t1', 't2'], expectedReps: 3, cells: [], missing: [], ignored: [], corpus: [], sets: [],
     conditions: { a: 'Playwright MCP', b: 'FAI Browser' }, prices: {}, dedupe: { replaced: 0, records: 0 }, totals: {}, ratios: {}, headline: { fastestHost: hosts[0].id } };
   hosts.forEach((h, i) => {
     data.totals[h.id] = { a: tot(2 + i / 4, 1), b: tot(1, i === 4 ? 0.8 : 1) };
-    data.ratios[h.id] = { wall: 1.2 + i / 10, toolCalls: 5, requests: 3, cost: 1.3, tokens: 2, priced: 2, tasks: ['t1', 't2'], complete: true };
+    data.ratios[h.id] = { wall: 1.2 + i / 10, toolCalls: 5, requests: 3, cost: 1.3, costSafeVerified: 1.3,
+      tokens: 2, priced: 2, tasks: ['t1', 't2'], complete: true };
   });
   return data;
 }

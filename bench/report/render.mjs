@@ -187,7 +187,7 @@ function hostLabel(data, id) {
 const hostIndex = (data, id) => data.hosts.findIndex(host => host.id === id);
 const dot = (data, id) => `<i class="dot" style="background:var(--h${S(data, hostIndex(data, id))})"></i>`;
 
-// Warm floor under a card's mean cost: p25 cost of warm runs (timeline harness); nothing for older sets.
+// Warm-floor card detail: p25 cost of warm runs (timeline harness); nothing for older sets.
 const floorLine = total => (total?.warmFloor?.costUsd != null
   ? `<span class="floor">warm floor ${usd(total.warmFloor.costUsd)} (${total.uncachedWarm.n} warm run${total.uncachedWarm.n === 1 ? '' : 's'})</span>`
   : '');
@@ -203,7 +203,7 @@ function headline(data) {
     cards.push(`<div class="card hero"><div class="k">Fastest host with FAI</div>
       <div class="host">${dot(data, fastest)}${esc(h.name)}</div>
       <div class="big">${num(t.wallPerTask)}<small>s / task</small></div>
-      <div class="meta">${t.passed}/${t.attempted} passed · ${usd(t.costPerTask)} per task · ${count(t.requests / t.tasks)} model requests per task</div></div>`);
+      <div class="meta">${t.safeVerified}/${t.attempted} safe verified · ${usd(t.costUsdPerSafeVerified)} per safe verified success · ${count(t.requests / t.tasks)} model requests per task</div></div>`);
   }
   for (const host of data.hosts) {
     const a = totals[host.id].a;
@@ -218,12 +218,13 @@ function headline(data) {
     const note = limited ? `<div class="note">Tier limitation under study: FAI passes ${pct(b.passRate)} vs ${pct(a.passRate)} for Playwright.</div>` : '';
     strip.push(`<div class="hc${limited ? ' lim' : ''}" style="border-top-color:var(--h${S(data, i)})"><div class="hn">${dot(data, host.id)}<span>${esc(host.short)}</span></div>
       <div class="hx">${r?.wall != null ? ratioText(r.wall) : '–'}<small>faster</small></div>
-      <div class="hl">${usd(b?.costPerTask)}${b?.warmFloor?.costPerTask != null || b?.warmFloor?.costUsd != null ? `<span> floor ${usd(b.warmFloor.costUsd)}</span>` : ''}</div>
+      <div class="hl">${usd(b?.costUsdPerSafeVerified)}<span> per safe verified success</span></div>
       <div class="hp">${b ? pct(b.passRate) : '–'} vs ${a ? pct(a.passRate) : '–'}${limited ? '<span class="lm">tier limit</span>' : ''}</div></div>`);
     cards.push(`<div class="card"><span class="stripe" style="background:var(--h${S(data, i)})"></span>
       <div class="k">Speedup · ${esc(host.effort)} effort</div><div class="host">${dot(data, host.id)}${esc(host.name)}</div>${big}
-      <dl class="pairs"><dt>Cost / task, FAI</dt><dd>${usd(b?.costPerTask)}${floorLine(b)}</dd>
-      <dt>Cost / task, Playwright</dt><dd>${usd(a?.costPerTask)}${floorLine(a)}</dd>
+      <dl class="pairs"><dt>Cost / safe verified success, FAI</dt><dd>${usd(b?.costUsdPerSafeVerified)}</dd>
+      <dt>Cost / safe verified success, Playwright</dt><dd>${usd(a?.costUsdPerSafeVerified)}</dd>
+      <dt>Warm floor / run, FAI</dt><dd>${floorLine(b) || '–'}</dd>
       <dt>Pass, FAI · Playwright</dt><dd>${b ? pct(b.passRate) : '–'} · ${a ? pct(a.passRate) : '–'}</dd></dl>${note}</div>`);
   }
   const n = data.hosts.length;
@@ -236,7 +237,7 @@ function headline(data) {
 // Grouped vertical bars: one group per host, Playwright (grey) and FAI (host colour), ratio above the pair.
 // Bar width, fonts and label text shrink with the host count; value labels that would touch are lifted apart and
 // ratio labels sit above the group's highest label, so nothing overlaps up to 8 hosts.
-function groupedChart(data, { key, label, note, fmt, ratioKey, ratioWord }) {
+function groupedChart(data, { key, label, note, fmt, ratioKey, ratioWord, perSuccess = false }) {
   const n = data.hosts.length || 1;
   const compact = n > 4;
   const W = 480;
@@ -251,7 +252,7 @@ function groupedChart(data, { key, label, note, fmt, ratioKey, ratioWord }) {
   const lab = v => (compact ? fmt(v).replace(/ s$/, '') : fmt(v));
   const value = (host, cond) => {
     const t = data.totals[host][cond];
-    return t && t[key] != null ? t[key] / t.tasks : null;
+    return t && t[key] != null ? (perSuccess ? t[key] : t[key] / t.tasks) : null;
   };
   const max = Math.max(1e-9, ...data.hosts.flatMap(h => [value(h.id, 'a'), value(h.id, 'b')]).filter(v => v != null)) * 1.08;
   const base = top + plotH;
@@ -275,10 +276,10 @@ function groupedChart(data, { key, label, note, fmt, ratioKey, ratioWord }) {
       const x = xs[cond];
       const { v, y, ly } = info[cond];
       if (v == null) {
-        parts.push(`<rect class="miss" x="${x + 1}" y="${base - 30}" width="${barW - 2}" height="29" rx="4"><title>${esc(`${host.name}, ${data.conditions[cond]}: no runs`)}</title></rect>`,
+        parts.push(`<rect class="miss" x="${x + 1}" y="${base - 30}" width="${barW - 2}" height="29" rx="4"><title>${esc(`${host.name}, ${data.conditions[cond]}: ${perSuccess ? 'per-success metric unavailable' : 'no runs'}`)}</title></rect>`,
           `<text class="t-mute" x="${x + barW / 2}" y="${ly}" text-anchor="middle" font-size="${fs}">n/a</text>`);
       } else {
-        parts.push(bar(x, y, barW, base - y, { cls: cond === 'a' ? 'b-pw' : '', title: `${host.name}, ${data.conditions[cond]}: ${fmt(v)} per task` })
+        parts.push(bar(x, y, barW, base - y, { cls: cond === 'a' ? 'b-pw' : '', title: `${host.name}, ${data.conditions[cond]}: ${fmt(v)} ${perSuccess ? 'per safe verified success' : 'per task'}` })
           .replace('<path class=""', `<path style="fill:var(--h${S(data, i)})"`),
         `<text class="t-val" x="${x + barW / 2}" y="${ly}" text-anchor="middle" font-size="${fs}">${lab(v)}</text>`);
       }
@@ -304,10 +305,10 @@ function groupedPanel(data) {
     { key: 'wallS', label: 'Wall time', note: 'seconds per task, host start to exit', fmt: secs, ratioKey: 'wall', ratioWord: 'faster' },
     { key: 'toolCalls', label: 'Tool calls', note: 'browser tool calls per task', fmt: count, ratioKey: 'toolCalls', ratioWord: 'fewer' },
     { key: 'requests', label: 'Model requests', note: 'host model round trips per task', fmt: count, ratioKey: 'requests', ratioWord: 'fewer' },
-    { key: 'costUsd', label: 'Cost', note: 'USD per task (Codex: API-equivalent)', fmt: usd, ratioKey: 'cost', ratioWord: 'cheaper' },
+    { key: 'costUsdPerSafeVerified', label: 'Cost', note: 'USD per safe verified success (Codex: API-equivalent)', fmt: usd, ratioKey: 'costSafeVerified', ratioWord: 'cheaper', perSuccess: true },
   ];
   return `<section id="bars"><h2>Playwright MCP vs FAI Browser, per host</h2>
-    <p class="sub">Per task: sum of per-task medians divided by tasks run. Ratio = Playwright ÷ FAI over tasks both ran; above 1× favours FAI.</p>
+    <p class="sub">Per task: sum of per-task medians divided by tasks run. Cost instead divides all measured-run cost by fully known safe verified successes. Ratio = Playwright ÷ FAI over tasks both ran; above 1× favours FAI.</p>
     ${legend}<div class="grid2">${charts.map(chart => groupedChart(data, chart)).join('')}</div></section>`;
 }
 
@@ -425,23 +426,37 @@ function oversightTable(data) {
 const phaseCost = t => (t.costWarm == null && t.costCold == null ? '–'
   : `${usd(t.costWarm)} (${t.uncachedWarm?.n ?? 0}) · ${usd(t.costCold)} (${t.uncachedCold?.n ?? 0})`);
 
+function successTable(data) {
+  const rows = [];
+  for (const h of data.hosts) {
+    for (const cond of ['a', 'b']) {
+      const t = data.totals[h.id][cond];
+      if (!t) continue;
+      rows.push(`<tr><td>${esc(h.name)} · ${cond === 'a' ? 'Playwright' : 'FAI'}</td><td>${t.safeVerified}/${t.attempted}</td><td>${t.safeVerifiedUnknown}</td><td>${tokens(t.cachedInputPerSafeVerified)}</td><td>${tokens(t.cacheWritePerSafeVerified)}</td><td>${tokens(t.uncachedInputPerSafeVerified)}</td><td>${tokens(t.outputTokensPerSafeVerified)}</td><td>${usd(t.costUsdPerSafeVerified)}</td></tr>`);
+    }
+  }
+  return `<section id="success-efficiency" class="hide-social"><h2>Cache and cost per safe verified success</h2>
+    <p class="sub">Every measured run contributes usage and cost, including failures. Unknown success evidence or incomplete metric coverage makes a rate unavailable; an unreported cache write is not zero.</p>
+    <div class="scroll"><table class="data"><thead><tr><th>Host · condition</th><th>Safe verified</th><th>Unknown</th><th>Cached in</th><th>Cache write</th><th>Uncached in</th><th>Output</th><th>Cost</th></tr></thead><tbody>${rows.join('')}</tbody></table></div></section>`;
+}
+
 function totalsTable(data) {
   const rows = [];
   for (const h of data.hosts) {
     for (const cond of ['a', 'b']) {
       const t = data.totals[h.id][cond];
       rows.push(t
-        ? `<tr><td>${esc(h.name)} · ${cond === 'a' ? 'Playwright' : 'FAI'}</td><td>${t.tasks}/${t.taskCount}</td><td>${t.passed}/${t.attempted}</td><td>${num(t.wallS)}</td><td>${count(t.toolCalls)}</td><td>${count(t.requests)}</td><td>${tokens(t.tokens)}</td><td>${tokens(t.priced)}</td><td>${usd(t.costUsd)}</td><td>${phaseCost(t)}</td><td>${t.warmFloor ? `${usd(t.warmFloor.costUsd)} · ${tokens(t.warmFloor.uncached)}` : '–'}</td></tr>`
-        : `<tr><td>${esc(h.name)} · ${cond === 'a' ? 'Playwright' : 'FAI'}</td><td colspan="10" style="text-align:left;color:var(--ink-3)">no runs</td></tr>`);
+        ? `<tr><td>${esc(h.name)} · ${cond === 'a' ? 'Playwright' : 'FAI'}</td><td>${t.tasks}/${t.taskCount}</td><td>${t.passed}/${t.attempted}</td><td>${num(t.wallS)}</td><td>${count(t.toolCalls)}</td><td>${count(t.requests)}</td><td>${tokens(t.cachedInput)}</td><td>${tokens(t.cacheWrite)}</td><td>${tokens(t.uncachedInput)}</td><td>${tokens(t.outputTokens)}</td><td>${tokens(t.tokens)}</td><td>${tokens(t.priced)}</td><td>${usd(t.costUsd)}</td><td>${phaseCost(t)}</td><td>${t.warmFloor ? `${usd(t.warmFloor.costUsd)} · ${tokens(t.warmFloor.uncached)}` : '–'}</td></tr>`
+        : `<tr><td>${esc(h.name)} · ${cond === 'a' ? 'Playwright' : 'FAI'}</td><td colspan="14" style="text-align:left;color:var(--ink-3)">no runs</td></tr>`);
     }
   }
   const ratioRows = data.hosts.filter(h => data.ratios[h.id]).map(h => {
     const r = data.ratios[h.id];
-    return `<tr><td>${esc(h.name)}</td><td>${r.tasks.length}</td><td>${ratioText(r.wall) ?? '–'}</td><td>${ratioText(r.toolCalls) ?? '–'}</td><td>${ratioText(r.requests) ?? '–'}</td><td>${ratioText(r.tokens) ?? '–'}</td><td>${ratioText(r.priced) ?? '–'}</td><td>${ratioText(r.cost) ?? '–'}</td></tr>`;
+    return `<tr><td>${esc(h.name)}</td><td>${r.tasks.length}</td><td>${ratioText(r.wall) ?? '–'}</td><td>${ratioText(r.toolCalls) ?? '–'}</td><td>${ratioText(r.requests) ?? '–'}</td><td>${ratioText(r.tokens) ?? '–'}</td><td>${ratioText(r.priced) ?? '–'}</td><td>${ratioText(r.cost) ?? '–'}</td><td>${ratioText(r.costSafeVerified) ?? '–'}</td></tr>`;
   });
   return `<section id="table" class="hide-social"><h2>Totals</h2><p class="sub">Sums of per-task medians over the tasks each cell ran. Requests are as the host stream shows them; data.json also has requestsAdjusted (+1 per Codex run with a tool call, the hidden MCP schema load). Cost warm · cold is the mean per run over warm and cold-start runs (warm-up runs excluded; older sets have no phase); warm floor is the 25th percentile of warm runs' cost and uncached input.</p>
-    <div class="scroll"><table class="data"><thead><tr><th>Host · condition</th><th>Tasks</th><th>Pass</th><th>Wall s</th><th>Calls</th><th>Requests</th><th>Tokens</th><th>Priced</th><th>Cost</th><th>Cost warm · cold</th><th>Warm floor</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>
-    ${ratioRows.length ? `<h3 style="font-size:15px;margin:20px 0 6px">Playwright ÷ FAI over shared tasks</h3><div class="scroll"><table class="data"><thead><tr><th>Host</th><th>Tasks</th><th>Wall</th><th>Calls</th><th>Requests</th><th>Tokens</th><th>Priced</th><th>Cost</th></tr></thead><tbody>${ratioRows.join('')}</tbody></table></div>` : ''}</section>`;
+    <div class="scroll"><table class="data"><thead><tr><th>Host · condition</th><th>Tasks</th><th>Pass</th><th>Wall s</th><th>Calls</th><th>Requests</th><th>Cached in</th><th>Cache write</th><th>Uncached in</th><th>Output</th><th>Tokens</th><th>Priced</th><th>Cost</th><th>Cost warm · cold</th><th>Warm floor</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>
+    ${ratioRows.length ? `<h3 style="font-size:15px;margin:20px 0 6px">Playwright ÷ FAI over shared tasks</h3><div class="scroll"><table class="data"><thead><tr><th>Host</th><th>Tasks</th><th>Wall</th><th>Calls</th><th>Requests</th><th>Tokens</th><th>Priced</th><th>Cost</th><th>Cost / safe verified success</th></tr></thead><tbody>${ratioRows.join('')}</tbody></table></div>` : ''}</section>`;
 }
 
 function missingPanel(data) {
@@ -472,8 +487,8 @@ function methodology(data) {
   const corpus = data.corpus.map(c => `<code>${esc(c.source)}</code>`).join(', ');
   return `<footer><h2>Methodology</h2><ul>
     <li>${data.taskIds.length} read-only browser tasks on a local deterministic fixture site; each host runs every task under A (Playwright MCP as its only browser tool) and B (FAI Browser MCP). Cells are <b>medians of up to ${data.expectedReps} repeats</b>; totals sum the per-task medians.</li>
-    <li><b>Wall time</b> runs from spawning the host to its exit, including MCP start-up and every model turn. <b>Model requests</b> are host model round trips. Pass is a strict normalized answer match.</li>
-    <li><b>Priced tokens</b> weight the token split relative to one uncached input token: uncached × 1, cached × 0.1, cache write × 1.25, output × 5 (assumed weights, not a price list). <b>Cost</b> applies bench/prices.json (${esc(data.prices.date ?? 'undated')}, USD per million tokens) to the same split; Claude rows are list prices, Codex rows are <b>API-equivalent</b>, since a ChatGPT plan bills quota rather than dollars.</li>
+    <li><b>Wall time</b> runs from spawning the host to its exit, including MCP start-up and every model turn. <b>Model requests</b> are host model round trips. Pass is a strict normalized answer match. <b>Safe verified</b> also requires no recorded safety failure; FAI conditions need a completed final receipt with verification.passed true, while A uses its independent grade. Unknown evidence is neither a success nor a failure.</li>
+    <li><b>Per-success usage and cost</b> divide actual totals over every measured run, failures included, by fully known safe verified successes. Incomplete coverage makes a rate unavailable; unreported cache writes are not zero. Codex usage is cumulative per exec, so no per-request cache attribution is inferred. <b>Priced tokens</b> weight the token split relative to one uncached input token: uncached × 1, cached × 0.1, cache write × 1.25, output × 5 (assumed weights, not a price list). <b>Cost</b> applies bench/prices.json (${esc(data.prices.date ?? 'undated')}, USD per million tokens) to the same split; Claude rows are list prices, Codex rows are <b>API-equivalent</b>, since a ChatGPT plan bills quota rather than dollars.</li>
     <li>Runs are deduplicated by task, condition, host and repeat; when sets overlap the newer set wins (${data.dedupe.replaced} runs replaced, ${data.dedupe.records} kept). Sets: ${sets || 'none'}.${corpus ? ` Corpus: ${corpus}.` : ''}</li>
     <li>Generated ${esc(data.date)} by <code>bench/report.mjs</code>. Headless Chromium for both conditions; the harness approves FAI tab requests in about 0.4 s.</li>
     </ul></footer>`;
@@ -501,7 +516,7 @@ export function renderHtml(data) {
 <div id="headline">${headline(data)}</div>
 ${groupedPanel(data)}
 <div class="hide-social">${passStrip(data)}${smallMultiples(data)}${corpusPanel(data)}</div>
-${oversightTable(data)}${totalsTable(data)}${missingPanel(data)}
+${oversightTable(data)}${successTable(data)}${totalsTable(data)}${missingPanel(data)}
 <div class="hide-social">${methodology(data)}</div>
 </div></body></html>
 `;

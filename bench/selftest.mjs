@@ -93,7 +93,7 @@ const withBaseline = aggregate([...records.map(r => ({ ...r, requests: r.toolCal
 assert.deepEqual(withBaseline.ratios.map(ratio => [ratio.over, ratio.wall, ratio.requests]), [['a', 2, 5 / 3], ['b-baseline', 1.5, 4 / 3]]);
 assert.equal(withBaseline.totals['b-baseline'].requests, 4);
 const table = markdownTable(withBaseline, ['t'], ['a', 'b-baseline', 'b']);
-assert.match(table, /\| t \| B-baseline FAI Browser \| 1\/1 \| 15\.0 \| 3 \| 4 \|/);
+assert.match(table, /\| t \| B-baseline FAI Browser \| 1\/1 \| - \| 200 \| - \| 250 \| 50 \| - \| 15\.0 \| 3 \| 4 \|/);
 assert.match(table, /B-baseline FAI Browser \/ B FAI Browser over 1 shared task\(s\).*wall 1\.50x/);
 assert.match(table, /\*\*Total\*\* \(1 tasks\) \| B FAI Browser/);
 ok('aggregation, A/B and baseline ratios, request counts and priced tokens');

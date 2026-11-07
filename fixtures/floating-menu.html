@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Floating menu fixture</title>
+  <style>
+    body { margin: 0; font: 14px sans-serif; }
+    #toolbar { position: relative; padding: 12px; background: #eee; }
+    #background { display: flex; flex-wrap: wrap; gap: 4px; padding: 12px; }
+    #background button { width: 90px; height: 28px; }
+    #sort-menu { position: fixed; top: 54px; right: 24px; z-index: 20; padding: 8px; background: white; border: 1px solid #555; }
+    #sort-menu [role^="menuitem"] { display: block; width: 220px; min-height: 28px; padding: 4px; background: white; border: 0; text-align: left; }
+    #layout-options { width: 220px; padding: 12px; border: 1px solid #555; }
+    #status { padding: 8px 12px; }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <button id="sort" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="sort-menu">Sort messages</button>
+    <button id="layout" type="button" popovertarget="layout-options">Layout options</button>
+  </div>
+  <p id="status" role="status">Nothing chosen</p>
+  <div id="background">
+    <button id="delete-background" type="button">Delete background message</button>
+    <button id="archive-background" type="button">Archive background message</button>
+  </div>
+  <div id="sort-menu" role="menu" aria-label="Message order" hidden>
+    <div id="recent" role="menuitem" tabindex="0">Most recent</div>
+    <div id="exact" role="menuitemradio" tabindex="0" aria-checked="false">Exact matches</div>
+    <div id="archived" role="menuitemcheckbox" tabindex="0" aria-checked="true">Include archived</div>
+    <div id="delete-filtered" role="menuitem" tabindex="0">Delete filtered messages</div>
+  </div>
+  <div id="layout-options" popover>
+    <button id="compact" type="button">Compact layout</button>
+  </div>
+  <script>
+    const status = document.getElementById('status');
+    const sort = document.getElementById('sort');
+    const menu = document.getElementById('sort-menu');
+    function setMenu(open) {
+      sort.setAttribute('aria-expanded', String(open));
+      menu.hidden = !open;
+    }
+    sort.addEventListener('click', () => setMenu(sort.getAttribute('aria-expanded') !== 'true'));
+    for (const id of ['recent', 'exact', 'archived', 'delete-filtered']) {
+      document.getElementById(id).addEventListener('click', event => {
+        const item = event.currentTarget;
+        if (item.getAttribute('role') === 'menuitemradio') item.setAttribute('aria-checked', 'true');
+        if (item.getAttribute('role') === 'menuitemcheckbox') {
+          item.setAttribute('aria-checked', String(item.getAttribute('aria-checked') !== 'true'));
+        }
+        status.textContent = `Chosen: ${item.textContent}`;
+        setMenu(false);
+      });
+    }
+    document.getElementById('compact').addEventListener('click', () => {
+      status.textContent = 'Chosen: Compact layout';
+      document.getElementById('layout-options').hidePopover();
+    });
+    for (let i = 0; i < 120; i++) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = `Background action ${i + 1}`;
+      document.getElementById('background').append(button);
+    }
+  </script>
+</body>
+</html>

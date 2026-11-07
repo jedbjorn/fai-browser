@@ -13,17 +13,18 @@
       <span class="eyebrow">AGENT REQUEST, NOT APPROVED YET</span>
     </header>
     <p id="pin-hint" class="pin-hint" role="note" hidden></p>
-    <h1 id="headline" class="arm-headline">Click the FAI Browser icon in the toolbar of the page that just opened</h1>
+    <h1 id="headline" class="arm-headline">Approve this request?</h1>
     <p id="detail" class="arm-detail"></p>
     <div class="arm-level">
       <label for="level">Allow</label>
-      <select id="level" class="level-select" aria-label="Level to allow"></select>
+      <select id="level" class="level-select" aria-label="Level to allow" aria-describedby="level-help"></select>
       <p id="level-help" class="level-help"></p>
-      <p id="level-warning" class="level-warning" hidden>No guardrails: the agent may log in, submit, delete and pay on this test site.</p>
+      <p id="level-warning" class="level-warning" hidden>For your test sites only. The agent may log in, submit, delete and pay. Origin and policy limits, secret redaction and approval protections still apply.</p>
     </div>
     <div class="arm-actions">
+      <button id="approve" class="primary-button" type="button" disabled>Approve request</button>
       <button id="deny" class="link-button" type="button">Deny this request</button>
-      <p id="status" class="status"></p>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
     </div>
   </main>
   <script type="module" src="arm.js"></script>

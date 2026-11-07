@@ -13,8 +13,10 @@
 // annotated screenshot (captureVisibleTab under activeTab, drawn in the offscreen frame); one act clicks a button
 // and the next observe shows its effect; a same-origin navigation keeps the session usable (the exact-origin
 // permission Firefox asked for at approval); a screenshot after it needs the all-sites opt-in, and with it the secret
-// boxes of a page full of fake keys are drawn by the same offscreen.js, running in the background page's frame. Marionette drives only
-// this throwaway browser: the user's real profile never runs with a remote protocol.
+// boxes of a page full of fake keys are drawn by the same offscreen.js, running in the background page's frame; the
+// local detector's shared observe/act matrix reports avoidable event flags, action effects, page-world/DOM cleanliness
+// and the inherent untrusted-event, user-activation and Marionette-webdriver signals. Marionette drives only this
+// throwaway browser: the user's real profile never runs with a remote protocol.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -24,6 +26,7 @@ import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { buildFirefox, GECKO_ID } from './build-firefox.mjs';
+import { evaluateDetection, runDetectionMatrix } from './detection-matrix.mjs';
 import { headlessEnv } from './headless-env.mjs';
 import { Marionette } from './marionette.mjs';
 import { FaiBrowserClient } from '../src/client.js';
@@ -45,6 +48,7 @@ let firefox = null;
 let marionette = null;
 let client = null;
 let site = null;
+let detection = null;
 
 function check(name, detail = '') {
   checks.push(name);
@@ -120,8 +124,18 @@ async function main() {
   check('FAI service started', `port ${daemonPort}`);
 
   const fixtures = new Map([['/index.html', 'index.html'], ['/about.html', 'about.html'],
-    ['/keys.html', 'secrets/keys.html'], ['/fakes.js', 'secrets/fakes.js']]);
+    ['/keys.html', 'secrets/keys.html'], ['/fakes.js', 'secrets/fakes.js'], ['/detector.html', 'detection/detector.html']]);
   site = http.createServer(async (req, res) => {
+    if (req.method === 'POST' && req.url === '/report') {
+      let body = '';
+      for await (const chunk of req) {
+        body += chunk;
+        if (body.length > 100_000) throw new Error('Detection report too large');
+      }
+      detection = JSON.parse(body);
+      res.writeHead(204);
+      return res.end();
+    }
     const name = fixtures.get(req.url === '/' ? '/index.html' : req.url);
     if (!name) {
       res.writeHead(404);
@@ -188,7 +202,7 @@ async function main() {
   else check('WebSocket transport with the moz-extension origin');
 
   // --- an agent request: opens in its own window, armed; the toolbar click approves ---------------------------
-  const created = await client.requestTab({ origins: [origin], mode: 'reversible', reason: 'Firefox smoke',
+  const created = await client.requestTab({ origins: [origin], mode: 'interactive', reason: 'Firefox smoke',
     url: `${origin}/index.html` });
   const armed = await until('the page to open and be armed', () => chromeScript(`
     for (const win of browserWindows()) {
@@ -304,6 +318,14 @@ async function main() {
   assert.ok(Number(redactions) >= 1, `secret boxes drawn: ${redactions}`);
   assert.doesNotMatch(JSON.stringify(keys.page ?? {}), /AKIAFAKE/);
   check('with the opt-in: screenshot after navigation, secrets boxed in the offscreen frame', `${redactions} boxes`);
+
+  // --- the local detection fixture, through the same approved observe/act path as any other page -----------------
+  await runDetectionMatrix(client, created.requestId, origin);
+  await until('the local detection report', () => detection);
+  const capabilityMatrix = evaluateDetection(detection, { webdriver: true, persistentProfile: false });
+  console.log(`detection capability matrix ${JSON.stringify(capabilityMatrix)}`);
+  check('Firefox detection fixture: realistic input has no avoidable flags and every action works once');
+  check('Firefox detection fixture: no FAI page globals or DOM mutations; inherent signals reported explicitly');
 
   // --- what this Firefox offers (compat.js feature report, read in an extension page) ----------------------------
   const features = await extensionPageScript(`

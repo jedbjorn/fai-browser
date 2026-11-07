@@ -9,10 +9,11 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
 import {
-  BUDGET_LIMITS, BUDGET_MINUTES, CAPABILITIES, DEFAULT_LEVELS, LEVELS, addTestingOrigin, budgetFromFields, describeBudget,
-  exactOrigin, levelChoices, minLevel, normalizeBudget, normalizePermissions, normalizeRememberedSites, removeTestingOrigin,
-  requestedLevel, startTarget, testingAllowed,
+  BUDGET_LIMITS, BUDGET_MINUTES, CAPABILITIES, DEFAULT_LEVELS, LEVELS, LEVEL_TEXT, addTestingOrigin, budgetFromFields,
+  describeBudget, exactOrigin, levelChoices, minLevel, normalizeBudget, normalizePermissions, normalizeRememberedSites,
+  removeTestingOrigin, requestedLevel, startTarget, testingAllowed,
 } from '../extension/permissions.js';
+import { TESTING_WARNING } from '../extension/ui.js';
 import * as guardrails from '../src/guardrails.js';
 
 const EXTENSION = new URL('../extension/', import.meta.url);
@@ -95,6 +96,15 @@ test('the request card offers levels up to the asked one, presets the asked one,
   assert.equal(testingAllowed([], ['http://localhost:3000']), false);
 });
 
+test('level copy describes purchase approval and the protections that remain on test sites', () => {
+  assert.equal(LEVEL_TEXT.full.description,
+    'Also saves, sends and deletes. Recognized purchases require approval when offered; otherwise they stay refused. No sign-in.');
+  assert.equal(LEVEL_TEXT.testing.description,
+    'May log in and buy on test sites. Origin, policy, redaction and approval protections remain.');
+  assert.equal(TESTING_WARNING,
+    'For your test sites only. The agent may log in, submit, delete and pay. Origin and policy limits, secret redaction and approval protections still apply.');
+});
+
 test('the popup, the worker and the runtime agree on the levels and their capabilities (drift check)', async () => {
   const worker = await readFile(new URL('background.js', EXTENSION), 'utf8');
   const levels = worker.match(/\nconst LEVELS = (\[[^\]]+\]);/)?.[1];
@@ -150,10 +160,14 @@ async function popup(t, { local = {}, requests = [], state = {}, tabUrl = 'http:
           async get(keys) { return Object.fromEntries(keys.filter(key => key in __local).map(key => [key, structuredClone(__local[key])])); },
           async set(values) { Object.assign(__local, structuredClone(values)); },
         },
-        session: { async get() { return { requests, connection: { connected, transport: connected ? 'websocket' : 'none', paired: connected, native: __state.native ?? null } }; } },
+        session: { async get() { return { requests, approvals: __state.approvals ?? [], connection: { connected, transport: connected ? 'websocket' : 'none', paired: connected, native: __state.native ?? null } }; } },
         onChanged: { addListener(listener) { listeners.push(listener); } },
       },
       tabs: { async query() { __tabQueries++; return [{ id: 7, url: tabUrl, title: 'App' }]; } },
+      permissions: { request(permission) {
+        __permissionCalls.push({ permission, active: navigator.userActivation.isActive });
+        return Promise.resolve(__access);
+      } },
       commands: { async getAll() { return [{ name: '_execute_action', shortcut: 'Ctrl+Shift+Y' }]; } },
       action: { async getUserSettings() { return { isOnToolbar: pinned }; } },
       permissions: {
@@ -197,6 +211,18 @@ const options = page => page.$$eval('.request-card .level-select option', nodes 
 // How many elements match. Never assert on an element handle itself: a failing assertion makes node inspect the whole
 // Playwright object graph behind it, which takes gigabytes of memory in seconds.
 const count = (page, selector) => page.locator(selector).count();
+
+async function computedDescription(page, selector) {
+  const session = await page.context().newCDPSession(page);
+  try {
+    const { root } = await session.send('DOM.getDocument', { depth: 0 });
+    const { nodeId } = await session.send('DOM.querySelector', { nodeId: root.nodeId, selector });
+    const { nodes } = await session.send('Accessibility.getPartialAXTree', { nodeId, fetchRelatives: false });
+    return nodes[0]?.description?.value ?? '';
+  } finally {
+    await session.detach();
+  }
+}
 
 test('popup: browser control toggles both ways, sends the choice and reflects confirmation', async t => {
   const page = await popup(t, { local: PAIRED, state: { control: { driver: 'jev', jevAvailable: true } } });
@@ -293,12 +319,23 @@ test('popup: Testing appears only when every requested origin is listed, warning
   assert.equal(await page.$eval('.request-card .level-select', node => node.value), 'full', 'preset: requested, never testing');
   assert.equal(await page.$eval('.request-card .level-warning', node => node.hidden), true);
   assert.equal(await page.$eval('option[value="testing"]', node => node.className), 'level-testing');
+  for (const level of ['read-only', 'interactive', 'full']) {
+    await page.selectOption('.request-card .level-select', level);
+    assert.equal(await page.getAttribute('.request-card .level-select', 'aria-describedby'), 'level-req_1-help');
+    assert.equal(await computedDescription(page, '.request-card .level-select'), LEVEL_TEXT[level].description);
+  }
+  assert.match(await page.textContent('#advanced'), /Test site\. Origin and policy limits, redaction and approval protections still apply\./);
   await page.selectOption('.request-card .level-select', 'testing');
   assert.equal(await page.$eval('.request-card', node => node.dataset.level), 'testing');
+  assert.equal(await page.$eval('.request-card .level-help', node => node.textContent), LEVEL_TEXT.testing.description);
   assert.equal(await page.$eval('.request-card .level-warning', node => node.hidden), false);
+  assert.equal(await page.getAttribute('.request-card .level-select', 'aria-describedby'), 'level-req_1-help level-req_1-warning');
+  const testingDescription = await computedDescription(page, '.request-card .level-select');
+  assert.match(testingDescription, new RegExp(LEVEL_TEXT.testing.description));
+  assert.match(testingDescription, new RegExp(TESTING_WARNING));
   await page.click('.approve-request');
   const start = (await page.evaluate(() => __sent)).find(message => message.type === 'start');
-  assert.deepEqual(start, { type: 'start', requestId: 'req_1', level: 'testing' }, 'the pairing never rides along');
+  assert.deepEqual(start, { type: 'start', requestId: 'req_1', level: 'testing', tabMode: 'single' }, 'the pairing never rides along');
 });
 
 test('popup: Approve sends the preset level when the user does not change it', async t => {
@@ -308,12 +345,119 @@ test('popup: Approve sends the preset level when the user does not change it', a
   assert.equal(start.level, 'interactive', 'a Reversible ceiling counts as Use');
 });
 
-test('popup: an active testing lease reads "TESTING, no guardrails" in the warning style', async t => {
+test('popup: replacing a request card preserves its selected level and keyboard focus', async t => {
+  const original = request(['http://localhost:3000'], 'full');
+  const page = await popup(t, { local: { ...PAIRED }, requests: [original] });
+  await page.focus('.request-card .level-select');
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await page.$eval('.request-card .level-select', node => node.value), 'interactive');
+  await page.evaluate(updated => {
+    for (const listener of __listeners) listener({ requests: { newValue: [updated] } }, 'session');
+  }, { ...original, reason: 'Updated request' });
+  assert.equal(await page.$eval('.request-reason', node => node.textContent), 'Updated request');
+  assert.equal(await page.$eval('.request-card .level-select', node => node.value), 'interactive');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'level-req_1');
+});
+
+test('popup: replacing an approval card preserves keyboard focus on Approve once', async t => {
+  const approval = { id: 'approval-1', kind: 'click', cls: 'purchase', origin: 'http://localhost:3000',
+    title: 'Checkout', label: 'Pay now', total: 'Total $20.00', note: 'Complete the test order' };
+  const page = await popup(t, { local: { ...PAIRED }, state: { approvals: [approval] } });
+  await page.waitForSelector('.approval-card .primary-button');
+  await page.focus('.approval-card .primary-button');
+  await page.evaluate(updated => {
+    for (const listener of __listeners) listener({ approvals: { newValue: [updated] } }, 'session');
+  }, { ...approval, note: 'Updated test order' });
+  assert.match(await page.textContent('.approval-card'), /Updated test order/);
+  assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Approve once');
+  assert.equal(await page.evaluate(() => document.activeElement.closest('.approval-card')?.dataset.approvalId), 'approval-1');
+});
+
+test('popup: upload consent identifies the file, size and destination before approving that upload', async t => {
+  const approval = { id: 'upload-1', kind: 'upload', cls: 'submit', origin: 'http://localhost:3000',
+    title: 'Application', label: 'Resume', file: { name: 'private-<report>.pdf', size: 56789 } };
+  const page = await popup(t, { local: { ...PAIRED }, state: { approvals: [approval] } });
+  await page.waitForSelector('.approval-card .primary-button');
+  const text = await page.textContent('.approval-card');
+  assert.match(text, /APPROVE UPLOAD/);
+  assert.match(text, /private-<report>\.pdf/);
+  assert.match(text, /55 KB/);
+  assert.match(text, /http:\/\/localhost:3000/);
+  assert.match(text, /one file from the agent's workspace/);
+  assert.match(text, /site receives it when the form is sent/);
+  assert.equal(await count(page, '.approval-card report'), 0, 'the filename is rendered as text');
+  assert.ok(!(await page.evaluate(() => __sent)).some(message => message.type === 'approval_decision'));
+  await page.click('.approval-card .primary-button');
+  assert.deepEqual((await page.evaluate(() => __sent)).filter(message => message.type === 'approval_decision'),
+    [{ type: 'approval_decision', id: 'upload-1', decision: 'approve' }]);
+});
+
+test('popup: normal-text color pairs meet WCAG AA contrast', async t => {
+  const page = await popup(t, { local: { ...PAIRED }, requests: [request(['http://localhost:3000'], 'full')] });
+  const pairs = await page.evaluate(() => {
+    const luminance = color => {
+      const channels = color.match(/[\d.]+/g).slice(0, 3).map(Number).map(value => value / 255)
+        .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+      return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+    };
+    const ratio = (foreground, background) => {
+      const [light, dark] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+      return (light + 0.05) / (dark + 0.05);
+    };
+    const style = (selector, pseudo = null) => getComputedStyle(document.querySelector(selector), pseudo);
+    return [
+      ['muted text on a card', style('.request-meta').color, style('.request-card').backgroundColor],
+      ['muted text on the deepest surface', style('.driver-toggle small').color, style('.driver-toggle').backgroundColor],
+      ['primary button text', style('.primary-button').color, style('.primary-button').backgroundColor],
+      ['placeholder text', style('#testing-origin', '::placeholder').color, style('#testing-origin').backgroundColor],
+      ['green badge text', style('.key-badge').color, style('.key-badge').backgroundColor],
+    ].map(([name, foreground, background]) => ({ name, ratio: ratio(foreground, background) }));
+  });
+  for (const pair of pairs) assert.ok(pair.ratio >= 4.5, `${pair.name}: ${pair.ratio.toFixed(2)}:1`);
+});
+
+test('popup: Approve gate checkboxes are compact, left aligned and keep a visible focus indicator', async t => {
+  const page = await popup(t, { local: { ...PAIRED } });
+  await page.click('#advanced summary');
+  const rows = await page.$$eval('.approval-setting', nodes => nodes.map(node => {
+    const label = node.querySelector('label');
+    const input = node.querySelector('input');
+    const name = node.querySelector('.approval-setting-name');
+    const help = node.querySelector('.field-help');
+    const labelBox = label.getBoundingClientRect();
+    const inputBox = input.getBoundingClientRect();
+    const nameBox = name.getBoundingClientRect();
+    return {
+      width: inputBox.width, height: inputBox.height,
+      inputLeft: inputBox.left - labelBox.left,
+      nameGap: nameBox.left - inputBox.right,
+      helpOffset: help.getBoundingClientRect().left - nameBox.left,
+      justify: getComputedStyle(label).justifyContent,
+      align: getComputedStyle(label).textAlign,
+    };
+  }));
+  assert.equal(rows.length, 3);
+  for (const row of rows) {
+    assert.equal(row.width, 31);
+    assert.equal(row.height, 31);
+    assert.equal(row.inputLeft, 0);
+    assert.equal(row.nameGap, 8);
+    assert.equal(row.helpOffset, 0);
+    assert.equal(row.justify, 'flex-start');
+    assert.equal(row.align, 'left');
+  }
+  await page.keyboard.press('Tab');
+  await page.focus('#approval-purchase');
+  assert.equal(await page.$eval('#approval-purchase', node => node.matches(':focus-visible')), true);
+  assert.equal(await page.$eval('#approval-purchase', node => getComputedStyle(node).outlineStyle), 'solid');
+});
+
+test('popup: an active testing lease reads "TEST SITE" in the warning style', async t => {
   const session = { requestId: 'req_1', leaseId: 'lease-1', tabId: 7, origin: 'http://localhost:3000', status: 'active', level: 'testing' };
   const active = { ...request(['http://localhost:3000'], 'testing'), state: 'active' };
   const page = await popup(t, { local: { ...PAIRED, status: 'active' }, requests: [active], state: { status: 'active', session } });
   await page.waitForFunction(() => document.querySelector('#state-label').dataset.state === 'testing');
-  assert.equal(await page.$eval('#state-label', node => node.textContent), 'TEST SITE, no guardrails');
+  assert.equal(await page.$eval('#state-label', node => node.textContent), 'TEST SITE');
   assert.equal(await page.$eval('#state-label', node => getComputedStyle(node).color), 'rgb(168, 50, 42)');
 
   const full = await popup(t, { local: { ...PAIRED, status: 'active' }, requests: [active], state: { status: 'active', session: { ...session, level: 'full' } } });
@@ -495,7 +639,7 @@ test('popup: a tab off the request offers "Open <host>"; the click asks Chrome f
   const button = await page.$('.open-request');
   assert.equal(await button.textContent(), 'Open shop.example.com');
   assert.match(await page.$eval('.request-mismatch', node => node.textContent),
-    /asked for: https:\/\/shop\.example\.com\. Open shop\.example\.com opens it in a new window; approve there with the FAI Browser icon\./);
+    /asked for: https:\/\/shop\.example\.com\. Open shop\.example\.com opens it in a new tab; approve there with the FAI Browser icon\./);
   await button.click();
   await page.waitForFunction(() => __sent.some(message => message.type === 'open'));
   assert.deepEqual(await page.evaluate(() => __permissionRequests), [], 'no Chrome permission for a single origin');
@@ -506,10 +650,10 @@ test('popup: a tab off the request offers "Open <host>"; the click asks Chrome f
   await page.waitForFunction(() => /click the FAI Browser icon \(or Ctrl\+Shift\+Y\) to approve/.test(document.querySelector('#status').textContent));
 });
 
-test('popup: a matching tab keeps "Approve this tab" as #approve, with a secondary "Open in a new window"', async t => {
+test('popup: a matching tab keeps "Approve this tab" as #approve, with a secondary "Open in a new tab"', async t => {
   const page = await popup(t, { local: { ...PAIRED }, requests: [{ ...request(['http://localhost:3000'], 'read-only'), url: 'http://localhost:3000/app' }] });
   assert.equal(await page.$eval('#approve', node => node.textContent), 'Approve this tab');
-  assert.equal(await page.$eval('.link-button.open-request', node => node.textContent), 'Open in a new window');
+  assert.equal(await page.$eval('.link-button.open-request', node => node.textContent), 'Open in a new tab');
   await page.click('.link-button.open-request');
   await page.waitForFunction(() => __sent.some(message => message.type === 'open'));
   assert.equal((await openMessage(page)).requestId, 'req_1');
@@ -601,6 +745,21 @@ test('popup: "Open requested pages right away" is on by default (absent or any o
   assert.equal(await legacy.$eval('#open-right-away', node => node.checked), true);
 });
 
+test('popup: tab access defaults to single, multiple is visible at approval and asks only for the current site', async t => {
+  const page = await popup(t, { local: { ...PAIRED }, requests: [request(['http://localhost:3000'], 'read-only')] });
+  assert.equal(await page.$eval('#tab-mode', node => node.value), 'single');
+  assert.match(await page.textContent('.tab-access'), /One task tab/);
+  await page.click('#advanced summary');
+  await page.selectOption('#tab-mode', 'multiple');
+  await page.waitForFunction(() => __local.tabMode === 'multiple');
+  assert.match(await page.textContent('.tab-access'), /Multiple task tabs/);
+  await page.click('.approve-request');
+  const asked = await page.evaluate(() => __permissionRequests);
+  assert.deepEqual(asked[0].origins, ['http://localhost/*']);
+  const start = await page.evaluate(() => __sent.find(message => message.type === 'start'));
+  assert.equal(start.tabMode, 'multiple');
+});
+
 // --- arm.html: the waiting prompt next to a page that opened by itself ------------------------------------------
 
 // Loads arm.html?tab=<tabId> with a fake chrome API: `arms` is chrome.storage.session.armedTabs, `requests` the
@@ -618,6 +777,8 @@ async function armPage(t, { arms, requests = [], permissions = null, tabId = 9, 
     globalThis.__listeners = listeners;
     globalThis.__sent = [];
     globalThis.__closed = 0;
+    globalThis.__access = true;
+    globalThis.__permissionCalls = [];
     globalThis.__reply = null;
     window.close = () => { globalThis.__closed++; };
     globalThis.chrome = {
@@ -629,9 +790,18 @@ async function armPage(t, { arms, requests = [], permissions = null, tabId = 9, 
       runtime: {
         async sendMessage(message) {
           __sent.push(message);
-          return __reply ?? { status: null };
+          if (__reply) return __reply;
+          if (message.type === 'arm_prepare') return { approval: { token: 'prepared', pattern: 'https://shop.example.com/*' } };
+          if (message.type === 'arm_approve') return message.granted
+            ? { status: 'active', session: { tabId: 9, requestId: message.requestId } }
+            : { error: 'Browser site access was not granted.' };
+          return { status: null };
         },
       },
+      permissions: { request(permission) {
+        __permissionCalls.push({ permission, active: navigator.userActivation.isActive });
+        return Promise.resolve(__access);
+      } },
       commands: { async getAll() { return [{ name: '_execute_action', shortcut: 'Ctrl+Shift+Y' }]; } },
       action: { async getUserSettings() { return { isOnToolbar: pinned }; } },
     };
@@ -647,15 +817,17 @@ const ARM_REQUEST = { ...request(['https://shop.example.com'], 'reversible'), ur
 
 test('arm.html says to click the icon on the opened page, names the client, host, reason and level, and offers the levels', async t => {
   const page = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST] });
-  assert.match(await page.$eval('#headline', node => node.textContent), /Click the FAI Browser icon in the toolbar of the page that just opened/);
+  assert.match(await page.$eval('#headline', node => node.textContent), /Approve this request/);
   const detail = await page.$eval('#detail', node => node.textContent);
   assert.match(detail, /Codex asks for shop\.example\.com: "Run the checkout test"/);
-  assert.match(detail, /Click the FAI Browser icon there \(or Ctrl\+Shift\+Y\) to let it use that tab at the level below\. Nothing happens until you do\./);
+  assert.match(detail, /Click the FAI Browser icon there \(or Ctrl\+Shift\+Y\), or approve here at the level below/);
   assert.equal(await page.$eval('#level', node => node.value), 'reversible');
   assert.deepEqual(await page.$$eval('#level option', nodes => nodes.map(node => node.value)), ['read-only', 'reversible'],
     'never above what the agent asked for');
   assert.deepEqual(await page.$$eval('#level option', nodes => nodes.map(node => node.textContent)), ['Read', 'Use']);
   assert.match(await page.$eval('#level-help', node => node.textContent), /Clicks, picks options/);
+  assert.equal(await page.getAttribute('#level', 'aria-describedby'), 'level-help');
+  assert.equal(await computedDescription(page, '#level'), LEVEL_TEXT.reversible.description);
   assert.equal(await page.$eval('#pin-hint', node => node.hidden), true, 'pinned: no hint');
   assert.equal(await page.$eval('#level-warning', node => node.hidden), true);
   assert.equal(await page.evaluate(() => __closed), 0);
@@ -684,6 +856,18 @@ test('arm.html offers Testing only when every requested origin is a listed envir
   const page = await armPage(t, { arms: [{ ...ARM, level: 'interactive' }], requests: [local], permissions: listed });
   assert.deepEqual(await page.$$eval('#level option', nodes => nodes.map(node => node.value)), ['read-only', 'interactive', 'full', 'testing']);
   assert.equal(await page.$eval('#level', node => node.value), 'interactive');
+  await page.selectOption('#level', 'testing');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'arm_level' && message.level === 'testing'));
+  await page.evaluate(arm => {
+    for (const listener of __listeners) listener({ armedTabs: { newValue: [arm] } }, 'session');
+  }, { ...ARM, level: 'testing' });
+  assert.equal(await page.$eval('#level-help', node => node.textContent), LEVEL_TEXT.testing.description);
+  assert.equal(await page.$eval('#level-warning', node => node.textContent), TESTING_WARNING);
+  assert.equal(await page.$eval('#level-warning', node => node.hidden), false);
+  assert.equal(await page.getAttribute('#level', 'aria-describedby'), 'level-help level-warning');
+  const testingDescription = await computedDescription(page, '#level');
+  assert.match(testingDescription, new RegExp(LEVEL_TEXT.testing.description));
+  assert.match(testingDescription, new RegExp(TESTING_WARNING));
   // An interactive request on a listed test site still offers nothing above Use.
   const use = await armPage(t, { arms: [{ ...ARM, level: 'interactive' }], requests: [{ ...local, mode: 'interactive' }], permissions: listed });
   assert.deepEqual(await use.$$eval('#level option', nodes => nodes.map(node => node.value)), ['read-only', 'interactive']);
@@ -816,4 +1000,32 @@ test('popup: the privacy note names where page text goes for the current driver'
   await agent.waitForFunction(() => /coding agent\.$/.test(document.querySelector('#privacy-note').textContent));
   const jev = await popup(t, { local: { ...PAIRED }, state: { control: { driver: 'jev', jevAvailable: true } } });
   await jev.waitForFunction(() => /Jev provider/.test(document.querySelector('#privacy-note').textContent));
+});
+
+
+test('arm.html Approve requests exact host permission in the click gesture, then confirms the armed tab', async t => {
+  const page = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST] });
+  await page.waitForFunction(() => !document.querySelector('#approve').disabled);
+  assert.equal(await page.locator('#approve').textContent(), 'Approve Use');
+  assert.equal(await page.evaluate(() => document.activeElement.id), '', 'approval is not focused automatically');
+  await page.locator('#approve').focus();
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => __closed > 0);
+  assert.deepEqual(await page.evaluate(() => __permissionCalls), [{ permission: { origins: ['https://shop.example.com/*'] }, active: true }]);
+  const message = await page.evaluate(() => __sent.find(item => item.type === 'arm_approve'));
+  assert.equal(message.tabId, 9);
+  assert.equal(message.requestId, ARM.requestId);
+  assert.equal(message.at, ARM.at);
+  assert.equal(message.level, 'reversible');
+  assert.equal(message.granted, true);
+});
+
+test('arm.html denied browser access leaves the modal open and announces the failure', async t => {
+  const page = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST] });
+  await page.evaluate(() => { __access = false; });
+  await page.click('#approve');
+  await page.waitForFunction(() => /not granted/.test(document.querySelector('#status').textContent));
+  assert.equal(await page.evaluate(() => __closed), 0);
+  assert.equal(await page.locator('#status').getAttribute('role'), 'status');
+  await page.waitForFunction(() => !document.querySelector('#approve').disabled);
 });

@@ -455,6 +455,8 @@ export { COMMIT_ACTION };
 
 const TEXT_TYPES = new Set(['text', 'email', 'search', 'tel', 'url', 'number', 'textarea']);
 const TOGGLE_TYPES = new Set(['checkbox', 'radio']);
+const MENU_ITEM_ROLES = new Set(['menuitem', 'menuitemcheckbox', 'menuitemradio']);
+const CHECKABLE_ROLES = new Set(['checkbox', 'radio', 'menuitemcheckbox', 'menuitemradio']);
 
 function originOf(url) {
   return new URL(url).origin;
@@ -590,7 +592,7 @@ function secretFillAllowed(control, name, instruction) {
 }
 
 function isToggle(control) {
-  return control.role === 'checkbox' || control.role === 'radio' || TOGGLE_TYPES.has(control.type);
+  return CHECKABLE_ROLES.has(control.role) || TOGGLE_TYPES.has(control.type);
 }
 
 /**
@@ -642,7 +644,7 @@ function gatedControl(control, facts) {
   if (!facts.purchasePage || !control || control.consent) return control;
   const role = control.role || 'control';
   // Buttons, script links and submits; an option only selects (a plan picker's choice is not the purchase).
-  const button = role === 'button' || (role === 'link' && !control.href) || control.type === 'submit';
+  const button = role === 'button' || role === 'tab' || (role === 'link' && !control.href) || control.type === 'submit';
   if (!button || isTextEntry(control) || control.options?.length || isToggle(control)) return control;
   if (['purchase', 'destructive', 'sign_in', 'consent_accept'].includes(control.risk)) return control;
   if (!purchaseControl(control.label, { checkout: control.region === 'checkout', navigation: control.region === 'navigation' })) return control;
@@ -734,8 +736,8 @@ export const INTENT_CLASSES = Object.freeze({
 });
 
 /**
- * True for a refused control Jev may clear (the ambiguous tier): a button or option the level refuses for its label
- * class (submit or purchase) alone, below testing with controls, whose label is in the ambiguous tier and not one
+ * True for a refused control Jev may clear (the ambiguous tier): a button, option or menu item the level refuses for
+ * its label class (submit or purchase) alone, below testing with controls, whose label is in the ambiguous tier and not one
  * the user forbade; not a text entry, select, consent button, password or payment field, and not on a page with a
  * password or payment field. A page-script risk counts only with the script's own `ambiguous` mark (a form submit or
  * a payment form never carries it); without a risk (an SDK bridge), a submit-type control is never one.
@@ -744,7 +746,8 @@ function intentEligible(control, block, guard, facts) {
   if (!block?.capability || !['submit', 'purchase'].includes(block.kind)) return false;
   if (guard.testing || !guard.allows('controls') || guard.forbids(control.label) || facts.sensitiveForm) return false;
   const role = control.role || 'control';
-  if (!['button', 'option'].includes(role) || isTextEntry(control) || control.options?.length || control.consent) return false;
+  if (!['button', 'option'].includes(role) && !MENU_ITEM_ROLES.has(role)
+    || isTextEntry(control) || control.options?.length || control.consent) return false;
   if (control.type === 'password' || control.sensitive || paymentField(control)) return false;
   if (control.risk !== undefined ? control.ambiguous !== true : control.type === 'submit') return false;
   return labelTier(control.label) === 'ambiguous' && labelClasses(control.label).includes(block.kind);
@@ -780,7 +783,7 @@ function safeSubmit(control, facts) {
  * label or risk class (purchase, forbid, sign_in, delete, submit, consent_accept, risk); `capability` is what would
  * allow it (null: nothing does, for a `forbid` addition or a page-script block). Checks, in order: the request's
  * additions (every role), links that are actions (destructiveLink), password and payment fields, the page script's
- * risk class and the label classes (buttons, options, text entries, selects; `labelled` decides for other roles).
+ * risk class and the label classes (buttons, options, menu items, text entries, selects; `labelled` decides for other roles).
  */
 function controlBlock(control, guard, facts, { labelled } = {}) {
   if (guard.forbids(control.label)) return { kind: 'forbid', capability: null };
@@ -802,8 +805,8 @@ function controlBlock(control, guard, facts, { labelled } = {}) {
     if (!capability) return { kind: 'risk', capability: null };
     if (!guard.allows(capability)) return { kind: risk, capability };
   }
-  const checkLabel = labelled ?? (role === 'button' || role === 'option' || role === 'combobox' || isTextEntry(control)
-    || Boolean(control.options?.length));
+  const checkLabel = labelled ?? (role === 'button' || role === 'tab' || role === 'option' || role === 'combobox' || isTextEntry(control)
+    || MENU_ITEM_ROLES.has(role) || Boolean(control.options?.length));
   if (role !== 'link' && checkLabel) {
     const kind = guard.blocks(control.label);
     if (kind) return { kind, capability: CLASS_CAPABILITY[kind] };
@@ -855,6 +858,24 @@ function markOverlayActions(observation, actions) {
     }
   }
   actions.splice(0, actions.length, ...main, ...popup);
+}
+
+/** Open floating menus and task overlays are the current task: their choices precede and survive background actions. */
+function markFloatingActions(observation, actions) {
+  const inside = new Set((observation.controls ?? []).filter(control => control?.floating === true).map(control => String(control.id)));
+  if (!inside.size) return;
+  const floating = [];
+  const background = [];
+  for (const action of actions) {
+    if (action.target !== undefined && inside.has(String(action.target))) {
+      action.floating = true;
+      action.description = `${action.description} (in an open floating menu or overlay)`;
+      floating.push(action);
+    } else {
+      background.push(action);
+    }
+  }
+  actions.splice(0, actions.length, ...floating, ...background);
 }
 
 export function offeredActions(observation, options = {}) {
@@ -1020,11 +1041,12 @@ export function offeredActions(observation, options = {}) {
     }
     // Buttons, checkboxes, radios and other clickable roles.
     const toggle = isToggle(control);
-    const state = toggle && typeof control.checked === 'boolean'
-      ? ` (currently ${control.checked ? 'checked' : 'unchecked'})`
+    const selection = role === 'tab';
+    const state = (toggle || selection) && typeof control.checked === 'boolean'
+      ? ` (currently ${selection ? (control.checked ? 'selected' : 'unselected') : (control.checked ? 'checked' : 'unchecked')})`
       : '';
     const action = { type: 'click', ...base, description: `Click ${role} ${ref}: ${label}${state}` };
-    if (toggle && typeof control.checked === 'boolean') action.checked = control.checked;
+    if ((toggle || selection) && typeof control.checked === 'boolean') action.checked = control.checked;
     if (gate) {
       action.needsApproval = gate;
       action.description += ' (asks the user)';
@@ -1041,6 +1063,7 @@ export function offeredActions(observation, options = {}) {
     controlActions.push(...named.slice(0, INTENT_LIMIT));
   }
   markOverlayActions(observation, controlActions);
+  markFloatingActions(observation, controlActions);
 
   // Page-level actions are reserved so they survive the cap on busy pages.
   const reserved = [
@@ -1153,7 +1176,7 @@ function sameControl(action, record) {
 export function actionClass(action) {
   if (action?.consent) return 'consent';
   if (action?.overlayDismiss) return 'dismiss';
-  if (action?.type === 'navigate_allowed_url') return 'link';
+  if (['navigate_allowed_url', 'open_tab'].includes(action?.type)) return 'link';
   if (['scroll', 'wait', 'history', 'switch_tab'].includes(action?.type)) return 'page';
   if (action?.type === 'click' && action.role === 'link') return 'link';
   return 'control';
@@ -1635,7 +1658,7 @@ function applyScreenshot(step, value, revision) {
 
 /**
  * A screenshot's redaction note (extension/offscreen.js): `redactions`, how many boxes hide secrets on it, and
- * `redaction: "withheld"` when the whole frame was blurred because the page would not hold still. Numbers and one
+ * `redaction: "withheld"` when the whole frame was filled solid black because the page would not hold still. Numbers and one
  * fixed word only.
  */
 export function redactionMeta(value) {
@@ -1819,22 +1842,31 @@ function stepperArrow(action) {
     && /^(?:previous|next|decrease|increase)(?:-value)? \S+ (?:before|after|beside) /.test(String(action.label ?? ''));
 }
 
+/** A non-sensitive supplied-text fill whose control is explicitly a search or filter field. */
+function staleSearchFill(action, observation) {
+  if (action?.type !== 'fill_supplied_text' || action.sensitive || action.needsApproval) return false;
+  const control = observation.controls?.find(candidate => String(candidate.id) === String(action.target));
+  if (!control || control.sensitive || control.type === 'password' || paymentField(control)) return false;
+  return control.type === 'search' || control.role === 'searchbox'
+    || labelSpellings(control.label).some(label => /^(?:search|find|filter)\b/i.test(label));
+}
+
 /**
  * Host act() stale re-resolve: the one action offered on the fresh observation that is the same control as `action`
  * from `offer` (same type, role, label, value, supplied name, destination, scroll direction, frame and picker
  * click), on the same origin and path; with several, the one whose neighbouring controls also carry the same
  * labels. Null when none or more than one match, when the page moved to another path, or for a consent button.
- * Only for a link, a derived-label stepper arrow (stepperArrow) or a picker-open click.
+ * Only for a link, a derived-label stepper arrow (stepperArrow), a picker-open click or a search/filter supplied
+ * fill (staleSearchFill). Any other button, select or fill stays stale for the host.
  * Also null (the host decides on the new page) for a control whose label trips a guardrail class (delete, submit,
  * purchase, sign-in, commit) or whose risk is above reversible, when a consent dialog shows on the fresh page, and
  * when the number of such controls changed (a removed row shifts every same-label "Delete" one place).
  */
 function staleControl(action, offer, fresh) {
   if (action.consent || action.type === 'done' || action.type === 'handoff') return null;
-  // Only the controls it was written for: a link, a derived-label stepper arrow, a picker-open click. Any other
-  // button, select or fill ("Next" on a later wizard step, "OK" on another dialog) stays stale for the host.
   const stepper = stepperArrow(action);
-  if (actionClass(action) !== 'link' && !stepper && !(action.type === 'click' && action.opens === true)) return null;
+  const searchFill = staleSearchFill(action, offer.observation);
+  if (actionClass(action) !== 'link' && !stepper && !(action.type === 'click' && action.opens === true) && !searchFill) return null;
   if (consentOf(fresh)) return null;
   if (action.target !== undefined) {
     const control = offer.observation.controls?.find(candidate => String(candidate.id) === String(action.target));
@@ -2030,7 +2062,7 @@ function configure(options, { step = false } = {}) {
   const requested = options.mode ?? 'read-only';
   if (!MODES.has(requested)) throw new TypeError('Unknown action policy');
   const grant = options.grant && typeof options.grant === 'object' && isLevel(options.grant.level)
-    ? { level: options.grant.level, testing: options.grant.level === 'testing' }
+    ? { level: options.grant.level, testing: options.grant.level === 'testing', tabMode: options.grant.tabMode === 'multiple' ? 'multiple' : 'single' }
     : null;
   if (options.grant !== undefined && options.grant !== null && !grant) throw new TypeError('grant.level must be a level');
   const level = clampLevel(requested, grant?.level ?? 'full');
@@ -2044,6 +2076,7 @@ function configure(options, { step = false } = {}) {
       granted: grant?.level ?? null,
       effective: level,
       testing: level === 'testing',
+      tabMode: grant?.tabMode ?? 'single',
       // What the approved origins cover: `domain` when they hold a domain root ("https://*.example.com", which the
       // daemon keeps only when the user approved it), else `origin`.
       scope: siteRoots(options.allowedOrigins).length ? 'domain' : 'origin',
@@ -5394,12 +5427,12 @@ function actChoice(choice) {
 /**
  * What is wrong with an act's choice on `offer`, or null: exactly one of an offered action id, a point, a URL, a
  * history move, a tab, a dialog answer and a fill batch (a key may name the field it is pressed in); text only for
- * an offered fill (and every fill needs one), submit only after typed text, hover only on an offered control, a
+ * an offered host-text fill (and every such fill needs one), submit after typed or supplied text, hover on a control, a
  * file only for an upload. Without a revision: never a point, an action the user approves or a secret use.
  */
 export function checkActChoice(offer, choice, { revisionless = false } = {}) {
   const spec = actChoice(choice);
-  const given = ['point', 'url', 'nav', 'tab', 'dialog', 'fills', 'key'].filter(key => spec[key] !== undefined && spec[key] !== null);
+  const given = ['point', 'url', 'openTab', 'nav', 'tab', 'dialog', 'fills', 'key'].filter(key => spec[key] !== undefined && spec[key] !== null);
   if (given.length > 1) return `Give one of ${given.join(' and ')}, not both.`;
   const kind = given[0] ?? null;
   if (kind && !['key'].includes(kind) && spec.actionId !== undefined) return `actionId and ${kind} are exclusive: send one.`;
@@ -5408,7 +5441,7 @@ export function checkActChoice(offer, choice, { revisionless = false } = {}) {
   const find = id => offer.actions.find(candidate => candidate.id === id) ?? null;
   const action = typeof spec.actionId === 'string' ? find(spec.actionId) : null;
   if (typeof spec.actionId === 'string' && !action) return `Action ${spec.actionId} was not offered for revision ${offer.revision}.`;
-  if (kind === 'url' && (typeof spec.url !== 'string' || !spec.url || spec.url.length > 2048)) return 'url must be a URL on the approved origins.';
+  if (['url', 'openTab'].includes(kind) && (typeof spec[kind] !== 'string' || !spec[kind] || spec[kind].length > 2048)) return 'url must be a URL on the approved origins.';
   if (kind === 'nav' && !HISTORY_MOVES.has(spec.nav)) return 'nav must be back, forward or reload.';
   if (kind === 'tab' && (typeof spec.tab !== 'string' || !/^t\d{1,3}$/.test(spec.tab))) return 'tab must be a tab id from tabs (t0, t1, ...).';
   if (kind === 'dialog' && !['accept', 'dismiss'].includes(spec.dialog)) return 'dialog must be accept or dismiss.';
@@ -5434,7 +5467,8 @@ export function checkActChoice(offer, choice, { revisionless = false } = {}) {
     if (action?.type !== 'fill') return 'text goes with a fill action ("fill ... with text"); passwords and secrets never (use fill_secret).';
   }
   if (action?.type === 'fill' && spec.text === undefined && !spec.hover && kind !== 'key') return `${action.id} is a fill: give the text to type.`;
-  if (spec.submit !== undefined && spec.submit !== false && !(spec.fills || action?.type === 'fill')) return 'submit goes with typed text (text or fills).';
+  if (spec.submit !== undefined && spec.submit !== false
+    && !(spec.fills || ['fill', 'fill_supplied_text'].includes(action?.type))) return 'submit goes with typed text (text or fills).';
   if (spec.hover && (!action || action.target === undefined || kind)) return 'hover takes the actionId of an offered control.';
   if (spec.file !== undefined && action?.type !== 'upload') return 'file goes with an upload action.';
   if (action?.type === 'upload' && spec.file === undefined) return `${action.id} is an upload: give the file.`;
@@ -5454,6 +5488,7 @@ function didLine(action) {
     case 'click': return `click ${label}`;
     case 'select': return `select ${JSON.stringify(String(action.optionLabel ?? action.value ?? ''))} in ${label}`;
     case 'navigate_allowed_url': return `open ${action.url}`;
+    case 'open_tab': return `open task tab ${action.url}`;
     case 'history': return `go ${action.move}`;
     case 'press': return action.target !== undefined ? `press ${action.key} in ${JSON.stringify(String(action.label ?? '').replace(/^press \S+ in /, '').slice(0, 80))}` : `press ${action.key}`;
     case 'hover': return `hover ${label}`;
@@ -5558,6 +5593,9 @@ export class BrowserRuntime {
       if (logs && !session.wantLogs) warnings.push('logs_need_testing');
       return redactSecrets({
         observation: { ...compactForDecision(observation), warnings, consent: observation.consent ?? null,
+          ...(observation.records ? { records: observation.records, recordLists: observation.recordLists,
+            recordsTruncated: observation.recordsTruncated === true,
+            ...(observation.recordState ? { recordState: observation.recordState } : {}) } : {}),
           ...(observation.overlay ? { overlay: observation.overlay } : {}),
           // Logs only when asked for on a Test site, a dialog only on a Test site (the hook exists only there).
           ...pageExtras({ tabs: observation.tabs, ...(config.level === 'testing' ? { dialog: observation.dialog } : {}),
@@ -5583,7 +5621,7 @@ export class BrowserRuntime {
     const spec = actChoice(choice);
     const point = spec.point;
     const actionId = spec.actionId ?? null;
-    const composedKind = ['url', 'nav', 'tab', 'dialog', 'fills', 'key'].some(key => spec[key] !== undefined);
+    const composedKind = ['url', 'openTab', 'nav', 'tab', 'dialog', 'fills', 'key'].some(key => spec[key] !== undefined);
     if (point !== undefined ? !(point && typeof point === 'object' && Number.isFinite(point.x) && Number.isFinite(point.y))
       : !(typeof actionId === 'string' && actionId) && !composedKind) {
       throw new TypeError('An action id or a point {x, y} is required');
@@ -5758,12 +5796,14 @@ export class BrowserRuntime {
           // control when exactly one offered action on the fresh page matches it (staleControl; for an act without a
           // revision or a batch step, any plain control whose label and class are unchanged), after the guards judged
           // it again on that page. Otherwise stale. A point click is never re-resolved (its coordinates were read off
-          // the stale page), nor an approved click (bound to the revision the user saw).
+          // the stale page), nor an approved click (bound to the revision the user saw), nor a field submission.
           if (error?.code !== 'stale' || point || next.approvalId) throw error;
           const fresh = await session.observe();
           session.visit(fresh);
           let again = staleControl(next, base, fresh);
-          if (!again && (loose || index > 0)) again = this.#sameControlOn(next, base, fresh)?.action ?? null;
+          if (!again && next.type !== 'submit_field' && (loose || index > 0)) {
+            again = this.#sameControlOn(next, base, fresh)?.action ?? null;
+          }
           if (!again) throw error;
           if (typeof next.text === 'string' && again.text === undefined) again = { ...again, text: next.text };
           const reguarded = await hostGuard(fresh, again);
@@ -5803,8 +5843,8 @@ export class BrowserRuntime {
 
   /**
    * A host-composed act as the plan of actions to run (`{ plan: [{ action } | { submitFor }] }`), or the refusal it
-   * ends with (`{ result }`): fills with the host's text (one, or a batch, then Enter when `submit`), a hover, a key,
-   * a URL on the granted origins, a history move, another tab of the lease or a JS dialog's answer. Levels: a URL,
+   * ends with (`{ result }`): fills with host or supplied text (one, or a batch, then Enter when `submit`), a hover,
+   * a key, a URL on the granted origins, a history move, another tab of the lease or a JS dialog's answer. Levels: a URL,
    * a history move and a tab switch are navigation (read-only); a hover, a key and a fill need controls (reversible);
    * a shortcut with Ctrl or Cmd needs full; a dialog answer testing. The page script checks each again.
    */
@@ -5823,10 +5863,15 @@ export class BrowserRuntime {
       if (spec.submit) plan.push({ submitFor: plan.at(-1).action });
       return { plan };
     }
-    if (spec.url !== undefined) {
+    if (spec.url !== undefined || spec.openTab !== undefined) {
+      if (spec.openTab !== undefined && config.grant?.tabMode !== 'multiple') {
+        setOutcome(result, 'refused_action');
+        result.needs.message = 'This request allows one task tab. Choose Multiple task tabs and approve a new request to open another.';
+        return { result };
+      }
       let target;
       try {
-        target = new URL(spec.url, before.url);
+        target = new URL(spec.openTab ?? spec.url, before.url);
       } catch {
         target = null;
       }
@@ -5850,10 +5895,17 @@ export class BrowserRuntime {
         session.why('url:refused');
         return { result };
       }
-      return { plan: [{ action: { type: 'navigate_allowed_url', url: target.href, label: target.href, composed: true } }] };
+      return { plan: [{ action: { type: spec.openTab !== undefined ? 'open_tab' : 'navigate_allowed_url', url: target.href, label: target.href, composed: true } }] };
     }
     if (spec.nav !== undefined) return { plan: [{ action: { type: 'history', move: spec.nav, label: `go ${spec.nav}` } }] };
-    if (spec.tab !== undefined) return { plan: [{ action: { type: 'switch_tab', tab: spec.tab, label: `tab ${spec.tab}` } }] };
+    if (spec.tab !== undefined) {
+      if (config.grant?.tabMode !== 'multiple') {
+        setOutcome(result, 'refused_action');
+        result.needs.message = 'This request allows one task tab; switching task tabs requires Multiple task tabs approval.';
+        return { result };
+      }
+      return { plan: [{ action: { type: 'switch_tab', tab: spec.tab, label: `tab ${spec.tab}` } }] };
+    }
     if (spec.dialog !== undefined) {
       if (config.level !== 'testing') {
         setOutcome(result, 'refused_action');
@@ -6242,7 +6294,7 @@ export class BrowserRuntime {
         timeoutMs,
         runId: first.result.runId,
         mode: prior.permissions.requested,
-        grant: prior.grant ? { level: prior.grant.level } : options.grant,
+        grant: prior.grant ? { level: prior.grant.level, tabMode: prior.grant.tabMode } : options.grant,
         permissions: prior.permissions,
         allowedOrigins: prior.allowedOrigins,
         guardrails: prior.guardrails,
@@ -6357,7 +6409,7 @@ export class BrowserRuntime {
           timeoutMs: Math.max(1000, Math.floor(timeoutMs - (Date.now() - started))),
           runId,
           mode: call.permissions.requested,
-          grant: grant ? { level: grant.level } : undefined,
+          grant: grant ? { level: grant.level, tabMode: grant.tabMode } : undefined,
           permissions: call.permissions,
           allowedOrigins: call.allowedOrigins,
           guardrails: (prev?.config ?? call).guardrails,

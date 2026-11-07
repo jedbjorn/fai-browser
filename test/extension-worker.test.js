@@ -38,7 +38,7 @@ test.afterEach(() => {
 // options.daemonBudget: the per-request budget the fake daemon reports in effect (hello and settings replies).
 function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode = 'daemon', leaseOrigins = null, permissions,
   hostGrants, local: extraLocal = {}, leaseError = null, opened = null, sessionStore = {}, daemonBudget = null,
-  driverControl = null, native = null } = {}) {
+  driverControl = null, native = null, actionOpenPopup = null, lastWindow = undefined, normalWindows = [], tabCreateFails = false } = {}) {
   const nativeCalls = []; // chrome.runtime.sendNativeMessage(host, message) calls
   const events = name => ({
     listeners: [],
@@ -57,12 +57,14 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
   Object.assign(local, extraLocal);
   const grants = new Set(hostGrants ?? []);
   const removed = [];
-  const windowsCreated = []; // chrome.windows.create options ("Open <host>")
+  const windowsCreated = []; // fallback normal windows
+  const tabsCreated = []; // task tabs in an existing normal window
   const popupWindows = []; // chrome.windows.create options for the approval and prompt windows (type popup)
   const openPopups = new Set(); // approval and prompt windows not closed yet
   const windowUpdates = [];
+  const actionPopupCalls = [];
   const windowsRemoved = []; // chrome.windows.remove ids
-  // Tabs that openWindow created, as chrome.tabs.get reports them once loaded; `opened` overrides url and title.
+  // Tabs that openTaskTab created, as chrome.tabs.get reports them once loaded; `opened` overrides url and title.
   const openedTabs = new Map();
   const permissionAdded = events('onAdded');
   const session = clone(sessionStore);
@@ -181,7 +183,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     if (message.type === 'lease') {
       if (leaseError) return { ok: false, error: { code: leaseError, message: 'Refused' } };
       const origins = typeof leaseOrigins === 'function' ? leaseOrigins(message) : leaseOrigins;
-      return { ok: true, data: { leaseId: LEASE_ID, requestId: message.requestId, ...(origins ? { origins } : {}) } };
+      return { ok: true, data: { leaseId: LEASE_ID, requestId: message.requestId, grant: { tabMode: message.tabMode ?? 'single' }, ...(origins ? { origins } : {}) } };
     }
     if (message.type === 'validate') return { ok: true, data: { valid: true } };
     return { ok: true, data: { ok: true } };
@@ -274,6 +276,12 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       async setBadgeBackgroundColor() {},
       async setTitle() {},
       async setPopup({ tabId, popup }) { tabPopups.set(tabId, popup); },
+      ...(actionOpenPopup ? {
+        async openPopup() {
+          actionPopupCalls.push({});
+          if (actionOpenPopup === 'error') throw new Error('User gesture required');
+        },
+      } : {}),
       onClicked: events('onClicked'),
     },
     alarms: {
@@ -300,6 +308,16 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       },
     } : {}),
     windows: {
+      async getLastFocused(options) {
+        assert.equal(options?.windowTypes?.length, 1);
+        assert.equal(options.windowTypes[0], 'normal');
+        if (lastWindow === null) throw new Error('No normal window');
+        return lastWindow ?? { id: 2, type: 'normal', incognito: false, left: 100, top: 50, width: 1200, height: 800 };
+      },
+      async getAll(options) {
+        assert.deepEqual(clone(options), { windowTypes: ['normal'] });
+        return normalWindows;
+      },
       async get(id) {
         if (!openPopups.has(id) && id !== 2) throw new Error(`No window with id: ${id}.`);
         return { id };
@@ -324,6 +342,13 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       },
     },
     tabs: {
+      async create(options) {
+        if (tabCreateFails) throw new Error('Window closed');
+        tabsCreated.push(clone(options));
+        const id = 8 + tabsCreated.length;
+        openedTabs.set(id, { url: options.url, windowId: options.windowId, status: 'complete', title: 'Cart', ...(opened ?? {}) });
+        return { id, windowId: options.windowId, active: true };
+      },
       onCreated: events('onCreated'),
       onActivated: events('onActivated'),
       onRemoved: events('onRemoved'),
@@ -337,9 +362,17 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
         if (openedTabs.has(id)) return { id, windowId: 2, groupId, ...openedTabs.get(id) };
         return { id, url: tab.url, status: tab.status, windowId: 1, groupId };
       },
-      async group({ tabIds }) {
-        const groupId = nextGroup++;
-        groups.set(groupId, {});
+      async remove(id) { openedTabs.delete(id); },
+      async update(id, info) {
+        if (info.active) activeTabId = id;
+        return this.get(id);
+      },
+      async move(id, info) {
+        if (openedTabs.has(id)) openedTabs.get(id).windowId = info.windowId;
+        return this.get(id);
+      },
+      async group({ tabIds, groupId = nextGroup++ }) {
+        if (!groups.has(groupId)) groups.set(groupId, {});
         for (const id of tabIds) groupOf.set(id, groupId);
         return groupId;
       },
@@ -444,8 +477,10 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     grants,
     removed,
     windowsCreated,
+    tabsCreated,
     popupWindows,
     windowUpdates,
+    actionPopupCalls,
     windowsRemoved,
     // The popup-type windows by page: the approval window (popup.html?window=1) and the waiting prompt (arm.html).
     get approvalWindows() { return popupWindows.filter(options => options.url.includes('popup.html?window=1')); },
@@ -471,6 +506,8 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     chrome,
     groupOf,
     groups,
+    groupOf,
+    openedTabs,
     tabPopups,
     setActiveTab(id) { activeTabId = id; },
     bumpRevision() { revision++; },
@@ -557,7 +594,7 @@ async function started(options = {}) {
   const h = harness(options);
   await h.waitFor(m => m.type === 'hello');
   const level = options.level ? { level: options.level } : {};
-  const reply = await h.send({ type: 'start', requestId: 'req_1', endpoint: ENDPOINT, secret: SECRET, ...level });
+  const reply = await h.send({ type: 'start', requestId: 'req_1', endpoint: ENDPOINT, secret: SECRET, ...level, ...(options.tabMode ? { tabMode: options.tabMode } : {}) });
   assert.equal(reply.status, 'active', JSON.stringify(reply));
   return h;
 }
@@ -575,7 +612,7 @@ test('a paired worker connects on startup with the auth subprotocol and says hel
   await h.until(() => h.session.connection?.connected);
   // `budget`: the per-request budget the daemon says is in effect (this fake daemon names none).
   assert.deepEqual(h.session.connection, { connected: true, transport: 'websocket', budget: null, paired: true, native: null });
-  assert.deepEqual(hello.settings, { budget: null, openRightAway: true, approvals: ASKS },
+  assert.deepEqual(hello.settings, { budget: null, openRightAway: true, tabMode: 'single', approvals: ASKS },
     'the hello reports the user\'s budget setting (none set) and that requested pages open right away (the default)');
   assert.deepEqual(h.alarmsCreated, [{ name: 'fai-reconnect', periodInMinutes: 0.5 }]);
 });
@@ -712,7 +749,7 @@ test('after a socket blip the worker reconnects and its hello carries the sessio
   h.socket.close();
   await h.until(() => h.sockets.length === 2 && h.sent.filter(m => m.type === 'hello').length === 2);
   const hello = h.sent.filter(m => m.type === 'hello')[1];
-  assert.deepEqual(hello.session, { requestId: 'req_1', leaseId: LEASE_ID, tabId: 7, origin: ORIGIN, status: 'active', level: 'read-only', scope: 'origin' });
+  assert.deepEqual(hello.session, { requestId: 'req_1', leaseId: LEASE_ID, tabId: 7, origin: ORIGIN, status: 'active', level: 'read-only', scope: 'origin', tabMode: 'single' });
 });
 
 test('the worker pings every 20 s on the open socket', async () => {
@@ -781,6 +818,99 @@ test('the worker pauses with tab_changed when the leased tab is no longer active
   assert.equal(result.error.recoverable, false);
   const status = await h.waitFor(m => m.type === 'status');
   assert.deepEqual({ status: status.status, reason: status.reason }, { status: 'paused', reason: 'tab_changed' });
+});
+
+test('single-tab approval refuses agent opens and pauses on a page-created child without adopting it', async () => {
+  const h = await started();
+  const id = h.command('execute', { action: { type: 'open_tab', url: `${ORIGIN}/next` }, expectedRevision: 'doc:1' });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === id)).error.code, 'blocked_risky');
+  assert.deepEqual(h.tabsCreated, []);
+  h.chrome.tabs.onCreated.emit({ id: 99, openerTabId: 7, url: `${ORIGIN}/child`, windowId: 1 });
+  const paused = await h.waitFor(m => m.type === 'status' && m.status === 'paused');
+  assert.equal(paused.reason, 'child_tab');
+  assert.equal(h.groups.size, 1);
+});
+
+const multiLease = { id: LEASE_ID, tabId: 7, requestId: 'req_1', tabMode: 'multiple' };
+async function multipleTask() {
+  return started({ hostGrants: [`${ORIGIN}/*`], local: { tabMode: 'multiple' }, tabMode: 'multiple' });
+}
+async function taskOpen(h, url = `${ORIGIN}/next`, lease = multiLease) {
+  const id = h.command('execute', { action: { type: 'open_tab', url }, expectedRevision: 'doc:1' }, { lease });
+  return h.waitFor(m => m.type === 'result' && m.id === id);
+}
+
+test('multiple-tab approval creates a tab in the task window and group, switches only among owned tabs and cleans all marks', async () => {
+  const h = await multipleTask();
+  await h.until(() => h.groupOf.has(7));
+  assert.equal(h.sent.find(m => m.type === 'lease').tabMode, 'multiple');
+  const result = await taskOpen(h);
+  assert.equal(result.error, undefined, JSON.stringify(result));
+  assert.deepEqual(h.tabsCreated, [{ windowId: 1, url: `${ORIGIN}/next`, active: false }]);
+  assert.equal(h.groupOf.get(9), h.groupOf.get(7));
+  const id = h.command('execute', { action: { type: 'switch_tab', tab: 't0' }, expectedRevision: 'doc:1' }, { lease: multiLease });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === id)).error, undefined);
+  const alien = h.command('execute', { action: { type: 'switch_tab', tab: 't99' }, expectedRevision: 'doc:1' }, { lease: multiLease });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === alien)).error.code, 'target_unavailable');
+  await h.send({ type: 'stop' });
+  await h.until(() => !h.groupOf.has(7) && !h.groupOf.has(9));
+});
+
+test('multiple tabs requires native site access and both immutable grants; origins and eight-tab limit hold', async () => {
+  const denied = harness({ hostGrants: [], local: { tabMode: 'multiple' } });
+  await denied.waitFor(m => m.type === 'hello');
+  const reply = await denied.send({ type: 'start', requestId: 'req_1', tabMode: 'multiple' });
+  assert.match(reply.error, /site access/);
+  assert.equal(denied.sent.some(m => m.type === 'lease'), false);
+  const h = await multipleTask();
+  assert.equal((await taskOpen(h, 'https://elsewhere.test/')).error.code, 'cross_origin');
+  assert.equal((await taskOpen(h, `${ORIGIN}/next`, { ...multiLease, tabMode: 'single' })).error.code, 'blocked_risky');
+  for (let i = 0; i < 7; i++) assert.equal((await taskOpen(h)).error, undefined);
+  assert.equal((await taskOpen(h)).error.code, 'blocked_risky');
+  assert.equal(h.tabsCreated.length, 7);
+});
+
+test('a stopped request cannot keep a tab created while its browser API call was pending', async () => {
+  const h = await multipleTask();
+  const create = h.chrome.tabs.create;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let creating = false;
+  h.chrome.tabs.create = async options => { const tab = await create(options); creating = true; await gate; return tab; };
+  const opened = taskOpen(h);
+  await h.until(() => creating);
+  await h.send({ type: 'stop' });
+  release();
+  assert.equal((await opened).error.code, 'blocked_risky');
+  assert.equal(h.openedTabs.size, 0);
+});
+
+test('concurrent page children cannot exceed the lease cap or receive duplicate task ids', async () => {
+  const h = await multipleTask();
+  for (let i = 0; i < 6; i++) assert.equal((await taskOpen(h)).error, undefined);
+  const contains = h.chrome.permissions.contains;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let checks = 0;
+  h.chrome.permissions.contains = async value => { checks++; await gate; return contains(value); };
+  for (const id of [90, 91]) {
+    h.openedTabs.set(id, { url: `${ORIGIN}/child`, windowId: 1, status: 'complete' });
+    h.chrome.tabs.onCreated.emit({ id, openerTabId: 7, url: `${ORIGIN}/child`, windowId: 1 });
+  }
+  await h.until(() => checks === 2);
+  release();
+  await h.waitFor(m => m.type === 'status' && m.status === 'paused');
+  assert.equal(h.groupOf.has(90) && h.groupOf.has(91), false, 'both children never join a full lease');
+});
+
+test('revoking site permission or switching to single stops further multiple-tab work', async () => {
+  const h = await multipleTask();
+  h.grants.clear();
+  assert.equal((await taskOpen(h)).error.code, 'blocked_risky');
+  assert.equal(h.tabsCreated.length, 0);
+  h.emitStorage({ tabMode: { newValue: 'single' } }, 'local');
+  await h.waitFor(m => m.type === 'status' && m.status === 'paused');
+  assert.equal((await taskOpen(h)).error.code, 'paused');
 });
 
 test('off-origin navigation is rejected without pausing; the user can pause', async () => {
@@ -1439,7 +1569,7 @@ test('a permission granted just before start survives a reconcile in between', a
   await h.waitFor(m => m.type === 'hello');
   await sleep(10);
   await h.send({ type: 'track', patterns: [SITE_PATTERN, 'https://*.co.uk/*', 'http://example.com/*', 'https://example.com/a/*'] });
-  assert.deepEqual(clone(h.local.trackedSites), [SITE_PATTERN], 'only valid root patterns are tracked');
+  assert.deepEqual(clone(h.local.trackedSites), [SITE_PATTERN, 'http://example.com/*'], 'valid root and exact-site patterns are tracked');
   h.grant(SITE_PATTERN);
   h.alarmFire();
   await sleep(20);
@@ -1492,7 +1622,7 @@ test('a remembered domain approved later at Full is no longer remembered: its pe
   assert.deepEqual(clone(h.local.rememberedSites), []);
 });
 
-// --- Open <host>: the page opens in its own window, armed; the toolbar icon click there is the approval -------------
+// --- Open <host>: the page opens in a new task tab, armed; the toolbar icon click there is the approval -------------
 
 const SHOP = 'https://shop.example.com';
 
@@ -1509,12 +1639,52 @@ async function armed({ origins = [SHOP], url = `${SHOP}/cart`, level = 'reversib
 test('open arms the tab: no popup there, ? badge, FAI ? group, no lease', async () => {
   const { h, reply } = await armed();
   assert.equal(reply.error, undefined, JSON.stringify(reply.error));
-  assert.deepEqual(clone(h.windowsCreated), [{ url: `${SHOP}/cart`, focused: true }]);
+  assert.deepEqual(clone(h.tabsCreated), [{ windowId: 2, url: `${SHOP}/cart`, active: true }]);
+  assert.deepEqual(h.windowsCreated, []);
   assert.equal(h.tabPopups.get(9), '');
   assert.equal(h.tabBadges.get(9), '?');
   await h.until(() => [...h.groups.values()].some(group => group.title === 'FAI ?'));
   assert.equal(h.sent.some(m => m.type === 'lease'), false);
   assert.equal(h.session.armedTabs[0].requestId, 'req_1');
+});
+
+test('task tabs choose a normal non-private window and fall back when none remains', async () => {
+  for (const options of [
+    { lastWindow: { id: 4, type: 'normal', incognito: true }, normalWindows: [{ id: 2, type: 'normal' }] },
+    { lastWindow: { id: 30, type: 'popup' }, normalWindows: [{ id: 2, type: 'normal' }] },
+    { lastWindow: null },
+    { lastWindow: { id: 4, type: 'normal', incognito: true } },
+    { tabCreateFails: true },
+  ]) {
+    const h = harness({ ...options, local: { openRightAway: false } });
+    await h.waitFor(m => m.type === 'hello');
+    await withPending(h, [pendingRequest('req_1', { mode: 'read-only' })]);
+    const reply = await h.send({ type: 'open', requestId: 'req_1', level: 'read-only' });
+    assert.equal(reply.error, undefined);
+    if (options.normalWindows?.length) {
+      assert.deepEqual(h.tabsCreated, [{ windowId: 2, url: `${SHOP}/cart`, active: true }]);
+      assert.deepEqual(h.windowsCreated, []);
+      assert.ok(h.windowUpdates.some(update => update.id === 2 && update.focused));
+    } else {
+      assert.deepEqual(h.tabsCreated, []);
+      assert.deepEqual(clone(h.windowsCreated), [{ url: `${SHOP}/cart`, focused: true }]);
+    }
+    assert.equal(h.sent.some(m => m.type === 'lease'), false);
+  }
+});
+
+test('a browser without tab groups still opens and arms a task tab in the existing window', async () => {
+  const h = harness({ local: { openRightAway: false } });
+  delete h.chrome.tabGroups;
+  delete h.chrome.tabs.group;
+  await h.waitFor(m => m.type === 'hello');
+  await withPending(h, [pendingRequest('req_1', { mode: 'read-only' })]);
+  const reply = await h.send({ type: 'open', requestId: 'req_1', level: 'read-only' });
+  assert.equal(reply.error, undefined);
+  assert.equal(h.tabsCreated.length, 1);
+  assert.equal(h.windowsCreated.length, 0);
+  assert.equal(h.tabBadges.get(9), '?');
+  assert.equal(h.sent.some(m => m.type === 'lease'), false);
 });
 
 test('the icon click on the armed tab leases it once at the armed level and restores the popup', async () => {
@@ -1567,13 +1737,13 @@ async function withPending(h, list) {
 // With "Open requested pages right away" off: the window is the only sign.
 const WINDOW_ONLY = { openRightAway: false };
 
-test('approval window: a new pending request opens one focused popup window; the same request never again', async () => {
+test('approval window: without openPopup, a new request opens one focused top-right popup; the same request never again', async () => {
   const h = harness({ local: WINDOW_ONLY });
   await h.waitFor(m => m.type === 'hello');
   await withPending(h, [pendingRequest('req_1')]);
   assert.deepEqual(clone(h.popupWindows), [{ url: 'chrome-extension://ext/popup.html?window=1', type: 'popup',
-    width: 420, height: 620, focused: true }]);
-  assert.deepEqual(h.windowsCreated, [], 'nothing opens by itself');
+    width: 420, height: 620, left: 856, top: 140, focused: true }]);
+  assert.deepEqual(h.tabsCreated, [], 'nothing opens by itself');
   assert.equal(h.badge, '?', 'the badge still says a request waits');
   await withPending(h, [pendingRequest('req_1')]);
   assert.equal(h.popupWindows.length, 1);
@@ -1584,13 +1754,32 @@ test('approval window: a new pending request opens one focused popup window; the
   assert.deepEqual(restarted.popupWindows, []);
 });
 
-test('approval window: a second request while it is open focuses it instead of opening another', async () => {
+test('approval UI: a supported action.openPopup opens the toolbar popup once, with no standalone window', async () => {
+  const h = harness({ local: WINDOW_ONLY, actionOpenPopup: 'ok' });
+  await h.waitFor(m => m.type === 'hello');
+  await withPending(h, [pendingRequest('req_1')]);
+  assert.deepEqual(h.actionPopupCalls, [{}]);
+  assert.deepEqual(h.popupWindows, []);
+  await withPending(h, [pendingRequest('req_1')]);
+  assert.equal(h.actionPopupCalls.length, 1);
+});
+
+test('approval UI: a rejected action.openPopup falls back to the top-right window', async () => {
+  const h = harness({ local: WINDOW_ONLY, actionOpenPopup: 'error' });
+  await h.waitFor(m => m.type === 'hello');
+  await withPending(h, [pendingRequest('req_1')]);
+  assert.deepEqual(h.actionPopupCalls, [{}]);
+  assert.deepEqual(clone(h.popupWindows), [{ url: 'chrome-extension://ext/popup.html?window=1', type: 'popup',
+    width: 420, height: 620, left: 856, top: 140, focused: true }]);
+});
+
+test('approval window: a second request repositions and focuses the open window instead of opening another', async () => {
   const h = harness({ local: WINDOW_ONLY });
   await h.waitFor(m => m.type === 'hello');
   await withPending(h, [pendingRequest('req_1')]);
   await withPending(h, [pendingRequest('req_1'), pendingRequest('req_2')]);
   assert.equal(h.popupWindows.length, 1);
-  assert.deepEqual(clone(h.windowUpdates), [{ id: 31, focused: true }]);
+  assert.deepEqual(clone(h.windowUpdates), [{ id: 31, left: 856, top: 140, focused: true }]);
   // Closed by then (approved, denied or by hand): the next request opens a new one.
   h.closePopup(31);
   await withPending(h, [pendingRequest('req_3')]);
@@ -1671,7 +1860,7 @@ test('"Open requested pages right away" is on by default: the page opens armed a
   const cases = [['read-only', 'full'], ['reversible', 'read-only'], ['interactive', 'read-only'], ['interactive', 'full']];
   for (const [mode, defaultLevel] of cases) {
     const h = await openedRightAway({ mode, defaultLevel });
-    assert.deepEqual(clone(h.windowsCreated), [{ url: `${SHOP}/cart`, focused: true }]);
+    assert.deepEqual(clone(h.tabsCreated), [{ windowId: 2, url: `${SHOP}/cart`, active: true }]);
     assert.deepEqual(h.approvalWindows, [], 'no approval window');
     assert.equal(h.session.armedTabs[0].level, mode, `${mode} with default ${defaultLevel}`);
     await h.until(() => h.tabPopups.get(9) === '');
@@ -1688,7 +1877,7 @@ test('"Open requested pages right away": Full and Testing requests get the appro
     const h = harness({ hostGrants: [], leaseOrigins: [SHOP], permissions: { defaultLevel: 'full' } });
     await h.waitFor(m => m.type === 'hello');
     await withPending(h, [pendingRequest('req_1', { mode })]);
-    assert.deepEqual(h.windowsCreated, [], mode);
+    assert.deepEqual(h.tabsCreated, [], mode);
     assert.equal(h.approvalWindows.length, 1, mode);
     assert.deepEqual(h.promptWindows, [], mode);
     assert.deepEqual(clone(h.session.armedTabs ?? []), []);
@@ -1698,24 +1887,24 @@ test('"Open requested pages right away": Full and Testing requests get the appro
   await h.waitFor(m => m.type === 'hello');
   await withPending(h, [{ requestId: 'req_1', state: 'pending', origins: [SITE_ROOT], mode: 'read-only' }]);
   assert.equal(h.approvalWindows.length, 1);
-  assert.deepEqual(h.windowsCreated, []);
+  assert.deepEqual(h.tabsCreated, []);
 });
 
 test('"Open requested pages right away" turned off: every request gets the window; anything but false is on', async () => {
   const off = harness({ local: { openRightAway: false } });
   await off.waitFor(m => m.type === 'hello');
   await withPending(off, [pendingRequest('req_1', { mode: 'read-only' })]);
-  assert.deepEqual(off.windowsCreated, []);
+  assert.deepEqual(off.tabsCreated, []);
   assert.equal(off.approvalWindows.length, 1);
   const odd = await openedRightAway({ local: { openRightAway: 'off' } });
-  assert.equal(odd.windowsCreated.length, 1);
+  assert.equal(odd.tabsCreated.length, 1);
 });
 
 test('the page opened by itself gets a prompt window next to it that names the level; it closes when the arm ends', async () => {
   // Approved: the icon click ends the arm and the prompt goes with it.
   const h = await openedRightAway({ mode: 'reversible' });
-  assert.deepEqual(clone(h.promptWindows), [{ url: 'chrome-extension://ext/arm.html?tab=9', type: 'popup', width: 400, height: 290,
-    focused: true }]);
+  assert.deepEqual(clone(h.promptWindows), [{ url: 'chrome-extension://ext/arm.html?tab=9', type: 'popup', width: 440, height: 430,
+    left: 836, top: 140, focused: true }]);
   const promptId = h.session.armedTabs[0].promptWindowId;
   assert.equal(h.openPopup(promptId), true);
   assert.deepEqual(h.approvalWindows, []);
@@ -1794,7 +1983,7 @@ test('"Open requested pages right away": a request the FAI tab already covers ge
   const h = await started({ level: 'read-only', local: { openRightAway: true } });
   h.push({ type: 'requests', requests: [{ requestId: 'req_2', state: 'pending', origins: [ORIGIN], url: `${ORIGIN}/`, mode: 'full' }] });
   await h.until(() => h.popupWindows.length === 1);
-  assert.deepEqual(h.windowsCreated, []);
+  assert.deepEqual(h.tabsCreated, []);
   assert.deepEqual(clone(h.session.armedTabs ?? []), []);
 });
 
@@ -1914,7 +2103,7 @@ test('the hello carries the stored budget, and the daemon\'s reply says what is 
   const stored = { maxCalls: 120, maxMs: 2_400_000 };
   const h = harness({ local: { budget: stored }, daemonBudget: { ...stored, source: 'extension' } });
   const hello = await h.waitFor(m => m.type === 'hello');
-  assert.deepEqual(hello.settings, { budget: stored, openRightAway: true, approvals: ASKS });
+  assert.deepEqual(hello.settings, { budget: stored, openRightAway: true, tabMode: 'single', approvals: ASKS });
   await h.until(() => h.session.connection?.budget);
   assert.deepEqual(h.session.connection.budget, { ...stored, source: 'extension' });
   assert.deepEqual((await h.send({ type: 'connect' })).connection.budget, { ...stored, source: 'extension' });
@@ -1923,12 +2112,12 @@ test('the hello carries the stored budget, and the daemon\'s reply says what is 
 test('a malformed stored budget is reported as none; a budget changed in the popup is sent as a settings message', async () => {
   const h = harness({ local: { budget: { maxCalls: 0, maxMs: 'x' } }, daemonBudget: { maxCalls: 50, maxMs: 1_200_000, source: 'default' } });
   const hello = await h.waitFor(m => m.type === 'hello');
-  assert.deepEqual(hello.settings, { budget: null, openRightAway: true, approvals: ASKS });
+  assert.deepEqual(hello.settings, { budget: null, openRightAway: true, tabMode: 'single', approvals: ASKS });
   await h.until(() => h.session.connection?.budget?.source === 'default');
   h.local.budget = { maxCalls: 8, maxMs: 300_000 };
   h.emitStorage({ budget: { newValue: { maxCalls: 8, maxMs: 300_000 } } }, 'local');
   const settings = await h.waitFor(m => m.type === 'settings');
-  assert.deepEqual(settings.settings, { budget: { maxCalls: 8, maxMs: 300_000 }, openRightAway: true, approvals: ASKS });
+  assert.deepEqual(settings.settings, { budget: { maxCalls: 8, maxMs: 300_000 }, openRightAway: true, tabMode: 'single', approvals: ASKS });
   assert.ok(settings.ref !== undefined, 'a reply type: the daemon answers with the budget in effect');
   await h.until(() => h.session.connection?.budget?.source === 'extension');
   assert.deepEqual(h.session.connection.budget, { maxCalls: 8, maxMs: 300_000, source: 'extension' });
@@ -1936,22 +2125,22 @@ test('a malformed stored budget is reported as none; a budget changed in the pop
   h.local.budget = null;
   h.emitStorage({ budget: { newValue: null } }, 'local');
   await h.until(() => h.sent.filter(m => m.type === 'settings').length === 2);
-  assert.deepEqual(h.sent.filter(m => m.type === 'settings')[1].settings, { budget: null, openRightAway: true, approvals: ASKS });
+  assert.deepEqual(h.sent.filter(m => m.type === 'settings')[1].settings, { budget: null, openRightAway: true, tabMode: 'single', approvals: ASKS });
   await h.until(() => h.session.connection?.budget?.source === 'default');
 });
 
 test('"Open requested pages right away" is reported in the hello (off only when the user turned it off) and on change', async () => {
   const off = harness({ local: { openRightAway: false } });
   const hello = await off.waitFor(m => m.type === 'hello');
-  assert.deepEqual(hello.settings, { budget: null, openRightAway: false, approvals: ASKS });
+  assert.deepEqual(hello.settings, { budget: null, openRightAway: false, tabMode: 'single', approvals: ASKS });
   await off.until(() => off.session.connection?.connected);
   off.local.openRightAway = true;
   off.emitStorage({ openRightAway: { newValue: true, oldValue: false } }, 'local');
   const settings = await off.waitFor(m => m.type === 'settings');
-  assert.deepEqual(settings.settings, { budget: null, openRightAway: true, approvals: ASKS });
+  assert.deepEqual(settings.settings, { budget: null, openRightAway: true, tabMode: 'single', approvals: ASKS });
   // Anything but an explicit false is on (an older install that never touched the setting).
   const legacy = harness({ local: { openRightAway: 'yes' } });
-  assert.deepEqual((await legacy.waitFor(m => m.type === 'hello')).settings, { budget: null, openRightAway: true, approvals: ASKS });
+  assert.deepEqual((await legacy.waitFor(m => m.type === 'hello')).settings, { budget: null, openRightAway: true, tabMode: 'single', approvals: ASKS });
 });
 
 // --- screenshot redaction -------------------------------------------------------------------------------------
@@ -2066,7 +2255,10 @@ test('approve: the window, badge and card show the request; Approve once mints a
   assert.equal(entry.note, 'Agent line');
   assert.equal(entry.origin, ORIGIN);
   assert.equal(entry.labelHash, undefined, 'the card never sees the hash');
-  assert.ok(h.popupWindows.some(options => options.url.includes('approve.html?id=')), 'the approval window opened');
+  const popup = h.popupWindows.find(options => options.url.includes('approve.html?id='));
+  assert.ok(popup, 'the approval window opened');
+  assert.equal(popup.left, 836);
+  assert.equal(popup.top, 140);
   assert.equal(h.badge, '!');
   assert.deepEqual(h.gateCalls.at(-1), { purchase: true, secret: true, level: true }, 'page.js gets the settings');
   // A web page cannot decide.
@@ -2091,6 +2283,18 @@ test('approve: the window, badge and card show the request; Approve once mints a
   const again = h.command('execute', { action: { type: 'click', target: '1', approvalId }, expectedRevision: 'doc:2', level: 'full' });
   assert.equal((await h.waitFor(m => m.type === 'result' && m.id === again)).error.code, 'blocked_risky');
   assert.equal(h.pageArgs.filter(c => c.method === 'execute').length, executes);
+});
+
+test('approve: a supported toolbar popup keeps the same one-click approval without a standalone window', async () => {
+  const h = await started({ level: 'full', actionOpenPopup: 'ok' });
+  const { id, entry } = await asked(h);
+  await h.until(() => h.actionPopupCalls.length === 1);
+  assert.equal(h.popupWindows.some(options => options.url.includes('approve.html?id=')), false);
+  const decided = await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  assert.equal(decided.error, undefined, JSON.stringify(decided));
+  const reply = await h.waitFor(m => m.type === 'result' && m.id === id);
+  assert.equal(reply.result.decision, 'approved');
+  assert.match(reply.result.approvalId, /^[0-9a-f-]{36}$/);
 });
 
 test('upload: worker dispatch accepts a bound once-only approval and rejects forged, malformed and mismatched files', async () => {
@@ -2346,4 +2550,153 @@ test('offscreen clipboard_write: a textarea selected, copied, emptied and remove
   events.length = 0;
   assert.equal(await answer({ type: 'clipboard_write', text: FAKE_KEY }, { id: 'other' }), undefined);
   assert.deepEqual(events, []);
+});
+
+// The request modal grants optional host access in its own click, then names the original armed task tab.
+const MODAL_SENDER = { id: 'ext', url: 'chrome-extension://ext/arm.html?tab=9' };
+async function modalPrepared(options) {
+  const h = await openedRightAway(options);
+  const arm = h.session.armedTabs[0];
+  const message = { tabId: 9, requestId: arm.requestId, at: arm.at };
+  const prepared = await h.send({ type: 'arm_prepare', ...message }, MODAL_SENDER);
+  assert.ok(prepared.approval, JSON.stringify(prepared));
+  return { h, message: { ...message, ...prepared.approval, type: 'arm_approve', level: arm.level, granted: true } };
+}
+
+test('modal approval binds the armed task tab and chosen level, then releases newly obtained host access on stop', async () => {
+  const { h, message } = await modalPrepared();
+  assert.equal(message.pattern, `${SHOP}/*`);
+  h.grant(message.pattern);
+  const reply = await h.send({ ...message, level: 'read-only' }, MODAL_SENDER);
+  assert.equal(reply.status, 'active', JSON.stringify(reply));
+  assert.equal(reply.session.tabId, 9, 'never adopts the modal or current personal tab');
+  assert.equal(reply.session.level, 'read-only');
+  assert.equal(reply.session.tabMode, 'single');
+  assert.ok(h.grants.has(message.pattern));
+  await h.send({ type: 'stop' });
+  await h.until(() => !h.grants.has(message.pattern));
+});
+
+test('modal denial, missing access, wrong sender, stale token, offsite and excessive levels never lease', async () => {
+  for (const kind of ['denied', 'missing', 'sender', 'token', 'offsite', 'pending-url', 'level', 'cancel']) {
+    const { h, message } = await modalPrepared();
+    if (kind !== 'missing') h.grant(message.pattern);
+    let sender = MODAL_SENDER;
+    if (kind === 'denied') message.granted = false;
+    if (kind === 'sender') sender = { id: 'ext', url: 'https://example.com/arm.html?tab=9' };
+    if (kind === 'token') message.token = 'stale';
+    if (kind === 'offsite') h.openedTabs.get(9).url = 'https://unrequested.test/';
+    if (kind === 'pending-url') h.openedTabs.get(9).pendingUrl = 'https://unrequested.test/';
+    if (kind === 'level') message.level = 'full';
+    if (kind === 'cancel') await h.send({ type: 'deny', requestId: message.requestId });
+    const reply = await h.send(message, sender);
+    assert.ok(reply.error, `${kind}: ${JSON.stringify(reply)}`);
+    assert.equal(h.sent.some(m => m.type === 'lease'), false, kind);
+    if (!['sender', 'token'].includes(kind)) assert.equal(h.grants.has(message.pattern), false, kind);
+  }
+});
+
+test('modal approval preserves host access already granted by the user', async () => {
+  const h = await openedRightAway();
+  h.grant(`${SHOP}/*`);
+  const arm = h.session.armedTabs[0];
+  const base = { tabId: 9, requestId: arm.requestId, at: arm.at };
+  const { approval } = await h.send({ type: 'arm_prepare', ...base }, MODAL_SENDER);
+  const reply = await h.send({ type: 'arm_approve', ...base, ...approval, level: arm.level, granted: true }, MODAL_SENDER);
+  assert.equal(reply.status, 'active');
+  await h.send({ type: 'stop' });
+  await sleep(20);
+  assert.equal(h.grants.has(`${SHOP}/*`), true);
+  assert.equal(h.removed.includes(`${SHOP}/*`), false);
+});
+
+test('modal double click leases once and handles its own active request snapshot before the lease reply', async () => {
+  const { h, message } = await modalPrepared();
+  h.grant(message.pattern);
+  const original = h.socket.send.bind(h.socket);
+  h.socket.send = text => {
+    if (JSON.parse(text).type === 'lease') h.push({ type: 'requests', requests: [pendingRequest('req_1', { mode: 'reversible', state: 'active' })] });
+    original(text);
+  };
+  const first = h.send(message, MODAL_SENDER);
+  const second = h.send(message, MODAL_SENDER);
+  const replies = await Promise.all([first, second]);
+  assert.equal(replies.filter(reply => reply.status === 'active').length, 1, JSON.stringify(replies));
+  assert.equal(h.sent.filter(m => m.type === 'lease').length, 1);
+});
+
+test('canceling an unclicked modal preserves later manual grants; canceling an in-flight prompt reclaims its late grant', async () => {
+  for (const clicked of [false, true]) {
+    const { h, message } = await modalPrepared();
+    if (clicked) await h.send({ type: 'arm_begin', tabId: 9, token: message.token }, MODAL_SENDER);
+    await h.send({ type: 'deny', requestId: message.requestId });
+    await sleep(10);
+    h.grant(message.pattern);
+    await sleep(20);
+    assert.equal(h.grants.has(message.pattern), !clicked, `clicked=${clicked}`);
+    assert.equal(h.sent.some(m => m.type === 'lease'), false);
+  }
+});
+
+test('modal approval preserves multiple-tab consent and refuses a setting revoked while browser permission was open', async () => {
+  for (const revoked of [false, true]) {
+    const { h, message } = await modalPrepared({ local: { tabMode: 'multiple' } });
+    h.grant(message.pattern);
+    if (revoked) await h.chrome.storage.local.set({ tabMode: 'single' });
+    const reply = await h.send(message, MODAL_SENDER);
+    if (revoked) {
+      assert.match(reply.error, /Multiple task tabs/);
+      assert.equal(h.sent.some(m => m.type === 'lease'), false);
+    } else {
+      assert.equal(reply.session.tabMode, 'multiple');
+      assert.equal(h.sent.find(m => m.type === 'lease').tabMode, 'multiple');
+    }
+  }
+});
+
+test('modal approval stops a returned lease if the user cancels while the lease request is in flight', async () => {
+  const { h, message } = await modalPrepared();
+  h.grant(message.pattern);
+  const original = h.socket.send.bind(h.socket);
+  h.socket.send = text => {
+    if (JSON.parse(text).type === 'lease') h.push({ type: 'requests', requests: [pendingRequest('req_1', { state: 'denied' })] });
+    original(text);
+  };
+  const reply = await h.send(message, MODAL_SENDER);
+  assert.ok(reply.error);
+  assert.ok(h.sent.some(m => m.type === 'status' && m.status === 'stopped'));
+  assert.equal(h.grants.has(message.pattern), false);
+});
+
+test('modal Testing approval rechecks the listed test sites after the native permission prompt', async () => {
+  for (const revoked of [false, true]) {
+    const h = harness({ hostGrants: [], leaseOrigins: [SHOP], permissions: { testingOrigins: [SHOP] } });
+    await h.waitFor(m => m.type === 'hello');
+    await withPending(h, [pendingRequest('req_1', { mode: 'testing' })]);
+    await h.send({ type: 'open', requestId: 'req_1', level: 'testing' });
+    const arm = h.session.armedTabs[0];
+    const base = { tabId: 9, requestId: arm.requestId, at: arm.at };
+    const prepared = await h.send({ type: 'arm_prepare', ...base }, MODAL_SENDER);
+    h.grant(prepared.approval.pattern);
+    if (revoked) await h.chrome.storage.local.set({ permissions: { testingOrigins: [] } });
+    const reply = await h.send({ type: 'arm_approve', ...base, ...prepared.approval, level: 'testing', granted: true }, MODAL_SENDER);
+    if (revoked) {
+      assert.match(reply.error, /Testing mode needs/);
+      assert.equal(h.sent.some(m => m.type === 'lease'), false);
+    } else assert.equal(reply.session.level, 'testing');
+  }
+});
+
+
+test('modal re-reads the bound tab after awaiting browser permissions', async () => {
+  const { h, message } = await modalPrepared();
+  h.grant(message.pattern);
+  const contains = h.chrome.permissions.contains;
+  h.chrome.permissions.contains = async value => {
+    h.openedTabs.get(9).url = 'https://elsewhere.test/';
+    return contains(value);
+  };
+  const reply = await h.send(message, MODAL_SENDER);
+  assert.match(reply.error, /page changed/);
+  assert.equal(h.sent.some(m => m.type === 'lease'), false);
 });

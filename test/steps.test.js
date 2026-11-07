@@ -641,7 +641,7 @@ test('one level for the list: a grant lowered during step 1 holds for step 2', a
     awaitCallbacks: true,
   });
   assert.equal(result.status, 'completed');
-  assert.deepEqual(result.permissions, { requested: 'reversible', granted: 'read-only', effective: 'read-only', testing: false, scope: 'origin' });
+  assert.deepEqual(result.permissions, { requested: 'reversible', granted: 'read-only', effective: 'read-only', testing: false, scope: 'origin', tabMode: 'single' });
   const step2 = provider.calls.find(call => call.instruction === 'Open Members');
   assert.equal(step2.context.level, 'read-only');
 });

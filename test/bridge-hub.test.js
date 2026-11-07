@@ -173,6 +173,17 @@ test('observations keep their blocks through the hub, on observe and after execu
   assert.deepEqual((await execution).observation.blocks, after.blocks);
 });
 
+test('queued extra-tab commands cannot survive a grant downgrade before delivery', async t => {
+  const setup = await daemon(t);
+  setup.hub.bindLease({ leaseId: 'queued-tabs', tabId: 7, origin: ORIGIN, allowedOrigins: [ORIGIN], tabMode: 'multiple' });
+  const command = setup.hub.bridgeFor('queued-tabs').execute({ type: 'open_tab', url: ORIGIN }, 'r1', { capture: false });
+  const denied = assert.rejects(command, error => error.code === 'blocked_risky');
+  setup.hub.setLeaseTabMode('queued-tabs', 'single');
+  const reply = await setup.post('/commands?wait=0', {});
+  assert.equal(reply.body.command ?? null, null);
+  await denied;
+});
+
 test('commands are pushed over the WebSocket; results and screenshots route by id', async t => {
   const setup = await daemon(t);
   const { ext, bridge } = await leased(t, setup);
@@ -181,7 +192,7 @@ test('commands are pushed over the WebSocket; results and screenshots route by i
   const command = await ext.command();
   assert.equal(command.version, PROTOCOL_VERSION);
   assert.equal(command.method, 'observe');
-  assert.deepEqual(command.lease, { id: 'lease-1', tabId: 7, requestId: 'req_1' });
+  assert.deepEqual(command.lease, { id: 'lease-1', tabId: 7, requestId: 'req_1', tabMode: 'single' });
   assert.deepEqual(command.allowedOrigins, [ORIGIN]);
   ext.result(command.id, { revision: 'doc:1' });
   assert.deepEqual(await observe, { revision: 'doc:1' });
