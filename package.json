@@ -78,6 +78,7 @@
     "bench:tokens:capture": "node bench/tokens/capture.mjs",
     "bench:tokens:real": "node bench/tokens/measure.mjs --corpus real",
     "bench:tokens:anthropic": "node bench/tokens/count-anthropic.mjs",
+    "site:benchmark-data": "node scripts/site-benchmark-data.mjs",
     "readme-chart": "node bench/report/readme-chart.mjs",
     "update-psl": "node scripts/update-psl.mjs",
     "demo:serve": "node scripts/demo/serve.mjs",
