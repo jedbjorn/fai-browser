@@ -162,32 +162,33 @@ code { font: .88em var(--mono); overflow-wrap: anywhere; }
 .control-grid p { color: var(--muted); font-size: .9rem; }
 
 .benchmark-section { --chart-grid: #dce7e0; --chart-track: #e8f0eb; --chart-text: #12251f; --chart-muted: #5a6d65; padding: 128px 0; color: var(--ink); background: var(--paper); }
+:root[data-theme="dark"] .benchmark-section { --chart-grid: #29443a; --chart-track: #1d372e; --chart-text: #edf7f2; --chart-muted: #a3b8ae; }
 .benchmark-section .eyebrow { color: var(--teal); }
 .benchmark-section .split-heading > p { color: var(--muted); }
 .benchmark { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow); }
+.benchmark + .benchmark { margin-top: 32px; }
 .benchmark-topline { display: flex; align-items: center; justify-content: space-between; gap: 30px; padding: 24px 28px; border-bottom: 1px solid var(--line); }
 .benchmark-status { display: inline-flex; align-items: center; gap: 9px; color: #dfbb70; font: 700 .7rem var(--mono); letter-spacing: .1em; text-transform: uppercase; }
 .benchmark-status i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .benchmark[data-state="complete"] .benchmark-status { color: var(--teal); }
-#benchmark-run { margin-top: 7px; color: var(--muted); font-size: .78rem; }
+.benchmark-run { margin-top: 7px; color: var(--muted); font-size: .78rem; }
 .benchmark-legend { display: flex; flex-wrap: wrap; gap: 20px; color: var(--muted); font: .68rem var(--mono); }
 .benchmark-legend span { display: inline-flex; align-items: center; gap: 8px; }
-.benchmark-legend i { width: 18px; height: 7px; border-radius: 2px; }
-.legend-a { background: #9a9f98; }
-.legend-b { background: #0a9a80; }
 .benchmark-canvas { overflow-x: auto; padding: 18px 28px 0; }
-#benchmark-chart, #jev-chart { width: 100%; min-width: 720px; height: auto; overflow: visible; }
+#benchmark-text-chart, #benchmark-visual-chart { width: 100%; min-width: 760px; height: auto; overflow: visible; }
 .pending-grid path { fill: none; stroke: var(--chart-grid); stroke-width: 1; stroke-dasharray: 2 8; }
 .metric-name { fill: var(--chart-text); font: 700 16px var(--font); }
-.metric-note { fill: var(--chart-muted); font: 12px var(--mono); }
-.series-name { fill: var(--chart-muted); font: 700 12px var(--mono); }
+.metric-note { fill: var(--chart-muted); font: 11px var(--mono); }
 .pending-track { stroke: var(--chart-track); stroke-width: 12; stroke-linecap: round; }
 .pending-value { fill: var(--chart-muted); font: 12px var(--mono); }
 .chart-grid { stroke: var(--chart-grid); stroke-width: 1; stroke-dasharray: 2 8; }
 .chart-zero { stroke: #9db8ab; stroke-width: 1.5; }
 .chart-track { fill: var(--chart-track); }
-.chart-bar-a { fill: #a3aea7; }
-.chart-bar-b { fill: #0a9a80; }
+.chart-bar-playwright { fill: #a3aea7; }
+.chart-bar-agent { fill: #0a9a80; }
+.chart-bar-jev { fill: #6558c7; }
+.chart-bar-label { fill: #fff; font: 700 12px var(--mono); pointer-events: none; }
+.chart-bar-label-playwright { fill: #12251f; }
 .chart-value { fill: var(--chart-text); font: 700 13px var(--mono); }
 .chart-scale { fill: var(--chart-muted); font: 10px var(--mono); }
 .benchmark > figcaption { display: grid; grid-template-columns: 300px 1fr; gap: 30px; padding: 20px 28px; border-top: 1px solid var(--line); }
