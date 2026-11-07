@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-11-07",
+  "classification": "Separate qualitative case; not a paired benchmark",
+  "label": "Gmail / Playwright MCP",
+  "headline": "Search completed; sort-menu check unfinished.",
+  "task": "Search the mailbox, inspect visible results and dates, then open the sort menu and close it without changing the selection.",
+  "outcome": "incomplete",
+  "evidenceBasis": "Agent-reported outcome, corroborated by the user who observed the attempt; no native verification receipt.",
+  "observation": "The agent submitted the search and reported the matching query, visible results and dates. It stopped before opening the sort menu or checking that it closed unchanged. Result coverage remained incomplete.",
+  "reportedAccessRefusals": 0,
+  "checks": {
+    "searchSubmitCount": 1,
+    "queryMatched": true,
+    "resultsVisible": true,
+    "datesVisible": true,
+    "menuOpened": false,
+    "menuClosedUnchanged": false,
+    "coverageIncomplete": true
+  },
+  "metrics": {
+    "wallMs": 43618.836591,
+    "toolCalls": 9,
+    "inputTokens": 126792,
+    "cachedInputTokens": 112512,
+    "uncachedInputTokens": 14280,
+    "outputTokens": 835
+  },
+  "provenance": {
+    "modelRequested": "gpt-6-astra",
+    "modelReported": null,
+    "browser": "Chromium",
+    "costUsd": null,
+    "usageSource": "Codex JSONL turn.completed events"
+  },
+  "comparisonLimit": "An earlier FAI session in Firefox passed narrow search and menu open/close checks, with host usage unavailable. Different browsers, sessions and tool policies mean there is no matched FAI timing, cost or reliability comparison.",
+  "interpretation": "This agent, tool and runner attempt was incomplete, with zero reported access refusals. It does not establish that Playwright generally fails at Gmail or that FAI is more consistent.",
+  "excludedSetupAttempts": "Earlier attempts that did not reach the intended Gmail session are excluded as setup failures, not model refusals.",
+  "privacy": "Only sanitized task outcomes and aggregate usage are published. Mailbox content, account identifiers, browser profiles and local paths are omitted."
+}
