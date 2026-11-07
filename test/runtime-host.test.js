@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BrowserRuntime } from '../src/runtime.js';
+import { bridgeError } from '../src/result.js';
 import { FakeBridge, ORIGIN } from './runtime-fixtures.js';
 
 test('observe returns the compact page and offered actions without terminal choices', async () => {
@@ -182,6 +183,49 @@ test('act uses the authority fixed at observe time for supplied text', async () 
   const result = await runtime.act(fill.id, { mode: 'read-only', suppliedText: { name: 'Mallory' } });
   assert.equal(bridge.lastText, 'Alex');
   assert.equal(result.status, 'checkpoint');
+});
+
+test('act stale supplied fill re-resolves only a unique search/filter control', async () => {
+  const search = (id, label = 'Search messages') => ({
+    id, role: 'textbox', label, type: 'text', enabled: true, risk: 'reversible', enter: 'submit_safe',
+  });
+  const cases = {
+    search: { before: [search('old')], after: [search('new')], recovered: true },
+    filter: { before: [search('old', 'Filter messages')], after: [search('new', 'Filter messages')], recovered: true },
+    ordinary: { before: [search('old', 'Display name')], after: [search('new', 'Display name')], recovered: false },
+    ambiguous: { before: [search('old')], after: [search('new'), search('other')], recovered: false },
+  };
+  for (const [name, fixture] of Object.entries(cases)) {
+    const bridge = new FakeBridge({ pages: { '/': { title: 'Messages', text: 'Find messages', controls: fixture.before } } });
+    const runtime = new BrowserRuntime({ bridge });
+    const { observation, actions } = await runtime.observe({ mode: 'interactive', suppliedText: { query: 'project update' } });
+    bridge.pages['/'].controls = fixture.after;
+    bridge.version++;
+    const fill = actions.find(action => action.type === 'fill_supplied_text');
+    const result = await runtime.act(fill.id, { revision: observation.revision });
+    assert.equal(result.code, fixture.recovered ? 'step_complete' : 'stale', `${name}: ${result.reason}`);
+    assert.equal(bridge.executions.length, fixture.recovered ? 2 : 1, name);
+    if (fixture.recovered) {
+      assert.equal(bridge.executions[1].action.target, 'new', name);
+      assert.equal(bridge.lastText, 'project update', name);
+    }
+  }
+});
+
+test('act never re-resolves Enter after the fill succeeded', async () => {
+  const bridge = new FakeBridge({ pages: { '/': { title: 'Search', text: 'Find messages', controls: [
+    { id: 'field', role: 'textbox', label: 'Search messages', type: 'search', enabled: true, risk: 'reversible', enter: 'submit_safe' },
+  ] } } });
+  const runtime = new BrowserRuntime({ bridge });
+  const { observation, actions } = await runtime.observe({ mode: 'interactive', suppliedText: { query: 'project update' } });
+  bridge.failNext.push(null, bridgeError('stale', 'Stale observation'));
+  const fill = actions.find(action => action.type === 'fill_supplied_text');
+  const result = await runtime.act({ actionId: fill.id, submit: true }, { revision: observation.revision });
+  assert.equal(result.code, 'stale', result.reason);
+  assert.equal(bridge.executions.length, 2, 'the fill ran once and Enter was not retried');
+  assert.deepEqual(bridge.executions.map(entry => entry.action.type), ['fill_supplied_text', 'submit_field']);
+  assert.equal(result.steps.length, 1, 'only the completed fill is recorded');
+  assert.equal(result.steps[0].action.type, 'fill_supplied_text');
 });
 
 test('act stale re-resolve reads a stepper label as lateLook does: next, increase and -value arrows alike', async () => {

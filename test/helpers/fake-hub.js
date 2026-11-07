@@ -129,9 +129,9 @@ export function createFakeHub({ bridgeOptions = {} } = {}) {
      * `level`: the level the user chose in the popup (omitted: an older extension that sends none). `scope`: the site
      * scope the extension reports (`domain` for an approved domain root with Chrome's host permission).
      */
-    approve(requestId, { tabId = 1, origin = ORIGIN, level, scope } = {}) {
+    approve(requestId, { tabId = 1, origin = ORIGIN, level, scope, tabMode } = {}) {
       return hub.emit({ type: 'lease', requestId, tabId, origin, title: 'Home', ...(level !== undefined ? { level } : {}),
-        ...(scope !== undefined ? { scope } : {}) });
+        ...(scope !== undefined ? { scope } : {}), ...(tabMode !== undefined ? { tabMode } : {}) });
     },
   };
   return hub;

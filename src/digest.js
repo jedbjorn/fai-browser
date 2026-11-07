@@ -559,6 +559,7 @@ export function buildDigest(observation, instruction, { maxBlocks = DIGEST_MAX_B
   const digest = [...chosen.keys()].sort((a, b) => a - b).map(i => {
     const entry = { t: blocks[i].t, text: chosen.get(i) };
     if (blocks[i].ref !== undefined) entry.ref = blocks[i].ref;
+    if (blocks[i].rec !== undefined) entry.rec = blocks[i].rec;
     return entry;
   });
   return { digest, truncated };

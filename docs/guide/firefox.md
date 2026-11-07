@@ -13,14 +13,29 @@ itself.
 ## Development builds
 
 ```sh
-npm run build:firefox      # writes dist/firefox/ from extension/, plus a Firefox manifest
-npm run setup              # installs the pairing helper for Firefox too
+npm run setup              # once: installs the pairing helper for Firefox too
+npm run dev:firefox        # builds dist/firefox, watches extension/, rebuilds and reloads
 ```
 
-Then `about:debugging#/runtime/this-firefox`, **Load Temporary Add-on**, choose `dist/firefox/manifest.json`. A temporary add-on
-is removed when Firefox restarts. `npx web-ext run --source-dir dist/firefox` starts a throwaway profile with it loaded.
-Release Firefox installs only signed add-ons; Developer Edition, Nightly, ESR and unbranded builds also take an unsigned
-one with `xpinstall.signatures.required` set to `false`.
+The development command uses `profiles/fai-firefox-dev` by default. It passes web-ext `--keep-profile-changes` and
+`--profile-create-if-missing`, so this dedicated profile is used directly and retains its preferences and sign-ins across
+restarts; there is no **Load Temporary Add-on** step. Use `npm run dev:firefox -- --profile /absolute/path/to/profile` for
+another dedicated profile, `--firefox /path/to/firefox` to select the executable, or `--debounce 500` to change the default
+250 ms rebuild debounce. Stop the loop with Ctrl+C.
+
+Close every Firefox process using the selected profile before starting. With a `.parentlock` or `parent.lock`, the command
+checks for running Firefox processes before building or launching and refuses if one uses or could use that profile (or if
+the process check fails), leaving the profile, lock and preferences untouched. Close that Firefox instance or choose another
+profile. Firefox instances with a different absolute `--profile` path do not block it. A stale lock is left for Firefox to
+handle on startup; you do not need to remove it.
+
+For a manual build instead, `npm run build:firefox` writes `dist/firefox/`; choose its `manifest.json` from
+`about:debugging#/runtime/this-firefox`, **Load Temporary Add-on**. Release Firefox installs only signed add-ons; Developer
+Edition, Nightly, ESR and unbranded builds also take an unsigned one with `xpinstall.signatures.required` set to `false`.
+
+**Detection stays separate.** web-ext remote-controls its development browser to reload the add-on, so that session is not
+valid for the no-remote-protocol measurement. Stop the development loop, start the profile normally without Marionette or
+another remote protocol, then run `npm run detect:firefox` as described in [REFERENCE.md](../REFERENCE.md#firefox).
 
 Release builds: `npm run package` (the reproducible zip), `npm run sign:firefox` (Mozilla's unlisted signature, with the
 maintainer's AMO API key) and the `Release` workflow on a version tag, which also publishes `updates.json` and `SHA256SUMS`.

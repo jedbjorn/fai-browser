@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - "site/**"
+      - "scripts/site-benchmark-data.mjs"
       - ".github/workflows/pages.yml"
   pull_request:
     paths:
       - "site/**"
+      - "scripts/site-benchmark-data.mjs"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -27,19 +29,19 @@ jobs:
       - name: Check required files and local references
         run: |
           set -eu
-          for f in index.html 404.html styles.css app.js favicon.svg media/social-preview.png media/demo.mp4 media/approval-card.png media/approve-once.png media/secret-placeholders.png media/benchmark-text-data.json media/benchmark-visual-data.json media/benchmark-text.svg media/benchmark-visual.svg; do
+          for f in index.html 404.html styles.css hero.css app.js favicon.svg media/social-preview.png media/demo.mp4 media/approval-card.png media/approve-once.png media/secret-placeholders.png media/evidence/public-pilots-2026-11-07.json; do
             test -s "site/$f" || { echo "missing site/$f"; exit 1; }
           done
-          for ref in styles.css app.js favicon.svg; do
+          for ref in styles.css hero.css app.js favicon.svg; do
             grep -q "$ref" site/index.html || { echo "index.html does not reference $ref"; exit 1; }
           done
           if grep -nE '(src|href)="https?://(cdn|unpkg|fonts)' site/index.html; then
             echo "runtime CDN reference found"; exit 1
           fi
           du -sk site
-      - name: Check generated benchmark charts are current
-        run: npm run site:benchmark-data && git diff --exit-code
-      - name: Validate local assets and completed benchmark data
+      - name: Check generated public trial charts are current
+        run: node --check site/app.js && npm run site:benchmark-data && git diff --exit-code
+      - name: Validate local assets and exploratory public trial evidence
         run: |
           node --input-type=module <<'NODE'
           import { readFileSync, existsSync, statSync } from 'node:fs';
@@ -54,27 +56,54 @@ jobs:
             if (statSync(file).isDirectory()) file = resolve(file, 'index.html');
             if (!existsSync(file)) throw new Error(`Missing local page: ${ref}`);
           }
-          for (const id of ['benchmark-text-chart', 'benchmark-visual-chart']) {
-            if (!new RegExp(`<svg[^>]+id="${id}"`).test(html)) throw new Error(`Missing inline ${id} SVG`);
-          }
-          for (const label of ['Playwright MCP', 'FAI Agent direct', 'FAI Jev autopilot']) {
-            if (!html.includes(`class="chart-bar-label chart-bar-label-`) || !html.includes(`>${label}</text>`)) {
-              throw new Error(`Missing direct bar label: ${label}`);
-            }
-          }
-          for (const file of ['benchmark-text-data.json', 'benchmark-visual-data.json']) {
-            const data = JSON.parse(readFileSync(resolve(root, 'media', file), 'utf8'));
-            if (data.schemaVersion !== 3 || data.kind !== 'grouped' || data.status !== 'complete' || !Array.isArray(data.metrics) || data.metrics.length !== 4) {
-              throw new Error(`The published ${file} must contain completed grouped measurements`);
-            }
-            for (const metric of data.metrics) {
-              for (const system of ['playwright', 'agent', 'jev']) {
-                if (!Number.isFinite(metric[system]?.value) || metric[system].value < 0 || typeof metric[system].display !== 'string') {
-                  throw new Error(`Invalid ${metric.id} ${system} measurement`);
-                }
+          const fail = message => { throw new Error(message); };
+          const dataText = readFileSync(resolve(root, 'media/evidence/public-pilots-2026-11-07.json'), 'utf8');
+          const data = JSON.parse(dataText);
+          const tasks = ['flights', 'amazon', 'airbnb'];
+          const drivers = ['fai', 'playwright'];
+          if (data.schemaVersion !== 1 || data.measuredAt !== '2026-11-07' ||
+              !Array.isArray(data.pairs) || data.pairs.length !== tasks.length ||
+              data.pairs.map(pair => pair.task).join() !== tasks.join()) fail('Invalid public trial schema/task coverage');
+          if (!data.classification.includes('not a controlled A/B test') ||
+              data.provenance.modelRequested !== 'gpt-6-astra' || data.provenance.modelReported !== null ||
+              data.provenance.costUsd !== null || data.provenance.fullTaskMachineVerified !== null ||
+              data.provenance.faiBrowser !== 'Firefox' || data.provenance.playwrightBrowser !== 'Chromium' ||
+              !Array.isArray(data.confounds) || data.confounds.length < 6) fail('Missing exploratory provenance/limitations');
+          for (const pair of data.pairs) {
+            if (!pair.outcome || !pair.verification.includes('full-task success unestablished')) fail('Missing bounded outcome');
+            for (const driver of drivers) {
+              const run = pair[driver];
+              for (const field of ['wallMs', 'toolCalls', 'inputTokens', 'cachedInputTokens', 'uncachedInputTokens', 'outputTokens']) {
+                if (!Number.isFinite(run?.[field]) || run[field] < 0 ||
+                    (field !== 'wallMs' && !Number.isSafeInteger(run[field]))) fail(`Invalid ${pair.task}/${driver}/${field}`);
               }
+              if (run.wallMs === 0 || run.toolCalls === 0 ||
+                  run.inputTokens - run.cachedInputTokens !== run.uncachedInputTokens) fail('Invalid timing or fresh input accounting');
             }
+            for (const field of ['faiStale', 'faiNoControl', 'playwrightRecoveredInteractionErrors', 'playwrightReportedAccessRefusals']) {
+              if (!Number.isSafeInteger(pair.recovery?.[field]) || pair.recovery[field] < 0) fail('Invalid recovery accounting');
+            }
+            if (pair.playwright.wallMs >= pair.fai.wallMs ||
+                pair.playwright.uncachedInputTokens >= pair.fai.uncachedInputTokens) fail('Published comparison claim no longer matches evidence');
           }
+          const attemptIds = ['flight-startup', 'flight-handoff', 'amazon-interrupted', 'playwright-airbnb-tab-selection'];
+          if (!Array.isArray(data.additionalAttempts) || data.additionalAttempts.length !== attemptIds.length ||
+              new Set(data.additionalAttempts.map(attempt => attempt.id)).size !== attemptIds.length ||
+              attemptIds.some(id => !data.additionalAttempts.some(attempt => attempt.id === id && attempt.outcome))) fail('Incomplete additional-attempt ledger');
+          if (!Array.isArray(data.sourceAudits) || data.sourceAudits.length !== 6 ||
+              tasks.some(task => drivers.some(driver => data.sourceAudits.filter(audit => audit.task === task && audit.driver === driver && /^[a-f0-9]{64}$/.test(audit.sha256)).length !== 1))) fail('Missing source audit fingerprints');
+          if (/\/tmp\/|\/home\/|Bearer\s|client-token|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(dataText)) fail('Private/local evidence leaked into public data');
+          for (const metric of ['wall', 'fresh']) {
+            if ((html.match(new RegExp(`data-chart-metric="${metric}"`, 'g')) || []).length !== 1 ||
+                !html.includes(`data-metric="${metric}"`)) fail(`Missing ${metric} chart/control`);
+          }
+          if ((html.match(/class="pilot-card"/g) || []).length !== 6 ||
+              (html.match(/class="pilot-series fai"/g) || []).length !== 6 ||
+              (html.match(/class="pilot-series playwright"/g) || []).length !== 6 ||
+              !html.includes('Exact values as a table') || !html.includes('All six runs returned partial results.') ||
+              !html.includes('common zero baseline') || !html.includes('public-pilots-2026-11-07.json')) fail('Incomplete static charts, labels, table or caveats');
+          if (/id="benchmark-(text|visual)-chart"|Host-only cost per task|90.3% fewer/.test(html)) fail('Retired claims reintroduced');
+          console.log('Public trial evidence: six runs, four additional attempts, six audit fingerprints; static chart and asset checks passed.');
           NODE
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
         if: github.event_name != 'pull_request'

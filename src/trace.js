@@ -159,7 +159,7 @@ async function writeImage(runDir, name, screenshot) {
     ...imageSize(bytes),
     // The action-id badges drawn (extension/offscreen.js), in image pixels, when the capture had the offer's ids.
     ...(Array.isArray(screenshot.tags) ? { tags: screenshot.tags } : {}),
-    // Secret boxes on the image (extension/offscreen.js), and `redaction: "withheld"` for a blurred frame.
+    // Secret boxes on the image (extension/offscreen.js), and `redaction: "withheld"` for a frame filled solid black.
     ...(Number.isInteger(screenshot.redactions) ? { redactions: screenshot.redactions } : {}),
     ...(screenshot.redaction === 'withheld' ? { redaction: 'withheld' } : {}),
   };

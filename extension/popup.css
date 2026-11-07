@@ -4,11 +4,11 @@
   --surface: #faf8f3;
   --surface-deep: #eee9df;
   --ink: #403b32;
-  --muted: #8b8579;
+  --muted: #6f685d;
   --line: #ddd6c9;
-  --amber: #a66e20;
+  --amber: #946116;
   --amber-dark: #875814;
-  --green: #277c53;
+  --green: #1f6f47;
   --danger: #a8322a;
   --danger-soft: #f8e5e1;
 }
@@ -78,7 +78,7 @@ code { font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
 .key-badge { flex: 0 0 auto; padding: 4px 6px; border-radius: 4px; background: #e3ece4; color: var(--green); font-size: 8px; }
 label { display: block; margin: 12px 0 5px; font-weight: 600; font-size: 12px; }
 input { display: block; width: 100%; height: 36px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: white; color: var(--ink); }
-input::placeholder { color: #ada79e; }
+input::placeholder { color: var(--muted); }
 .field-help { margin: 5px 0 0; color: var(--muted); font-size: 10px; }
 .requests { margin-top: 12px; }
 .requests:empty { display: none; }
@@ -132,6 +132,6 @@ body.arm-page { width: auto; min-height: 100vh; }
 .arm-headline { margin: 9px 0 6px; font-size: 16px; line-height: 1.2; font-weight: 650; color: var(--amber-dark); }
 .arm-detail { margin: 0 0 10px; font-size: 12px; overflow-wrap: anywhere; }
 .arm-level label { margin: 0 0 4px; font-size: 11px; }
-.arm-actions { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
-.arm-actions .status { flex: 1; min-height: 0; margin: 0; }
+.arm-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 10px; }
+.arm-actions .status { flex-basis: 100%; min-height: 0; margin: 0; }
 body.arm-page[data-level="testing"] .level-select { border-color: var(--danger); color: var(--danger); font-weight: 650; }

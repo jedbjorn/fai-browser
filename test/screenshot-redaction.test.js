@@ -151,7 +151,7 @@ test('race: a key inserted between the box query and the capture is covered or t
   }
 });
 
-test('a page that never holds still is withheld: the whole frame is blurred', async t => {
+test('a page that never holds still is withheld: the whole frame is covered', async t => {
   const page = await open(t, '/account.html');
   await page.evaluate(value => {
     const p = document.createElement('p');
@@ -175,3 +175,36 @@ test('the page is never changed by a capture: no attribute, style or element add
   await captureRedacted(page, offscreen);
   assert.equal(await page.evaluate(() => document.documentElement.outerHTML), before);
 });
+
+// A withheld frame must carry no captured pixels, even when neither query found a box. Covering
+// large color fields also catches blur/downsampling that retained color and source-over edge leaks.
+for (const encoder of ['dom', 'offscreen']) {
+  test(`withheld ${encoder} frames discard all source pixels, including edges`, async () => {
+    const source = color => offscreen.page.evaluate(fill => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1280;
+      canvas.height = 900;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = fill;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/png');
+    }, color);
+    const green = await source('#00ff00');
+    const magenta = await source('#ff00ff');
+    assert.equal((await pixelReport(offscreen, green)).green, 1280 * 900);
+    const message = { type: 'annotate', encoder, action: null, target: null,
+      observation: { viewport: { width: 1280, height: 900 }, controls: [], url: 'https://example.test/', revision: 'test' },
+      redact: { rects: [], viewport: { width: 1280, height: 900 }, withheld: true } };
+    const first = await offscreen.annotate({ ...message, dataUrl: green });
+    const second = await offscreen.annotate({ ...message, dataUrl: magenta });
+    assert.equal(first.error, undefined);
+    assert.equal(second.error, undefined);
+    assert.equal(first.withheld, true);
+    assert.equal(first.redactions, 0);
+    assert.equal(first.dataUrl, second.dataUrl, 'withheld output is independent of every source pixel');
+    const boxes = [{ x: 0, y: 0, width: 1280, height: 850 }];
+    const report = await pixelReport(offscreen, first.dataUrl, boxes, { width: 1280 });
+    assert.equal(report.green, 0);
+    assert.equal(report.boxes[0].dark, report.boxes[0].pixels);
+  });
+}

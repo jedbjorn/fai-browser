@@ -32,10 +32,12 @@ verified receipt comes back. Autopilot benchmarks are reported separately below.
 - **Less page text per turn.** On twelve captured public pages replayed locally, opening results
   used a median 1,147 tokens versus 11,787 for full accessibility snapshots (rounded, o200k_base).
   This measures output size, not task success; see the [method and results](bench/tokens/results-real-0.3.1.md).
-- **You stay in control.** The agent gets one tab, only after you approve its request: the page opens in
-  a new window by itself and one click on the FAI Browser icon there approves it (a request for `full` or
+- **You stay in control.** The agent gets one task tab by default, only after you approve its request: the page opens in
+  a new tab in the existing browser window by itself. Click **Approve** in its request modal, allowing browser site
+  access when asked, or click the FAI Browser toolbar icon on that tab (a request for `full` or
   `testing` shows the FAI Browser window first, where you pick the level and **Open** the page).
-  You can pause or stop at any time.
+  You can pause or stop at any time. Screenshots on either browser may still need the toolbar click;
+  modal approval requests host access, which does not itself grant screenshot access.
 - **Results are receipts, not guesses.** `completed` means an independent expectation passed. Each
   result carries a trusted `verdict` and `next {kind, text}`: answer, choose, rerun, relay to the
   user or stop.
@@ -158,7 +160,7 @@ node examples/fake-demo.js   # deterministic provider and in-memory bridge; prin
 2. Open `chrome://extensions` (or `brave://`, `edge://`), turn on Developer mode, click **Load unpacked** and
    select `extension/`. The extension pairs by itself: nothing to copy or paste. Firefox: `npm run
    build:firefox`, then load `dist/firefox/` ([Browsers](#browsers)).
-3. Pin the FAI Browser icon (puzzle-piece menu, then the pin): you approve each agent request by clicking it.
+3. Pin the FAI Browser icon (puzzle-piece menu, then the pin) for controls and toolbar approval. You can also approve directly in the request modal.
 4. Restart your coding agent.
 
 To try the experimental Jev autopilot, run `npm run setup -- --driver jev` instead: it asks for the Jev key at
@@ -182,8 +184,10 @@ node src/cli.js run "Open Members" --origin https://app.example.com \
   --reason "Check the members list" --expect-url-includes /members
 ```
 
-The CLI asks you to approve the request (the page opens in a new window; one click on the FAI Browser icon
-there approves it; for `--mode full`, **Open** in the FAI Browser window first), runs the task and
+In the extension's **Advanced → Tab access**, **One task tab** is the default; a page-created tab or popup pauses the task. Choose **Multiple task tabs** before approving a request to let the agent open and switch among up to eight task tabs on the approved site. The browser asks for site access, the tabs share the task group where supported, and existing personal tabs stay outside the task. Switching back to one pauses a multiple-tab task. The chosen permission level still applies.
+
+The CLI asks you to approve the request (the page opens in a new task tab; click **Approve** in the request modal
+or the toolbar icon on that tab; for `--mode full`, **Open** in the FAI Browser window first), runs the task and
 prints one JSON line.
 
 **Or from your agent, through MCP (Jev autopilot):**
@@ -307,7 +311,7 @@ permissions take no port: approving `http://127.0.0.1:8080` grants `http://127.0
 
 ## Status and roadmap
 
-FAI Browser is an **early release (v0.3.2)**: the daemon, MCP server, skill, guardrails and benchmark
+FAI Browser is an **early release (v0.4.0)**: the daemon, MCP server, skill, guardrails and benchmark
 harness work and are tested, and interfaces may still change. Open items:
 
 - **Extension UX:** a side panel with a pending-request badge, live run view and real pause and

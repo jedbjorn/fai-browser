@@ -30,6 +30,8 @@
   <div id="spacer"></div>
   <h2 id="results">Results</h2>
   <button id="far" type="button">Load more results</button>
+  <div class="row"><button id="finish" type="button">Finish detection report</button></div>
+  <pre id="output"></pre>
 </main>
 <script>
 // A stand-in for the client-side half of a bot-detection script: it records the event stream with capture listeners
@@ -151,6 +153,22 @@
   document.getElementById('show').addEventListener('click', () => { document.getElementById('status').textContent = 'Details shown.'; });
   document.getElementById('far').addEventListener('click', () => { document.getElementById('status').textContent = 'More results loaded.'; });
 
+  const mutations = [];
+  function watchMutations() {
+    new MutationObserver(records => {
+      for (const record of records) {
+        const target = record.target.nodeType === 1 ? record.target : record.target.parentNode;
+        if (target?.closest?.('#status,#output')) continue;
+        const path = [];
+        for (let node = target; node && path.length < 5; node = node.parentNode) path.push(node.id || node.nodeName);
+        const changed = [...record.addedNodes, ...record.removedNodes].map(node => (node.outerHTML ?? node.textContent ?? node.nodeName).slice(0, 80));
+        mutations.push(`${record.type}:${record.attributeName ?? ''}:${path.join('<')} ${changed.join('|')}`);
+      }
+    }).observe(document, { subtree: true, attributes: true, childList: true, characterData: true });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchMutations, { once: true });
+  else watchMutations();
+
   window.__detector = {
     report() {
       const result = { flags: { ...flags }, untrusted, counts: JSON.parse(JSON.stringify(counts)) };
@@ -164,15 +182,45 @@
       }
       return result;
     },
+    snapshot() {
+      return {
+        report: this.report(),
+        globals: Object.keys(window).filter(key => /fai/i.test(key)),
+        mutations: [...mutations],
+        webdriver: navigator.webdriver,
+        activation: navigator.userActivation?.isActive ?? null,
+        values: {
+          name: document.getElementById('name').value,
+          notes: document.getElementById('notes').value,
+          query: document.getElementById('q').value,
+          sort: document.getElementById('sort').value,
+          status: document.getElementById('status').textContent,
+          hash: location.hash,
+        },
+      };
+    },
     reset() {
       events.length = 0;
       keyIntervals.length = 0;
       lastKeydown = null;
       untrusted = 0;
+      mutations.length = 0;
       for (const key of Object.keys(flags)) delete flags[key];
       counts.click = {}; counts.change = {}; counts.input = {}; counts.submit = 0;
     },
   };
+
+  document.getElementById('finish').addEventListener('click', async () => {
+    const snapshot = window.__detector.snapshot();
+    document.getElementById('output').textContent = JSON.stringify(snapshot, null, 2);
+    try {
+      const response = await fetch('/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot) });
+      if (!response.ok) throw new Error(`report HTTP ${response.status}`);
+      document.getElementById('status').textContent = 'Detection report sent.';
+    } catch {
+      document.getElementById('status').textContent = 'Detection report is shown below.';
+    }
+  });
 })();
 </script>
 </body>

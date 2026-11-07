@@ -82,6 +82,12 @@
           <option value="full">Act</option>
         </select>
         <p id="default-level-help" class="field-help">Cards preselect what the agent asked for, up to this level.</p>
+        <label for="tab-mode">Tab access</label>
+        <select id="tab-mode">
+          <option value="single">One task tab</option>
+          <option value="multiple">Multiple task tabs</option>
+        </select>
+        <p class="field-help">Applies when you approve a request. Multiple task tabs lets the agent open and follow up to eight tabs on the approved site, grouped together where supported. Browser site access is required. Use with agents you trust, at your own risk. Switching back to one pauses a multiple-tab task.</p>
         <label class="check-row" for="approval-window"><input id="approval-window" type="checkbox" checked> Show a window when an agent asks</label>
         <label class="check-row" for="open-right-away"><input id="open-right-away" type="checkbox" checked> Open requested pages right away</label>
         <p class="field-help">Opening approves nothing: you still click the FAI Browser icon on the page.</p>
@@ -92,10 +98,10 @@
         <span class="section-label">Site access</span>
         <p id="all-sites-state" class="field-help">The browser asks for access per site when a task needs it.</p>
         <button id="all-sites" class="secondary-button" type="button">Allow on all sites</button>
-        <p class="field-help">Lets the extension read and capture pages on any site you approve a tab on, without a prompt per site. Agents still get only the one tab you approve, at the level you pick.</p>
+        <p class="field-help">Lets the extension read and capture pages on any site you approve a tab on, without a prompt per site. Agents still get only the task tabs and sites you approve, at the level you pick.</p>
 
         <span class="section-label">Test sites</span>
-        <p class="field-help">Exact origins where you may pick <strong>Test site</strong>: no guardrails there.</p>
+        <p class="field-help">Exact origins where you may pick <strong>Test site</strong>. Origin and policy limits, redaction and approval protections still apply.</p>
         <ul id="testing-list" class="testing-list"></ul>
         <p id="testing-empty" class="field-help">None listed.</p>
         <div class="testing-add">

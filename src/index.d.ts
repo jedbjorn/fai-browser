@@ -129,6 +129,7 @@ export type ActionType =
   | 'fill_supplied_text'
   | 'select'
   | 'scroll'
+  | 'open_tab'
   | 'navigate_allowed_url'
   | 'wait'
   | 'fill_secret'
@@ -533,6 +534,8 @@ export type Capability = 'navigate' | 'controls' | 'submit_safe' | 'submit' | 'd
   | 'purchase';
 /** The user's approval for a tab request, from the extension's lease message. */
 export interface Grant {
+  /** Immutable tab access approved by the user; omitted older grants mean single. */
+  tabMode?: 'single' | 'multiple';
   level: Level;
   testing: boolean;
   /** ISO time of the approval. */
@@ -557,6 +560,7 @@ export function checkOriginEntry(value: unknown): { entry: string; root?: string
 export function originCovered(origin: string, entries: readonly string[]): boolean;
 /** Trusted block on every receipt: what the agent asked for, what the user granted and what the run used. */
 export interface Permissions {
+  tabMode?: 'single' | 'multiple';
   requested: Level;
   /** Null when no user grant applies (pending request, or an SDK caller without a grant). */
   granted: Level | null;
@@ -692,7 +696,7 @@ export interface AuthorityOptions {
   /** The level the run asks for; clamped to `grant` (and to `full` without a grant: testing needs the user's grant). */
   mode?: Level;
   /** The user's grant for the tab (the daemon and the in-process companion pass the lease's). */
-  grant?: { level: Level };
+  grant?: { level: Level; tabMode?: 'single' | 'multiple' };
   /**
    * Values for fill_supplied_text, by name. Never placed in offered actions or history. Before any provider
    * request, exact occurrences (and URL-encoded forms) of values of 4 or more characters that the page echoes back
@@ -818,6 +822,8 @@ export interface PointChoice {
  * control, `file` goes with an upload action (the daemon's `{ name, size, type, data }`; over HTTP and MCP a `path`).
  */
 export interface ActChoice {
+  /** Open a new task tab on approved origins; requires Multiple task tabs approval. */
+  openTab?: string;
   actionId?: string;
   point?: { x: number; y: number };
   text?: string;
@@ -1716,7 +1722,8 @@ export type HubReply = (value: Record<string, unknown> | { error: { code: string
   => void;
 
 export type HubEvent =
-  | { type: 'lease'; requestId: string | null; tabId: number; origin: string; title: string; reply: HubReply }
+  | { type: 'lease'; requestId: string | null; tabId: number; origin: string; title: string; level?: Level;
+      scope?: OriginScope; tabMode?: 'single' | 'multiple'; reply: HubReply }
   | { type: 'deny'; requestId: string | null; reply: HubReply }
   | { type: 'status'; leaseId: string; requestId?: string | null; status: 'paused' | 'stopped'; reason: string }
   | { type: 'hello'; session: HubSession | null; settings: ExtensionSettings | null; reply: HubReply }
@@ -1746,7 +1753,8 @@ export interface Hub {
   onEvent(listener: (event: HubEvent) => void): () => void;
   /** Binds (or re-activates) a lease. */
   bindLease(lease: { leaseId: string; requestId: string | null; tabId: number; origin: string;
-    allowedOrigins: string[] }): unknown;
+    allowedOrigins: string[]; level?: Level; tabMode?: 'single' | 'multiple' }): unknown;
+  setLeaseTabMode?(leaseId: string, tabMode: 'single' | 'multiple'): boolean;
   /** Pushes lease_update; a non-active state fails pending commands with the reason code. */
   updateLease(leaseId: string, state: string, reason?: string): unknown;
   forgetLease?(leaseId: string): boolean;
@@ -1918,6 +1926,8 @@ export type ObserveResponse =
   | { state: 'done'; requestId: string; result: RunResult };
 
 export interface ActBody {
+  /** Open a new task tab on approved origins; requires Multiple task tabs approval. */
+  openTab?: string;
   requestId: string;
   /** An offered action, or a host-composed act (ActChoice): one of actionId, point, url, nav, key, tab, dialog, fills. */
   actionId?: string;

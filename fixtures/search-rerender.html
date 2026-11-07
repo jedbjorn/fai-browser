@@ -1,0 +1,23 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Generic search rerender</title></head><body>
+<main>
+  <h1>Search</h1>
+  <form id="search-form">
+    <label for="query">Search</label>
+    <input id="query" name="q" type="search" autocomplete="off">
+  </form>
+  <p id="status">Ready</p>
+</main>
+<script>
+window.inputCount = 0;
+window.submitCount = 0;
+document.getElementById('search-form').addEventListener('input', event => {
+  if (event.target.id === 'query') window.inputCount++;
+});
+document.getElementById('search-form').addEventListener('submit', event => {
+  event.preventDefault();
+  window.submitCount++;
+  document.getElementById('status').textContent = 'Search completed';
+});
+</script>
+</body></html>

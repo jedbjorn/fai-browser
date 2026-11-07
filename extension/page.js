@@ -13,9 +13,13 @@
     'a[href]', 'button', 'input', 'textarea', 'select', 'details > summary',
     '[role="button"]', '[role="link"]', '[role="combobox"]', '[role="listbox"]',
     '[role="textbox"]', '[role="checkbox"]', '[role="radio"]', '[role="option"]',
+    '[role="menuitem"]', '[role="menuitemcheckbox"]', '[role="menuitemradio"]', '[role="tab"]',
   ].join(',');
-  const EXPLICIT_ROLES = new Set(['link', 'button', 'textbox', 'combobox', 'listbox', 'checkbox', 'radio', 'option']);
-  // Custom dropdowns: an element with role=option is a control only inside a listbox/menu (or the popup an
+  const EXPLICIT_ROLES = new Set(['link', 'button', 'textbox', 'combobox', 'listbox', 'checkbox', 'radio', 'option',
+    'menuitem', 'menuitemcheckbox', 'menuitemradio', 'tab']);
+  const MENU_ITEM_ROLES = new Set(['menuitem', 'menuitemcheckbox', 'menuitemradio']);
+  const CHECKABLE_ROLES = new Set(['checkbox', 'radio', 'menuitemcheckbox', 'menuitemradio']);
+  // Custom dropdowns and menus: an option or menu item is a control only inside its container (or the popup an
   // aria-expanded trigger controls), and only while rendered, so the open list is offered after the trigger click.
   const OPTION_CONTAINER = '[role="listbox"],[role="menu"],[role="combobox"],[role="tree"],[role="grid"]';
 
@@ -427,9 +431,9 @@
   const MAX_SHADOW_ROOTS = 64;
   const MAX_SHADOW_DEPTH = 4;
 
-  // Control selection under MAX_CONTROLS: consent buttons, then controls in the viewport (those matching an
-  // instruction term first), with up to TERM_RESERVE slots kept for off-screen term matches, then off-screen
-  // controls in document order.
+  // Control selection under MAX_CONTROLS: consent buttons, nag closers and floating choices, then other controls in
+  // the viewport (those matching an instruction term first), with up to TERM_RESERVE slots kept for off-screen term
+  // matches, then off-screen controls in document order.
   const TERM_RESERVE = 15;
   const MAX_TERMS = 30;
   // Visibility checks spent on counting the off-screen controls the cap left out (controlsDropped).
@@ -606,8 +610,8 @@
     return el.tagName !== 'SELECT' && el.getAttribute('role') === 'listbox' && Boolean(el.querySelector('[role="option"]'));
   }
 
-  // role=option counts inside a listbox/menu, or inside the popup an expanded trigger names with aria-controls or
-  // aria-owns. Native <option> elements are reported through their <select>.
+  // Options and menu items count inside a listbox/menu, or inside the popup an expanded trigger names with
+  // aria-controls or aria-owns. Native <option> elements are reported through their <select>.
   function offeredOption(el) {
     if (el.tagName === 'OPTION') return false;
     const scope = el.getRootNode();
@@ -1368,18 +1372,19 @@
     const rawHref = el.tagName === 'A' ? String(el.getAttribute('href') ?? '').trim() : '';
     const scriptHref = el.tagName === 'A' && (rawHref === '' || rawHref === '#' || /^javascript:/i.test(rawHref));
     let worst = null;
-    if (scriptLink || (role === 'link' && scriptHref) || ['button', 'option', 'textbox', 'combobox'].includes(role)) {
+    if (scriptLink || (role === 'link' && scriptHref) || ['button', 'tab', 'option', 'textbox', 'combobox'].includes(role)
+      || MENU_ITEM_ROLES.has(role)) {
       for (const name of names) worst = severer(worst, labelClass(name));
     }
     const fromLabels = worst;
     if (paymentField(el)) worst = severer(worst, 'purchase');
     if (el.tagName === 'INPUT' && el.type === 'password') worst = severer(worst, 'sign_in');
     if (worst) {
-      // A button or option refused only for ambiguous label words (the intent tier, labelTier) is marked, so a click
-      // the runtime cleared with Jev (action.intentCleared) may run: never a form submit, a payment or password
+      // A button, option or menu item refused only for ambiguous label words (the intent tier, labelTier) is marked,
+      // so a click the runtime cleared with Jev (action.intentCleared) may run: never a form submit, a payment or password
       // field, a consent dialog's control, a control with any name in the hard tier, or on a page with such fields.
       const ambiguous = worst === fromLabels && (worst === 'submit' || worst === 'purchase')
-        && (role === 'button' || role === 'option') && !consentKind
+        && (role === 'button' || role === 'tab' || role === 'option' || MENU_ITEM_ROLES.has(role)) && !consentKind
         && !((el.type === 'submit' || el.type === 'image') && el.form)
         && names.every(name => !name || labelTier(name) !== 'hard') && !pageSensitive();
       return ambiguous ? { cls: worst, ambiguous: true } : { cls: worst };
@@ -1389,7 +1394,7 @@
       // destructive-looking label; other dialog buttons may submit but keep the label classes.
       if (consentKind === 'accept') return { cls: 'consent_accept' };
       if (role === 'link') return { cls: 'navigation' };
-      if (consentKind !== 'reject' && role === 'button') {
+      if (consentKind !== 'reject' && (role === 'button' || role === 'tab')) {
         const cls = labelClass(label);
         if (cls) return { cls };
       }
@@ -1399,8 +1404,8 @@
     if ((el.type === 'submit' || el.type === 'image') && el.form) return { cls: formClass(el.form, label) };
     // Defence in depth for frames, where a consent banner may not be recognised as a dialog: an accept-style button
     // inside a frame is a consent accept.
-    if (el.ownerDocument !== document && role === 'button' && consentKindOfControl(el, label) === 'accept') return { cls: 'consent_accept' };
-    if (role === 'button' || role === 'option') {
+    if (el.ownerDocument !== document && (role === 'button' || role === 'tab') && consentKindOfControl(el, label) === 'accept') return { cls: 'consent_accept' };
+    if (role === 'button' || role === 'tab' || role === 'option' || MENU_ITEM_ROLES.has(role)) {
       const cls = labelClass(label);
       if (cls) return { cls };
     }
@@ -1511,7 +1516,7 @@
   function gatedRisk(el, role, label, risk, consent, purchase, region = null) {
     if (!risk || ['forbid', 'sign_in', 'consent_accept'].includes(risk.cls) || consent || risk.overlayDismiss) return risk;
     const realLink = el.tagName === 'A' && el.hasAttribute('href') && !/^\s*(?:#|javascript:)/i.test(el.getAttribute('href') ?? '#');
-    const button = role === 'button' || (role === 'link' && !realLink)
+    const button = role === 'button' || role === 'tab' || (role === 'link' && !realLink)
       || ((el.type === 'submit' || el.type === 'image') && Boolean(el.form));
     if (!button) return risk;
     const names = gateNames(el, label);
@@ -1523,7 +1528,7 @@
       if (region) region.value = navigation ? 'navigation' : checkout ? 'checkout' : null;
       if (names.some(name => purchaseControl(name, { checkout, navigation }))) next = { cls: 'purchase', gate: 'purchase' };
     }
-    if (!exempt && role === 'button' && inDialog(el)) {
+    if (!exempt && (role === 'button' || role === 'tab') && inDialog(el)) {
       const dialog = el.closest(DIALOG);
       if (dialog && COMMIT_DIALOG.test(cleanText(dialog.textContent ?? '').slice(0, 2000)) && severer(next.cls, 'delete') === 'delete') {
         next = { cls: 'delete', gate: 'delete' };
@@ -1878,13 +1883,13 @@
     let fields = 0;
     let rich = false;
     for (const el of controls) {
-      if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || ['combobox', 'listbox', 'grid'].includes(el.getAttribute('role') ?? '')) rich = true;
+      if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || ['combobox', 'grid'].includes(el.getAttribute('role') ?? '')) rich = true;
       if (el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset', 'image', 'hidden'].includes(el.type)) fields++;
     }
-    if (root.querySelector('[role="grid"],[role="listbox"],[role="tablist"],table')) rich = true;
+    if (root.querySelector('[role="grid"],[role="tablist"],table')) rich = true;
     if (rich || fields > 3 || controls.length > 25 || TASK_WORDS.test(text)) return 'task';
     for (const [kind, words] of NAG_KINDS) if (words.test(text)) return kind;
-    return 'unknown';
+    return root.querySelector('[role="listbox"]') ? 'task' : 'unknown';
   }
 
   // The close controls of an overlay, best first: an X or close/dismiss name, an unnamed icon button in the panel's
@@ -2011,6 +2016,11 @@
       const layer = floatingLayer(panel);
       const root = layer && !(consentRoot && within(consentRoot, layer)) ? layer : panel;
       if (root === document.body) continue;
+      // A menu, listbox or native popover is ordinary floating UI only when the candidate itself is that container.
+      // Nested floating UI does not hide an outer nag/dialog, and a real dialog still goes through the rules below.
+      const floatingSelector = '[role="menu"],[role="listbox"],[popover]';
+      const semanticFloating = root.matches(floatingSelector) && visible(root) && floatingContainer(root);
+      if (semanticFloating && !panel.matches(DIALOG) && !root.querySelector(DIALOG)) continue;
       const signals = new Set(candidate.signals);
       // A dialog under the probes: its layer was hit-tested as covering the centre too.
       for (const other of candidates) if (other !== candidate && (other.el === root || within(other.el, root))) for (const s of other.signals) signals.add(s);
@@ -2083,6 +2093,54 @@
       control.dismiss = true;
       if (risk.cls === 'reversible') risk.overlayDismiss = true;
     }
+  }
+
+  // Ordinary floating UI is not a blocking overlay: its choices are the current task and must survive the control and
+  // offer caps ahead of the page behind it. Semantic containers work wherever the portal was mounted, not only under
+  // their trigger. Consent and nag overlays keep their existing, separate priority rules.
+  const FLOATING_CONTAINER = `[role="menu"],[role="listbox"],[popover],${DIALOG}`;
+  const MAX_FLOATING_CONTAINERS = 20;
+  let floatingRoots = [];
+
+  function expandedFloating(el) {
+    const scope = el.getRootNode();
+    for (let node = el, depth = 0; node && node.nodeType === 1 && depth < 6; node = parentOf(node), depth++) {
+      if (!node.id) continue;
+      const id = CSS.escape(node.id);
+      if (scope.querySelector(`[aria-expanded="true"][aria-controls~="${id}"],[aria-expanded="true"][aria-owns~="${id}"]`)) return true;
+    }
+    return false;
+  }
+
+  function floatingContainer(el) {
+    if (el.matches(DIALOG)) return true;
+    if (el.matches('[popover]')) {
+      try {
+        return el.matches(':popover-open');
+      } catch {
+        return false;
+      }
+    }
+    if (expandedFloating(el)) return true;
+    // Positioning alone does not say a menu is open. A validated overlay is the current task; static/offcanvas UI is not.
+    return Boolean(lastOverlay && within(el, lastOverlay.root));
+  }
+
+  function detectFloating(roots, consent) {
+    floatingRoots = [];
+    for (const el of withFrames(queryAll(FLOATING_CONTAINER, roots), FLOATING_CONTAINER)) {
+      if (floatingRoots.length >= MAX_FLOATING_CONTAINERS) break;
+      if (!visible(el) || !floatingContainer(el)) continue;
+      if (consent?.container && within(el, consent.container)) continue;
+      // Nested menus/listboxes/popovers keep their own floating marks even inside a nag; the nag's dialog does not.
+      if (lastOverlay && lastOverlay.kind !== 'task' && within(el, lastOverlay.root)
+        && (el === lastOverlay.root || el.matches(DIALOG))) continue;
+      floatingRoots.push(el);
+    }
+  }
+
+  function inFloating(el) {
+    return floatingRoots.some(root => within(el, root));
   }
 
   // A dismissal the runtime asks for (`dismiss_overlay` with method escape or backdrop) on the overlay of this very
@@ -2995,10 +3053,10 @@
   }
 
   // Picks at most MAX_CONTROLS controls. Returns [{ el, rect, label?, offscreen, consentKind? }] in output
-  // order: in-viewport controls in document order, then off-screen term matches, then other off-screen
-  // controls, each in document order. Selection priority: consent buttons, in-viewport term matches, other
-  // in-viewport controls (leaving up to TERM_RESERVE slots for off-screen term matches), off-screen term
-  // matches, off-screen controls.
+  // order: in-viewport floating choices, other in-viewport controls, off-screen term matches, then other off-screen
+  // controls, each in document order. Selection priority: consent buttons, nag closers, floating choices, in-viewport
+  // term matches, other in-viewport controls (leaving up to TERM_RESERVE slots for off-screen term matches), off-screen
+  // term matches, off-screen controls.
   function selectControls(candidates, terms, consent) {
     const inView = [];
     const offView = [];
@@ -3016,7 +3074,7 @@
       // hides the input itself, so its label's box stands in for it.
       if (type === 'file' && (el.tagName !== 'INPUT' || !currentAllow.has('submit') || el.disabled)) continue;
       const explicitRole = el.getAttribute('role');
-      if (explicitRole === 'option' && !offeredOption(el)) continue;
+      if ((explicitRole === 'option' || MENU_ITEM_ROLES.has(explicitRole)) && !offeredOption(el)) continue;
       if (explicitRole === 'listbox' && optionContainer(el)) continue;
       const own = boxOf(el);
       const pickerLabel = type === 'file' && !(own.width > 0 && own.height > 0) ? Array.from(el.labels ?? []).find(label => {
@@ -3053,8 +3111,9 @@
         if (kind) take(item);
       }
     }
-    // A nag overlay's close controls come next (detectOverlay ran just before).
+    // A nag overlay's close controls come next (detectOverlay ran just before), then an ordinary floating UI's choices.
     if (lastOverlay?.closers.length) for (const item of inView) if (overlayCloser(item.el)) take(item);
+    for (const item of inView) if (inFloating(item.el)) take(item);
     if (terms.length) for (const item of inView) if (matches(item)) take(item);
     // Off-screen term matches, checked for visibility only until the reserve is full.
     const offMatches = [];
@@ -3090,7 +3149,8 @@
     if (leftInView) capped = true;
     dropped += leftInView;
     const ordered = [
-      ...inView.filter(item => chosen.has(item)),
+      ...inView.filter(item => chosen.has(item) && inFloating(item.el)),
+      ...inView.filter(item => chosen.has(item) && !inFloating(item.el)),
       ...offMatches.filter(item => chosen.has(item)),
       ...offView.filter(item => chosen.has(item) && !offMatches.includes(item)),
     ];
@@ -3246,9 +3306,10 @@
   // records of a list without a digit ("See availability", "Includes taxes and fees") are template text and dropped.
   // Typed hints come from the fields: price (currency and number), rating (a number next to score/rated/stars, or
   // "4.5 out of 5", a score with its grade either side, a decimal before its review count; with several, the one
-  // nearest the review count, all of them in `ratings`), reviews, counts and dates or times. A record that says Sponsored/Ad/Promoted is marked
-  // `sponsored`, one that says sold out or unavailable `unavailable`; neither is removed. At most MAX_RECORDS records
-  // of RECORD_TEXT characters; each list reports its member total, so a cut is honest (`recordsTruncated`).
+  // nearest the review count, all of them in `ratings`), reviews, counts and dates or times. A record that says
+  // Sponsored/Ad/Promoted is marked `sponsored`, one that says sold out or unavailable `unavailable`; neither is
+  // removed. At most MAX_RECORDS records of RECORD_TEXT characters; each list reports its member total, so a cut is
+  // honest (`recordsTruncated`). Only explicit result count, sort and pagination are added as `recordState`.
   const RECORD_MIN = 3;
   const MAX_RECORDS = 60;
   const MAX_RECORD_LISTS = 3;
@@ -3287,6 +3348,8 @@
   const RECORD_REVIEWS = /(\d[\d,.  ]*)\s*(?:reviews?|ratings?|votes?|opinions?|comments?)\b/i;
   const RECORD_TIME = /\b(?:[01]?\d|2[0-3]):[0-5]\d\s*(?:[ap]\.?m\.?)?|\b(?:1[0-2]|0?[1-9])(?:\.[0-5]\d)?\s?[ap]\.?m\.?(?![a-z])/i;
   const RECORD_DATE = /\b(?:\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b|20\d{2}-\d{2}-\d{2})/i;
+  // Whole date cells, not date mentions in descriptive settings text. Numeric order remains uninterpreted.
+  const RECORD_DATE_CELL = /^(?:(?:\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2})(?:,?\s+\d{4})?|\d{1,2}[/.]\d{1,2}[/.](?:\d{2}|\d{4})|20\d{2}-\d{2}-\d{2}|today|yesterday)$/i;
   const RECORD_COUNT = /\b\d[\d,.]*\s(?:[a-z]{2,}|m²)|\b\d[\d,.]*\s?(?:m²|km|mi)\b/i;
   const RECORD_SPONSORED = /^(?:sponsored|ad|ads|advert|advertisement|promoted|promotion|sponsored (?:listing|result|ad)|anzeige|publicité|patrocinado|sponsorisé)\b/i;
   const RECORD_UNAVAILABLE = /\b(?:sold out|unavailable|not available|no availability|out of stock|fully booked|no (?:rooms?|seats?|tickets?) (?:left|available)|no longer available)\b/i;
@@ -3430,6 +3493,18 @@
         .some(node => recordRating(node.getAttribute('aria-label') || node.getAttribute('alt'))),
       unavailable: RECORD_UNAVAILABLE.test(text),
       choices: el.querySelectorAll(RECORD_CHOICES).length,
+      // Data rows can have both selection and state controls (for example, a star checkbox).
+      // Require independent readable data cells and a standalone date/time cell; a settings row with a
+      // name, description and toggles is still a filter. This exception covers dated tabular records only.
+      dataRow: (el.tagName === 'TR' || el.getAttribute('role') === 'row')
+        && Boolean(el.parentElement?.closest(`table,${GRID_SELECTOR}`))
+        && gridCells(el).filter(cell => !cell.matches(RECORD_CHOICES) && !cell.querySelector(RECORD_CHOICES)
+          && /[\p{L}\p{N}]/u.test(cell.textContent ?? '')).length >= 2
+        && gridCells(el).some(cell => {
+          if (cell.matches(RECORD_CHOICES) || cell.querySelector(RECORD_CHOICES)) return false;
+          const text = cleanText(cell.textContent);
+          return RECORD_DATE_CELL.test(text) || Boolean(text && text.match(RECORD_TIME)?.[0] === text);
+        }),
     };
     cache.set(el, stats);
     return stats;
@@ -3581,7 +3656,7 @@
     const length = mean(item => Math.min(item.text.length, 400));
     if (fields < 2 || length < 12) return 0;
     // A filter or settings panel: each member holds two or more choice controls (checkboxes, radios, sliders).
-    if (mean(item => (item.choices >= 2 ? 1 : 0)) >= 0.5) return 0;
+    if (mean(item => (item.choices >= 2 && !item.dataRow ? 1 : 0)) >= 0.5) return 0;
     const priced = mean(item => (recordPrices(item.text).length ? 1 : 0));
     const rated = mean(item => (recordRating(item.text) ? 1 : 0));
     // A hub of plain links (footer columns, a mega menu): most text, or most text boxes, in three or more links per
@@ -3688,12 +3763,95 @@
       if (!parent || !/\d/.test(node.nodeValue) || SKIP_TEXT_TAGS.has(parent.tagName.toUpperCase())
         || !RECORD_RESULT_COUNT.test(node.nodeValue)) continue;
       if ((parent.textContent ?? '').replace(/\s+/g, ' ').trim().length > 80 || recordChrome(parent)) continue;
-      // A filter option's count ("412 places" beside a checkbox) is no result count.
-      if (parent.closest('label,fieldset,form,select') || parent.parentElement?.querySelector(RECORD_CHOICES)) continue;
+      // A filter option's count ("412 places" beside a checkbox) is no result count; a sort control elsewhere under
+      // the results container does not suppress the page's own count.
+      const container = parent.parentElement;
+      if (parent.closest('label,fieldset,form,select') || (container?.querySelector(RECORD_CHOICES)
+        && cleanText(container.textContent) === cleanText(parent.textContent))) continue;
       if (!rendered(parent)) continue;
       return parent;
     }
     return null;
+  }
+
+  function recordResultCount(el) {
+    if (!el) return null;
+    const text = cleanText(el.textContent);
+    const match = RECORD_RESULT_COUNT.exec(text);
+    if (!match) return null;
+    const raw = /(\d[\d,.  ]*\+?)/.exec(match[0])?.[1] ?? '';
+    const value = Number(raw.replace(/\D/g, ''));
+    if (!Number.isSafeInteger(value) || value < 0) return null;
+    const qualifier = text.slice(0, match.index).trim();
+    const approximate = raw.includes('+')
+      || /\b(?:about|around|approximately|approx\.?|roughly|nearly|over|under|more than|less than|at least|at most|up to)\s*$/i.test(qualifier);
+    return { value, ...(approximate ? { approximate: true } : {}) };
+  }
+
+  // Only explicit state from the primary list's own module: a select named as a sort, aria-sort on a column, and
+  // previous/next controls in its pagination landmark (or with rel=next/prev). A secondary module lends no state.
+  function recordResultState(countEl, idOf, group, secondary) {
+    const state = {};
+    const resultCount = recordResultCount(countEl);
+    if (resultCount) state.resultCount = resultCount;
+    const first = group?.members?.[0];
+    let scope = document;
+    if (first && countEl) {
+      for (let node = first.parentElement; node; node = node.parentElement) {
+        if (!node.contains(countEl)) continue;
+        scope = node;
+        break;
+      }
+    } else if (first) {
+      scope = first.closest('section,article,main,[role="region"],[role="main"]') ?? document;
+    }
+    // A count above the list can make the scope include independent result modules. Exclude their controls while
+    // keeping shared surrounding controls (for example, a sort and pager beside the primary list's section).
+    const otherModules = secondary.map(({ group: other }) => {
+      let container = other.members[0]?.parentElement;
+      while (container && !other.members.every(member => container.contains(member))) container = container.parentElement;
+      return container?.closest('section,article,aside,main,[role="region"],[role="main"]');
+    }).filter(module => module && !module.contains(first));
+    const all = selector => [...scope.querySelectorAll(selector)]
+      .filter(el => !otherModules.some(module => module.contains(el)));
+    const sorted = all('[aria-sort="ascending"],[aria-sort="descending"]')[0];
+    if (sorted && rendered(sorted)) {
+      const label = cleanText(sorted.textContent).slice(0, 80);
+      if (label) state.sort = { label, direction: sorted.getAttribute('aria-sort') };
+    } else {
+      for (const select of all('select')) {
+        if (!rendered(select) || !/\bsort(?:ed)?\s*(?:by)?\b/i.test(labelOf(select))) continue;
+        const label = cleanText(select.selectedOptions?.[0]?.textContent).slice(0, 80);
+        if (label) state.sort = { label };
+        break;
+      }
+    }
+    const navigation = all('nav,[role="navigation"]')
+      .filter(nav => /pagination/i.test(nav.getAttribute('aria-label') ?? '') || nav.querySelector('[rel="next"],[rel="prev"]'));
+    const candidates = new Set(all('[rel="next"],[rel="prev"]'));
+    for (const nav of navigation) for (const el of nav.querySelectorAll('a,button,[role="button"]')) candidates.add(el);
+    const pagination = {};
+    for (const el of candidates) {
+      if (!rendered(el) || el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+      const rel = el.getAttribute('rel');
+      const label = labelOf(el);
+      const kind = rel === 'next' ? 'next' : rel === 'prev' ? 'previous'
+        : /^next(?:\s+page)?$/i.test(label) ? 'next' : /^previous(?:\s+page)?$/i.test(label) ? 'previous' : null;
+      if (!kind || pagination[kind]) continue;
+      pagination[kind] = idOf.get(el) ?? true;
+    }
+    for (const nav of navigation) {
+      const current = nav.querySelector('[aria-current="page"]');
+      const currentNumber = Number(cleanText(current?.textContent));
+      if (current && /^\d+$/.test(cleanText(current.textContent))) pagination.current = currentNumber;
+      const match = /\bpage\s+(\d+)\s+of\s+(\d+)\b/i.exec(cleanText(nav.textContent));
+      if (match) {
+        pagination.current = Number(match[1]);
+        pagination.total = Number(match[2]);
+      }
+    }
+    if (Object.keys(pagination).length) state.pagination = pagination;
+    return Object.keys(state).length ? state : null;
   }
 
   // Main-results signals of a list (0-2): inside the main landmark (when the page has one), and after the page's
@@ -3751,6 +3909,7 @@
       entry.inMain = Boolean(marks.main && marks.main.contains(first));
       entry.afterCount = Boolean(marks.count && !marks.count.contains(first)
         && (marks.count.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING));
+      entry.countElement = marks.count;
       return entry;
     }).sort((a, b) => (a.carousel - b.carousel) || (b.main - a.main) || (b.score - a.score));
     const accepted = [];
@@ -3967,9 +4126,9 @@
     if (record.title.length > RECORD_TEXT) record.title = record.title.slice(0, RECORD_TEXT);
   }
 
-  // The page's records: { records, lists, truncated, recordOf(el) -> { id?, member } | null }.
+  // The page's records: { records, lists, state, truncated, recordOf(el) -> { id?, member } | null }.
   function detectRecords(idOf) {
-    const empty = { records: [], lists: [], truncated: false, recordOf: () => null, members: [] };
+    const empty = { records: [], lists: [], state: null, truncated: false, recordOf: () => null, members: [] };
     let lists;
     try {
       lists = recordLists();
@@ -4023,7 +4182,8 @@
       return found;
     };
     const members = [...memberOf.values()].filter(entry => entry.id).map(entry => entry.member);
-    return { records, lists: out, truncated: out.some(entry => entry.total > entry.kept), recordOf, members };
+    const state = recordResultState(lists[0].countElement, idOf, lists[0].group, lists.slice(1));
+    return { records, lists: out, state, truncated: out.some(entry => entry.total > entry.kept), recordOf, members };
   }
 
   // finishBlocks over the cap with records: the blocks inside a record after its first one (the record entry carries
@@ -4655,6 +4815,7 @@
     if (consentKind) control.consent = true;
     // Inside an open dialog (a date picker): a click there may re-render seconds later (the runtime's late change).
     else if (inDialog(el)) control.dialog = true;
+    if (inFloating(el)) control.floating = true;
     markOverlayControl(el, control, risk);
     // The label is a descriptor this script wrote (describeUnnamed): the control has no name of its own.
     if (unnamed) control.unnamed = true;
@@ -4672,9 +4833,13 @@
       control.href = el.href;
       control.linkTarget = el.target || el.ownerDocument.querySelector('base[target]')?.target || '';
     }
-    if (role === 'option') {
+    if (role === 'tab') {
+      // Tabs select a panel. Missing/invalid aria-selected is unknown, not an invented false state.
+      const selected = el.getAttribute('aria-selected');
+      if (selected === 'true' || selected === 'false') control.checked = selected === 'true';
+    } else if (role === 'option') {
       control.checked = el.getAttribute('aria-selected') === 'true';
-    } else if (role === 'checkbox' || role === 'radio') {
+    } else if (CHECKABLE_ROLES.has(role)) {
       control.checked = el.tagName === 'INPUT' ? el.checked : el.getAttribute('aria-checked') === 'true';
     } else if (['INPUT', 'TEXTAREA'].includes(el.tagName)) {
       control.filled = Boolean(el.value);
@@ -4735,6 +4900,7 @@
     const consent = detectConsent(roots);
     lastConsent = consent;
     const overlay = detectOverlay(roots, consent);
+    detectFloating(roots, consent);
     const candidates = withFrames(queryAll(CONTROL_SELECTOR, roots), CONTROL_SELECTOR);
     const { ordered, password, capped, dropped } = selectControls(candidates, currentTerms, consent);
     targets = new Map();
@@ -4807,7 +4973,8 @@
       ...(textFound ? { textFound } : {}),
       ...(findTexts.capped ? { textCapped: true } : {}),
       ...(withBlocks ? finishBlocks(page.blocks, page.resolve, views, records) : {}),
-      ...(records?.records.length ? { records: records.records, recordLists: records.lists, recordsTruncated: records.truncated } : {}),
+      ...(records?.records.length ? { records: records.records, recordLists: records.lists, recordsTruncated: records.truncated,
+        ...(records.state ? { recordState: records.state } : {}) } : {}),
       ...(views?.unreadable.length ? { unreadable: views.unreadable } : {}),
       controls,
       ...(capped ? { controlsDropped: dropped } : {}),
@@ -4904,14 +5071,14 @@
 
   // The control a click at the point lands on: the element there or its nearest actionable ancestor (CONTROL_SELECTOR,
   // across shadow boundaries), as selectControls would pick it; null when there is none, or it is an input kind that
-  // is never a control (hidden, file) or an option outside an open list.
+  // is never a control (hidden, file) or an option/menu item outside an open list.
   function controlAtPoint(x, y) {
     let el = elementAtPoint(x, y);
     while (el && !(typeof el.matches === 'function' && el.matches(CONTROL_SELECTOR))) el = parentOf(el);
     if (!el) return null;
     if (el.type === 'hidden' || el.type === 'file') return null;
     const explicitRole = el.getAttribute('role');
-    if (explicitRole === 'option' && !offeredOption(el)) return null;
+    if ((explicitRole === 'option' || MENU_ITEM_ROLES.has(explicitRole)) && !offeredOption(el)) return null;
     if (explicitRole === 'listbox' && optionContainer(el)) return null;
     return rendered(el) ? el : null;
   }

@@ -5,6 +5,26 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## 0.4.0 (2026-11-07)
+
+### Added
+
+- Task tabs open in the existing browser window. Optional multiple-task-tab access supports up to eight task-owned tabs on the approved site while leaving personal tabs outside the task.
+- In-page request approval for Read, Use and search/filter tasks, with native browser site permission and the toolbar approval alternative.
+- Resumable public pilot tooling and a public site reporting six exploratory runs across three task pairs with outcome, token, timing and provenance details.
+- Firefox development and detection tools, floating-menu support, and stronger structured record extraction.
+
+### Fixed
+
+- Task-tab ownership, popup and navigation boundaries, permission cleanup, and recovery after worker restarts.
+- Search rerenders, independent record lists, stale action revisions, and benchmark approval isolation.
+
+### Known limits
+
+- Screenshots can still require a toolbar gesture after in-page approval.
+- Public pilot measurements are exploratory, include partial outcomes and browser/session differences, and do not establish a general performance win.
+- Native in-page approval was checked manually in Firefox; Chromium coverage is automated.
+
 ## 0.3.2 (2026-11-06)
 
 ### Fixed

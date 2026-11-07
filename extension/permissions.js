@@ -154,8 +154,8 @@ export const LEVEL_TEXT = Object.freeze({
   'read-only': Object.freeze({ name: 'Read', description: 'Reads pages and follows links on the site.' }),
   reversible: Object.freeze({ name: 'Use', description: 'Clicks, picks options and fills text you gave. Never submits.' }),
   interactive: Object.freeze({ name: 'Use', description: 'Clicks, fills, searches and filters. Never saves or sends.' }),
-  full: Object.freeze({ name: 'Act', description: 'Also saves, sends and deletes. Never pays or logs in.' }),
-  testing: Object.freeze({ name: 'Test site', description: 'No guardrails: may log in and buy. Your test sites only.' }),
+  full: Object.freeze({ name: 'Act', description: 'Also saves, sends and deletes. Recognized purchases require approval when offered; otherwise they stay refused. No sign-in.' }),
+  testing: Object.freeze({ name: 'Test site', description: 'May log in and buy on test sites. Origin, policy, redaction and approval protections remain.' }),
 });
 
 /** The capabilities each level grants (configurable-guardrails.md §3.1). */

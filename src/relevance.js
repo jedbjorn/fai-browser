@@ -82,12 +82,12 @@ function terminal(action) {
 }
 
 /**
- * Actions the cap never drops: scrolling, waiting, explicitly supplied URLs (allowedUrls), consent buttons, fills of
- * host-supplied values (the host named them for this task), secret handle fills and copies (at most a few, src/runtime.js
- * SECRET_FILL_*), and terminal actions.
+ * Actions the cap never drops: scrolling, waiting, explicitly supplied URLs (allowedUrls), consent buttons, open
+ * floating-menu/overlay choices, fills of host-supplied values (the host named them for this task), secret handle fills
+ * and copies (at most a few, src/runtime.js SECRET_FILL_*), and terminal actions.
  */
 export function essentialAction(action) {
-  if (terminal(action) || action.consent) return true;
+  if (terminal(action) || action.consent || action.floating) return true;
   if (['scroll', 'wait', 'fill_supplied_text', 'submit_field', 'fill_secret', 'copy_secret'].includes(action.type)) return true;
   return action.type === 'navigate_allowed_url' && !action.newTab;
 }

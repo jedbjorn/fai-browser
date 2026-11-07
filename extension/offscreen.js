@@ -155,25 +155,23 @@ function annotate(ctx, width, height, { observation, action, target, fromUrl, la
 
 // Screenshot redaction (docs/REFERENCE.md "Screenshot redaction"): every box the page script named (top-document
 // viewport CSS px, already padded) is filled solid on the captured pixels, labelled with its placeholder number when
-// it has one, so the image and the text agree. `withheld` (a page that would not hold still) first reduces the whole
-// frame to an unreadable blur. Returns { boxes, withheld } for the worker's check; throws on a malformed request.
+// it has one, so the image and the text agree. `withheld` (a page that would not hold still) covers the whole
+// frame with an opaque fill. Returns { boxes, withheld } for the worker's check; throws on a malformed request.
 const REDACT_FILL = '#000000';
 const REDACT_LABEL = '#ffd60a';
-const WITHHELD_FACTOR = 48;
 
-function redact(ctx, canvas, width, height, request) {
+function redact(ctx, width, height, request) {
   if (!request || !Array.isArray(request.rects) || !(request.viewport?.width > 0) || !(request.viewport?.height > 0)) {
     throw new Error('No redaction boxes');
   }
   const withheld = request.withheld === true;
   if (withheld) {
-    const small = createCanvas('dom', Math.max(1, Math.round(width / WITHHELD_FACTOR)), Math.max(1, Math.round(height / WITHHELD_FACTOR)));
-    const smallCtx = small.getContext('2d');
-    smallCtx.drawImage(canvas, 0, 0, small.width, small.height);
+    // Neither query can account for every pixel of an unstable or incomplete frame. A blur still
+    // carries source pixels (and source-over leaves the raw image beneath translucent filter edges).
+    // Withhold all captured pixels before adding the usual boxes, badges and footer.
     ctx.save();
-    ctx.imageSmoothingEnabled = true;
-    ctx.filter = 'blur(8px)';
-    ctx.drawImage(small, 0, 0, width, height);
+    ctx.fillStyle = REDACT_FILL;
+    ctx.fillRect(0, 0, width, height);
     ctx.restore();
   }
   const scaleX = width / request.viewport.width;
@@ -214,7 +212,7 @@ async function handle(message) {
   ctx.drawImage(image, 0, 0, width, height);
   image.close();
   // Secrets go first, before any box, badge or footer is drawn over the frame; without boxes there is no image.
-  const redacted = redact(ctx, canvas, width, height, message.redact);
+  const redacted = redact(ctx, width, height, message.redact);
   const tags = annotate(ctx, width, height, message);
   const drawn = performance.now();
   const dataUrl = await encode(canvas, encoder);

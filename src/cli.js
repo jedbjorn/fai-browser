@@ -30,6 +30,8 @@ const USAGE = `Usage (your agent chooses each action; the default driver):
   fai-browser observe --request ID [--mode M] [--capture last]   (--capture last: also a screenshot)
   fai-browser act --request ID --action a3 --revision R [--expect-* ...]
   fai-browser act --request ID --point X,Y --revision R      (pixels of the observe screenshot; a guarded click)
+  fai-browser act --request ID --open-tab URL --revision R   (Multiple task tabs grant required)
+  fai-browser act --request ID --tab t0 --revision R
   fai-browser release <requestId>
 Experimental Jev autopilot (driver jev: select it in the extension or npm run setup -- --driver jev):
   fai-browser step|run "instruction" [options.json] [flags]
@@ -169,6 +171,8 @@ function parseCli(argv) {
         'max-ms': { type: 'string' },
         action: { type: 'string' },
         point: { type: 'string' },
+        'open-tab': { type: 'string' },
+        tab: { type: 'string' },
         revision: { type: 'string' },
         limit: { type: 'string' },
         step: { type: 'string' },
@@ -520,7 +524,7 @@ function notActiveResult(outcome, requestId, leaseTimeoutMs, expectation, elapse
       code: 'select_tab',
       reason: `No tab was approved for request ${requestId} within ${seconds(leaseTimeoutMs)}`,
       who: 'user',
-      message: `Ask the user to approve request ${requestId} in Chrome: ${approvalSteps(outcome.request?.approval)}. `
+      message: `Ask the user to approve request ${requestId} in the browser: ${approvalSteps(outcome.request?.approval)}. `
         + `Then rerun with --request ${requestId}.`,
       expectation,
       elapsedMs,
@@ -666,7 +670,7 @@ async function executeThin(operation, flags, instruction, options, optionsPath) 
       });
       requestId = created.requestId;
       createdRequest = requestId;
-      log(`ACTION NEEDED: approve request ${requestId} for ${origins.join(' or ')} in Chrome: `
+      log(`ACTION NEEDED: approve request ${requestId} for ${origins.join(' or ')} in the browser: `
         + `${approvalSteps(created.request?.approval)}. Waiting up to ${seconds(leaseTimeoutMs)}.`);
       if (created.extensionConnected === false) {
         log('note: the extension is not connected to the daemon; open it and check Setup & connection.');
@@ -705,10 +709,12 @@ async function executeAct(flags) {
       throw new ConfigError(`act needs --${name}`);
     }
   }
-  if (Boolean(flags.action) === Boolean(flags.point)) throw new ConfigError('act needs --action or --point, not both');
+  if (['action', 'point', 'open-tab', 'tab'].filter(key => flags[key]).length !== 1) throw new ConfigError('act needs exactly one of --action, --point, --open-tab, or --tab');
   const options = applyOverrides({}, flags);
   const body = { requestId: flags.request, revision: flags.revision, waitMs: 0 };
   if (flags.point) body.point = parsePoint(flags.point);
+  else if (flags['open-tab']) body.openTab = flags['open-tab'];
+  else if (flags.tab) body.tab = flags.tab;
   else body.actionId = flags.action;
   for (const key of ['expectation', 'capture', 'timeoutMs']) {
     if (options[key] !== undefined) {
@@ -780,7 +786,7 @@ async function commandRequestTab(flags) {
   const url = requestStartUrl(flags.origin, [], [flags.instruction]);
   if (url) body.url = url;
   const created = await client.requestTab(body);
-  log(`ACTION NEEDED: approve request ${created.requestId} for ${flags.origin.join(' or ')} in Chrome: `
+  log(`ACTION NEEDED: approve request ${created.requestId} for ${flags.origin.join(' or ')} in the browser: `
     + `${approvalSteps(created.request?.approval)}. Then run: fai-browser wait ${created.requestId}`);
   return created;
 }
