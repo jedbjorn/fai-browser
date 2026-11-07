@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 3,
+  "kind": "grouped",
+  "status": "complete",
+  "id": "visual",
+  "title": "Visual workflows",
+  "label": "2 visual workflows · 2 repeats each · Jev experimental · two safety scenarios excluded",
+  "run": {
+    "model": "Claude Sonnet 5.5 medium",
+    "protocol": "Fresh agent per task · host harness · local fixtures",
+    "taskCount": 2,
+    "repeats": 2,
+    "attempted": 4,
+    "measuredAt": "2026-11-06T22:21:15.365Z",
+    "source": "bench/results/site-agentdirect-optimized-visual-2026-11-06/summary.json + bench/results/jev-comparison-2026-11-06.json"
+  },
+  "series": {
+    "playwright": "Playwright MCP",
+    "agent": "FAI Agent direct",
+    "jev": "FAI Jev autopilot"
+  },
+  "metrics": [
+    {
+      "id": "passes",
+      "label": "Task checks passed",
+      "unit": "runs",
+      "playwright": {
+        "value": 4,
+        "display": "4/4"
+      },
+      "agent": {
+        "value": 4,
+        "display": "4/4"
+      },
+      "jev": {
+        "value": 4,
+        "display": "4/4"
+      }
+    },
+    {
+      "id": "wall",
+      "label": "Wall time per task",
+      "unit": "s",
+      "playwright": {
+        "value": 29.8,
+        "display": "29.8 s"
+      },
+      "agent": {
+        "value": 20,
+        "display": "20.0 s"
+      },
+      "jev": {
+        "value": 35.8,
+        "display": "35.8 s"
+      }
+    },
+    {
+      "id": "tokens",
+      "label": "Raw host tokens per task",
+      "unit": "tokens",
+      "playwright": {
+        "value": 115889,
+        "display": "115.9k"
+      },
+      "agent": {
+        "value": 104923,
+        "display": "104.9k"
+      },
+      "jev": {
+        "value": 179887,
+        "display": "179.9k"
+      }
+    },
+    {
+      "id": "cost",
+      "label": "Host-only cost per task",
+      "unit": "USD",
+      "playwright": {
+        "value": 0.0542,
+        "display": "$0.0542"
+      },
+      "agent": {
+        "value": 0.0604,
+        "display": "$0.0604"
+      },
+      "jev": {
+        "value": 0.1063,
+        "display": "$0.1063"
+      }
+    }
+  ],
+  "notes": [
+    "Lower wall time, token and cost bars are better; higher pass counts are better. Each metric uses a common zero baseline and shared scale.",
+    "Raw host tokens are full model usage per vendor tokenizer. Visual counts include image tokens.",
+    "Jev provider tokens are additional to raw host tokens and are not included in host-only cost.",
+    "Cost uses bench/prices.json (2026-10-04), API-equivalent for Codex hosts.",
+    "Per-task figures are suites of per-task medians over repeats, divided by tasks."
+  ],
+  "jevHost": "sonnet"
+}

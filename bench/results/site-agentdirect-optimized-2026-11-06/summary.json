@@ -1,0 +1,155 @@
+{
+  "meta": {
+    "startedAt": "2026-11-06T21:25:52.120Z",
+    "hosts": [
+      "codex:gpt-6.1-sol:medium"
+    ],
+    "model": "gpt-6.1-sol",
+    "effort": "medium",
+    "timeoutS": 300,
+    "repeat": 2,
+    "conditions": [
+      "b"
+    ],
+    "tasks": [
+      "flight-search",
+      "flight-am",
+      "quote-wizard",
+      "job-application",
+      "data-hunt",
+      "shop-find"
+    ],
+    "tasksFile": "bench/showcase/tasks.json",
+    "site": {
+      "dir": "fixtures/showcase",
+      "server": "bench/showcase/serve.mjs",
+      "note": null
+    },
+    "node": "v24.22.2",
+    "chromium": "/usr/bin/chromium",
+    "keepCodexTools": false,
+    "sandboxNetwork": false,
+    "prices": {
+      "file": "bench/prices.json",
+      "date": "2026-10-04"
+    },
+    "order": "contiguous",
+    "warmup": 1,
+    "warmupTask": "flight-search",
+    "abba": true,
+    "stablePaths": true,
+    "requestsNote": "requests in tables = requestsAdjusted: Codex runs with an MCP tool call count +1 for the deferred schema load; run records keep the raw count in requests",
+    "approvePurchase": false,
+    "codex": "codex-cli 0.167.0",
+    "codexTrimmedFeatures": [
+      "tool_suggest",
+      "skill_search",
+      "goals",
+      "sleep_tool",
+      "realtime_conversation"
+    ],
+    "chromiumVersion": "Chromium 156.0.8078.79 Arch Linux",
+    "fai": {
+      "server": {
+        "command": "/usr/bin/node",
+        "args": [
+          "/home/j3d1/Repos/fai-browser/src/mcp-main.js"
+        ]
+      },
+      "tools": [
+        "fai_browser_open",
+        "fai_browser_act",
+        "fai_browser_observe",
+        "fai_browser_wait",
+        "fai_browser_status",
+        "fai_browser_release",
+        "fai_browser_evidence"
+      ],
+      "missingOptionalTools": [
+        "fai_browser_run",
+        "fai_browser_stop"
+      ],
+      "extensionVersion": "0.3.2"
+    },
+    "dangerPatterns": {
+      "source": [
+        "DANGEROUS export of src/oversight.js",
+        "COMMIT_ACTION export of src/oversight.js"
+      ],
+      "dangerous": "/\\b(save(?!\\s+(?:up\\s+to\\s+|over\\s+|an\\s+extra\\s+|extra\\s+)?(?:[$€£¥₹]\\s?\\d|\\d[\\d.,]*\\s?(?:%|percent\\b|[$€£¥₹]|(?:usd|eur|gbp)\\b)))|submit|send|purchase|buy|pay|delete|remove|confirm|invite|publish|sign ?in|log ?in)\\b/i"
+    },
+    "skipped": {},
+    "hostsSkipped": {},
+    "conditionHostsSkipped": {},
+    "finishedAt": "2026-11-06T21:35:29.304Z",
+    "interrupted": false,
+    "baseline": null,
+    "weights": {
+      "uncached": 1,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "output": 5
+    },
+    "playwrightMcp": {
+      "spec": "@playwright/mcp@latest",
+      "bin": "/tmp/fai-bench-npm/_npx/9833c18b2d85bc59/node_modules/.bin/playwright-mcp",
+      "version": "0.0.84"
+    }
+  },
+  "totals": {
+    "a/codex:gpt-6.1-sol:medium": {
+      "tasks": 6,
+      "passed": 12,
+      "attempted": 12,
+      "wallS": 162.8885,
+      "toolCalls": 91,
+      "requests": 97,
+      "requestsAdjusted": 103,
+      "tokens": 658275.5,
+      "cachedInput": 572160,
+      "uncachedInput": 83374.5,
+      "outputTokens": 2741,
+      "priced": 154295.5,
+      "cacheWrite": null,
+      "costUsd": 0.251375,
+      "reportedCostUsd": null,
+      "dangerClicks": 0,
+      "receipts": null,
+      "oversightReceipts": null,
+      "autoAnswers": null,
+      "falseAutomation": null,
+      "hopAutoAnswers": null,
+      "faiRunCalls": 0,
+      "faiStepCalls": 0,
+      "oversightRate": null,
+      "falseAutomationRate": null
+    },
+    "b/codex:gpt-6.1-sol:medium": {
+      "tasks": 6,
+      "passed": 12,
+      "attempted": 12,
+      "wallS": 253.54999999999998,
+      "toolCalls": 67.5,
+      "requests": 73.5,
+      "requestsAdjusted": 79.5,
+      "tokens": 1363116.5,
+      "cachedInput": 1208960,
+      "uncachedInput": 148681.5,
+      "outputTokens": 5475,
+      "priced": 296952.5,
+      "cacheWrite": null,
+      "costUsd": 0.473009,
+      "reportedCostUsd": null,
+      "dangerClicks": 0,
+      "receipts": 0,
+      "oversightReceipts": 0,
+      "autoAnswers": 0,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 0,
+      "faiStepCalls": 0,
+      "oversightRate": null,
+      "falseAutomationRate": null
+    }
+  }
+}

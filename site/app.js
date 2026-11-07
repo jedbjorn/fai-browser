@@ -7,7 +7,7 @@
 
   function isDark() {
     var selected = doc.getAttribute('data-theme');
-    return selected ? selected === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return selected ? selected === 'dark' : false;
   }
 
   function syncTheme() {
@@ -91,12 +91,7 @@
     });
   });
 
-  var figure = document.getElementById('task-benchmark');
-  var chart = document.getElementById('benchmark-chart');
-  if (!figure || !chart) return;
-
   var svgNS = 'http://www.w3.org/2000/svg';
-  var requiredMetrics = ['passes', 'calls', 'artifacts', 'tokens'];
   var numberFormat = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
 
   function svgElement(name, attributes, text) {
@@ -114,84 +109,7 @@
     return point && finiteNumber(point.value) && (point.display === undefined || typeof point.display === 'string');
   }
 
-  function validateData(data) {
-    if (!data || data.schemaVersion !== 1 || data.status !== 'complete') return null;
-    if (!data.run || !Number.isInteger(data.run.taskCount) || data.run.taskCount < 1) return null;
-    if (!Array.isArray(data.metrics) || data.metrics.length !== requiredMetrics.length) return null;
-    var byId = {};
-    data.metrics.forEach(function (metric) {
-      if (!metric || typeof metric.id !== 'string') return;
-      byId[metric.id] = metric;
-    });
-    var ordered = requiredMetrics.map(function (id) { return byId[id]; });
-    var valid = ordered.every(function (metric, index) {
-      if (!metric || typeof metric.label !== 'string' || !validPoint(metric.a) || !validPoint(metric.b)) return false;
-      if (index === 0) {
-        return metric.a.value <= data.run.taskCount && metric.b.value <= data.run.taskCount;
-      }
-      return Number.isInteger(metric.matchedTasks) && metric.matchedTasks > 0 && metric.matchedTasks <= data.run.taskCount;
-    });
-    return valid ? { data: data, metrics: ordered } : null;
-  }
-
-  function displayValue(metric, point, taskCount) {
-    if (typeof point.display === 'string' && point.display.trim()) return point.display;
-    if (metric.id === 'passes') return numberFormat.format(point.value) + ' / ' + taskCount;
-    var suffix = metric.unit ? ' ' + metric.unit : '';
-    return numberFormat.format(point.value) + suffix;
-  }
-
-  function basisFor(metric, taskCount) {
-    if (metric.id === 'passes') return taskCount + ' tasks total';
-    var aggregation = typeof metric.aggregation === 'string' && metric.aggregation ? metric.aggregation.charAt(0).toUpperCase() + metric.aggregation.slice(1) : 'Measured';
-    return aggregation + ' · ' + metric.matchedTasks + ' matched successes';
-  }
-
-  function scaleFor(metric, taskCount) {
-    var maximum = Math.max(metric.a.value, metric.b.value);
-    if (metric.id === 'passes') return taskCount;
-    if (finiteNumber(metric.scaleMax) && metric.scaleMax >= maximum && metric.scaleMax > 0) return metric.scaleMax;
-    return maximum > 0 ? maximum : 1;
-  }
-
-  function scaleLabel(metric, scale) {
-    if (metric.id === 'passes') return 'Shared max · ' + numberFormat.format(scale) + ' tasks';
-    return 'Shared max · ' + numberFormat.format(scale) + (metric.unit ? ' ' + metric.unit : '');
-  }
-
-  function setStatus(text) {
-    var status = document.getElementById('benchmark-status');
-    var dot = document.createElement('i');
-    dot.setAttribute('aria-hidden', 'true');
-    status.replaceChildren(dot, document.createTextNode(text));
-  }
-
-  function renderTable(result) {
-    var body = document.getElementById('benchmark-table-body');
-    var taskCount = result.data.run.taskCount;
-    body.replaceChildren();
-    result.metrics.forEach(function (metric) {
-      var row = document.createElement('tr');
-      var heading = document.createElement('th');
-      heading.scope = 'row';
-      heading.textContent = metric.label;
-      row.appendChild(heading);
-      [metric.a, metric.b].forEach(function (point) {
-        var cell = document.createElement('td');
-        cell.textContent = displayValue(metric, point, taskCount);
-        row.appendChild(cell);
-      });
-      var basis = document.createElement('td');
-      basis.textContent = basisFor(metric, taskCount);
-      row.appendChild(basis);
-      body.appendChild(row);
-    });
-    var caption = document.getElementById('benchmark-table-caption');
-    var source = result.data.run.source ? ' Source: ' + result.data.run.source + '.' : '';
-    caption.textContent = 'Measured values only. Each metric uses the aggregation shown in the basis column.' + source;
-  }
-
-  function animateBars() {
+  function animateBars(chart, figure) {
     if (chart.dataset.animated === 'true') return;
     chart.dataset.animated = 'true';
     var bars = Array.prototype.slice.call(chart.querySelectorAll('.chart-bar'));
@@ -205,7 +123,7 @@
       if (started === null) started = now;
       var elapsed = now - started;
       bars.forEach(function (bar, index) {
-        var delay = Math.floor(index / 2) * 75;
+        var delay = Math.floor(index / 3) * 75;
         var progress = Math.max(0, Math.min(1, (elapsed - delay) / duration));
         var eased = 1 - Math.pow(1 - progress, 3);
         bar.setAttribute('width', (Number(bar.dataset.width) * eased).toFixed(2));
@@ -216,89 +134,160 @@
     window.requestAnimationFrame(frame);
   }
 
-  function observeBars() {
+  function observeBars(chart, figure) {
     if (reduce.matches || !('IntersectionObserver' in window)) {
-      animateBars();
+      animateBars(chart, figure);
       return;
     }
     var observer = new IntersectionObserver(function (entries) {
       if (entries[0].isIntersecting) {
-        animateBars();
+        animateBars(chart, figure);
         observer.disconnect();
       }
     }, { threshold: 0.25 });
     observer.observe(figure);
   }
 
-  function renderComplete(result) {
+  // ---------------------------------------------------------------------------
+  // Grouped chart (schemaVersion 3): directly labeled bars for all three drivers.
+  // ---------------------------------------------------------------------------
+
+  var GROUPED_METRICS = ['passes', 'wall', 'tokens', 'cost'];
+  var GROUPED_SERIES = ['playwright', 'agent', 'jev'];
+  var BAR_X = 260;
+  var BAR_W = 560;
+  var ROW_H = 140;
+
+  function validateGrouped(data) {
+    if (!data || data.schemaVersion !== 3 || data.kind !== 'grouped' || data.status !== 'complete') return null;
+    if (!data.run || !Number.isInteger(data.run.taskCount) || data.run.taskCount < 1) return null;
+    if (!data.series || !GROUPED_SERIES.every(function (name) { return typeof data.series[name] === 'string'; })) return null;
+    if (!Array.isArray(data.metrics)) return null;
+    var byId = {};
+    data.metrics.forEach(function (metric) {
+      if (metric && typeof metric.id === 'string') byId[metric.id] = metric;
+    });
+    var ordered = GROUPED_METRICS.map(function (id) { return byId[id]; });
+    var valid = ordered.every(function (metric, index) {
+      if (!metric || typeof metric.label !== 'string' || !GROUPED_SERIES.every(function (name) { return validPoint(metric[name]); })) return false;
+      if (index !== 0) return true;
+      var attempted = Number.isInteger(data.run.attempted) && data.run.attempted > 0 ? data.run.attempted : data.run.taskCount;
+      return GROUPED_SERIES.every(function (name) { return metric[name].value <= attempted; });
+    });
+    return valid ? { data: data, metrics: ordered } : null;
+  }
+
+  function groupedDisplay(metric, point) {
+    if (typeof point.display === 'string' && point.display.trim()) return point.display;
+    if (metric.id === 'passes') return numberFormat.format(point.value);
+    return numberFormat.format(point.value) + (metric.unit ? ' ' + metric.unit : '');
+  }
+
+  function groupedScaleLabel(metric, scale) {
+    if (metric.id === 'passes') return 'Shared max · ' + numberFormat.format(scale) + ' runs';
+    if (metric.unit === 'USD') return 'Shared max · $' + scale.toFixed(4);
+    return 'Shared max · ' + numberFormat.format(scale) + (metric.unit === 's' ? ' s' : ' ' + metric.unit);
+  }
+
+  function renderGrouped(result, elements) {
     var data = result.data;
     var metrics = result.metrics;
-    var taskCount = data.run.taskCount;
-    var chartHeight = 54 + metrics.length * 114;
-    var gridDepth = chartHeight - 70;
-    var protocol = data.run.protocol || 'Native agents via MCP relay';
-    figure.dataset.state = 'complete';
-    setStatus('Measured results');
-    document.getElementById('benchmark-run').textContent = (data.run.model || 'Measured model') + ' · ' + protocol + ' · ' + taskCount + ' tasks · ' + (data.run.repeats || 1) + ' repeat' + (data.run.repeats === 1 ? '' : 's') + ' · local fixtures';
+    var chart = elements.chart;
+    var chartHeight = 44 + metrics.length * ROW_H;
+    elements.figure.dataset.state = 'complete';
+    setStatus(elements.status, 'Measured results · ' + (data.id === 'visual' ? 'screenshots' : 'text'));
+    document.getElementById(elements.run).textContent = (data.run.model || 'Measured model') + ' · ' + data.run.taskCount + ' tasks · ' + (data.run.repeats || 1) + ' repeats · local fixtures';
 
     chart.replaceChildren();
-    chart.setAttribute('viewBox', '0 0 960 ' + chartHeight);
-    chart.appendChild(svgElement('title', { id: 'benchmark-svg-title' }, 'FAI Agent direct compared with Playwright MCP'));
-    var description = metrics.map(function (metric) {
-      return metric.label + ': Playwright MCP ' + displayValue(metric, metric.a, taskCount) + ', FAI Agent direct ' + displayValue(metric, metric.b, taskCount) + '.';
-    }).join(' ');
-    chart.appendChild(svgElement('desc', { id: 'benchmark-svg-desc' }, description + ' Each pair uses a common zero baseline and shared scale.'));
-    chart.appendChild(svgElement('path', { class: 'chart-grid', d: 'M270 30v' + gridDepth + 'M400 30v' + gridDepth + 'M530 30v' + gridDepth + 'M660 30v' + gridDepth + 'M790 30v' + gridDepth, 'aria-hidden': 'true' }));
+    chart.setAttribute('viewBox', '0 0 1000 ' + chartHeight);
+    chart.appendChild(svgElement('title', { id: 'benchmark-' + data.id + '-svg-title' }, data.title + ': ' + GROUPED_SERIES.map(function (name) { return data.series[name]; }).join(', ')));
+    chart.appendChild(svgElement('desc', { id: 'benchmark-' + data.id + '-svg-desc' }, metrics.map(function (metric) {
+      return metric.label + ': ' + GROUPED_SERIES.map(function (name) { return data.series[name] + ' ' + groupedDisplay(metric, metric[name]); }).join(', ');
+    }).join('. ') + '. Each metric uses a common zero baseline and shared scale.'));
+    chart.appendChild(svgElement('path', { class: 'chart-grid', d: 'M' + BAR_X + ' 24v' + (chartHeight - 64) + 'M' + (BAR_X + 140) + ' 24v' + (chartHeight - 64) + 'M' + (BAR_X + 280) + ' 24v' + (chartHeight - 64) + 'M' + (BAR_X + 420) + ' 24v' + (chartHeight - 64) + 'M' + (BAR_X + BAR_W) + ' 24v' + (chartHeight - 64), 'aria-hidden': 'true' }));
 
     metrics.forEach(function (metric, index) {
-      var scale = scaleFor(metric, taskCount);
-      var group = svgElement('g', { transform: 'translate(0 ' + (38 + index * 114) + ')' });
+      var scale = metric.id === 'passes' ? data.run.attempted : Math.max.apply(null, GROUPED_SERIES.map(function (name) { return metric[name].value; }));
+      var group = svgElement('g', { transform: 'translate(0 ' + (28 + index * ROW_H) + ')' });
       group.appendChild(svgElement('text', { class: 'metric-name', x: 0, y: 25 }, metric.label));
-      group.appendChild(svgElement('text', { class: 'metric-note', x: 0, y: 47 }, metric.id === 'passes' ? 'out of ' + taskCount + ' tasks' : basisFor(metric, taskCount)));
-      group.appendChild(svgElement('line', { class: 'chart-zero', x1: 270, y1: 5, x2: 270, y2: 72, 'aria-hidden': 'true' }));
+      group.appendChild(svgElement('text', { class: 'metric-note', x: 0, y: 47 }, metric.id === 'passes' ? data.run.taskCount + ' tasks · ' + data.run.repeats + ' repeats' : 'per task · mean of task medians'));
+      group.appendChild(svgElement('line', { class: 'chart-zero', x1: BAR_X, y1: 4, x2: BAR_X, y2: 103, 'aria-hidden': 'true' }));
 
-      [['a', 20, 'chart-bar-a'], ['b', 58, 'chart-bar-b']].forEach(function (series) {
-        var key = series[0];
-        var y = series[1];
-        var point = metric[key];
-        var width = point.value / scale * 520;
-        group.appendChild(svgElement('text', { class: 'series-name', x: 222, y: y + 5 }, key.toUpperCase()));
-        group.appendChild(svgElement('rect', { class: 'chart-track', x: 270, y: y - 8, width: 520, height: 16, rx: 3, 'aria-hidden': 'true' }));
-        group.appendChild(svgElement('rect', { class: 'chart-bar ' + series[2], x: 270, y: y - 8, width: 0, height: 16, rx: 3, 'data-width': width.toFixed(2), 'aria-hidden': 'true' }));
-        group.appendChild(svgElement('text', { class: 'chart-value', x: 820, y: y + 5 }, displayValue(metric, point, taskCount)));
+      GROUPED_SERIES.forEach(function (name, seriesIndex) {
+        var point = metric[name];
+        var width = point.value / scale * BAR_W;
+        var y = 10 + seriesIndex * 31;
+        group.appendChild(svgElement('rect', { class: 'chart-track', x: BAR_X, y: y, width: BAR_W, height: 19, rx: 3, 'aria-hidden': 'true' }));
+        group.appendChild(svgElement('rect', { class: 'chart-bar chart-bar-' + name, x: BAR_X, y: y, width: 0, height: 19, rx: 3, 'data-width': width.toFixed(2), 'aria-hidden': 'true' }));
+        group.appendChild(svgElement('text', { class: 'chart-bar-label chart-bar-label-' + name, x: BAR_X + 10, y: y + 14 }, data.series[name]));
+        group.appendChild(svgElement('text', { class: 'chart-value', x: 850, y: y + 14 }, groupedDisplay(metric, point)));
       });
-      group.appendChild(svgElement('text', { class: 'chart-scale', x: 270, y: 94 }, '0'));
-      group.appendChild(svgElement('text', { class: 'chart-scale', x: 790, y: 94, 'text-anchor': 'end' }, scaleLabel(metric, scale)));
+      group.appendChild(svgElement('text', { class: 'chart-scale', x: BAR_X, y: 124 }, '0'));
+      group.appendChild(svgElement('text', { class: 'chart-scale', x: BAR_X + BAR_W, y: 124, 'text-anchor': 'end' }, groupedScaleLabel(metric, scale)));
       chart.appendChild(group);
     });
 
-    var caption = figure.querySelector('figcaption');
-    caption.querySelector('span').textContent = data.label || 'Experimental · one repeat · local fixture evidence';
-    var source = data.run.source ? ' Source: ' + data.run.source + '.' : '';
+    var caption = elements.figure.querySelector('figcaption');
+    caption.querySelector('span').textContent = data.label || 'Measured local fixture evidence';
+    var source = data.run.source ? ' Sources: ' + data.run.source + '.' : '';
     var measuredAt = data.run.measuredAt ? ' Measured ' + data.run.measuredAt + '.' : '';
-    caption.querySelector('p').textContent = 'Measured values only. MCP calls, snapshot artifact reads and observed text tokens use matched successful tasks; each pair shares a zero baseline and scale.' + measuredAt + source;
-    renderTable(result);
-    observeBars();
+    caption.querySelector('p').textContent = 'Directly labeled bars; lower time, tokens and cost are better. Raw host tokens only; Jev provider tokens are additional and excluded from host-only cost. Each metric shares a zero baseline and scale.' + measuredAt + source;
+
+    var body = document.getElementById(elements.tableBody);
+    body.replaceChildren();
+    metrics.forEach(function (metric) {
+      var row = document.createElement('tr');
+      var heading = document.createElement('th');
+      heading.scope = 'row';
+      heading.textContent = metric.label;
+      row.appendChild(heading);
+      GROUPED_SERIES.forEach(function (name) {
+        var cell = document.createElement('td');
+        cell.textContent = groupedDisplay(metric, metric[name]);
+        row.appendChild(cell);
+      });
+      var basis = document.createElement('td');
+      basis.textContent = metric.id === 'passes' ? data.run.taskCount + ' tasks × ' + data.run.repeats + ' repeats' : 'Per task · medians over ' + data.run.repeats + ' repeats';
+      row.appendChild(basis);
+      body.appendChild(row);
+    });
+    document.getElementById(elements.tableCaption).textContent = 'Measured values only. Jev provider tokens are additional and excluded from host-only cost.' + source;
+
+    observeBars(chart, elements.figure);
   }
 
-  function renderPending(data) {
-    figure.dataset.state = 'pending';
-    setStatus('Benchmark in progress');
-    if (data && data.run) {
-      var run = data.run;
-      document.getElementById('benchmark-run').textContent = (run.model || 'Sol 6.1 medium') + ' · ' + (run.protocol || 'Native agents via MCP relay') + ' · ' + (run.taskCount || 6) + ' tasks · ' + (run.repeats || 1) + ' repeat · local fixtures';
-    }
+  // ---------------------------------------------------------------------------
+
+  function setStatus(statusId, text) {
+    var status = document.getElementById(statusId);
+    if (!status) return;
+    var dot = document.createElement('i');
+    dot.setAttribute('aria-hidden', 'true');
+    status.replaceChildren(dot, document.createTextNode(text));
   }
 
-  fetch('media/benchmark-data.json', { cache: 'no-store' })
-    .then(function (response) {
-      if (!response.ok) throw new Error('Benchmark data unavailable');
-      return response.json();
-    })
-    .then(function (data) {
-      var result = validateData(data);
-      if (result) renderComplete(result);
-      else renderPending(data);
-    })
-    .catch(function () { if (figure.dataset.state !== 'complete') renderPending(null); });
+  function setupFigure(config) {
+    var figure = document.getElementById(config.figure);
+    var chart = document.querySelector(config.chart);
+    if (!figure || !chart) return;
+    fetch(config.url, { cache: 'no-store' })
+      .then(function (response) {
+        if (!response.ok) throw new Error('data unavailable');
+        return response.json();
+      })
+      .then(function (data) {
+        var result = config.validate(data);
+        // On failure keep the static fallback baked into the HTML.
+        if (result) config.render(result, { figure: figure, chart: chart, chartId: config.chart.slice(1), status: config.status, run: config.run, tableBody: config.tableBody, tableCaption: config.tableCaption });
+      })
+      .catch(function (error) { console.error('benchmark chart fallback:', error); /* static fallback stays */ });
+  }
+
+  ['text', 'visual'].forEach(function (id) {
+    setupFigure({
+      figure: id + '-benchmark', chart: '#benchmark-' + id + '-chart', url: 'media/benchmark-' + id + '-data.json',
+      validate: validateGrouped, render: renderGrouped,
+      status: id + '-status', run: id + '-run', tableBody: id + '-table-body', tableCaption: id + '-table-caption',
+    });
+  });
 })();

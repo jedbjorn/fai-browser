@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createDaemon } from '../src/daemon.js';
 import { DEFAULT_DRIVER, homePaths, loadConfig, readDriver, saveDriver } from '../src/home.js';
-import { ALWAYS_LOAD_META, INSTRUCTIONS, JEV_INSTRUCTIONS } from '../src/mcp.js';
+import { ALWAYS_LOAD_META, INSTRUCTIONS, JEV_INSTRUCTIONS, directText } from '../src/mcp.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
 import { mcpData } from './helpers/mcp-result.js';
@@ -199,9 +199,69 @@ test('a later observe keeps the opening call\'s policy, supplied values and URLs
   assert.ok(!has(more, /Settings/) && !has(more, /Help/));
   // The act on that offer lands on a listing under the same terms.
   const fill = more.actions.find(action => /fill/.test(action.description));
-  const acted = mcpData(await ctx.mcp.callTool('fai_browser_act', { actionId: fill.id, revision: more.revision }));
+  const actedResult = await ctx.mcp.callTool('fai_browser_act', { actionId: fill.id, revision: more.revision });
+  const acted = mcpData(actedResult);
   assert.ok(!has(acted, /Settings/) && !has(acted, /Help/));
+  assert.doesNotMatch(actedResult.content[0].text, /delta from revision|unchanged from revision/);
+  assert.match(actedResult.content[0].text, /page digest:\nHome\nWelcome/);
   assert.equal(ctx.hub.bridgeForTab(1).executions.at(-1).action.text, 'Ada');
+  const fullResult = await ctx.mcp.callTool('fai_browser_observe', {});
+  assert.doesNotMatch(fullResult.content[0].text, /delta from revision|unchanged from revision/);
+  assert.match(fullResult.content[0].text, /page digest:\nHome\nWelcome/);
+  assert.ok(has(mcpData(fullResult), /fill .*"Name" with supplied name/));
+});
+
+test('long-list direct text deltas keep current action ids and fall back to a full page when that is smaller', () => {
+  const previous = {
+    requestId: 'req_delta', revision: 'rev:1',
+    page: { url: 'https://example.com/form', title: 'Form',
+      digest: ['Form', 'Name', 'Submit', ...Array.from({ length: 12 }, (_, i) => `Repeated line ${i}`)] },
+    actions: [
+      { id: 'a0', description: 'fill "Name" (act with text)' },
+      { id: 'a1', description: 'click "Submit"', needsApproval: 'submit' },
+      { id: 'a2', description: 'scroll down' },
+      ...Array.from({ length: 37 }, (_, i) => ({ id: `a${i + 3}`, description: `open item ${i}` })),
+    ],
+  };
+  const current = {
+    ...previous, revision: 'rev:2', status: 'acted', granted: { level: 'full', asked: 'full' },
+    verification: { passed: true, expectation: { textIncludes: 'Error' } },
+    next: { kind: 'answer', text: 'Verified.' },
+    page: { ...previous.page, digest: ['Form', 'Error', ...previous.page.digest.slice(1)], truncated: true },
+    actions: [
+      previous.actions[0],
+      { id: 'a1', description: 'press Enter in "Name" (submits its form)' },
+      ...previous.actions.slice(1).map((action, i) => ({ ...action, id: `a${i + 2}` })),
+    ],
+  };
+  const text = directText(current, previous);
+  assert.match(text, /next \(answer\): Verified\./);
+  assert.match(text, /status: acted, verified: true/);
+  assert.match(text, /granted: full \(asked full\)/);
+  assert.match(text, /revision: rev:2/);
+  assert.match(text, /url\/title: unchanged from revision rev:1/);
+  assert.match(text, /page digest \(more on the page: observe with focus or digestChars\):\nForm\nError\nName\nSubmit/);
+  assert.doesNotMatch(text, /page digest delta/);
+  assert.match(text, /actions delta from revision rev:1/);
+  assert.match(text, /a0: unchanged\na1  press Enter/);
+  assert.match(text, /a2-a40 = a1-a39/);
+  assert.doesNotMatch(text, /a2  click|a3  scroll/);
+  assert.ok(text.length < directText(current).length);
+  const wire = value => ({ content: [{ type: 'text', text: value }] });
+  mcpData(wire(directText(previous)));
+  const reconstructed = mcpData(wire(text));
+  assert.equal(reconstructed.page.url, current.page.url);
+  assert.equal(reconstructed.page.title, current.page.title);
+  assert.deepEqual(reconstructed.page.digest, current.page.digest);
+  assert.deepEqual(reconstructed.actions, current.actions);
+  assert.equal(reconstructed.page.truncated, true);
+
+  const navigated = directText({ ...current, revision: 'rev:3',
+    page: { url: 'https://example.com/done', title: 'Done', digest: ['Confirmation', 'Q-123'] },
+    actions: [{ id: 'a0', description: 'open https://example.com/form' }] }, current);
+  assert.match(navigated, /page digest:\nConfirmation\nQ-123/);
+  assert.match(navigated, /actions \(revision rev:3\):\na0  open/);
+  assert.doesNotMatch(navigated, /delta from revision/);
 });
 
 test('Enter in a filled search field is offered as a search at interactive, never below it', async t => {

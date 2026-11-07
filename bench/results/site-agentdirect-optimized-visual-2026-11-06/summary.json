@@ -1,0 +1,56 @@
+{
+  "meta": {
+    "hosts": [
+      "claude:claude-sonnet-5-5:medium"
+    ],
+    "model": "claude-sonnet-5-5",
+    "effort": "medium",
+    "repeat": 2,
+    "conditions": [
+      "b"
+    ],
+    "tasks": [
+      "flight-am-visual",
+      "shop-find-visual"
+    ],
+    "tasksFile": "bench/showcase/tasks.json",
+    "prices": {
+      "file": "bench/prices.json",
+      "date": "2026-10-04"
+    },
+    "fai": {
+      "extensionVersion": "0.3.2"
+    },
+    "finishedAt": "2026-11-06T21:37:56.742Z",
+    "interrupted": false
+  },
+  "totals": {
+    "b/claude:claude-sonnet-5-5:medium": {
+      "tasks": 2,
+      "passed": 4,
+      "attempted": 4,
+      "wallS": 39.982,
+      "toolCalls": 16,
+      "requests": 17,
+      "requestsAdjusted": 17,
+      "tokens": 209846.5,
+      "cachedInput": 182782,
+      "uncachedInput": 34,
+      "outputTokens": 2201.5,
+      "priced": 60355.950000000004,
+      "cacheWrite": 24829,
+      "costUsd": 0.1207119,
+      "reportedCostUsd": 0.1024337,
+      "dangerClicks": 0,
+      "receipts": 0,
+      "oversightReceipts": 0,
+      "autoAnswers": 0,
+      "falseAutomation": 0,
+      "hopAutoAnswers": 0,
+      "faiRunCalls": 0,
+      "faiStepCalls": 0,
+      "oversightRate": null,
+      "falseAutomationRate": null
+    }
+  }
+}
