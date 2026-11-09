@@ -7,7 +7,7 @@ explains the layers; [SECURITY.md](../../SECURITY.md) lists what is *not* protec
 
 ## 1. One tab, approved per request
 
-The agent cannot pick a tab. It asks (`fai_browser_open`) with exact **origins**, a one-line **reason** and a **level**. You
+The agent cannot pick a tab, and gets one you already had open only when you invite it from the popup (section 9). It asks (`fai_browser_open`) with exact **origins**, a one-line **reason** and a **level**. You
 see the request (site, level, reason, marked as the agent's words) and approve it with a click in the extension. That binds
 **one tab** to **that request**; nothing the agent sends can select another tab or window, and browser-internal pages are
 never used.
@@ -88,6 +88,31 @@ with your own git credentials; off with `FAI_UPDATE_CHECK=0`. Installing an upda
 or `node src/cli.js update`; an agent's MCP calls cannot start one, while an agent with a shell can run that command
 like any other CLI command (the CLI's existing trust assumption), and the updater still refuses while a tab is held,
 on local changes and on anything but a fast-forward to a release. Traces stay local and are pruned (50 runs, 500 MB, 7 days).
+
+## 9. Invites and wakes
+
+**Invite agent** in the popup is the one way an agent gets a tab you already had open. Only your click in the
+toolbar popup creates an invite: the extension's worker accepts the `invite` message only from `popup.html` itself
+(not the approval window, a web page or a content script), and the service accepts it only over the extension's
+paired channel; no agent, MCP or client API call can create one. The invite grants exactly the level you picked, on
+that tab's exact origin (never a domain root), in one tab; every guardrail, the Approve gate and the clamping apply
+unchanged. Its id is single use and expires after 10 minutes, and closing the tab or leaving its site before an agent
+joined revokes it. What you type in "What should it do?" reaches the agent as your words, labelled as such; nothing
+from the page does.
+
+To wake an idle agent, FAI's MCP server (the agent's own child process) writes one fixed FAI message to that agent's
+own channel: Claude Code's messaging socket, or `codex queue` for its own thread. The message names the invite or
+request id, the level and the tool to call, and never carries a page title, URL or page text. Each MCP server
+registers with the service under a random key only it holds, so it only receives the wakes addressed to it, and it
+never writes to another session's socket. The registry needs the client token and lists sessions without keys or
+paths (the repository's folder name only).
+
+**Threat model.** Any process running as your user can already write to Claude Code's messaging socket (its path and
+token are in the session's environment and its child processes) or run `codex queue`, so FAI adds no new way in: it
+uses the same channel, from inside the session's own process tree, with text it authored. A local process with FAI's
+client token can join an open invite (as it could already request tabs); you see which agent joined in the popup.
+Claude Code's own `crossSessionInbound` setting (accept, hold, refuse) still decides what happens to an inbound
+message, and a Codex queued message runs with that session's own permissions, never more.
 
 ## What is and is not protected
 
