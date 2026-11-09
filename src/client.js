@@ -244,6 +244,16 @@ export class FaiBrowserClient {
     return new FaiBrowserClient({ port: daemon.port, token: daemon.token, clientName, warnings: daemon.warnings });
   }
 
+  /**
+   * The agent session this client speaks for (an MCP server's registry entry, `<sessionId>:<key>`), when one is set:
+   * `sessionAuth` is a string or a function returning one. The daemon records it as the owner of the requests it
+   * creates (woken on Approve and Resume) and as the session that joins an invite.
+   */
+  sessionHeader() {
+    const auth = typeof this.sessionAuth === 'function' ? this.sessionAuth() : this.sessionAuth;
+    return typeof auth === 'string' && auth ? { 'X-Fai-Session': auth } : {};
+  }
+
   async request(method, path, body, { timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, signal } = {}) {
     let response;
     try {
@@ -255,7 +265,7 @@ export class FaiBrowserClient {
         body,
         timeoutMs,
         signal,
-        headers: { 'X-Fai-Client': this.clientName },
+        headers: { 'X-Fai-Client': this.clientName, ...this.sessionHeader() },
       });
     } catch (error) {
       if (signal?.aborted) throw error;
