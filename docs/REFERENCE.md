@@ -237,7 +237,8 @@ screenshot boxes is used, and it is only named.
   session stays active); another document on an approved origin, `stale`. It also looks at the page again (one cheap
   read of the top document): a page whose revision changed since the observation is `stale`, and the frame runs with
   the page's current facts (a page that turned into a checkout makes the frame's "Continue" a purchase). An act on a
-  page control (click, Enter in a field, a key) first takes one cheap look at each frame read, for the same reason. A
+  page control (click, Enter in a field, a key, a select, a fill, an upload; not a hover) first takes one cheap look
+  at each frame read, for the same reason. A
   frame document the browser no longer has when the act is injected is never reported as done: the frame is probed
   again (`stale` or `cross_origin`). In the frame, `page.js` checks again that
   the frame and every ancestor the browser names (`location.ancestorOrigins`, Chromium) are on approved origins. A
@@ -250,10 +251,15 @@ screenshot boxes is used, and it is only named.
   field, or a credentials page in any document (page or frame) applies to every document (a "Continue" in a frame
   of a checkout page is a purchase control; a search submit is not a safe submit when a frame holds a password
   field). One that no longer applies anywhere is dropped again, and the documents are read again without it.
-  Screenshots place each read frame's own boxes (secrets and fields) by where the frame is at the capture (the page
-  script names every cross-origin frame's current box); a read frame that does not answer, and **every cross-origin
-  frame that was not read**, is boxed whole, so nothing of it shows. A read frame that moved more than 2 px between the
-  queries before and after the capture, or that no query can place, makes the capture be taken again, then withheld.
+  Screenshots place each read frame's own boxes (secrets and fields) by where the frame is at the capture: the page
+  script names every cross-origin frame's current box by its current position in `window.frames`, and the worker finds
+  each read frame again by its frame id (its current position, origin, document and size), never by the position it
+  had (removing an earlier frame, as ad rotation does, shifts every later one). The frames are asked in parallel within
+  one 2 s cap. A read frame that does not answer, a box whose frame is not the one read there, and **every
+  cross-origin frame, `<object>` or `<embed>` that was not read** are boxed whole, so nothing of them shows; frames
+  past the slot and frame caps, deeper than four levels or not found in `window.frames` are boxed by the page script
+  itself. A read frame that moved more than 2 px between the queries before and after the capture, that changed size,
+  or that no query can place, makes the capture be taken again, then withheld.
   Strict mode still boxes every cross-origin frame. A frame whose own size does not match the box `page.js` saw at its
   position (the page moved its frames in between) is not read (`unavailable`), and an opaque (`null`) ancestor refuses
   every call in the frame. A point click on a frame is refused as

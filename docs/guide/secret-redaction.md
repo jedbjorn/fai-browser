@@ -43,7 +43,7 @@ An expectation's `textIncludes` is matched against the redacted text, so it cann
 
 Every screenshot is redacted **on its pixels** before it leaves the extension. Right before capture the extension asks the page for the
 boxes to fill: elements holding found secrets, every password field, every payment field, every field that holds a secret, cross-origin frames of payment and
-sign-in widgets (Stripe, Braintree, PayPal, Google, Microsoft, Okta and others), and every other cross-origin frame FAI did not
+sign-in widgets (Stripe, Braintree, PayPal, Google, Microsoft, Okta and others), and every other cross-origin frame, object or embed FAI did not
 read (an approved frame it read gets its own secret and field boxes, placed where the frame is); in Strict mode or on a secret page also every canvas, other cross-origin
 frame and code block. The page is asked again right after capture, with a watch armed in between; if anything changed in a way
 that could expose something, the capture fails closed (no image rather than a leaky one).
