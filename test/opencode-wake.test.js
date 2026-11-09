@@ -126,9 +126,15 @@ test('plugin: a stale socket is replaced; a symlinked directory or a file in the
   // Node unlinks a socket it closes: a killed process leaves one behind, as a crashed OpenCode would.
   spawnSync(process.execPath, ['-e', `require('net').createServer().listen(${JSON.stringify(stalePath)}, () => process.kill(process.pid, 'SIGKILL'))`]);
   assert.ok(lstatSync(stalePath).isSocket());
+  // One left by another OpenCode that was killed: swept, since its pid is gone.
+  const dirOf = join(staleRuntime, 'fai-browser');
+  const dead = spawnSync(process.execPath, ['-e', `require('net').createServer().listen(require('path').join(${JSON.stringify(dirOf)}, 'oc-' + process.pid + '.sock'), () => process.kill(process.pid, 'SIGKILL'))`]);
+  const deadPath = join(dirOf, `oc-${dead.pid}.sock`);
+  assert.ok(lstatSync(deadPath).isSocket());
   const { hooks } = await loadPlugin(t, fakeClient(), { runtime: staleRuntime });
   assert.ok(hooks['tool.execute.before']);
   assert.equal(process.env.FAI_OPENCODE_WAKE_SOCKET, stalePath);
+  assert.throws(() => lstatSync(deadPath), /ENOENT/);
   resetPlugin();
 
   // A symlinked directory (someone else's redirect): off.

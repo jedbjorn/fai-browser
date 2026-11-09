@@ -14,7 +14,7 @@
 //   models, agents or tools: refused. It answers {"ok":true} once OpenCode has queued the turn.
 // It never logs arguments, texts or the token, and never throws out of a hook. FAI_WAKE=0 or opencode --pure: off.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmodSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -57,6 +57,19 @@ function removeStale(path) {
   }
   if (!info.isSocket()) throw new Error('socket path is taken by something else');
   unlinkSync(path);
+}
+
+// Sockets left by an OpenCode that was killed (no exit handler ran): removed when their pid is gone.
+function sweep(dir) {
+  for (const name of readdirSync(dir)) {
+    const pid = Number(/^oc-(\d+)\.sock$/.exec(name)?.[1]);
+    if (!pid || pid === process.pid) continue;
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (error?.code === 'ESRCH') removeStale(join(dir, name));
+    }
+  }
 }
 
 function sameToken(given, token) {
@@ -146,6 +159,11 @@ function start() {
   const path = join(dir, `oc-${process.pid}.sock`);
   if (Buffer.byteLength(path) > MAX_PATH) throw new Error('socket path too long');
   removeStale(path);
+  try {
+    sweep(dir);
+  } catch {
+    // Best effort.
+  }
   const state = { token: randomBytes(32).toString('hex'), path, sessions: new Map(), server: null };
   state.server = createServer(connection => serve(state, connection));
   state.server.on('error', () => {});
