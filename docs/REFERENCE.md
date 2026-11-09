@@ -60,8 +60,8 @@ node examples/fake-demo.js   # deterministic provider and in-memory bridge; prin
 
 1. Run `npm run setup` in the package directory. It moves settings left in the checkout by an older version, saves the pairing secret to `.env.local` (mode `0600`) in the settings directory (see [The daemon](#the-daemon)), installs the [native messaging host](#native-messaging-pairing) for every browser it finds, starts or reloads the FAI service (the daemon), and offers to register FAI Browser with each coding agent on your `PATH` ("Register FAI Browser with Claude Code? [Y/n]"; user scope, through `install --host`). It ends with a three-step checklist. Your agent drives (no key) unless `config.json` already names the Jev autopilot. `--yes` registers every detected agent without asking, `--no-register` skips that; `--driver jev` opts in to the experimental Jev autopilot and asks for its key at a hidden prompt (or whether to replace a saved one); `--driver agent` switches back; `--extension-id <id>` overrides the pinned ID for a re-keyed manifest. Other settings and existing keys are preserved.
 2. Open `chrome://extensions` (`brave://extensions`, `edge://extensions`), turn on Developer mode, click **Load unpacked** and select `extension/`. The manifest `key` fixes the extension ID at `ikkpdnokohfcjhfidepcledkbepmkfcm`, so you don't need to copy it. The extension pairs by itself through the native host: nothing to paste.
-   Firefox: `npm run build:firefox` writes `dist/firefox/`; load it from `about:debugging#/runtime/this-firefox` (**Load Temporary Add-on**, pick its `manifest.json`). [Firefox](#firefox) has the permanent install options.
-3. Pin the FAI Browser icon (puzzle-piece menu, then the pin): you approve every agent request by clicking it. The popup shows how while it is not pinned.
+   Firefox: setup offers the FAI profile with the signed add-on (`node src/cli.js launch`), or install the signed `.xpi` from GitHub Releases in your own Firefox ([install guide](guide/install.md)). For development, `npm run build:firefox` writes `dist/firefox/`; load it from `about:debugging#/runtime/this-firefox` (**Load Temporary Add-on**, pick its `manifest.json`). [Firefox](#firefox) has the details.
+3. Pin the FAI Browser icon (puzzle-piece menu, then the pin) for the popup's controls, invites and the toolbar approval; most requests can also be approved with **Approve** in the task tab's request modal. The popup shows how to pin it while it is not pinned.
 4. Restart your coding agent so it loads the MCP server and skill (or connect one by hand, [next section](#coding-agents-mcp-and-skill)), or use the CLI directly.
 
 ### Native messaging pairing
@@ -759,7 +759,7 @@ Each run (and each observe) writes `artifacts/<id>/trace.json` plus one image fi
 
 After each write the daemon prunes the oldest runs (observes count too) until at most **50 runs, 500 MB and 7 days** remain. It never deletes the run it just wrote, and it only touches directories that contain a `trace.json`. Change the limits with `"retention": {"maxRuns", "maxBytes", "maxAgeMs"}` in `config.json` or `FAI_RETENTION_MAX_RUNS|BYTES|AGE_MS`, or skip pruning per run with `--no-prune`.
 
-The extension's Pause pauses the lease and ends the current run as `needs_user`/`paused`; the user presses **Resume on this tab** and the agent continues (FAI wakes a Claude Code or Codex session on the click, see [Invites and wakes](#invites-and-wakes); otherwise its `next.text` names the background `wait --until active` command that does). Stop ends the run as `stopped` and releases the tab.
+The extension's Pause pauses the lease and ends the current run as `needs_user`/`paused`; the user presses **Resume on this tab** and the agent continues (FAI wakes a Claude Code, Codex or OpenCode session on the click, see [Invites and wakes](#invites-and-wakes); otherwise its `next.text` names the background `wait --until active` command that does). Stop ends the run as `stopped` and releases the tab.
 
 ## SDK
 
@@ -1074,7 +1074,7 @@ These report p50/p95 for observe, execute-to-observation, screenshot arrival, pr
 
 ## Limits
 
-One active tab lease at a time; approving another request supersedes it. Domain roots follow the vendored Public Suffix List as of its last refresh ([Domain roots](#domain-roots)). Pause ends the run rather than suspending it. A daemon restart forgets requests (clients get `unknown_request` and request again). Login, MFA, frames on origins the request does not list ([Frames](#frames)), unusual widgets and browser-internal pages need the user. Capture is limited by Chrome's quota. Nothing verifies arbitrary prose tasks; supply an expectation. Linux and macOS only.
+One active tab lease per browser; approving another request in the same browser supersedes it. Domain roots follow the vendored Public Suffix List as of its last refresh ([Domain roots](#domain-roots)). Pause ends a run in progress (the lease stays paused until Resume) rather than suspending it. A daemon restart forgets requests (clients get `unknown_request` and request again). Login, MFA, frames on origins the request does not list ([Frames](#frames)), unusual widgets and browser-internal pages need the user. Capture is limited by Chrome's quota. Nothing verifies arbitrary prose tasks; supply an expectation. Linux and macOS only.
 
 ### Approval window and tab mark
 
