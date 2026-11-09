@@ -102,12 +102,18 @@ export interface Observation {
   viewport?: Viewport;
   /** The page script's consent dialog (always present from extension 0.4.0, null when none). */
   consent?: ConsentDialog | null;
-  /** Machine codes: password_field, login_wall, controls_capped, cross_origin_frame. */
+  /** Machine codes: password_field, login_wall, controls_capped, cross_origin_frame, browser_error_page. */
   warnings?: string[];
   /** With controls_capped: how many rendered controls the page script's 100-control cap left out. */
   controlsDropped?: number;
   /** The document's HTTP status (Navigation Timing responseStatus) while the URL is still the loaded one. */
   httpStatus?: number;
+  /**
+   * True when the tab shows the browser's own error page (Chrome's chrome-error://chromewebdata/ for an HTTP error sent
+   * without a page body, or a network failure) on the approved URL. The extension reports it without a page script:
+   * no controls, a fixed text, the `browser_error_page` warning and no httpStatus (unknown).
+   */
+  browserErrorPage?: boolean;
 }
 
 /** Observation passed to providers and returned by observe(): no bounds, sensitive controls removed. */
@@ -1250,7 +1256,7 @@ export interface RunResult {
   /** Receipt v2, computed when the run ends (budget is null outside MCP). */
   verdict?: Verdict;
   next?: { kind: NextKind; text: string };
-  /** Machine warnings: password_field, expectation_weak, controls_capped:<n>, cross_origin_frame, act_reresolved. */
+  /** Machine warnings: password_field, expectation_weak, controls_capped:<n>, cross_origin_frame, act_reresolved, browser_error_page. */
   warnings?: string[];
   /**
    * An act with a point: the screenshot pixels given, the CSS point they map to, the scale and image size assumed,
@@ -1621,7 +1627,7 @@ export interface AgentResult {
 export interface LeanObserveResult {
   revision: string;
   page: { url: string; title: string; digest: string[] };
-  /** Machine warning codes (password_field, login_wall, controls_capped:<n>, cross_origin_frame). */
+  /** Machine warning codes (password_field, login_wall, controls_capped:<n>, cross_origin_frame, browser_error_page). */
   warnings?: string[];
   /** Untrusted dialog text and labels; lean observations omit button ids. */
   consent?: { text: string; buttons: Array<{ label: string; kind?: string }> };

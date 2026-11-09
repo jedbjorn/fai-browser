@@ -5828,6 +5828,9 @@ export class BrowserRuntime {
           session.why('fill:not_kept');
           setOutcome(session.result, 'fill_not_kept');
         } else if (await session.checkExpectation(after)) setOutcome(session.result, 'expectation_passed');
+        // The browser's own error page (nothing on it to read): error_page, as a run's landing on an HTTP error page.
+        // The offer stays, so the host can still reload or open another approved URL once the site is back.
+        else if (errorPageOf(after)?.source === 'browser') await session.errorPage(after, false);
         else setOutcome(session.result, 'step_complete');
         // What the host may do next from here, without another observe(); listed by the task its observe() named.
         session.result.offer = this.#offerAfter(session, config, after, offer.hints, offer.question);
