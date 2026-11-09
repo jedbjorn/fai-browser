@@ -21,6 +21,10 @@ test('update card view: available, running, failed, recent success, nothing', ()
   assert.equal(available.button, 'Update to 0.9.0');
   assert.equal(available.notesUrl, NOTES);
   assert.equal(updateCard(AVAILABLE, { installing: true }).state, 'running');
+  const byHand = updateCard({ ...AVAILABLE, installable: false }, { now });
+  assert.equal(byHand.button, null, 'no button for a copy that is not a git clone');
+  assert.match(byHand.text, /npm install -g fai-browser@latest/);
+  assert.equal(updateCard({ ...AVAILABLE, available: false, latest: '0.4.0', install: { state: 'up_to_date', to: '0.4.0' } }).hidden, true);
   const failed = updateCard({ ...AVAILABLE, install: { state: 'rolled_back', to: '0.9.0', at: '2026-11-21T07:00:00Z',
     message: 'restart failed. Rolled back to 0.4.0.' } }, { now });
   assert.equal(failed.state, 'failed');

@@ -155,7 +155,8 @@ Chrome, Chromium, Brave, Edge and Vivaldi 116+ load the extension unpacked; ther
 ## Updating
 
 FAI Browser follows **tagged GitHub releases** only, never `main`. About once a day the local service asks GitHub's
-releases API whether a newer release is out (an anonymous request; `FAI_UPDATE_CHECK=0` or `"updateCheck": false` in
+releases API whether a newer release is out (an anonymous request; while the repository is private it asks your clone's
+remote with `git ls-remote` and your own git credentials instead; `FAI_UPDATE_CHECK=0` or `"updateCheck": false` in
 `config.json` turns it off). When one is, the popup shows **Update available vX.Y.Z** with the release notes and an
 **Update** button, and `node src/cli.js status` says so. Nothing installs until you click or run:
 
@@ -165,14 +166,17 @@ node src/cli.js update           # install the latest release
 ```
 
 The update moves your clone to the release tag (fast-forwards `main`, or checks the tag out when you are on a release
-checkout), runs `npm ci` when the lock file changed, refreshes the pairing helper and the skill you installed, and
-restarts the local service. It refuses, and says what to do, while an agent holds a tab, when the clone has local
-changes or unpushed commits, is on another branch, or does not come from github.com/jedbjorn/fai-browser. If a step
-fails after the move it rolls back to the previous version.
+checkout), runs `npm ci` when the lock file changed (best effort), refreshes the pairing helper and the skill you
+installed, and restarts the local service. It refuses, and says what to do, while an agent holds a tab, when the clone
+has local changes or unpushed commits, is on another branch, or does not come from github.com/jedbjorn/fai-browser.
+While it runs, new agent tab requests wait ("retry in a minute"). If the refresh or restart fails after the move it rolls
+back to the previous version; if it was interrupted, run `node src/cli.js update` again to finish it.
 
 - **Chromium, from source**: the extension reloads itself once the new service answers. Restart your coding agent.
 - **Firefox (paths 1 and 2)**: Firefox updates the signed add-on by itself (its `update_url`); the updater only updates
-  the clone and the service. A temporary add-on from `dist/firefox/` needs `npm run build:firefox` and a reload.
+  the clone and the service. While the repository is private, that automatic update cannot reach the release: install
+  the new `.xpi` from the Releases page by hand. A temporary add-on from `dist/firefox/` needs `npm run build:firefox`
+  and a reload.
 
 Details: [Updates](../REFERENCE.md#updates).
 

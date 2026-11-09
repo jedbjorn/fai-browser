@@ -257,7 +257,8 @@ and exit code.
   autopilot sends observations to its provider and uses your locally stored Jev key to authenticate
   those requests. Supplied values are redacted before provider requests; traces are pruned
   (50 runs, 500 MB, 7 days). The only other outbound request is the daily update check, an
-  anonymous GET to GitHub's releases API (`FAI_UPDATE_CHECK=0` turns it off).
+  anonymous GET to GitHub's releases API, or `git ls-remote` with your own git credentials while
+  the repository is private (`FAI_UPDATE_CHECK=0` turns it off).
 
 Details: [Policies and providers](docs/REFERENCE.md#policies-and-providers),
 [Guardrails](docs/REFERENCE.md#guardrails) and [Traces and

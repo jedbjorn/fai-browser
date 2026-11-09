@@ -169,7 +169,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
   // The fake daemon's answer to a ref'd message.
   function answer(message) {
     if (message.type === 'hello') {
-      return { ok: true, data: { mode, daemonVersion, endSession: false, ...(daemonUpdate ? { update: daemonUpdate } : {}),
+      return { ok: true, data: { mode, daemonVersion: state.daemonVersion ?? daemonVersion, endSession: false, ...(daemonUpdate ? { update: daemonUpdate } : {}),
         ...(daemonBudget ? { budget: daemonBudget } : {}), ...(driverControl ? { control: driverControl } : {}) } };
     }
     if (message.type === 'update' && daemonUpdate) {
@@ -2114,7 +2114,7 @@ const UPDATE = { enabled: true, current: '0.3.0', latest: '0.9.0', tag: 'v0.9.0'
 test('update: the hello and the popup connect carry a cleaned update view; Update from the popup asks the service', async () => {
   const h = harness({ daemonUpdate: { ...UPDATE, notesUrl: 'https://evil.example/', extra: 'x' } });
   await h.until(() => h.session.connection?.update);
-  assert.deepEqual(h.session.connection.update, { current: '0.3.0', latest: '0.9.0', available: true, notesUrl: null, install: null },
+  assert.deepEqual(h.session.connection.update, { current: '0.3.0', latest: '0.9.0', available: true, installable: true, notesUrl: null, install: null },
     'only versions, a notes link of the release itself, and the install');
   const page = await h.send({ type: 'update_install' }, { id: 'ext', url: ORIGIN });
   assert.match(page.error, /popup/);
@@ -2144,6 +2144,22 @@ test('update: a newer service reloads the unpacked extension once per version; F
     await sleep(30);
     assert.equal(other.reloads.length, 0, JSON.stringify(options));
   }
+});
+
+test('update: never reloads during a session, even when a newer service answers after a reconnect', async () => {
+  const h = await started();
+  h.state.daemonVersion = '0.9.0';
+  h.socket.close();
+  await h.until(() => h.sent.filter(m => m.type === 'hello').length === 2);
+  await sleep(30);
+  assert.equal(h.reloads.length, 0, 'the approved tab keeps its session');
+  assert.equal(h.local.updateReloadedFor, undefined);
+});
+
+test('update: a service that cannot install says so; the cleaned view keeps installable false', async () => {
+  const h = harness({ daemonUpdate: { ...UPDATE, installable: false } });
+  await h.until(() => h.session.connection?.update);
+  assert.equal(h.session.connection.update.installable, false);
 });
 
 // --- per-request budget (Setup & connection) ---------------------------------------------------------------------
