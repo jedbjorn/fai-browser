@@ -16,6 +16,7 @@ Requires Node 22+ and Chrome/Chromium 116+. The runtime has no npm dependencies,
   - [Dev logs and JavaScript dialogs](#dev-logs-and-javascript-dialogs)
   - [Uploads](#uploads)
 - [The daemon](#the-daemon)
+  - [Several browsers](#several-browsers)
   - [Updates](#updates)
 - [Coding agents (MCP and skill)](#coding-agents-mcp-and-skill)
 - [Step lists](#step-lists)
@@ -289,6 +290,49 @@ A tab request (`POST /v1/requests`) may carry `url`, the page the extension open
 | `FAI_WAIT_DAEMON_GONE_MS` | How long `wait --until active` rides out a daemon that does not answer before it ends as `unknown`/`daemon_gone` (default 30000) |
 | `FAI_RETENTION_MAX_RUNS`, `_MAX_BYTES`, `_MAX_AGE_MS` | Retention limits (see below) |
 | `FAI_UPDATE_CHECK` | `0` (or `false`, `off`, `no`) turns off the daily check for a newer release ([Updates](#updates)); `update --check` still checks when you run it |
+
+### Several browsers
+
+The extension may be paired in more than one browser at a time (say the signed Firefox add-on and an unpacked
+Chromium, or two Chrome profiles), all with the same daemon and pairing secret. Each install keeps a random browser
+id in its extension storage (`browserId`, created once) and sends it with every connection: the `browser` parameter
+of the WebSocket URL, the `X-Fai-Browser` header of every long-poll call, and `hello.browser {product, name,
+version}`. An extension older than 0.6 sends none and is known by its extension Origin (unique per Firefox install,
+shared by Chromium-family browsers that load the same unpacked extension). Origins and the secret are checked per
+connection exactly as before.
+
+- **Connections.** The hub keeps one connection per browser, each with its own socket or long-polls, outbox and
+  liveness. A newer connection of the same browser (a restarted service worker) closes the old socket with `4003`,
+  and the extension never reconnects on `4003` (until the popup opens, or after five minutes). A connection of another
+  browser never closes anyone. Before 0.6 every new connection closed the previous one with `4000`, whatever the
+  browser, and two paired browsers replaced each other about twice a second (issue #9); the extension now backs off
+  on repeated `4000`s from such an older service (at least 4 s, then 8 and 15 s) and its popup says another browser
+  keeps taking the connection. A connection only resets its backoff after lasting 10 s.
+- **Which browser a request opens in.** A new tab request waits in the browser the user used FAI in most recently:
+  the last approval, popup open or toolbar click there (the extension's `used` message); never used, the one connected
+  last. An agent may name one: `browser` on `fai_browser_open`, `fai_browser_run`, `request-tab --browser` and
+  `POST /v1/requests`, matched (case-insensitive) on the product the extension reports (`firefox`, `chrome`,
+  `chromium`, `edge`, `brave`, `opera`, `vivaldi`), its name, or a browser id from status. A browser that is not
+  connected is refused with `409 browser_not_connected`, whose message names the connected ones ("Connected: Chromium
+  (chromium), Firefox (firefox)"). A request nobody named follows the user: when its browser disconnects it moves to
+  the one used last; with no browser connected it waits for the first one.
+- **Every popup lists it.** Only the browser a request waits in opens its approval window or task tab and shows the
+  `?` badge. Every other connected browser's popup lists it as **In another browser** with **Open here**, which moves
+  it there (the `move` message; the request then stays in that browser). Deny works from any of them.
+- **Leases belong to a browser.** The approval binds the lease to the browser that approved it; every command, cancel
+  and `lease_update` for it goes to that connection only, and a status or `lease_level` from another browser is
+  ignored. One active lease per browser: approving a second request in the same browser supersedes the first there,
+  while a tab in another browser keeps running. A browser that disconnects, or whose worker restarts (a hello without
+  a session), pauses only its own leases (`disconnected`, `session_inactive`).
+- **Where it shows.** Request views carry `browser {id, product, name}` (the browser that holds the tab, else the
+  one it waits in) and `lease.browserId`; receipts' `permissions.browser` and the direct result's `granted` line name
+  it. `daemon status`, the CLI `status` and `fai_browser_status` list every connected browser under
+  `extension.browsers` (and every known one under `browsers`): `id`, `product`, `name`, `version`, `transport`,
+  `connectedAt`, `lastSeen`, `lastUsedAt`, `closesLastMinute` and its `leases`. A browser whose connection closes more
+  than 8 times in a minute adds the warning `extension_flapping: <name> (<id>) lost its connection N times in 60 s`
+  (and logs `extension_flapping` once), so a reconnect loop is never silent again.
+- **Settings.** The per-request budget and "Open requested pages right away" are the ones the browser that reported
+  last sent; each browser keeps its own Permissions, test sites and secret redaction.
 
 ### Updates
 
