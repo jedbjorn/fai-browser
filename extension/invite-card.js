@@ -1,7 +1,7 @@
 // "Invite agent" in the toolbar popup (docs/REFERENCE.md "Invites and wakes"): the user is on a tab they already have
 // open and invites a connected coding agent to work in it. One tap with one live agent session, one tap on its row
 // with several, and a copy line ("Tell your agent: join FAI invite inv-…") when the agent cannot be woken. The level
-// is the one last chosen for invites (initially Use), changed with one tap; Test site only on a listed test site. The
+// is the one last chosen for invites (initially Use = interactive), changed with one tap; Test site only on a listed test site. The
 // optional "What should it do?" text is the user's own words: it comes only from this input.
 // Everything the daemon reports (host, repo name, ids, errors) is rendered with textContent only.
 import { askSiteAccess, element } from './ui.js';
@@ -9,10 +9,11 @@ import { askSiteAccess, element } from './ui.js';
 export const HOST_NAMES = Object.freeze({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', unknown: 'Agent' });
 export const INVITE_LEVELS = Object.freeze([
   { level: 'read-only', name: 'Read' },
-  { level: 'reversible', name: 'Use' },
+  { level: 'interactive', name: 'Use' },
   { level: 'full', name: 'Act' },
 ]);
-export const DEFAULT_INVITE_LEVEL = 'reversible';
+// Use is `interactive` here, as the popup's "Preselect up to" calls it: clicks, fills, search, filter, sort and paging.
+export const DEFAULT_INVITE_LEVEL = 'interactive';
 const LEVEL_NAMES = { 'read-only': 'Read', reversible: 'Use', interactive: 'Use', full: 'Act', testing: 'Test site' };
 const LIVE_INVITE = new Set(['open', 'joined']);
 
@@ -63,6 +64,8 @@ export function mountInvite({ root, context, onState, say }) {
   let level = DEFAULT_INVITE_LEVEL;
   let busy = false;
   let copiedFor = null;
+  // The session whose invite waits for a second tap because it would end another agent's task (see busyTask).
+  let confirming = undefined;
   const text = element('input', 'invite-text');
   text.type = 'text';
   text.maxLength = 500;
@@ -71,7 +74,9 @@ export function mountInvite({ root, context, onState, say }) {
   text.spellcheck = true;
 
   chrome.storage.local.get(['inviteLevel']).then(saved => {
-    if (INVITE_LEVELS.some(item => item.level === saved?.inviteLevel) || saved?.inviteLevel === 'testing') level = saved.inviteLevel;
+    // A choice saved as Use before Use meant `interactive` here counts as Use.
+    const stored = saved?.inviteLevel === 'reversible' ? 'interactive' : saved?.inviteLevel;
+    if (INVITE_LEVELS.some(item => item.level === stored) || stored === 'testing') level = stored;
     render();
   }, () => {});
 
@@ -100,6 +105,14 @@ export function mountInvite({ root, context, onState, say }) {
   function invite(agent) {
     const ctx = context();
     if (busy || !ctx.currentOrigin) return;
+    // This browser holds one tab at a time: inviting ends another agent's task here, so the first tap only says so.
+    const other = busyTask(ctx, agent);
+    if (other?.owner && confirming !== (agent?.sessionId ?? null)) {
+      confirming = agent?.sessionId ?? null;
+      render();
+      return;
+    }
+    confirming = undefined;
     const chosen = levels(ctx).some(item => item.level === level) ? level : DEFAULT_INVITE_LEVEL;
     const asked = askSiteAccess(null, { origins: [ctx.currentOrigin], tabMode: 'single' });
     busy = true;
@@ -202,7 +215,9 @@ export function mountInvite({ root, context, onState, say }) {
     const list = element('div', 'invite-agents');
     if (agents.length <= 1) {
       const agent = agents[0] ?? null;
-      const button = element('button', 'primary-button invite-agent', agent ? `Invite ${agentLabel(agent)}` : 'Invite agent');
+      const armed = confirming !== undefined && confirming === (agent?.sessionId ?? null);
+      const button = element('button', 'primary-button invite-agent', armed ? 'End that task and invite'
+        : agent ? `Invite ${agentLabel(agent)}` : 'Invite agent');
       button.type = 'button';
       button.disabled = busy;
       if (agent) button.dataset.sessionId = agent.sessionId;
@@ -216,13 +231,35 @@ export function mountInvite({ root, context, onState, say }) {
         row.type = 'button';
         row.dataset.sessionId = agent.sessionId;
         row.disabled = busy;
-        row.append(element('span', 'invite-row-name', agentLabel(agent)), element('span', 'invite-row-meta', hint(agent)));
+        const armed = confirming === agent.sessionId;
+        row.append(element('span', 'invite-row-name', armed ? `End that task and invite ${agentLabel(agent)}` : agentLabel(agent)),
+          element('span', 'invite-row-meta', hint(agent)));
         row.addEventListener('click', () => invite(agent));
         list.append(row);
       }
     }
     wrap.append(list);
+    // One line before the click: an invite here ends the task this browser runs on another tab.
+    const conflicts = (agents.length ? agents : [null]).map(agent => busyTask(ctx, agent)).filter(Boolean);
+    const other = conflicts[0];
+    if (other) {
+      const line = element('p', 'level-warning invite-supersede', other.owner
+        ? `This will end ${agentLabel(other.owner)}'s current tab task.${confirming !== undefined ? ' Tap again to invite anyway.' : ''}`
+        : 'This will end the current FAI tab task.');
+      line.setAttribute('role', 'note');
+      wrap.append(line);
+    }
     return wrap;
+  }
+
+  /**
+   * The task this browser runs now (an active or paused tab of another request) that an invite for `agent` would end,
+   * or null. A request the invited session itself owns is no conflict: it moves to the new tab.
+   */
+  function busyTask(ctx, agent) {
+    return (ctx.requests ?? []).find(request => ['active', 'paused'].includes(request.state) && ctx.here(request)
+      && request.lease?.tabId !== undefined && request.lease?.tabId !== ctx.currentTabId
+      && !(agent && request.owner?.sessionId === agent.sessionId)) ?? null;
   }
 
   function hint(agent) {

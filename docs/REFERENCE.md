@@ -560,7 +560,8 @@ live sessions, most recently active first (host · repo · last active):
 - none: **Invite agent** makes an invite for no session in particular and shows the copy line.
 
 The level chips (Read, Use, Act; Test site only on an origin listed under Advanced → Test sites) default to the level
-last chosen for invites, initially Use (`reversible`); one tap changes it. The optional "What should it do?" field is
+last chosen for invites, initially Use (`interactive`: clicks, fills of your values, search, filter, sort and paging
+submits, as the popup's "Preselect up to" calls Use); one tap changes it. The optional "What should it do?" field is
 the user's own words: it goes to the agent as a labelled line in the wake and in the join result, and only ever comes
 from that input. The click is the approval: inside the gesture the popup asks for browser site access where the
 browser needs it (Firefox, the exact origin), and the worker, which accepts `invite` only from `popup.html` itself

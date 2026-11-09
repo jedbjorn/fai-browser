@@ -202,6 +202,8 @@ test('invite: joining is single use and makes the joining session the owner (wok
   await poll(ctx, session);
   const joined = await ctx.api('POST', `/v1/invites/${reply.invite.inviteId}/join`, {}, { headers: session.headers });
   assert.equal(joined.status, 200, JSON.stringify(joined.body));
+  assert.deepEqual(joined.body.request.owner, { sessionId: session.sessionId, host: 'claude', repo: 'my-repo' },
+    'the popup sees which agent holds the tab');
   assert.equal(joined.body.requestId, reply.requestId);
   assert.equal(joined.body.level, 'reversible');
   assert.equal(joined.body.userText, 'Book nothing, just look');

@@ -33,7 +33,7 @@ test.before(async () => {
 test.after(() => browser?.close());
 
 // popup.html with a fake chrome API: `agents` answers the session list; `invite` answers an active invited request.
-async function popup(t, { sessions, wake = 'queued', search = '' }) {
+async function popup(t, { sessions, wake = 'queued', search = '', requests = [] }) {
   const page = await browser.newPage({ viewport: { width: 400, height: 900 } });
   t.after(() => page.close());
   await page.route('https://popup.test/**', async route => {
@@ -41,13 +41,13 @@ async function popup(t, { sessions, wake = 'queued', search = '' }) {
     const type = file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : 'text/html';
     route.fulfill({ contentType: type, body: await readFile(new URL(file, EXTENSION), 'utf8') });
   });
-  await page.addInitScript(([sessions, wake]) => {
+  await page.addInitScript(([sessions, wake, requests]) => {
     const local = { endpoint: 'http://127.0.0.1:4318', secret: 'x'.repeat(30) };
     globalThis.__sent = [];
-    globalThis.__requests = [];
+    globalThis.__requests = requests;
     globalThis.__local = local;
     const connection = { connected: true, transport: 'websocket', paired: true, native: null };
-    const state = () => ({ status: globalThis.__requests.length ? 'active' : null, session: globalThis.__session ?? null,
+    const state = () => ({ status: globalThis.__requests.some(item => item.invite) ? 'active' : null, session: globalThis.__session ?? null,
       requests: globalThis.__requests, connection });
     globalThis.chrome = {
       storage: {
@@ -78,7 +78,7 @@ async function popup(t, { sessions, wake = 'queued', search = '' }) {
         },
       },
     };
-  }, [sessions, wake]);
+  }, [sessions, wake, requests]);
   await page.goto(`https://popup.test/popup.html${search}`);
   await page.waitForFunction(() => document.body.dataset.ready === '1');
   return page;
@@ -88,12 +88,12 @@ test('popup: one live session is one tap; the level defaults to Use and the text
   const page = await popup(t, { sessions: [CLAUDE], wake: 'delivered' });
   await page.waitForSelector('#invite .invite-agent');
   assert.equal(await page.textContent('#invite .invite-agent'), 'Invite Claude Code · fai-browser');
-  assert.equal(await page.getAttribute('.invite-level[aria-checked="true"]', 'data-level'), 'reversible');
+  assert.equal(await page.getAttribute('.invite-level[aria-checked="true"]', 'data-level'), 'interactive', 'Use is interactive');
   await page.fill('#invite .invite-text', 'Compare the two plans');
   await page.click('#invite .invite-agent');
   await page.waitForSelector('#invite .invite-status');
   const sent = await page.evaluate(() => __sent.filter(message => message.type === 'invite'));
-  assert.deepEqual(sent, [{ type: 'invite', sessionId: 'ses_1', level: 'reversible', text: 'Compare the two plans' }]);
+  assert.deepEqual(sent, [{ type: 'invite', sessionId: 'ses_1', level: 'interactive', text: 'Compare the two plans' }]);
   assert.match(await page.textContent('#invite .invite-line'), /got the invite/);
   assert.equal(await page.$('#invite .invite-copy'), null, 'no copy line when the wake went through');
 });
@@ -126,3 +126,23 @@ test('popup: no session still invites (copy line); the approval window never off
   await windowed.waitForTimeout(200);
   assert.equal(await windowed.$eval('#invite', node => node.hidden), true);
 });
+
+test('popup: an invite that would end another agent\'s task in this browser says so first and needs a second tap', async t => {
+  const other = { requestId: 'req_other', state: 'active', origins: ['https://docs.example'], mode: 'read-only', reason: 'Docs',
+    createdAt: new Date().toISOString(), lease: { tabId: 9 }, browser: { mine: true },
+    owner: { sessionId: 'ses_2', host: 'codex', repo: 'shop' } };
+  const page = await popup(t, { sessions: [CLAUDE], requests: [other], wake: 'delivered' });
+  await page.waitForSelector('#invite .invite-supersede');
+  assert.equal(await page.textContent('#invite .invite-supersede'), "This will end Codex · shop's current tab task.");
+  await page.click('#invite .invite-agent');
+  assert.equal(await page.textContent('#invite .invite-agent'), 'End that task and invite');
+  assert.match(await page.textContent('#invite .invite-supersede'), /Tap again to invite anyway/);
+  assert.deepEqual(await page.evaluate(() => __sent.filter(message => message.type === 'invite')), [], 'the first tap only warns');
+  await page.click('#invite .invite-agent');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'invite'));
+  // The same agent's own task is no conflict: it moves to the new tab with one tap.
+  const own = await popup(t, { sessions: [CLAUDE], requests: [{ ...other, owner: { sessionId: 'ses_1', host: 'claude', repo: 'fai-browser' } }] });
+  await own.waitForSelector('#invite .invite-agent');
+  assert.equal(await own.$('#invite .invite-supersede'), null);
+});
+

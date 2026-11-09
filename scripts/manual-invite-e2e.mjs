@@ -5,7 +5,9 @@
 // only this repository's MCP server, no session persistence and an environment built from scratch (no CLAUDE_* or
 // FAI_* variable of the shell that runs it, so no real session's socket is ever reachable). It waits for that MCP server
 // to register with the wake capability `claude-socket`, makes an invite for it, and passes when the idle session takes a
-// new turn and calls fai_browser_open with the invite id.
+// new turn and calls fai_browser_open with the invite id. A second, tiny MCP server in the same throwaway session
+// probes what its socket answers (a wrong token; the auth line alone) and writes that to the temp dir, so a delivered
+// message can be told from a held or refused one if the socket says anything at all.
 //
 //   node scripts/manual-invite-e2e.mjs [--model haiku] [--timeout 120]
 //
@@ -38,8 +40,32 @@ await daemon.listen();
 const api = (method, path, body) => call(daemon.port, method, path, body, { token: daemon.token });
 
 const mcpConfig = join(work, 'mcp.json');
-await writeFile(mcpConfig, JSON.stringify({ mcpServers: { fai: { type: 'stdio', command: process.execPath,
-  args: [join(ROOT, 'src', 'mcp-main.js')], env: { FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port) } } } }));
+const probeFile = join(work, 'probe.json');
+const probeScript = join(work, 'probe.cjs');
+// The probe: an MCP server with no tools that, once started, connects to its own session's socket twice (a wrong
+// token; the right token with no message) and records the bytes the session writes back. It sends no user message.
+await writeFile(probeScript, `const net = require('net'); const fs = require('fs');
+const out = ${JSON.stringify(probeFile)}; const results = {};
+let buf = ''; process.stdin.on('data', d => { buf += d; let i; while ((i = buf.indexOf('\\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1);
+  let m; try { m = JSON.parse(line); } catch { continue; }
+  const send = r => process.stdout.write(JSON.stringify(Object.assign({ jsonrpc: '2.0', id: m.id }, r)) + '\\n');
+  if (m.method === 'initialize') send({ result: { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'probe', version: '0' } } });
+  else if (m.method === 'tools/list') send({ result: { tools: [] } }); else if (m.id !== undefined && m.method) send({ result: {} }); } });
+function attempt(name, lines) { return new Promise(done => { const path = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
+  if (!path) { results[name] = 'no socket'; return done(); } let got = ''; const s = net.connect({ path });
+  s.setEncoding('utf8'); s.on('data', c => { got += c; }); s.on('error', e => { results[name] = 'error ' + e.code; done(); });
+  s.on('connect', () => { s.write(lines.map(l => JSON.stringify(l)).join('\\n') + '\\n'); s.end(); });
+  s.on('close', () => { if (!(name in results)) results[name] = got.slice(0, 300) || '(nothing, closed)'; done(); });
+  setTimeout(() => { if (!(name in results)) { results[name] = got.slice(0, 300) || '(nothing, still open after 3 s)'; s.destroy(); done(); } }, 3000); }); }
+setTimeout(async () => { await attempt('wrongToken', [{ type: 'auth', token: 'not-the-token' }]);
+  await attempt('authOnly', [{ type: 'auth', token: process.env.CLAUDE_CODE_MESSAGING_TOKEN || '' }]);
+  fs.writeFileSync(out, JSON.stringify(results)); }, 3000);
+`);
+await writeFile(mcpConfig, JSON.stringify({ mcpServers: {
+  fai: { type: 'stdio', command: process.execPath, args: [join(ROOT, 'src', 'mcp-main.js')],
+    env: { FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port) } },
+  probe: { type: 'stdio', command: process.execPath, args: [probeScript] },
+} }));
 
 // From scratch: what claude needs to run and find its login, nothing of this shell's session.
 const env = {};
@@ -93,7 +119,13 @@ try {
     part.type === 'tool_use' && /fai_browser_open$/.test(part.name) && part.input?.inviteId === inviteId)), 'fai_browser_open with the invite');
   passed = Boolean(used);
   const wake = (await api('GET', `/v1/requests/${reply.requestId}`)).body.invite;
-  console.log(`wake ${wake.wake.state}; invite ${wake.state}`);
+  console.log(`wake ${wake.wake.state}${wake.wake.detail ? ` (the socket answered: ${wake.wake.detail})` : ' (the socket answered nothing)'}; invite ${wake.state}`);
+  try {
+    const { readFile } = await import('node:fs/promises');
+    console.log(`socket probe: ${await readFile(probeFile, 'utf8')}`);
+  } catch {
+    console.log('socket probe: no result');
+  }
 } catch (error) {
   console.error(`FAIL: ${error.message}`);
 } finally {

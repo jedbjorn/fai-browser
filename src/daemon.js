@@ -721,6 +721,9 @@ export function createDaemon(options = {}) {
       // How a pending request is approved (`page`: its page opened by itself, the icon click on it approves; `window`:
       // Open in the FAI Browser window first); null once it is no longer pending.
       approval: record.state === 'pending' ? approvalOf(record) : null,
+      // The agent session that owns this request (it made it, or joined its invite), while it runs: host and repo
+      // folder only. The popup warns before an invite ends another agent's task in the same browser.
+      owner: ownerView(record),
       // A tab the user invited an agent to from the popup: the invite and its wake (see onInviteEvent).
       ...(record.invite && invites.has(record.invite) ? { invite: inviteView(invites.get(record.invite)) } : {}),
     };
@@ -957,6 +960,11 @@ export function createDaemon(options = {}) {
     return sessions.queueWake(record.ownerSession, { kind, requestId: record.requestId, level: record.grant?.level });
   }
 
+  function ownerView(record) {
+    const owner = record.ownerSession ? sessions.view(record.ownerSession) : null;
+    return owner ? { sessionId: owner.sessionId, host: owner.host, repo: owner.repo } : null;
+  }
+
   const inviteLog = new Map(); // browserId -> invite times (ms), for the rate limit
   function inviteView(invite) {
     const wake = invite.wakeId ? sessions.wake(invite.wakeId) : null;
@@ -974,7 +982,7 @@ export function createDaemon(options = {}) {
       hasText: Boolean(invite.text),
       session: target ? { sessionId: target.sessionId, host: target.host, repo: target.repo } : null,
       // none: nobody to wake (no session chosen, or it cannot be woken): the popup shows the copy text.
-      wake: wake ? { state: wake.state, error: wake.error } : { state: 'none', error: null },
+      wake: wake ? { state: wake.state, error: wake.error, ...(wake.detail ? { detail: wake.detail } : {}) } : { state: 'none', error: null },
       joinedBy: joined ? { host: joined.host, repo: joined.repo } : invite.state === 'joined' ? { host: 'unknown', repo: 'unknown' } : null,
     };
   }

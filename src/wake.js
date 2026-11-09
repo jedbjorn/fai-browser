@@ -171,14 +171,16 @@ export function deliverClaudeSocket({ path, token, text, timeoutMs = SOCKET_TIME
       socket.destroy();
       resolveDelivery(outcome);
     };
+    // What the session wrote back, if anything (one line, clipped): kept so an ack can be told from silence.
+    const reply = () => answer.replace(/\s+/g, ' ').trim().slice(0, 200);
     const judge = () => {
       const refusal = refusalIn(answer);
       if (refusal) return finish({ ok: false, code: 'refused', message: refusal });
       if (!written) return finish({ ok: false, code: 'connect_failed', message: 'The session closed the socket before the message was written.' });
-      return finish({ ok: true });
+      return finish(reply() ? { ok: true, reply: reply() } : { ok: true });
     };
     const timer = setTimeout(() => {
-      if (written && !refusalIn(answer)) return finish({ ok: true });
+      if (written && !refusalIn(answer)) return finish(reply() ? { ok: true, reply: reply() } : { ok: true });
       finish({ ok: false, code: 'timeout', message: `The messaging socket did not answer within ${timeoutMs} ms.` });
     }, timeoutMs);
     socket.setEncoding('utf8');
