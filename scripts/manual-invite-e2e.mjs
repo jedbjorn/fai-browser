@@ -118,7 +118,9 @@ try {
   const used = await until(() => events.find(event => event.type === 'assistant' && event.message?.content?.some?.(part =>
     part.type === 'tool_use' && /fai_browser_open$/.test(part.name) && part.input?.inviteId === inviteId)), 'fai_browser_open with the invite');
   passed = Boolean(used);
-  const wake = (await api('GET', `/v1/requests/${reply.requestId}`)).body.invite;
+  // As the popup sees it (a client without the owner's session sees only the request's id and state).
+  const wake = hub.published.at(-1)?.find(view => view.requestId === reply.requestId)?.invite
+    ?? { state: 'unknown', wake: { state: 'unknown' } };
   console.log(`wake ${wake.wake.state}${wake.wake.detail ? ` (the socket answered: ${wake.wake.detail})` : ' (the socket answered nothing)'}; invite ${wake.state}`);
   try {
     const { readFile } = await import('node:fs/promises');

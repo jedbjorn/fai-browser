@@ -35,6 +35,7 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 
 ### Security
 
+- An invited tab is never a bearer handle: an invite for one agent session is listed to and joinable by that session only, joining needs a registered session, nobody can observe, act, run or release the tab before the join (`invite_not_joined`), and only the joining session after it (`not_owner`); other clients see only its id and state. The popup sends the tab and origin it showed and nothing is bound if the tab changed. The MCP server's background session loop never stops or starts a daemon (an old server no longer shuts down the new daemon after an update), registers only after the daemon proves it holds the client token, uses Claude Code's messaging socket only when it is named after its own parent process, and promises a wake only for requests the daemon records as its own.
 - Only a click in the toolbar popup creates an invite: the worker accepts `invite` from `popup.html` only, the service only over the paired extension channel, and no client API route creates one. An invite grants exactly the chosen level on the tab's exact origin; every guardrail applies unchanged. Wake texts are fixed templates without page content. A session's wakes need its own random key, and the MCP server writes only to its own host's channel. See [the safety model](docs/guide/safety-model.md#9-invites-and-wakes).
 
 ### Known limits

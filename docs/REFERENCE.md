@@ -532,8 +532,8 @@ listed but never wakes it.
 
 | Capability | When | Delivery |
 |---|---|---|
-| `claude-socket` | Claude Code 2.1.224+ (the token since 2.1.228) gives the server `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN` (`--bare` sessions have none) | the MCP server writes `{"type":"auth","token":…}` and `{"type":"user","message":{"role":"user","content":<text>}}`, one line each, to that socket; an idle session takes a new turn |
-| `codex-queue` | Codex 0.149+, once a tool call named the thread (`_meta["x-codex-turn-metadata"].thread_id`) and `codex queue --help` works | `codex queue --thread <id> --message <text>`, argv only (no shell), 15 s timeout, `codex` from `PATH` or `FAI_CODEX_BIN`, no `FAI_*` variable passed on; a busy session runs it as its next turn with its own permissions |
+| `claude-socket` | Claude Code 2.1.224+ (the token since 2.1.228) gives the server `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN` (`--bare` sessions have none), and the socket is `<dir>/<pid>.sock` with the MCP server's parent pid: the variables are inherited by everything Claude Code starts, so a server started through a wrapper (npx, a shell) or by a Bash command fails closed to `none` | the MCP server writes `{"type":"auth","token":…}` and `{"type":"user","message":{"role":"user","content":<text>}}`, one line each, to that socket; an idle session takes a new turn |
+| `codex-queue` | Codex 0.149+, once a tool call named the thread (`_meta["x-codex-turn-metadata"].thread_id`, a UUID) and `codex queue --help` works (`codex` from an absolute `PATH` entry or `FAI_CODEX_BIN`) | `codex queue --thread <id> --message <text>`, argv only (no shell), 15 s timeout, `codex` from `PATH` or `FAI_CODEX_BIN`, no `FAI_*` variable passed on; a busy session runs it as its next turn with its own permissions |
 | `none` | anything else (OpenCode, an unknown host, Claude Code without the socket, Codex before its first FAI call) | none: the popup shows the copy line |
 
 The socket format is the one Claude Code's own debug output prints; it is undocumented and may change. Claude Code's
@@ -581,9 +581,27 @@ for you to accept), or, when the wake failed or the session cannot be woken, **T
 
 **Joining.** `fai_browser_open {"inviteId": "inv-…"}` (or `fai_browser_run` with the Jev autopilot) calls
 `POST /v1/invites/:id/join` and returns the page as usual, preceded by a trusted line naming the invite and the user's
-words. Joining is single use; the joining session owns the request from then on (it is woken on Resume and releases
-it when its stdio closes). `fai_browser_status` lists open invites for this session or for any agent, and its next is
-the join when one is for this session. An invite ends `expired` after 10 minutes (the tab is released), `revoked` when
+words. Joining needs a registered session (`X-Fai-Session`; `session_required`), and an invite made for one session
+only takes that one (`invite_for_another_session`, 403); one made for no session (the copy line) takes any registered
+session. It is single use; the joining session owns the request from then on (it is woken on Resume and releases it
+when its stdio closes). An invited tab is never a bearer handle: before the join every observe, act, run and release
+is refused (`invite_not_joined`, 409), after it any caller but the owner gets `not_owner` (403); status, the request
+list and `GET /v1/requests/:id` show it in full only to its addressee or owner, and to anyone else as
+`{requestId, state, stateReason, invited: true}` (the CLI's `wait --until active` still works). Ordinary requests stay
+open to any client-token holder, as before: the CLI and SDK drive MCP-made requests too (the resume wait command is the
+CLI). `fai_browser_status` lists only the invites this session may join, and its next is the join when one is for
+this session; its other nexts only ever name this session's own requests.
+
+**Registry safety.** The MCP server's session loop connects with `autoStart: false` and `takeover: false`: it never
+starts a daemon and never stops one of another version (after an update an old server would otherwise shut the new,
+idle daemon down); on `version_mismatch` it waits until the server's own tool call (which may replace the daemon as any
+client call does) and then registers. Before registering it asks `GET /v1/health?challenge=<nonce>` without the token
+and checks `proof`, an HMAC-SHA256 of `fai-health:<nonce>` under the client token, so a process squatting on the port
+gets no registration and cannot inject wakes (a daemon without the proof, an older one, turns invites and wakes off).
+A session the daemon dropped for not polling registers again with `previous: {sessionId, key}` and takes its requests
+and invites back; at most two entries per pid. A server registers (up to 3 s) before it creates a request or joins an
+invite, so the daemon records it as the owner; a relay `next.text` says "FAI Browser wakes this session" only for
+requests whose view names this session as `owner`. An invite ends `expired` after 10 minutes (the tab is released), `revoked` when
 the tab closes or leaves its origin before an agent joined, `cancelled` by the user, or replaced by a new invite on the
 same tab; joining then fails with `invite_expired`, `invite_revoked`, `invite_cancelled` (or `invite_joined` when used),
 and the agent should ask the user to invite it again. A browser may make 6 invites a minute (`rate_limited`).
