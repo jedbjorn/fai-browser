@@ -539,3 +539,52 @@ test('re-review: runs and observes of an invited tab are the owner\'s alone: lis
   assert.equal((await ctx.api('GET', `/v1/runs/${plainObserve.body.observeId}`, undefined, { headers: b.headers })).status, 200);
 });
 
+test('final: a run of an invited tab stays the owner\'s after its request record is gone (the run carries the stamp)', async t => {
+  const clock = { now: Date.now() };
+  const home = await mkdtemp(join(tmpdir(), 'fai-invite-final-'));
+  const hub = createFakeHub({ bridgeOptions: { captureDelayMs: 400 } });
+  const daemon = createDaemon({ driver: 'agent', home, env: {}, port: 0, hub, isAlive: () => true, now: () => clock.now,
+    sweepIntervalMs: 20, providerFactory: () => { throw new Error('no provider'); } });
+  await daemon.listen();
+  t.after(async () => {
+    await daemon.close();
+    await rm(home, { recursive: true, force: true });
+  });
+  const ctx = { hub, daemon, api: (method, path, body, extra = {}) => call(daemon.port, method, path, body, { token: daemon.token, ...extra }) };
+  const a = await register(ctx, { repo: 'repo-a' });
+  const b = await register(ctx, { repo: 'repo-b' });
+  const reply = await invite(ctx, { sessionId: a.sessionId, level: 'full' });
+  await ctx.api('POST', `/v1/invites/${reply.invite.inviteId}/join`, {}, { headers: a.headers });
+  const observed = await ctx.api('POST', '/v1/observe', { requestId: reply.requestId }, { headers: a.headers });
+  const started = await ctx.api('POST', '/v1/act', { requestId: reply.requestId, actionId: observed.body.actions[0].id,
+    revision: observed.body.revision, waitMs: 0, capture: 'last' }, { headers: a.headers });
+  const runId = started.body.runId;
+  assert.ok(runId, JSON.stringify(started.body));
+  // The user stops the tab while the act is still capturing: the request ends first, the run a moment later.
+  await ctx.hub.emit({ type: 'status', leaseId: reply.leaseId, status: 'stopped', reason: 'stopped' });
+  clock.now += 5_000;
+  for (let i = 0; i < 100; i++) {
+    const run = (await ctx.api('GET', `/v1/runs/${runId}`, undefined, { headers: a.headers })).body;
+    if (run.state === 'done') break;
+    await delay(20);
+  }
+  // The request record goes (an hour after it ended); the run stays a little longer.
+  clock.now += 60 * 60_000 - 2_000;
+  for (let i = 0; i < 50; i++) {
+    if ((await ctx.api('GET', `/v1/requests/${reply.requestId}`, undefined, { headers: a.headers })).status === 404) break;
+    await delay(20);
+  }
+  assert.equal((await ctx.api('GET', `/v1/requests/${reply.requestId}`, undefined, { headers: a.headers })).status, 404);
+  for (const extra of [{ headers: b.headers }, {}]) {
+    const got = await ctx.api('GET', `/v1/runs/${runId}`, undefined, extra);
+    assert.deepEqual([got.status, got.body.error?.code], [403, 'not_owner']);
+    assert.ok(!JSON.stringify((await ctx.api('GET', '/v1/runs', undefined, extra)).body).includes(runId));
+  }
+  // The owner's MCP server, dropped over that hour of silence, comes back with its old key: the run is its own again.
+  const back = await ctx.api('POST', '/v1/sessions', { host: 'claude', repo: 'repo-a', pid: process.pid, wake: 'claude-socket',
+    previous: { sessionId: a.sessionId, key: a.headers['X-Fai-Session'].split(':')[1] } });
+  assert.equal(back.status, 201);
+  const headers = { 'X-Fai-Session': `${back.body.sessionId}:${back.body.key}` };
+  assert.equal((await ctx.api('GET', `/v1/runs/${runId}`, undefined, { headers })).status, 200);
+});
+

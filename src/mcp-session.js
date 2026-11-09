@@ -28,10 +28,11 @@ export class AgentSession {
    * `connect(options)`: FaiBrowserClient.connect (called with autoStart and takeover false). `host`: claude, codex,
    * opencode or unknown (src/wake.js detectHost). `driver()`: the driver in effect (the wake text names its tools).
    * `waiting(wake)`: true when this server already showed the agent what the wake is about (a call waiting on that
-   * request, or one that saw it become active). `deliver`: the delivery function (tests); `pollMs`, `backoffMs`,
-   * `ppid`: test overrides.
+   * request, or one that saw it become active). `deliver`: the delivery function (tests); `onOutcome(wake, outcome)`: told how each wake went (the server stops
+   * promising wakes after a failure); `pollMs`, `backoffMs`, `ppid`: test overrides.
    */
   constructor({ env, home, connect, clientName, host, log = () => {}, driver = () => 'agent', waiting = () => false,
+    onOutcome = () => {},
     deliver = deliverWake, pollMs = POLL_MS, backoffMs = BACKOFF_MIN_MS, cwd = process.cwd(), pid = process.pid,
     ppid = undefined }) {
     this.env = env;
@@ -42,6 +43,7 @@ export class AgentSession {
     this.log = log;
     this.driver = driver;
     this.waiting = waiting;
+    this.onOutcome = onOutcome;
     this.deliver = deliver;
     this.pollMs = pollMs;
     this.backoffMinMs = backoffMs;
@@ -220,10 +222,12 @@ export class AgentSession {
           { timeoutMs: this.pollMs + 10_000, signal: this.abort.signal });
         this.sentToolCallAt = body.lastToolCallAt ?? this.sentToolCallAt;
         backoff = this.backoffMinMs;
-        // New wakes only, at most WAKES_PER_POLL of them (the rest come again on the next poll from a real daemon).
+        // New wakes only, at most WAKES_PER_POLL of them (the daemon hands out no more); any extra is reported as
+        // rate_limited at once, so the daemon and the popup show the copy line instead of waiting for nothing.
         const wakes = (Array.isArray(response?.wakes) ? response.wakes : [])
           .filter(wake => typeof wake?.wakeId === 'string' && !this.handled.has(wake.wakeId));
         for (const wake of wakes.slice(0, WAKES_PER_POLL)) this.handle(wake);
+        for (const wake of wakes.slice(WAKES_PER_POLL)) this.refuse(wake, 'More wakes in one poll than FAI takes.');
         if (response?.closed) {
           // The daemon is shutting down: whatever answers on this port next proves itself before it gets anything.
           this.dropClient();
@@ -293,6 +297,7 @@ export class AgentSession {
     this.recentWakes = this.recentWakes.filter(at => now - at < 60_000);
     if (this.recentWakes.length >= WAKES_PER_MINUTE) {
       this.log('wake dropped: more than 12 a minute');
+      this.refuse(wake, 'More than 12 wakes a minute.', { marked: true });
       return;
     }
     this.recentWakes.push(now);
@@ -311,14 +316,30 @@ export class AgentSession {
           : { outcome: 'failed', code: delivered.code ?? 'wake_failed', message: delivered.message ?? 'The wake failed.' };
         this.log(`wake ${wake.kind} ${outcome.outcome}${delivered.ok ? '' : ` (${outcome.code})`}`);
       }
-      // Reported to the daemon that handed it out (the client it came from), never to a new one.
-      if (client && sessionId) {
+      this.onOutcome(wake, outcome);
+      // Reported to the daemon that handed it out, and only while that connection is still the current, verified one:
+      // after a shutdown something else may hold the port by now (the daemon then fails the wake as no_report).
+      if (client && sessionId && this.client === client) {
         await client.request('POST', `/v1/sessions/${encodeURIComponent(sessionId)}/wakes/${encodeURIComponent(wake.wakeId)}`,
           outcome, { timeoutMs: 5_000 }).catch(() => null);
       }
     })().catch(error => this.log(`wake failed: ${error?.message ?? error}`));
     this.deliveries.add(task);
     task.finally(() => this.deliveries.delete(task));
+  }
+
+  /** Fail a wake at once without acting on it (`rate_limited`), reported only over the current connection. */
+  refuse(wake, message, { marked = false } = {}) {
+    if (!marked) {
+      this.handled.add(wake.wakeId);
+      if (this.handled.size > HANDLED_KEEP) this.handled.delete(this.handled.values().next().value);
+    }
+    const outcome = { outcome: 'failed', code: 'rate_limited', message };
+    this.onOutcome(wake, outcome);
+    const client = this.client;
+    if (!client || !this.sessionId) return;
+    client.request('POST', `/v1/sessions/${encodeURIComponent(this.sessionId)}/wakes/${encodeURIComponent(wake.wakeId)}`,
+      outcome, { timeoutMs: 5_000 }).catch(() => null);
   }
 
   /** stdio closed: stop polling and leave the registry (bounded; a gone daemon drops the entry by pid anyway). */

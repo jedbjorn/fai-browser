@@ -51,6 +51,8 @@ const DAEMON_MARGIN_MS = 2_000;
 const SAW_ACTIVE_MS = 10_000;
 // How long a call that creates a request or joins an invite waits for this session's registration.
 const SESSION_READY_MS = 3_000;
+// After a wake failed, relay texts name the wait command again for this long.
+const WAKE_FAILED_MS = 10 * 60_000;
 const DAEMON_MAX_WAIT_MS = 45_000;
 // The longest one call waits for the user (an act for the Approve click; in Agent direct also an open for the tab
 // approval): hosts time a tool call out at 120 s (Codex's tool_timeout_sec, src/install.js), so with the act itself a
@@ -1870,6 +1872,12 @@ class McpServer {
       host: this.host,
       log: message => this.log(message),
       driver: () => this.driver,
+      // A failed wake: that request's (and, for ten minutes, every) relay text goes back to the wait command.
+      onOutcome: (wake, outcome) => {
+        if (outcome.outcome !== 'failed') return;
+        if (wake.requestId) this.wakeOwned.delete(wake.requestId);
+        this.wakeFailedAt = Date.now();
+      },
       // A resume or approval a call in flight is already waiting for (or one that just saw it) needs no wake: that call
       // returns the page.
       waiting: wake => [...this.inflight.values()].some(call => call.requestId === wake.requestId && call.waitingOnRequest)
@@ -1906,6 +1914,7 @@ class McpServer {
 
   /** The wake capability next texts may rely on: a session that will be woken needs no background wait command. */
   wakeMode() {
+    if (this.wakeFailedAt && Date.now() - this.wakeFailedAt < WAKE_FAILED_MS) return null;
     const capability = this.agentSession?.sessionId && !this.agentSession.disabled ? this.agentSession.capability : 'none';
     return capability === 'none' ? null : capability;
   }

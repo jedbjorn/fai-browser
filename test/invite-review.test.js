@@ -250,3 +250,96 @@ test('re-review: each wake is acted on once, at most 4 a poll and 12 a minute', 
   for (let i = 1; i < perPoll.length; i++) assert.ok(perPoll[i] - perPoll[i - 1] <= 4, 'at most 4 from one poll');
 });
 
+// A stand-in for FaiBrowserClient: records every request it is asked to send.
+function recordingClient(name, calls) {
+  return { port: 1, token: 't', request: async (method, path, body) => { calls.push({ name, method, path, body }); return {}; } };
+}
+
+test('final: a wake outcome is reported only over the connection it came from, while it is still the current one', async () => {
+  const calls = [];
+  let release;
+  const session = new AgentSession({ env: {}, home: '/nonexistent', connect: async () => { throw new Error('unused'); },
+    clientName: 'x', host: 'claude', deliver: () => new Promise(resolve => { release = () => resolve({ ok: true }); }) });
+  const first = recordingClient('first', calls);
+  session.client = first;
+  session.sessionId = 'ses_1';
+  session.key = 'k';
+  session.handle({ wakeId: 'w1', kind: 'invite', inviteId: 'inv-aaaaaaaa', level: 'read-only' });
+  await delay(20);
+  // The daemon shut down meanwhile: the loop dropped that connection (and something else may hold the port now).
+  session.client = null;
+  release();
+  await delay(20);
+  assert.deepEqual(calls, [], 'the report is dropped (the daemon fails the wake as no_report)');
+  session.client = first;
+  session.handle({ wakeId: 'w2', kind: 'invite', inviteId: 'inv-bbbbbbbb', level: 'read-only' });
+  await delay(5);
+  release();
+  await delay(20);
+  assert.deepEqual(calls.map(entry => [entry.name, entry.path, entry.body.outcome]),
+    [['first', '/v1/sessions/ses_1/wakes/w2', 'delivered']]);
+});
+
+test('final: a wake over the caps is reported failed rate_limited at once, and the server stops promising wakes', async () => {
+  const calls = [];
+  const outcomes = [];
+  const session = new AgentSession({ env: {}, home: '/nonexistent', connect: async () => { throw new Error('unused'); },
+    clientName: 'x', host: 'claude', deliver: async () => ({ ok: true }), onOutcome: (wake, outcome) => outcomes.push([wake.wakeId, outcome.outcome, outcome.code]) });
+  session.client = recordingClient('c', calls);
+  session.sessionId = 'ses_1';
+  session.key = 'k';
+  for (let i = 0; i < 13; i++) session.handle({ wakeId: `w${i}`, kind: 'resume', requestId: 'req_1', level: 'read-only' });
+  await delay(30);
+  assert.deepEqual(outcomes.filter(entry => entry[1] === 'delivered').length, 12);
+  assert.deepEqual(outcomes.find(entry => entry[0] === 'w12'), ['w12', 'failed', 'rate_limited']);
+  assert.ok(calls.some(entry => entry.path.endsWith('/wakes/w12') && entry.body.code === 'rate_limited'), 'reported, not left hanging');
+});
+
+test('final: the daemon hands out at most 4 wakes a poll; the rest come on the next', async () => {
+  const { createSessionRegistry } = await import('../src/sessions.js');
+  const registry = createSessionRegistry({});
+  const reg = registry.register({ host: 'claude', pid: process.pid, wake: 'claude-socket' });
+  const session = registry.authenticate(reg.sessionId, reg.key);
+  for (let i = 0; i < 6; i++) registry.queueWake(reg.sessionId, { kind: 'resume', requestId: `req_${i}` });
+  assert.equal((await registry.poll(session, 0)).wakes.length, 4);
+  assert.equal((await registry.poll(session, 0)).wakes.length, 2);
+  registry.close();
+});
+
+test('final: a failed Approve wake shows in the request (the popup\'s "tell it to continue") and the MCP relay names the wait command again', async t => {
+  const home = await mkdtemp(join(tmpdir(), 'fai-review-final-'));
+  saveDriver('agent', homePaths({ home, env: {} }));
+  const hub = createFakeHub();
+  const daemon = createDaemon({ home, env: {}, port: 0, hub, providerFactory: () => { throw new Error('no provider'); } });
+  await daemon.listen();
+  const fake = await startFakeClaudeSocket(t, { mode: 'refuse' });
+  const mcp = spawnMcp({ PATH: process.env.PATH, HOME: home, FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port),
+    FAI_MCP_APPROVAL_WAIT_MS: '300', CLAUDE_CODE_MESSAGING_SOCKET: fake.path, CLAUDE_CODE_MESSAGING_TOKEN: fake.token });
+  t.after(async () => {
+    await mcp.close();
+    await daemon.close();
+    await rm(home, { recursive: true, force: true });
+  });
+  await mcp.request('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'claude-code', version: 'test' } });
+  mcp.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  const api = (method, path, body) => call(daemon.port, method, path, body, { token: daemon.token });
+  for (let i = 0; i < 200 && !(await api('GET', '/v1/status')).body.sessions?.length; i++) await delay(20);
+  const pending = await mcp.callTool('fai_browser_open', { origins: [ORIGIN], reason: 'Check' });
+  assert.match(text(pending), /FAI Browser wakes this session/, 'its own request: the wake is promised');
+  const requestId = hub.published.at(-1).find(view => view.state === 'pending').requestId;
+  await hub.approve(requestId);
+  let view;
+  for (let i = 0; i < 200; i++) {
+    view = hub.published.at(-1)?.find(item => item.requestId === requestId);
+    if (view?.ownerWake?.state === 'failed') break;
+    await delay(20);
+  }
+  assert.deepEqual([view.ownerWake.kind, view.ownerWake.state, view.ownerWake.error.code], ['approved', 'failed', 'refused']);
+  // The wake did not land: from now on its relay texts name the wait command, not "end your turn".
+  const lease = hub.bound.at(-1);
+  await hub.emit({ type: 'status', leaseId: lease.leaseId, status: 'paused', reason: 'tab_changed' });
+  const paused = await mcp.callTool('fai_browser_wait', { requestId, maxMs: 0 });
+  assert.match(text(paused), /--until active/);
+  assert.ok(!/wakes this session/.test(text(paused)));
+});
+

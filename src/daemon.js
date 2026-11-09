@@ -725,6 +725,7 @@ export function createDaemon(options = {}) {
       // The agent session that owns this request (it made it, or joined its invite), while it runs: host and repo
       // folder only. The popup warns before an invite ends another agent's task in the same browser.
       owner: ownerView(record),
+      ownerWake: ownerWakeView(record),
       // A tab the user invited an agent to from the popup: the invite and its wake (see onInviteEvent).
       ...(record.invite && invites.has(record.invite) ? { invite: inviteView(invites.get(record.invite)) } : {}),
     };
@@ -1026,7 +1027,15 @@ export function createDaemon(options = {}) {
    */
   function wakeOwner(record, kind) {
     if (!record.ownerSession) return null;
-    return sessions.queueWake(record.ownerSession, { kind, requestId: record.requestId, level: record.grant?.level });
+    const wake = sessions.queueWake(record.ownerSession, { kind, requestId: record.requestId, level: record.grant?.level });
+    record.ownerWakeId = wake?.wakeId ?? null;
+    return wake;
+  }
+
+  // The last Approve or Resume wake of a request's owner, for the popup: a failed one shows "tell your agent".
+  function ownerWakeView(record) {
+    const wake = record.ownerWakeId ? sessions.wake(record.ownerWakeId) : null;
+    return wake ? { kind: wake.kind, state: wake.state, error: wake.error } : null;
   }
 
   function ownerView(record) {
@@ -1037,6 +1046,7 @@ export function createDaemon(options = {}) {
   // Re-registration after a drop: requests and invites of the old session id move to the new one.
   function transferOwner(from, to) {
     for (const record of requests.values()) if (record.ownerSession === from) record.ownerSession = to;
+    for (const run of runs.values()) if (run.ownerSession === from) run.ownerSession = to;
     for (const invite of invites.values()) {
       if (invite.sessionId === from) invite.sessionId = to;
       if (invite.joinedBy === from) invite.joinedBy = to;
@@ -1858,6 +1868,8 @@ export function createDaemon(options = {}) {
       lastStep: null,
       result: null,
       done: null,
+      // An invited tab's run keeps who may read it, for the time between the request record's removal and its own.
+      ...inviteStamp(record),
     };
     runs.set(runId, run);
     record.activeRunId = runId;
@@ -1958,7 +1970,7 @@ export function createDaemon(options = {}) {
   }
 
   function statusView(caller = null) {
-    const all = [...runs.values()].filter(run => seesRun(run.requestId, null, caller));
+    const all = [...runs.values()].filter(run => seesRun(run.requestId, run, caller));
     return {
       daemon: {
         version,
@@ -2557,7 +2569,7 @@ export function createDaemon(options = {}) {
   async function runFor(runId, caller) {
     const run = runs.get(runId);
     if (run) {
-      checkRunUse(run.requestId, null, caller);
+      checkRunUse(run.requestId, run, caller);
       return { run };
     }
     const stored = await storedRun(runId);
@@ -2574,7 +2586,7 @@ export function createDaemon(options = {}) {
     const requestId = url.searchParams.get('requestId');
     const byId = new Map();
     for (const run of runs.values()) {
-      if (seesRun(run.requestId, null, caller)) byId.set(run.runId, runSummary(run));
+      if (seesRun(run.requestId, run, caller)) byId.set(run.runId, runSummary(run));
       else byId.set(run.runId, null);
     }
     const dir = outputDir();
@@ -2620,7 +2632,7 @@ export function createDaemon(options = {}) {
     let tracePath = null;
     const run = runs.get(runId);
     if (run) {
-      checkRunUse(run.requestId, null, caller);
+      checkRunUse(run.requestId, run, caller);
       if (run.state !== 'done') throw new HttpError(404, 'no_evidence', 'The run is still running; wait for it first');
       tracePath = run.result?.trace ?? null;
       if (!tracePath) throw new HttpError(404, 'no_evidence', 'This run has no trace on disk');

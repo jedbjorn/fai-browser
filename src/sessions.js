@@ -12,6 +12,7 @@ export const SESSION_STALE_MS = 90_000;
 export const WAKE_PICKUP_MS = 10_000;
 export const WAKE_REPORT_MS = 25_000;
 export const MAX_SESSIONS = 32;
+export const WAKES_PER_POLL = 4;
 // One MCP server process registers once (again only after the daemon forgot it); two per pid allows that overlap.
 export const MAX_SESSIONS_PER_PID = 2;
 // A dropped session's key is remembered this long, so the same MCP server can come back as itself (`previous`).
@@ -196,7 +197,8 @@ export function createSessionRegistry(options = {}) {
     // A newer poll replaces an older one (the MCP server reconnected).
     release(session, { wakes: [] });
     const deliver = () => {
-      const list = pendingFor(session);
+      // At most WAKES_PER_POLL at a time, as the MCP server takes them; the rest wait for its next poll.
+      const list = pendingFor(session).slice(0, WAKES_PER_POLL);
       for (const wake of list) {
         wake.state = 'sent';
         wake.sentAt = now();

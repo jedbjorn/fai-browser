@@ -11,7 +11,7 @@ import {
 } from './permissions.js';
 import { mountApprovals } from './approval-card.js';
 import { mountUpdate } from './update-card.js';
-import { mountInvite } from './invite-card.js';
+import { agentLabel, mountInvite } from './invite-card.js';
 import {
   PIN_HINT, TESTING_WARNING, actionShortcut, allSitesGranted, askSiteAccess, element, fillLevelSelect, iconPinned,
   orShortcut, removeAllSites, replaceCardsPreservingFocus, requestAllSites,
@@ -184,6 +184,11 @@ function requestCard(request, { serving }) {
   const asked = `asks for ${LEVEL_TEXT[requestedLevel(request)].name}`;
   const meta = [described, asked, request.client ? `from ${request.client}` : ''].filter(Boolean).join(' · ');
   card.append(element('p', 'request-meta', meta));
+  // FAI could not wake the agent after your Approve or Resume: it may be waiting for a message that never came.
+  if (request.ownerWake?.state === 'failed') {
+    const who = request.owner ? agentLabel(request.owner) : 'your agent';
+    card.append(element('p', 'level-warning owner-wake-failed', `Could not wake ${who}. Tell it to continue.`));
+  }
   const tabs = serving ? view.session?.tabMode : tabMode.value;
   card.append(element('p', 'field-help tab-access', tabs === 'multiple'
     ? 'Multiple task tabs: up to eight tabs on the approved site. Browser site access required.'
