@@ -299,10 +299,13 @@ id in its extension storage (`browserId`, created once) and sends it with every 
 of the WebSocket URL, the `X-Fai-Browser` header of every long-poll call, and `hello.browser {product, name,
 version}`. Origins and the secret are checked per connection exactly as before, and an id is bound to the extension
 Origin it first came from (kept in `browsers.json` in the state directory with the browser's last use): a claim of a
-known id from another Origin is refused (WebSocket close `4004`, HTTP `403 identity_refused`). Extensions are never
-sent another browser's id: their request list marks each request `browser {product, name, mine}` and lists the
-connected browsers as `{product, name, self}` (two with one name read "Chrome" and "Chrome (2)"); agents see ids in
-status.
+known id from another Origin is refused (WebSocket close `4004`, HTTP `403 identity_refused`). The refused extension
+gives up its own claim once: it creates a new id and connects again; refused a second time, it stops and its popup
+says so until opened again. Status then shows `extension_identity_refused` (how many connections, and when last) for
+ten minutes. The daemon remembers the 64 ids it saw most recently, dropping disconnected ones first. Extensions are
+never sent another browser's id or lease: their request list marks each request `browser {product, name, mine}`,
+keeps `lease` only on the browser's own requests, and lists the connected browsers as `{product, name, self}` (two
+with one name read "Chrome" and "Chrome (2)"); agents see ids and leases in status.
 
 **Legacy extensions.** The 0.5.0 Firefox add-on and older unpacked builds send no id and are known by their extension
 Origin (unique per Firefox install; shared by Chromium-family browsers that load the same unpacked extension). They
@@ -325,9 +328,11 @@ unpacked Origin still count as one browser and can replace each other; `extensio
   `POST /v1/requests`, matched (case-insensitive) on the product the extension reports (`firefox`, `chrome`,
   `chromium`, `edge`, `brave`, `opera`, `vivaldi`), its name, or a browser id from status. A browser that is not
   connected is refused with `409 browser_not_connected`, whose message names the connected ones ("Connected: Chromium
-  (chromium), Firefox (firefox)"). When a request's browser has been gone longer than the grace period (3 s), it moves
-  to the one used last, named or not, and its view gets `browserNote` ("Firefox disconnected; the request now waits in
-  Chromium."), which the agent's approval hint repeats; with no browser connected it waits for the first one. The last
+  (chromium), Firefox (firefox)"). When a request's browser has been gone longer than the disconnect grace (3 s), a
+  request nobody named moves to the one used last; one the agent named, or the user moved with Open here, waits a
+  minute first (a laptop sleep or a service restart moves nothing). It then gets `browserNote` ("Firefox disconnected;
+  the request now waits in Chromium."), which the agent's approval hint repeats, until the user moves or approves it;
+  with no browser connected it waits for the first one. The last
   use survives a daemon restart or update (`browsers.json`).
 - **Every popup lists it.** Only the browser a request waits in opens its approval window or task tab and shows the
   `?` badge. Every other connected browser's popup lists it as **In another browser** with **Open here**, which moves
