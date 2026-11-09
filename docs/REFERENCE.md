@@ -230,7 +230,10 @@ screenshot boxes is used, and it is only named.
   `frameOrigin`, bounds moved into the top viewport), a frame's cookie dialog or popup when the page has none, and
   the union of the warnings. Frames get up to half of the 100-control cap (more when the page leaves room) and up to
   half of the 200 blocks; text is capped at 12000 characters in all. Structured records and derived views come from
-  the top document only.
+  the top document only. Every frame call is bounded, so a busy or hung frame never holds a command or a screenshot:
+  a probe gets 2 s (one that does not answer leaves the frames `unavailable`, and a screenshot boxes the frame whole
+  and is taken again, then withheld), a read 3 s, and an act fails as `timeout` once the frame has not answered for
+  6 s and a further 2 s probe.
 - **One revision.** With frames read, the observation's revision stands for the page and every frame
   (`<page revision>.<n>`). An act on `f<n>.<id>` runs in that frame on the frame's own revision; the worker first
   probes the frame again: gone or on an origin the request does not approve, `cross_origin` (nothing runs, the

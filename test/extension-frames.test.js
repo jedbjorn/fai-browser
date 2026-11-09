@@ -365,3 +365,49 @@ test('exact-host access only: an approved frame on a host the browser gives no a
     { origin: frameOrigin, read: false, reason: 'no_access', declared: true }]);
   assert.ok(observation.warnings.includes('cross_origin_frame'));
 });
+
+test('a busy approved frame (its own process stuck in a script) never holds a screenshot or an act for long', async t => {
+  // The frame is on localhost (another site, so its own renderer process): a 12 s busy loop there blocks only it.
+  const bladeServer = await serve(path => (path === '/blade' ? '<title>Blade</title><body style="margin:0"><p>Settings</p>'
+    + '<input id="pw" type="password" value="hunter2-hunter2" style="position:absolute;left:10px;top:40px;width:200px;height:20px;border:0;padding:0">'
+    + '<button type="button" style="position:absolute;left:10px;top:100px">Save view</button></body>' : null));
+  const bladeOrigin = `http://localhost:${bladeServer.address().port}`;
+  const topServer = await serve(path => (path === '/' ? '<title>Portal</title><body style="margin:0"><h1 style="margin:0;height:40px">Portal</h1>'
+    + `<iframe id="blade" src="${bladeOrigin}/blade" width="600" height="200" style="border:0;display:block"></iframe></body>` : null));
+  t.after(() => Promise.all([bladeServer, topServer].map(server => new Promise(done => { server.closeAllConnections?.(); server.close(done); }))));
+  const topOrigin = `http://127.0.0.1:${topServer.address().port}`;
+  const launched = await launchLeased(t, { hostPermissions: ['<all_urls>'], startUrl: `${topOrigin}/`, allowedOrigins: [topOrigin, bladeOrigin] });
+  if (!launched) return;
+  const { page, worker, companion } = launched;
+  await sleep(300);
+  const observation = await companion.bridge.observe();
+  const save = observation.controls.find(control => control.label === 'Save view');
+  assert.ok(save, `the frame was read before it got busy: ${JSON.stringify(observation.frames)}`);
+  const result = await worker.evaluate(async () => {
+    const tabId = session.tabId;
+    await faiFrames.observeTab(tabId);
+    const all = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => location.origin });
+    const frameId = all.find(entry => entry.frameId !== 0).frameId;
+    await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, func: () => {
+      setTimeout(() => { const start = Date.now(); while (Date.now() - start < 12_000) { /* busy */ } }, 50);
+    } });
+    await new Promise(done => setTimeout(done, 300));
+    const started = Date.now();
+    const before = await redactionQuery(tabId, true).then(value => faiFrames.redaction(tabId, value, true));
+    const after = await redactionQuery(tabId, false).then(value => faiFrames.redaction(tabId, value, false));
+    return { ms: Date.now() - started, before: before.rects, after: after.rects, dirty: after.dirty ?? null };
+  });
+  const field = await page.evaluate(() => {
+    const blade = document.getElementById('blade').getBoundingClientRect();
+    return { x: blade.x + 10, y: blade.y + 40 };
+  });
+  assert.ok(result.ms < 7_000, `the two queries took ${result.ms} ms`);
+  const covers = rect => rect.x <= field.x && rect.y <= field.y && rect.x + rect.width >= field.x + 200 && rect.y + rect.height >= field.y + 20;
+  assert.ok(result.before.some(covers) && result.after.some(covers), JSON.stringify(result));
+  assert.equal(result.dirty, true, 'a frame that did not answer makes the capture untrusted');
+  // An act on the busy frame's control fails within its bounds instead of holding the command.
+  const started = Date.now();
+  const code = await codeOf(companion.bridge.execute({ type: 'click', target: save.id }, observation.revision, { capture: false }));
+  assert.notEqual(code, 'ok');
+  assert.ok(Date.now() - started < 11_000, `the act took ${Date.now() - started} ms (${code})`);
+});
