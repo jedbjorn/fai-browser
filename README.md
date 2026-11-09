@@ -41,6 +41,13 @@ verified receipt comes back. Autopilot benchmarks are reported separately below.
 - **Results are receipts, not guesses.** `completed` means an independent expectation passed. Each
   result carries a trusted `verdict` and `next {kind, text}`: answer, choose, rerun, relay to the
   user or stop.
+- **Invite an agent to a tab you are on.** The toolbar popup's **Invite an agent to this tab** hands the current
+  tab to a live Claude Code, Codex or OpenCode session at the level you pick. Approve and Resume wake that session,
+  so it continues without you typing "done" (other hosts get a copy-paste line).
+- **Several browsers, one service.** The Firefox add-on and Chromium-family builds can be paired at the same time;
+  each browser holds its own task tab, and a request opens in the browser you used last (or the one the agent names).
+- **Frames you approved are readable.** A cross-origin frame inside the page (an admin portal's content blade, say) is
+  read and acted on when its own origin is one you approved; other frames are never read and are boxed in screenshots.
 - **Everything is local.** The FAI service, extension and traces stay on your machine, outside the
   checkout; only provider calls leave it.
 
@@ -154,13 +161,27 @@ node examples/fake-demo.js   # deterministic provider and in-memory bridge; prin
 
 **Set it up for real (one time):**
 
-1. Run `npm run setup`. It saves its settings in `~/.config/fai-browser` (macOS: `~/Library/Application
+```sh
+git clone https://github.com/jedbjorn/fai-browser.git
+cd fai-browser
+npm ci
+npm run setup
+```
+
+1. `npm run setup` saves its settings in `~/.config/fai-browser` (macOS: `~/Library/Application
    Support/fai-browser`), installs browser pairing for every browser it finds, starts the FAI service and asks
    whether to register FAI Browser with each coding agent on your `PATH` (Claude Code, Codex, OpenCode).
-2. Open `chrome://extensions` (or `brave://`, `edge://`), turn on Developer mode, click **Load unpacked** and
-   select `extension/`. The extension pairs by itself: nothing to copy or paste. Firefox: `npm run
-   build:firefox`, then load `dist/firefox/` ([Browsers](#browsers)).
-3. Pin the FAI Browser icon (puzzle-piece menu, then the pin) for controls and toolbar approval. You can also approve directly in the request modal.
+2. Pick a browser ([install guide](docs/guide/install.md)):
+   - **Firefox, dedicated FAI profile (recommended):** accept setup's last prompt, or run `node src/cli.js launch`.
+     It starts Mozilla's unmodified Firefox with a separate profile and the signed add-on, already paired.
+   - **Your existing Firefox:** install the signed `fai-browser-firefox-<version>.xpi` from
+     [GitHub Releases](https://github.com/jedbjorn/fai-browser/releases).
+   - **Chromium family, from source:** open `chrome://extensions` (or `brave://`, `edge://`), turn on Developer mode,
+     click **Load unpacked** and select `extension/`.
+
+   The extension pairs by itself: nothing to copy or paste.
+3. Pin the FAI Browser icon (puzzle-piece menu, then the pin) for controls, invites and toolbar approval. You can
+   also approve directly in the request modal.
 4. Restart your coding agent.
 
 To try the experimental Jev autopilot, run `npm run setup -- --driver jev` instead: it asks for the Jev key at
@@ -169,7 +190,15 @@ a hidden prompt. To register an agent later: `node src/cli.js install --host cla
 **Updating.** About once a day FAI checks GitHub for a newer tagged release and the popup then shows **Update
 available vX.Y.Z**. One click on **Update** (or `node src/cli.js update`) moves this clone to the release tag, refreshes
 pairing and the installed skill, restarts the FAI service and reloads the extension; nothing installs without it.
-It refuses while an agent holds a tab and never touches local changes. See [Updates](docs/REFERENCE.md#updates).
+It refuses while an agent holds a tab and never touches local changes. The signed Firefox add-on updates itself.
+See [Updates](docs/REFERENCE.md#updates).
+
+**Invites and wakes.** On any normal web tab, the popup's **Invite an agent to this tab** binds that tab, at the level
+you choose, to a live coding-agent session and wakes it with a single-use invite id (`inv-…`, 10 minutes); the agent
+calls `fai_browser_open {"inviteId": "inv-…"}`. When FAI can wake the session (Claude Code's messaging socket, Codex's
+`codex queue`, OpenCode through the small FAI plugin `install --host opencode` adds), your Approve or Resume click
+continues the agent's turn; otherwise the popup shows a line to paste into the chat. See
+[Invites and wakes](docs/REFERENCE.md#invites-and-wakes).
 
 With your agent driving, `fai_browser_open` requests approval and returns the first page: digest,
 offered actions and a single-use revision. Your agent answers from the digest or calls
@@ -268,10 +297,10 @@ retention](docs/REFERENCE.md#traces-and-retention).
 
 | | |
 |---|---|
-| **Coding agents** | Claude Code, Codex CLI and OpenCode via `node src/cli.js install --host claude\|codex\|opencode`; any other MCP client through the stdio server `fai-browser-mcp` |
+| **Coding agents** | Claude Code, Codex CLI and OpenCode via `node src/cli.js install --host claude\|codex\|opencode`, with invites and wakes for all three; any other MCP client through the stdio server `fai-browser-mcp` (no wakes) |
 | **Without MCP** | the CLI (`node src/cli.js`, one JSON line per command) and the SDK client (`FaiBrowserClient`) |
 | **Decision providers** | TypeSafe Jev (default) and local SystemOne-compatible servers; custom providers implement one `decide()` method |
-| **Browser** | Chrome, Chromium, Brave, Edge or Vivaldi 116+ (Manifest V3), Firefox 140+ (a build of the same extension); pairing by native messaging. See [Browsers](#browsers) |
+| **Browser** | Chrome, Chromium, Brave, Edge or Vivaldi 116+ (Manifest V3), Firefox 140+ (a signed build of the same extension); several can be paired at once; pairing by native messaging. See [Browsers](#browsers) |
 
 ### Browsers
 
@@ -279,15 +308,14 @@ retention](docs/REFERENCE.md#traces-and-retention).
 |---|---|---|---|
 | Chrome, Chromium | Supported | `chrome://extensions`, Developer mode, **Load unpacked**, `extension/` | headless Chromium (`npm run browser-smoke`), headed Chrome |
 | Brave, Edge, Vivaldi | Supported (Chromium, same extension) | `brave://extensions`, `edge://extensions`, `vivaldi://extensions` | native pairing paths in unit tests |
-| Firefox 140+ | Supported, with the gaps below | `npm run build:firefox`, then `about:debugging#/runtime/this-firefox`, **Load Temporary Add-on**, `dist/firefox/manifest.json` | headless Firefox 159 (`npm run smoke:firefox`), `web-ext lint` |
+| Firefox 140+ | Supported, with the gaps below | `node src/cli.js launch` (dedicated profile), or the signed `.xpi` from [Releases](https://github.com/jedbjorn/fai-browser/releases); for development `npm run build:firefox` and **Load Temporary Add-on** from `dist/firefox/` | headless Firefox 159 (`npm run smoke:firefox`), `web-ext lint` |
 | Firefox for Android, Safari | Not supported | | |
 
-**Firefox install.** A temporary add-on is removed when Firefox restarts. To keep it: Firefox Developer Edition,
-Nightly or ESR install an unsigned add-on once `xpinstall.signatures.required` is `false` in `about:config` (release
-Firefox ignores that setting): zip the contents of `dist/firefox/` and use `about:addons`, gear menu, **Install
-Add-on From File**. Or sign it yourself as an unlisted add-on on addons.mozilla.org (`npx web-ext sign --channel
-unlisted --source-dir dist/firefox` with your own AMO API key) and install the signed `.xpi` in any Firefox. For
-development, `npx web-ext run --source-dir dist/firefox` starts a throwaway profile with it loaded. Setup installs
+**Firefox install.** Each release carries a Mozilla-signed add-on (`fai-browser-firefox-<version>.xpi`) that
+installs in any Firefox 140+ and updates itself; `node src/cli.js launch` puts it in a dedicated FAI profile of
+Mozilla's unmodified Firefox ([install guide](docs/guide/install.md)). A temporary add-on loaded from `dist/firefox/`
+is removed when Firefox restarts; for development, `npx web-ext run --source-dir dist/firefox` starts a throwaway
+profile with it loaded. Setup installs
 the native messaging host for Firefox too (also for Firefox 147+ profiles under `~/.config/mozilla/`), so the add-on
 pairs by itself. Snap and Flatpak Firefox cannot start the host: pair by hand (`node src/cli.js pair`, then the
 popup's Advanced section).
@@ -328,8 +356,8 @@ harness work and are tested, and interfaces may still change. Open items:
 - **Broader real-site coverage:** additional runs to evaluate compatibility and guardrail thresholds
   beyond the current local fixtures and recorded public-page corpus.
 
-Known limits today: one active tab lease at a time, and login, MFA, nested frames and unusual
-widgets need the user. See [Limits](docs/REFERENCE.md#limits).
+Known limits today: one active tab lease per browser; login, MFA, cross-origin frames you did not approve and
+unusual widgets need the user. See [Limits](docs/REFERENCE.md#limits).
 
 ## Contributing
 
@@ -345,6 +373,37 @@ Issues and pull requests are welcome. Before you open a PR:
   per run.
 - Never commit `.env.local`, `client-token` or raw traces; run `node scripts/secret-scan.mjs` before
   committing bench summaries (see [docs/PUBLISHING.md](docs/PUBLISHING.md)).
+
+## Use at your own risk
+
+- **Website terms.** Automating a website with FAI may break that site's terms of service. You are responsible for
+  following the terms of every site you use it on.
+- **No warranty.** FAI is provided as-is under the [MIT license](LICENSE). The authors are not responsible for how you
+  use it or for what an agent does with it.
+- **Your data stays with you.** Settings, the pairing secret, screenshots, traces and task history stay on your machine
+  and are never sent to the authors. Keeping that machine and those files secure is up to you; traces and screenshots
+  are pruned automatically (50 runs, 500 MB, 7 days by default). Page content does go to your coding agent's model
+  provider, and to the Jev provider if you turn the autopilot on.
+
+This is a plain-language summary, not legal advice.
+
+## More projects
+
+Other open-source projects by the same author:
+
+- [subfloor](https://subfloor.designs-os.com): a forkable shell substrate for a code repository, with DB-backed
+  identity, memory and roadmap, independent of the agent harness.
+- [rst-c (RST)](https://jedbjorn.github.io/rst-c/): a native Revit add-in for curated ribbon profiles that users load
+  with one click.
+- [gantt-it](https://github.com/jedbjorn/gantt-it): a Revit add-in that draws Gantt charts inside your project, ready
+  to place on sheets.
+- [splash-it](https://github.com/jedbjorn/splash-it): a Revit add-in that colors view tabs by file, so open models and
+  families are easy to tell apart.
+- [md-converter](https://md-converter.designs-os.com): turns Markdown into themed, shareable HTML in the browser.
+- [storybench](https://github.com/jedbjorn/storybench): a local workspace for developing videos with an AI production
+  agent.
+- [anj-cloud](https://github.com/jedbjorn/anj-cloud): household file sync from a self-hosted gateway, with clients for
+  Linux, macOS, Windows and Android.
 
 ## License
 
