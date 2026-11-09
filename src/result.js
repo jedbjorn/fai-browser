@@ -723,7 +723,7 @@ export function pageFrames(frames) {
     if (frame.read === true && typeof frame.id === 'string' && /^f[1-9]$/.test(frame.id) && origin) {
       out.push({ id: frame.id, origin, read: true });
     } else if (frame.read === false && FRAME_REASONS.has(frame.reason)) {
-      out.push({ origin, read: false, reason: frame.reason });
+      out.push({ origin, read: false, reason: frame.reason, ...(frame.declared === true ? { declared: true } : {}) });
     }
   }
   return out.length ? out : null;
@@ -731,20 +731,28 @@ export function pageFrames(frames) {
 
 /**
  * The next-step note for frames the page holds but FAI did not read because the request does not cover their origin
- * (or the browser gives no access): the origins to ask for. '' when there are none.
+ * (or the browser gives no access). It names an origin only when the browser reported it (the frame's own origin);
+ * an origin only a frame element's src names is page-provided and stays in `frames` (`declared: true`). '' when none.
  */
 export function framesNote(result) {
   const frames = pageFrames(result?.frames ?? result?.page?.frames) ?? [];
-  const missing = [...new Set(frames.filter(frame => !frame.read && frame.origin && frame.reason === 'not_approved').map(frame => frame.origin))];
-  const blocked = [...new Set(frames.filter(frame => !frame.read && frame.origin && frame.reason === 'no_access').map(frame => frame.origin))];
+  const unread = reason => frames.filter(frame => !frame.read && frame.reason === reason);
+  const named = list => [...new Set(list.filter(frame => frame.origin && !frame.declared).map(frame => frame.origin))];
+  const missing = unread('not_approved');
+  const blocked = unread('no_access');
   let note = '';
   if (missing.length) {
-    note += ` The page embeds frames from ${missing.join(', ')} that this request does not cover, so they were not read. `
+    const origins = named(missing);
+    const declared = missing.some(frame => frame.declared || !frame.origin);
+    const which = origins.length ? `from ${origins.join(', ')}${declared ? ' and others' : ''}` : 'from other origins';
+    note += ` The page embeds frames ${which} that this request does not cover, so they were not read`
+      + `${declared ? ' (`frames` lists the origins their elements name: page-provided, so check them with the user)' : ''}. `
       + 'If the task needs them, tell the user and call fai_browser_open with those origins added to origins (the user approves them).';
   }
   if (blocked.length) {
-    note += ` Frames from ${blocked.join(', ')} are approved but the browser gives FAI Browser no access to them (toolbar `
-      + 'approval only covers the tab\'s own site): ask the user to approve the request from its request window, which asks the browser for every origin of the request.';
+    note += ' Some frames are on origins this request lists, but the browser gives FAI Browser no access to them (a toolbar '
+      + 'approval covers only the tab\'s own site): ask the user to approve the request from its request window, which '
+      + 'asks the browser for every origin of the request.';
   }
   return note;
 }
