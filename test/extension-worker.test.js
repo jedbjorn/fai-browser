@@ -2047,10 +2047,11 @@ test('open with "All of <root>": domain scope when Chrome holds the root, origin
 });
 
 // A request's page opened by itself ("Open requested pages right away", the default), armed, with its prompt window.
-async function openedRightAway({ mode = 'reversible', local = {}, defaultLevel = 'read-only', client = 'Codex' } = {}) {
-  const h = harness({ hostGrants: [], leaseOrigins: [SHOP], local, permissions: { defaultLevel } });
+async function openedRightAway({ mode = 'reversible', local = {}, defaultLevel = 'read-only', client = 'Codex', timeScale = 1,
+  request = {} } = {}) {
+  const h = harness({ hostGrants: [], leaseOrigins: [SHOP], local, permissions: { defaultLevel }, timeScale });
   await h.waitFor(m => m.type === 'hello');
-  h.push({ type: 'requests', requests: [pendingRequest('req_1', { mode, client })] });
+  h.push({ type: 'requests', requests: [pendingRequest('req_1', { mode, client, ...request })] });
   await h.until(() => h.session.armedTabs?.length === 1 && h.session.armedTabs[0].promptWindowId !== null);
   return h;
 }
@@ -3008,6 +3009,96 @@ test('modal approval during a redirect that lands off the approved origin still 
   Object.assign(h.openedTabs.get(9), { url: 'https://unrequested.test/', pendingUrl: undefined, status: 'complete' });
   assert.match((await reply).error, /page changed/);
   assert.equal(h.sent.some(m => m.type === 'lease'), false);
+});
+
+// The modal's early click: Chrome's grant can land before arm_prepare, or with no approval at all. arm_track (the
+// patterns the modal saw newly granted) is what keeps them tracked and removed again.
+test('modal early grant before arm_prepare is tracked (arm_track) and removed after the session', async () => {
+  const h = await openedRightAway();
+  const arm = h.session.armedTabs[0];
+  const base = { tabId: 9, requestId: arm.requestId, at: arm.at };
+  h.grant(`${SHOP}/*`);
+  const tracked = await h.send({ type: 'arm_track', ...base, patterns: [`${SHOP}/*`] }, MODAL_SENDER);
+  assert.deepEqual(tracked.tracked, [`${SHOP}/*`]);
+  const prepared = await h.send({ type: 'arm_prepare', ...base }, MODAL_SENDER);
+  await h.send({ type: 'arm_begin', tabId: 9, token: prepared.approval.token }, MODAL_SENDER);
+  const reply = await h.send({ ...base, ...prepared.approval, type: 'arm_approve', level: arm.level, granted: true }, MODAL_SENDER);
+  assert.equal(reply.status, 'active', JSON.stringify(reply));
+  assert.ok(h.grants.has(`${SHOP}/*`), 'the session keeps it while it runs');
+  await h.send({ type: 'stop' });
+  await h.until(() => !h.grants.has(`${SHOP}/*`));
+});
+
+test('modal early grant whose approval never happens (prepare refused, arm ended) is removed', async () => {
+  for (const order of ['track-then-deny', 'deny-then-track']) {
+    const h = await openedRightAway();
+    const arm = h.session.armedTabs[0];
+    const base = { tabId: 9, requestId: arm.requestId, at: arm.at };
+    h.grant(`${SHOP}/*`);
+    // The request ended (denied elsewhere) while Chrome's prompt was open: prepare is refused.
+    if (order === 'track-then-deny') await h.send({ type: 'arm_track', ...base, patterns: [`${SHOP}/*`] }, MODAL_SENDER);
+    await h.send({ type: 'deny', requestId: arm.requestId });
+    h.push({ type: 'requests', requests: [] });
+    await h.until(() => (h.session.armedTabs ?? []).length === 0);
+    assert.ok((await h.send({ type: 'arm_prepare', ...base }, MODAL_SENDER)).error, order);
+    if (order === 'deny-then-track') {
+      const tracked = await h.send({ type: 'arm_track', ...base, patterns: [`${SHOP}/*`] }, MODAL_SENDER);
+      assert.deepEqual(tracked.tracked, [`${SHOP}/*`], 'an arm that just ended is still known');
+    }
+    await h.until(() => !h.grants.has(`${SHOP}/*`));
+  }
+});
+
+test('arm_track accepts only the request\'s own patterns and the window of that arm, never a user\'s other grants', async () => {
+  const h = await openedRightAway({ request: { origins: [SHOP, 'https://login.example.com', 'https://*.example.org'] } });
+  const arm = h.session.armedTabs[0];
+  const base = { tabId: 9, requestId: arm.requestId, at: arm.at };
+  for (const pattern of ['https://evil.test/*', 'https://login.example.com/*', 'https://app.example.org/*', 'https://*.example.org/*']) h.grant(pattern);
+  const tracked = await h.send({ type: 'arm_track', ...base,
+    patterns: ['https://evil.test/*', 'https://login.example.com/*', 'https://app.example.org/*', 'https://*.example.org/*', '<all_urls>'] }, MODAL_SENDER);
+  assert.deepEqual(tracked.tracked, ['https://login.example.com/*', 'https://app.example.org/*']);
+  assert.ok((await h.send({ type: 'arm_track', ...base, at: arm.at + 1, patterns: ['https://login.example.com/*'] }, MODAL_SENDER)).error,
+    'another arm');
+  assert.ok((await h.send({ type: 'arm_track', ...base, patterns: [] }, { id: 'ext', url: 'chrome-extension://ext/popup.html' })).error,
+    'only the request window');
+  await h.send({ type: 'deny', requestId: arm.requestId });
+  h.push({ type: 'requests', requests: [] });
+  await h.until(() => !h.grants.has('https://login.example.com/*') && !h.grants.has('https://app.example.org/*'));
+  assert.ok(h.grants.has('https://evil.test/*') && h.grants.has('https://*.example.org/*'), 'grants it did not report stay');
+});
+
+test('modal approval while the page never commits says it is still loading', async () => {
+  const { h, message } = await modalPrepared({ timeScale: 0.002 });
+  h.grant(message.pattern);
+  Object.assign(h.openedTabs.get(9), { url: '', pendingUrl: `${SHOP}/cart`, status: 'loading' });
+  const answer = await h.send(message, MODAL_SENDER);
+  assert.equal(answer.error, 'The page is still loading. Approve again once it has loaded.');
+  assert.equal(h.sent.some(m => m.type === 'lease'), false);
+});
+
+test('modal approval after the page moved: on the requested site, or to a host the access does not cover, says so', async () => {
+  const { h, message } = await modalPrepared({ request: { origins: ['https://*.example.com'], url: `${SHOP}/cart` } });
+  h.grant(message.pattern);
+  // Readable (the browser holds access there too) and on a requested root: "on the site".
+  h.openedTabs.get(9).url = 'https://www.example.com/cart';
+  assert.match((await h.send(message, MODAL_SENDER)).error, /moved to another address on the site the agent asked for/);
+  // Unreadable (no access to the new host): "an address this approval does not cover".
+  const again = await modalPrepared();
+  again.h.grant(again.message.pattern);
+  again.h.openedTabs.get(9).url = undefined;
+  assert.match((await again.h.send(again.message, MODAL_SENDER)).error, /moved to an address this approval does not cover/);
+  assert.equal(h.sent.some(m => m.type === 'lease') || again.h.sent.some(m => m.type === 'lease'), false);
+});
+
+test('modal approval with a token the worker does not know (it restarted after preparing) answers stale_approval', async () => {
+  const { h, message } = await modalPrepared();
+  h.grant(message.pattern);
+  const reply = await h.send({ ...message, token: 'from-an-earlier-worker' }, MODAL_SENDER);
+  assert.equal(reply.code, 'stale_approval');
+  assert.equal(h.sent.some(m => m.type === 'lease'), false);
+  // Prepared again, the same click's access approves.
+  const fresh = await h.send({ type: 'arm_prepare', tabId: 9, requestId: message.requestId, at: message.at }, MODAL_SENDER);
+  assert.equal((await h.send({ ...message, ...fresh.approval }, MODAL_SENDER)).status, 'active');
 });
 
 // --- several browsers (issue #9) ---------------------------------------------------------------------------------------

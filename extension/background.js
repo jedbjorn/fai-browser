@@ -3531,6 +3531,8 @@ const ARM_TITLE = 'FAI ?';
 const POPUP_PAGE = 'popup.html';
 const ARM_DECLINED = 'The request was no longer waiting or this tab left its site: nothing was approved.';
 const armed = new Map();
+// Arms that ended in the last ARM_MS, by tab: a modal's grant reported after its arm ended is still tracked (arm_track).
+const recentArms = new Map();
 let armsLoaded = null;
 
 function loadArms() {
@@ -3569,7 +3571,7 @@ async function openAndArm(requestId, level, wantDomain) {
   const { tab, window: opened } = await openTaskTab(target.url);
   const arm = { tabId: tab.id, requestId, tabMode: cleanTabMode(armSettings.tabMode), level: cleanLevel(level) ?? 'read-only', scope, patterns: scope === 'domain' ? roots : [],
     client: typeof request.client === 'string' ? request.client.slice(0, 80) : '', at: Date.now(), groupId: null,
-    promptWindowId: null, origin: target.origin };
+    promptWindowId: null, origin: target.origin, origins: [...request.origins] };
   armed.set(tab.id, arm);
   saveArms();
   setTimeout(() => expireArms(), ARM_MS + 1_000);
@@ -3649,6 +3651,11 @@ async function disarm(tabId, { notice = null, keepGroup = false } = {}) {
     recentGrants.delete(modal.pattern);
     if (!modal.started) modalIntents.delete(tabId);
   }
+  // A modal grant reported for this arm (arm_track) is no longer an approval in progress: the next reconcile removes it
+  // unless a session uses it. The arm stays known a while, so a grant reported late is still tracked.
+  for (const pattern of keepGroup ? [] : arm.grants ?? []) recentGrants.delete(pattern);
+  recentArms.set(tabId, arm);
+  setTimeout(() => { if (recentArms.get(tabId) === arm) recentArms.delete(tabId); }, ARM_MS);
   saveArms();
   closePrompt(arm);
   try {
@@ -3660,7 +3667,7 @@ async function disarm(tabId, { notice = null, keepGroup = false } = {}) {
   }
   // The FAI tab shows its own badge again; a domain arm that ends unapproved gives the roots' permission back.
   if (session?.tabId === tabId) updateBadge();
-  if (!keepGroup && arm.patterns?.length) ignore(reconcileSites());
+  if (!keepGroup && (arm.patterns?.length || arm.grants?.length)) ignore(reconcileSites());
   if (notice) await ignore(chrome.storage.session?.set?.({ openNotice: { tabId, requestId: arm.requestId, message: notice } }));
   if (!keepGroup && arm.groupId != null) {
     markChain = markChain.then(async () => {
@@ -3754,23 +3761,69 @@ async function prepareModalApproval(message, sender) {
 // while it passes through a redirect: wait for the tab to commit on the approved origin, at most COMMIT_WAIT_MS, before
 // the origin check (validate), which is unchanged. A tab that is not loading is not waited for.
 const COMMIT_WAIT_MS = 15_000;
+// Resolves true when it stopped waiting because the tab was still loading at the deadline.
 async function waitCommitted(tabId, origin, ms = COMMIT_WAIT_MS) {
-  const deadline = Date.now() + ms;
-  for (;;) {
+  for (let waited = 0; ; waited += NAV_POLL_MS) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
-    if (!tab) return;
+    if (!tab) return false;
     const there = originOf(tab.url ?? '') === origin && (!tab.pendingUrl || originOf(tab.pendingUrl) === origin);
-    if (there || tab.status !== 'loading' || Date.now() >= deadline) return;
+    if (there || tab.status !== 'loading') return false;
+    if (waited >= ms) return true;
     await delay(NAV_POLL_MS);
   }
+}
+const ARM_STALE = 'This approval was prepared by an earlier run of the extension. Nothing was approved.';
+const STILL_LOADING = 'The page is still loading. Approve again once it has loaded.';
+const MOVED_ON_SITE = 'The page moved to another address on the site the agent asked for. Nothing was approved; click the '
+  + 'FAI Browser icon on the tab to approve it there.';
+const MOVED_AWAY = 'The page moved to an address this approval does not cover. Nothing was approved. If it is still the '
+  + 'site the agent asked for, click the FAI Browser icon on the tab.';
+
+// The host patterns a modal approval of this arm may ask Chrome for (prepareModalApproval's derivation): one per exact
+// origin of the request, and the host of a tab on a domain root the request lists.
+function armPatternAllowed(arm, pattern) {
+  const match = typeof pattern === 'string' ? /^(https?):\/\/([^/*\s:]+)\/\*$/.exec(pattern) : null;
+  if (!match) return false;
+  const origins = Array.isArray(arm.origins) ? arm.origins
+    : requests.find(item => item.requestId === arm.requestId)?.origins ?? [];
+  return origins.some(entry => typeof entry === 'string' && !entry.includes('*') && originOf(entry) === entry
+    && taskOriginPattern(entry) === pattern) || originCovered(`${match[1]}://${match[2]}`, origins);
+}
+
+// arm_track: the modal reports the host patterns Chrome just granted in its click that were not held before it (its
+// own chrome.permissions.contains snapshot). They are tracked like any pattern this extension asked for, so the
+// reconcile removes them once no session or approval in progress needs them, whatever order the click, Chrome's
+// prompt and arm_prepare took, and even when the approval itself failed or the arm ended meanwhile. Only patterns of
+// the arm's own request are accepted.
+async function trackModalGrant(message, sender) {
+  modalSender(message, sender);
+  await loadArms();
+  const live = armed.get(message.tabId);
+  const arm = [live, recentArms.get(message.tabId)]
+    .find(item => item && item.requestId === message.requestId && item.at === message.at);
+  if (!arm) throw new Error(ARM_DECLINED);
+  const patterns = [...new Set(Array.isArray(message.patterns) ? message.patterns.slice(0, 11) : [])]
+    .filter(pattern => armPatternAllowed(arm, pattern));
+  if (!patterns.length) return { tracked: [] };
+  await trackSites(patterns);
+  if (live === arm) {
+    arm.grants = [...new Set([...(arm.grants ?? []), ...patterns])];
+  } else {
+    for (const pattern of patterns) recentGrants.delete(pattern);
+  }
+  await reconcileSites();
+  return { tracked: patterns };
 }
 
 async function finishModalApproval(message, sender) {
   modalSender(message, sender);
   const intent = modalIntents.get(message.tabId);
-  if (!intent || intent.token !== message.token || intent.running) throw new Error(ARM_DECLINED);
+  // An unknown token (a worker restarted after arm_prepare): the modal prepares again and retries once.
+  if (!intent || intent.token !== message.token) throw Object.assign(new Error(ARM_STALE), { code: 'stale_approval' });
+  if (intent.running) throw new Error(ARM_DECLINED);
   intent.running = true;
   const { arm, pattern } = intent;
+  let stillLoading = false;
   const validate = async (ownLease = null) => {
     await modalArm(message, ownLease);
     const level = cleanLevel(message.level);
@@ -3781,8 +3834,14 @@ async function finishModalApproval(message, sender) {
     const fresh = modalArmState(message, ownLease);
     const asked = cleanLevel(fresh.request.mode ?? fresh.request.level) ?? 'read-only';
     if (fresh.arm !== arm || !level || minLevel(level, asked) !== level) throw new Error('The agent did not ask for that level.');
-    if (tab.incognito || originOf(tab.url ?? '') !== intent.origin
-      || (tab.pendingUrl && originOf(tab.pendingUrl) !== intent.origin)) throw new Error('The page changed. Nothing was approved.');
+    if (tab.incognito) throw new Error('The page changed. Nothing was approved.');
+    if (originOf(tab.url ?? '') !== intent.origin || (tab.pendingUrl && originOf(tab.pendingUrl) !== intent.origin)) {
+      if (stillLoading) throw new Error(STILL_LOADING);
+      // Readable only with access to the new host: unreadable is a host this approval's access does not cover.
+      const now = tab.pendingUrl ? originOf(tab.pendingUrl) : originOf(tab.url ?? '');
+      if (!now) throw new Error(MOVED_AWAY);
+      throw new Error(originCovered(now, fresh.request.origins) ? MOVED_ON_SITE : 'The page changed. Nothing was approved.');
+    }
     if (level === 'testing' && (!allListed(fresh.request.origins, testingOrigins) || !testingOrigins.includes(intent.origin))) {
       throw new Error('Testing mode needs every requested origin listed under Testing environments.');
     }
@@ -3790,7 +3849,7 @@ async function finishModalApproval(message, sender) {
   };
   try {
     if (message.granted !== true) throw new Error('Browser site access was not granted. You can try again or use the toolbar icon.');
-    if (await hasSitePermission([pattern])) await waitCommitted(arm.tabId, intent.origin);
+    if (await hasSitePermission([pattern])) stillLoading = await waitCommitted(arm.tabId, intent.origin);
     const tab = await validate();
     // Focus the exact task tab, never the extension window's active tab.
     await chrome.tabs.update(tab.id, { active: true });
@@ -3878,7 +3937,7 @@ async function approveOnSessionTab(message) {
     if (!request) throw new Error('This request is no longer waiting.');
     const arm = { tabId, requestId: request.requestId, tabMode, level: cleanLevel(message.level) ?? 'read-only',
       scope: message.scope === 'domain' ? 'domain' : 'origin', patterns: [], client: String(request.client ?? '').slice(0, 80),
-      at: Date.now(), groupId: null };
+      at: Date.now(), groupId: null, origins: Array.isArray(request.origins) ? [...request.origins] : [] };
     armed.set(tabId, arm);
     saveArms();
     await showArm(arm);
@@ -3932,6 +3991,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       return await prepareModalApproval(message, sender);
     } else if (message.type === 'arm_approve') {
       return await finishModalApproval(message, sender);
+    } else if (message.type === 'arm_track') {
+      return await trackModalGrant(message, sender);
     } else if (message.type === 'start') {
       // `onSessionTab`: "Approve on the FAI tab" (approveOnSessionTab); else the popup's own activeTab gesture.
       if (message.onSessionTab === true) note = await approveOnSessionTab(message);
@@ -4069,7 +4130,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       throw new Error('Unsupported control');
     }
     return note ? { ...popupState(), note } : popupState();
-  })().then(respond, error => respond({ error: error.message }));
+  })().then(respond, error => respond({ error: error.message, ...(error.code === 'stale_approval' ? { code: error.code } : {}) }));
   return true;
 });
 
