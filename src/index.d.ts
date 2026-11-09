@@ -44,9 +44,24 @@ export interface Control {
   /**
    * Set on controls inside a same-origin iframe: the 1-based index of that frame among the readable frames, in
    * document order. Ids are one sequence across the page, its open shadow roots and its frames ("1".."100"), so
-   * act() resolves a frame control's id like any other.
+   * act() resolves a frame control's id like any other. A control of an approved cross-origin frame (the extension's
+   * frames.js) carries `"f<n>"` here, an id `"f<n>.<id>"` and `frameOrigin`.
    */
-  frame?: number;
+  frame?: number | string;
+  /** The origin of the approved cross-origin frame the control is in. */
+  frameOrigin?: string;
+}
+
+/**
+ * A cross-origin frame of the page: one the extension read (`id` "f<n>", its controls carry it) or one it did not, with
+ * why. `declared`: only the frame element's src names this origin (page-provided). Origins only, never frame content.
+ */
+export interface PageFrame {
+  id?: string;
+  origin: string | null;
+  read: boolean;
+  reason?: 'not_approved' | 'no_access' | 'sandboxed' | 'limit' | 'unavailable';
+  declared?: boolean;
 }
 
 /** A cookie/consent dialog the page script detected. `text` and labels are untrusted page content. */
@@ -104,6 +119,8 @@ export interface Observation {
   consent?: ConsentDialog | null;
   /** Machine codes: password_field, login_wall, controls_capped, cross_origin_frame, browser_error_page. */
   warnings?: string[];
+  /** The page's cross-origin frames, read or not (see PageFrame). */
+  frames?: PageFrame[];
   /** With controls_capped: how many rendered controls the page script's 100-control cap left out. */
   controlsDropped?: number;
   /** The document's HTTP status (Navigation Timing responseStatus) while the URL is still the loaded one. */
@@ -1629,6 +1646,8 @@ export interface LeanObserveResult {
   page: { url: string; title: string; digest: string[] };
   /** Machine warning codes (password_field, login_wall, controls_capped:<n>, cross_origin_frame, browser_error_page). */
   warnings?: string[];
+  /** The page's cross-origin frames, read or not (see PageFrame). */
+  frames?: PageFrame[];
   /** Untrusted dialog text and labels; lean observations omit button ids. */
   consent?: { text: string; buttons: Array<{ label: string; kind?: string }> };
   /** `description` is like `click "About"`, `select "Team" in "Plan"`, `scroll down`. Labels are page text. */
@@ -1818,6 +1837,8 @@ export interface RequestView {
   state: RequestState;
   /** paused: paused|tab_changed|origin_changed|child_tab|session_inactive|disconnected; released: stopped|released|superseded|daemon_shutdown; expired: ttl|idle|paused_timeout. */
   stateReason: string | null;
+  /** origin_changed: the origin the tab went to, when the extension could see it (origin only). */
+  leftOrigin?: string;
   origins: string[];
   mode: AccessMode;
   /** Agent-written; shown to the user as "Agent says". */

@@ -679,6 +679,8 @@ export function createDaemon(options = {}) {
       requestId: record.requestId,
       state: record.state,
       stateReason: record.stateReason,
+      // origin_changed: the origin the tab went to, when the extension could see it (origin only).
+      ...(record.state === 'paused' && record.stateReason === 'origin_changed' && record.leftOrigin ? { leftOrigin: record.leftOrigin } : {}),
       origins: [...record.origins],
       mode: record.mode,
       grant: record.grant ? { ...record.grant } : null,
@@ -776,12 +778,27 @@ export function createDaemon(options = {}) {
     if (record.state === 'pending') return outcomeResult('select_tab', { ...base, approval: approvalOf(record) });
     if (record.state === 'paused') {
       const code = PAUSE_REASONS.has(record.stateReason) ? record.stateReason : 'paused';
-      return outcomeResult(code, base);
+      return withLeftOrigin(record, outcomeResult(code, base));
     }
     if (record.state === 'released' && record.stateReason === 'stopped') {
       return outcomeResult('stopped', base);
     }
     return outcomeResult('request_closed', base);
+  }
+
+  /**
+   * An origin_changed pause that named where the tab went (the extension's status, origin only): needs.message says
+   * so, so the agent can ask the user and request that origin up front next time. Returns the result.
+   */
+  function withLeftOrigin(record, result) {
+    if (result?.code !== 'origin_changed' || !record.leftOrigin || typeof result.needs?.message !== 'string') return result;
+    // The origin itself goes in `leftOrigin` (untrusted: a page chooses where it sends the tab); the trusted message
+    // only says where to find it.
+    result.leftOrigin = record.leftOrigin;
+    result.needs.message = `${result.needs.message} The tab went to an origin this request does not list (leftOrigin; `
+      + 'page-chosen, check it with the user). If the task needs it, ask the user, then request it in origins (a new '
+      + 'fai_browser_open).';
+    return result;
   }
 
   // --- hub events -------------------------------------------------------------------------------------------
@@ -972,6 +989,7 @@ export function createDaemon(options = {}) {
     if (event.status === 'paused' && record.state === 'active') {
       const reason = PAUSE_REASONS.has(event.reason) ? event.reason : 'paused';
       interruptActive(record, reason);
+      record.leftOrigin = reason === 'origin_changed' && typeof event.origin === 'string' ? event.origin : null;
       setState(record, 'paused', reason);
     }
   }
@@ -1441,6 +1459,7 @@ export function createDaemon(options = {}) {
 
   async function finishRun(run, record, raw, spec) {
     applyLeaseMessage(raw);
+    if (record.state === 'paused') withLeftOrigin(record, raw);
     raw.lease = { requestId: record.requestId, state: record.state };
     const dir = outputDir(spec.outputDir);
     let result;

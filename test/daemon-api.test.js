@@ -458,6 +458,22 @@ test('tab events pause with their code and the lease message', async t => {
   assert.equal(ctx.daemon.request(requestId).stateReason, 'tab_changed');
 });
 
+test('an origin_changed pause that names the origin: the request view and needs.message say where the tab went', async t => {
+  const ctx = await setup(t);
+  const requestId = await approved(ctx);
+  const leaseId = ctx.daemon.request(requestId).lease.leaseId;
+  await ctx.hub.emit({ type: 'status', leaseId, status: 'paused', reason: 'origin_changed', origin: 'https://login.example.org' });
+  assert.equal(ctx.daemon.request(requestId).stateReason, 'origin_changed');
+  assert.equal(ctx.daemon.request(requestId).leftOrigin, 'https://login.example.org');
+  const blocked = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About' });
+  assert.equal(blocked.body.result.code, 'origin_changed');
+  assert.match(blocked.body.result.needs.message, /^The tab lease is paused\./);
+  // The origin is page-chosen: in leftOrigin (untrusted), never in the trusted needs.message.
+  assert.match(blocked.body.result.needs.message, /The tab went to an origin this request does not list \(leftOrigin/);
+  assert.doesNotMatch(blocked.body.result.needs.message, /login\.example\.org/);
+  assert.equal(blocked.body.result.leftOrigin, 'https://login.example.org');
+});
+
 test('disconnect pauses; hello with the same leaseId resumes it; unknown and empty sessions', async t => {
   const ctx = await setup(t);
   const requestId = await approved(ctx);

@@ -15,7 +15,15 @@ never used.
 - Origins are exact (`https://app.example.com`). For a task that spans subdomains of one site the agent may ask for a
   **domain root** (`https://*.example.com`); you see it as "all of example.com", and Chrome asks you to allow the site too.
   Matching follows the Public Suffix List.
-- Leaving the approved origins pauses the session. Redirects to other sites do not carry the grant.
+- Leaving the approved origins pauses the session (the result names the origin the tab went to). Redirects to other
+  sites do not carry the grant.
+- **Frames are a boundary too.** A frame from another origin inside the approved page is read only when its own
+  origin is one of the request's origins (or under an approved domain root), and only when every frame above it was
+  read as well. Any other frame is never read: its text, controls and fields stay out of what the agent gets, it is
+  blacked out on screenshots, and the result only names its origin (as page content) so the agent can ask you for it. An act on an approved frame's control runs in that frame
+  after its origin is checked again; a frame that moved to another origin refuses it. Inside an approved frame every
+  layer below applies exactly as on the page, and one page context covers the tab: a checkout page, a password field or
+  a credentials page in any frame restricts every frame and the page.
 - There is one active lease at a time. **Pause** and **Stop** are in the popup; a per-request call and time budget ends runaway agents (50 calls / 20 minutes by default, your setting is the ceiling).
 
 ## 2. Levels you choose
@@ -86,7 +94,7 @@ on local changes and on anything but a fast-forward to a release. Traces stay lo
 | Protected | Not protected |
 |---|---|
 | Tab choice, origins, level, risky clicks | Prompt injection **within** a level you granted: a malicious page can steer the agent to do Use-level things on that tab |
-| Known secrets in text, URLs and screenshots | Secrets with no rule (short passwords in prose, text in canvases or images, cross-origin frames) |
+| Known secrets in text, URLs and screenshots | Secrets with no rule (short passwords in prose, text in canvases or images, frames from origins you did not approve) |
 | What the agent holds | What your model provider sees in the redacted page; what a page does with values you let the agent type |
 | The pairing secret | A compromised OS account or other malware running as you |
 

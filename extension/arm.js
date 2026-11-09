@@ -89,7 +89,14 @@ approve.addEventListener('click', async () => {
   select.disabled = true;
   // Native user gesture: no await, messaging or storage read before permissions.request.
   let access;
-  try { access = chrome.permissions.request({ origins: [intent.pattern] }); }
+  // The task origin, plus the request's other exact origins (approved frames, sign-in hops) in the same prompt. The
+  // list is checked here, before the one request this gesture allows (Chrome rejects a bad pattern asynchronously, and
+  // a second request in that rejection would no longer count as the user's click): anything but plain host patterns
+  // led by the task's own asks for the task origin alone, so the task site can still be approved.
+  const PATTERN = /^https?:\/\/[^/*\s]+\/\*$/;
+  const origins = Array.isArray(intent.patterns) && intent.patterns.length <= 11 && intent.patterns[0] === intent.pattern
+    && intent.patterns.every(pattern => typeof pattern === 'string' && PATTERN.test(pattern)) ? intent.patterns : [intent.pattern];
+  try { access = chrome.permissions.request({ origins }); }
   catch { access = Promise.resolve(false); }
   chrome.runtime.sendMessage({ type: 'arm_begin', tabId, token: intent.token }).catch(() => {});
   status.textContent = 'Waiting for browser site access…';

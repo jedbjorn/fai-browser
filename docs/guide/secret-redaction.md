@@ -42,8 +42,9 @@ An expectation's `textIncludes` is matched against the redacted text, so it cann
 ## Screenshots
 
 Every screenshot is redacted **on its pixels** before it leaves the extension. Right before capture the extension asks the page for the
-boxes to fill: elements holding found secrets, every password field, every payment field, every field that holds a secret, and cross-origin frames of payment and
-sign-in widgets (Stripe, Braintree, PayPal, Google, Microsoft, Okta and others); in Strict mode or on a secret page also every canvas, other cross-origin
+boxes to fill: elements holding found secrets, every password field, every payment field, every field that holds a secret, cross-origin frames of payment and
+sign-in widgets (Stripe, Braintree, PayPal, Google, Microsoft, Okta and others), and every other cross-origin frame, object or embed FAI did not
+read (an approved frame it read gets its own secret and field boxes, placed where the frame is); in Strict mode or on a secret page also every canvas, other cross-origin
 frame and code block. The page is asked again right after capture, with a watch armed in between; if anything changed in a way
 that could expose something, the capture fails closed (no image rather than a leaky one).
 
@@ -73,7 +74,7 @@ sign-in forms, including in Test site mode; a sign-in task may require a user ha
 
 Be aware of these; they are also in [SECURITY.md](../../SECURITY.md).
 
-- Text drawn on a **canvas**, text inside **images**, **cross-origin frames** (never read anyway) and **closed shadow roots** are not scanned.
+- Text drawn on a **canvas**, text inside **images**, **cross-origin frames the request does not approve** (never read; an approved frame is scanned by its own page script) and **closed shadow roots** are not scanned.
 - A value with no known format, shorter than about 20 characters, with no context word nearby (a short password in plain prose) is not found.
 - A value split across elements, drawn on a canvas or shown only in an image is never vaulted for handles.
 - `copy_secret` puts the value on the OS clipboard (after you approve); local programs, including the agent's shell, can read the clipboard until something else is copied. The approval card says so.
