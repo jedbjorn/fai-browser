@@ -901,6 +901,15 @@ export function offeredActions(observation, options = {}) {
   // Links are offered only on the approved site: to the current page's origin, or (with a domain root the user
   // approved) to another https subdomain of the same root. The extension refuses any other link click.
   const linkAllowed = href => Boolean(href) && Boolean(leaseOrigin) && sameSite(observation.url, href, allowedOrigins);
+  // A link inside an approved cross-origin frame (extension/frames.js, `frameOrigin`) that navigates only that frame
+  // must land on an approved origin (the frame stays readable); one that navigates the tab (_top, _parent) follows the
+  // page's rule above. The frame's page script checks the same again at dispatch.
+  const frameLinkAllowed = control => {
+    const target = String(control.linkTarget ?? '').toLowerCase();
+    if (['_top', '_parent'].includes(target)) return linkAllowed(control.href);
+    return Boolean(control.href) && Boolean(leaseOrigin) && (sameSite(control.frameOrigin, control.href, allowedOrigins)
+      || allowedOrigin(control.href, allowedOrigins));
+  };
 
   const controlActions = [];
   const intentActions = [];
@@ -969,7 +978,8 @@ export function offeredActions(observation, options = {}) {
         continue;
       }
       // Read-only: real same-origin links only. With controls: also script links without an href.
-      if (linkAllowed(control.href) || (controls && !control.href)) {
+      const admitted = typeof control.frameOrigin === 'string' ? frameLinkAllowed(control) : linkAllowed(control.href);
+      if (admitted || (controls && !control.href)) {
         const action = { type: 'click', ...base, description: `Click link ${ref}: ${label}` };
         if (control.href) action.href = control.href;
         controlActions.push(action);

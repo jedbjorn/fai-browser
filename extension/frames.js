@@ -150,8 +150,6 @@
   const union = list => ({
     purchase: list.some(item => item.purchase), sensitive: list.some(item => item.sensitive), secretPage: list.some(item => item.secretPage),
   });
-  const sameFacts = (a, b) => Boolean(a) && Boolean(b) && a.purchase === b.purchase && a.sensitive === b.sensitive
-    && a.secretPage === b.secretPage;
 
   function strip(observation) {
     if (!observation || typeof observation !== 'object') return observation;
@@ -236,15 +234,16 @@
     // One page context for the whole tab: the union of every document's own facts. A document read with less than
     // that is read again with it (own facts do not depend on the context, so once is enough).
     const all = union([facts(top), ...read.map(item => facts(item.observation))]);
-    const before = state.context;
+    const before = state.context ?? union([]);
     state.context = all;
+    // What a document lacked: a fact of the tab that neither it has itself nor the context it was read with had.
+    const lacking = own => ['purchase', 'sensitive', 'secretPage'].some(key => all[key] && !own[key] && !before[key]);
     let current = top;
-    if (!sameFacts(before, all) && (all.purchase || all.sensitive || all.secretPage)) {
-      current = (await retop().catch(() => null)) ?? top;
-      for (const item of read) {
-        const again = await callFrame(tabId, item.frame, 'observe', [options]).catch(() => null);
-        if (again && Array.isArray(again.controls)) item.observation = again;
-      }
+    if (lacking(facts(top))) current = (await retop().catch(() => null)) ?? top;
+    for (const item of read) {
+      if (!lacking(facts(item.observation))) continue;
+      const again = await callFrame(tabId, item.frame, 'observe', [options]).catch(() => null);
+      if (again && Array.isArray(again.controls)) item.observation = again;
     }
     return { top: current, read, unread };
   }
