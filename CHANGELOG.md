@@ -9,11 +9,11 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 
 ### Added
 
-- Update notice and one-click update from tagged GitHub releases. About once a day the local service checks GitHub's releases API anonymously (`FAI_UPDATE_CHECK=0` or `"updateCheck": false` turns it off). The popup then shows "Update available vX.Y.Z" with release notes and an Update button, and status and `fai_browser_status` carry an `update` field. The update installs only on that click or `node src/cli.js update` (`--check` only looks). It moves the git clone to the release tag, refreshes pairing and installed skills, restarts the service and reloads the unpacked Chromium extension. It refuses while a tab lease is held, on local changes, unpushed commits, another branch or another remote, and rolls back if a step fails after the move.
+- Update notice and one-click update from tagged GitHub releases. About once a day the local service checks GitHub's releases API anonymously (`FAI_UPDATE_CHECK=0` or `"updateCheck": false` turns it off). The popup then shows "Update available vX.Y.Z" with release notes and an Update button, and status and `fai_browser_status` carry an `update` field. The update installs only on that click or `node src/cli.js update` (`--check` only looks). It moves the git clone to the release tag, refreshes pairing and installed skills, restarts the service and reloads the unpacked Chromium extension. It refuses while a tab lease is held, on local changes, unpushed commits, another branch or another remote, and rolls back if a step fails after the move. While an update installs, new tab requests and approvals wait. For a private repository the check falls back to `git ls-remote` with the user's own git credentials (status `source: git`). No FAI secret reaches git, npm or the restarted service.
 
 ### Known limits
 
-- The check needs the GitHub repository to be public; until then it reports `not_found`, and `node src/cli.js update` can only check.
+- With the repository private, only final releases may carry a plain `vX.Y.Z` tag (the git fallback cannot see prerelease flags), and Firefox cannot fetch the signed add-on's update by itself.
 - Project-level skill installs are not refreshed by an update; re-run `node src/cli.js install --host ...` there.
 
 ## 0.4.0 (2026-11-07)
