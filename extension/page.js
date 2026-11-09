@@ -5582,38 +5582,42 @@
         if (action.typed === true && (el.type === 'password' || paymentField(el) || secretTarget(el))) {
           throw new PageError('blocked_risky', 'Typed text never goes into a password, payment or secret field');
         }
+        refuseLineBreak(el, action.text);
         const realm = el.ownerDocument.defaultView ?? window;
         const prototype = el.tagName === 'INPUT' ? realm.HTMLInputElement.prototype : realm.HTMLTextAreaElement.prototype;
         // Use the native setter so framework-controlled inputs (React etc.) see the change.
         const setValue = () => {
-          Object.getOwnPropertyDescriptor(prototype, 'value').set.call(el, action.text);
+          Object.getOwnPropertyDescriptor(prototype, 'value').set.call(el, withinMaxLength(el, action.text));
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
         };
-        // Typed key by key (input.js); the plain set when the field does not show the text afterwards.
-        if (realInput()) await realInput().type(el, action.text, { kept: () => fillKept(el, action.text).kept, fallback: setValue });
-        else setValue();
+        // Typed key by key (input.js, which reads the value back and corrects it once); the plain set when the field
+        // does not show the text afterwards.
+        const typed = realInput() ? await realInput().type(el, action.text, { kept: () => fillKept(el, action.text).kept, fallback: setValue }) : null;
+        if (!typed) setValue();
         // Read back after the page settles (execute): a controlled input or a picker's textbox may revert or ignore
         // the value, and a fill the field did not keep is no progress (a live Google Flights run reported the
         // Departure fill done while the field stayed empty).
-        result.fillCheck = () => fillKept(el, action.text);
+        result.fillCheck = () => ({ ...fillKept(el, action.text), ...(typed?.corrected ? { corrected: true } : {}) });
         break;
       }
       case 'fill_secret': {
         // A secret handle's value (the worker resolves it; nothing else ever sees it) into a field that takes secrets
         // (secretTarget). The field is a secret field from now on: never reported, boxed on every screenshot.
         if (!secretTarget(el) || typeof action.text !== 'string' || !action.text) throw new PageError('unsupported', 'Unsupported secret target');
+        refuseLineBreak(el, action.text);
         const realm = el.ownerDocument.defaultView ?? window;
         const setSecret = () => {
-          Object.getOwnPropertyDescriptor(realm.HTMLInputElement.prototype, 'value').set.call(el, action.text);
+          Object.getOwnPropertyDescriptor(realm.HTMLInputElement.prototype, 'value').set.call(el, withinMaxLength(el, action.text));
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
         };
-        // Typed like any fill (input.js; sign-in pages watch their key events most), the plain set as the fallback.
-        if (realInput()) await realInput().type(el, action.text, { kept: () => fillKept(el, action.text).kept, fallback: setSecret });
-        else setSecret();
+        // Typed like any fill (input.js; sign-in pages watch their key events most), the plain set as the fallback. The
+        // rhythm is planned blind (`secret`): its timing, and so inputMs, depend on the value's length only.
+        const typed = realInput() ? await realInput().type(el, action.text, { kept: () => fillKept(el, action.text).kept, fallback: setSecret, secret: true }) : null;
+        if (!typed) setSecret();
         rememberFilledSecret(el, action.text);
-        result.fillCheck = () => fillKept(el, action.text);
+        result.fillCheck = () => ({ ...fillKept(el, action.text), ...(typed?.corrected ? { corrected: true } : {}) });
         break;
       }
       case 'submit_field': {
@@ -5813,16 +5817,98 @@
     return forms;
   }
 
+  // A line break typed into a single-line input is Enter, and Enter there submits the form: a fill would get past the
+  // submit gate and the request's forbid list. Refused; submit_field is the way to submit.
+  function refuseLineBreak(el, text) {
+    if (el.tagName === 'INPUT' && /[\r\n]/.test(text)) {
+      throw new PageError('line_break_input', "Newlines can't be typed into a single-line field; use submit_field to submit");
+    }
+  }
+
+  // A plain text field: what it shows is what was typed, give or take a formatter; no suggestion list completing it
+  // (a combobox, autocomplete, a datalist, a popup) and no picker.
+  function plainTextField(el) {
+    if (el.tagName === 'INPUT' ? !['text', 'search', 'email', 'url', 'tel', 'password'].includes(el.type) : el.tagName !== 'TEXTAREA') return false;
+    const popup = (el.getAttribute('aria-haspopup') || 'false').toLowerCase();
+    return el.getAttribute('role') !== 'combobox' && (el.getAttribute('aria-autocomplete') || 'none').toLowerCase() === 'none'
+      && !el.hasAttribute('list') && popup === 'false' && !el.readOnly;
+  }
+
+  // `text` as a field with maxlength keeps it: cut to that many UTF-16 units, never half a character.
+  function withinMaxLength(el, text) {
+    if (!(el.maxLength >= 0)) return text;
+    let fit = '';
+    for (const ch of text) {
+      if (fit.length + ch.length > el.maxLength) break;
+      fit += ch;
+    }
+    return fit;
+  }
+
+  /**
+   * Whether `value` shows `text` once, with case and runs of whitespace ignored: the same text with spaces aside
+   * ("NO9386011117947" for "NO93 8601 1117 947"); or the text exactly once with anything around it set off by a
+   * character that is not a letter or digit ("#abc", "https://example.com", "1500 kr"; not "abcc" for "abc"); or, for
+   * a number-like text, its digits as whole digit groups exactly once in the value, with only a country code (one
+   * group of up to three digits) before
+   * them (set off by a space, a bracket or a dash, not a decimal point) and only a zero decimal part after them
+   * ("$1,500.00" and "1500.0" for "1500", "+1 555 1234567" for "5551234567"; not "$150.00" or "155" for "15", not
+   * "$0.15" for "15"). Same rule as input.js containedOnce (the read-back after typing).
+   */
+  function containedOnce(value, text) {
+    const collapse = s => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const want = collapse(text);
+    const have = collapse(value);
+    if (!want) return !have;
+    if (have.replace(/ /g, '') === want.replace(/ /g, '')) return true;
+    const parts = have.split(want);
+    // Set off: by a character that is not a letter or digit, and not a decimal point or comma inside a number.
+    const openStart = !parts[0] || (/[^\p{L}\p{N}]$/u.test(parts[0]) && !/\p{N}[.,]$/u.test(parts[0]));
+    const openEnd = !parts[1] || (/^[^\p{L}\p{N}]/u.test(parts[1]) && !/^[.,]\p{N}/u.test(parts[1]));
+    if (parts.length === 2 && openStart && openEnd) return true;
+    if (!/\d/.test(want) || !/^[\d\s()+.,\-$€£¥%]+$/.test(want)) return false;
+    const digits = want.replace(/\D/g, '');
+    const groups = [];
+    const before = [];
+    let end = 0;
+    for (const match of have.matchAll(/\d+/g)) {
+      before.push(have.slice(end, match.index));
+      groups.push(match[0]);
+      end = match.index + match[0].length;
+    }
+    let found = 0;
+    for (let i = 0; i < groups.length; i++) {
+      let joined = '';
+      for (let j = i; j < groups.length && joined.length < digits.length; j++) {
+        joined += groups[j];
+        if (joined !== digits) continue;
+        const lead = i === 0 || (i === 1 && groups[0].length <= 3 && !/[.,]/.test(before[i]));
+        const tail = groups.slice(j + 1);
+        const rest = !tail.length || (tail.length === 1 && /^0{1,2}$/.test(tail[0]) && /^[.,]$/.test(before[j + 1]));
+        if (lead && rest) found++;
+      }
+    }
+    return found === 1;
+  }
+
   // Whether a text field holds the supplied text after a fill, read from the field itself (never from page text):
-  // `kept` when its value contains the text (whitespace collapsed, case ignored), the same digits for a text of
-  // digits and separators (a field that formats numbers), or the same date in another form for an ISO date;
-  // `empty` when the field holds nothing at all. The value itself is never returned.
+  // `kept` when, in a plain text field, the value shows the text once (containedOnce: a formatter's additions pass,
+  // the text twice or with residue inside does not), or, in a picker's or combobox's textbox (which completes what was
+  // typed), contains it; the same digits for a text of digits and separators; or the same date in another form for an
+  // ISO date (a field may add the weekday). The text is first cut to the field's maxlength. An empty text is kept by
+  // an empty field. `empty` when the field holds nothing at all. The value itself is never returned.
   function fillKept(el, text) {
     const normalize = value => String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
-    const want = normalize(text);
+    const want = normalize(withinMaxLength(el, text));
     const have = el.isConnected ? normalize(el.value) : '';
-    let kept = !want || have.includes(want);
-    if (!kept && /\d/.test(want) && /^[\d\s()+.-]+$/.test(want)) kept = have.replace(/\D/g, '').includes(want.replace(/\D/g, ''));
+    if (!want) return { kept: !have, empty: !have };
+    let kept;
+    if (plainTextField(el)) {
+      kept = containedOnce(have, want);
+    } else {
+      kept = have.includes(want);
+      if (!kept && /\d/.test(want) && /^[\d\s()+.-]+$/.test(want)) kept = have.replace(/\D/g, '').includes(want.replace(/\D/g, ''));
+    }
     if (!kept) kept = dateForms(want).some(form => have.includes(form));
     return { kept, empty: !have };
   }

@@ -74,6 +74,40 @@ test('replays the closed step set in the leased tab, attached for the action and
   assert.deepEqual(h.detaches, [7]);
 });
 
+test('an until step makes a call last a fixed time; past the deadline only the held keys are released, and the reply says late', async () => {
+  const h = load();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  const key = (type, k) => ({ m: 'key', type, key: k, code: `Key${k.toUpperCase()}`, keyCode: k.toUpperCase().charCodeAt(0), ...(type === 'keyDown' ? { text: k } : {}) });
+  // A fixed length: the same whatever the steps before it.
+  for (const steps of [[key('keyDown', 'a'), key('keyUp', 'a')], [key('keyDown', 'a'), key('keyUp', 'a'), key('keyDown', 'b'), key('keyUp', 'b')]]) {
+    const started = Date.now();
+    const reply = await h.send({ kind: 'fai-trusted-input', steps: [...steps, { until: 150 }], viewport: VIEWPORT });
+    assert.equal(reply.ok, true);
+    const took = Date.now() - started;
+    assert.ok(took >= 145 && took < 260, `took ${took}`);
+  }
+  assert.equal((await h.send({ kind: 'fai-trusted-input', steps: [{ until: 20_000 }], viewport: VIEWPORT })).reason, 'invalid');
+  // A deadline: keys after it are not pressed and no text goes in; what is held comes up.
+  h.commands.length = 0;
+  const reply = await h.send({ kind: 'fai-trusted-input', deadline: 40, viewport: VIEWPORT, steps: [
+    key('keyDown', 'a'), { wait: 20 }, key('keyDown', 'b'), key('keyUp', 'a'), { wait: 60 },
+    key('keyUp', 'b'), key('keyDown', 'c'), key('keyUp', 'c'), { m: 'text', text: 'rest' },
+  ] });
+  assert.deepEqual(reply, { ok: true, dispatched: 4, late: true });
+  assert.deepEqual(h.commands.map(c => `${c.params.type ?? 'text'}:${c.params.key ?? c.params.text}`), ['keyDown:a', 'keyDown:b', 'keyUp:a', 'keyUp:b']);
+});
+
+test('editing commands: select-all and (for macOS) Backspace\'s deleteBackward go out with their key; any other is dropped', () => {
+  const h = load();
+  const clean = step => JSON.parse(JSON.stringify(h.context.cleanTrustedStep(step, VIEWPORT)));
+  const backspace = { m: 'key', type: 'rawKeyDown', key: 'Backspace', code: 'Backspace', keyCode: 8 };
+  assert.deepEqual(clean({ ...backspace, commands: ['deleteBackward'] }).params.commands, ['deleteBackward']);
+  assert.deepEqual(clean({ m: 'key', type: 'rawKeyDown', key: 'a', code: 'KeyA', keyCode: 65, modifiers: 4, commands: ['selectAll'] }).params.commands, ['selectAll']);
+  for (const commands of [['insertText'], ['deleteBackward', 'paste'], ['selectAll', 'selectAll', 'selectAll'], 'deleteBackward']) {
+    assert.equal(clean({ ...backspace, commands }).params.commands, undefined, JSON.stringify(commands));
+  }
+});
+
 test('refuses other tabs, frames and senders, anything outside the step set, and does nothing while off', async () => {
   const h = load();
   await new Promise(resolve => setTimeout(resolve, 5));

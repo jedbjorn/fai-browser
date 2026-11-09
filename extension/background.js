@@ -108,6 +108,8 @@ const KNOWN_CODES = new Set([
   'no_control', 'point_outside', 'point_frame',
   // The page stopped answering while a JavaScript dialog (alert, confirm, prompt) is most likely open (callPage).
   'js_dialog',
+  // A fill with a line break aimed at a single-line input (page.js refuseLineBreak): refused, nothing typed.
+  'line_break_input',
 ]);
 const RECOVERABLE = new Set(['stale', 'target_unavailable', 'capture_failed']);
 // Message types that get exactly one reply, and their HTTP fallback paths.
@@ -1827,12 +1829,38 @@ function clearVault() {
   secretVault = newVault();
 }
 
+// One typing-rhythm seed per lease (input.js RHYTHM), random and unrelated to the lease id, so every document of a
+// task types at the same pace and the next task at another. Kept in storage.session, so a worker restart in the middle
+// of a task keeps the pace.
+let typingRhythm = { leaseId: null, seed: 0 };
+function sessionStore(method, value) {
+  try {
+    return Promise.resolve(chrome.storage?.session?.[method]?.(value)).catch(() => null);
+  } catch {
+    return Promise.resolve(null);
+  }
+}
+// Page calls wait for this read, so a restarted worker never draws a new seed before the saved one is back.
+const typingRhythmRestored = sessionStore('get', ['typingRhythm']).then(saved => {
+  const kept = saved?.typingRhythm;
+  if (!typingRhythm.seed && Number.isInteger(kept?.seed) && kept.seed > 0) typingRhythm = { leaseId: kept.leaseId ?? null, seed: kept.seed };
+});
+function rhythmSeed() {
+  const leaseId = session?.leaseId ?? null;
+  if (!typingRhythm.seed || typingRhythm.leaseId !== leaseId) {
+    const seed = globalThis.crypto?.getRandomValues?.(new Uint32Array(1))[0] ?? Math.floor(Math.random() * 2 ** 32);
+    typingRhythm = { leaseId, seed: seed || 1 };
+    sessionStore('set', { typingRhythm });
+  }
+  return typingRhythm.seed;
+}
+
 function secretOptions() {
-  // `input`: input.js's settings for the call (trusted input on or off, trusted-input.js).
+  // `input`: input.js's settings for the call (trusted input on or off, trusted-input.js; the lease's rhythm seed).
   const trusted = typeof trustedInputOn === 'function' && trustedInputOn();
   // `context`: what the tab's approved frames add to the page's restrictions (frames.js); none without frames.
   const context = globalThis.faiFrames?.topContext(session?.tabId) ?? null;
-  return { ...secretRedaction, salt: secretNumbering().salt, gates: approvalSettings, vault: true, input: { trusted }, context };
+  return { ...secretRedaction, salt: secretNumbering().salt, gates: approvalSettings, vault: true, input: { trusted, rhythmSeed: rhythmSeed() }, context };
 }
 
 // The values page.js redacted (VAULT_KEY of a page result: [{ tag, value, kind, pre, origin }]), kept under their
@@ -1962,6 +1990,7 @@ async function scriptPage(details) {
 }
 
 async function callPageOnce(tabId, method, args = []) {
+  await typingRhythmRestored;
   const secrets = secretOptions();
   let [injection] = await scriptPage({ target: { tabId }, func: pageCall, args: [method, args, secrets] });
   if (injection?.result?.missing) {

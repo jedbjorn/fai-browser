@@ -83,6 +83,8 @@ export const BRIDGE_ERROR_CODES = Object.freeze([
   'no_control', 'point_outside', 'point_frame',
   // The page stopped answering while a JavaScript dialog (alert, confirm, prompt) is most likely open.
   'js_dialog',
+  // A fill with a line break aimed at a single-line input: refused before anything was typed.
+  'line_break_input',
 ]);
 const KNOWN_CODES = new Set(BRIDGE_ERROR_CODES);
 export const LEVEL_RAISE_MESSAGE = 'A lease_level message can only lower the level; raising it needs a new approval '

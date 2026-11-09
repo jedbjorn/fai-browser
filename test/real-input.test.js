@@ -283,7 +283,7 @@ test('trusted input: the sequences go to the worker as debugger steps, and nothi
   await run(`globalThis.chrome = { runtime: { sendMessage: async message => {
     (globalThis.__steps ||= []).push(message.steps);
     return { ok: true, dispatched: message.steps.filter(step => step.wait === undefined).length };
-  } } }; __faiInput.configure({ trusted: true }); true`);
+  } } }; __faiInput.configure({ trusted: true, slipRate: 0 }); true`);
   const steps = () => run('(globalThis.__steps || []).splice(0)');
 
   assert.equal((await act(run, 'Press here', { type: 'click' })).error, undefined);
@@ -418,3 +418,340 @@ test('a plain-http page (no secure context): realistic click, typing and Enter w
   assert.equal(enter, 'ok');
   assert.deepEqual(await page.evaluate(() => window.log), ['click', 'submit']);
 });
+
+// Symbols, accents, other scripts, emoji (with a skin-tone modifier), a newline: typed key by key in full, typed in
+// part with the rest inserted, and as a secret, the field ends up with exactly the text.
+const TRICKY = 'Ünïcode — 日本 🎉👍🏽 "quotes" <tag> & {x}~ |\\ `tick` 50% off!\nLine 2: Aa1@#$^*()_+=[];\',./?';
+const RHYTHM_PAGE = `<!doctype html><title>Rhythm</title>
+  <textarea id="t" aria-label="Notes"></textarea><input id="i" aria-label="Name"><input id="p" type="password" aria-label="PIN">
+  <form id="f"><input id="q" aria-label="Query" name="q"><button>Go</button></form>
+  <input id="m" maxlength="5" aria-label="Code"><input id="slow" aria-label="Slow"><input id="ph" aria-label="Phone">
+  <input id="eat" aria-label="Eats Backspace"><input id="pre" aria-label="Prefixed"><input id="dbl" aria-label="Doubled">
+  <script>
+    window.log = [];
+    window.submits = 0;
+    for (const type of ['keydown', 'keyup']) addEventListener(type, e => log.push([type, e.key, e.code, performance.now(), e.isTrusted, e.shiftKey]), true);
+    for (const type of ['beforeinput', 'input']) addEventListener(type, e => log.push([type, e.inputType, e.target.id, performance.now(), e.isTrusted]), true);
+    document.getElementById('f').addEventListener('submit', e => { e.preventDefault(); submits++; });
+    // Key handlers that take 140 ms each.
+    document.getElementById('slow').addEventListener('keydown', () => { const s = performance.now(); while (performance.now() - s < 140); });
+    // A formatter: digits in groups of three.
+    document.getElementById('ph').addEventListener('input', e => { const d = e.target.value.replace(/\\D/g, ''); e.target.value = d.replace(/(\\d{3})(?=\\d)/g, '$1 '); });
+    document.getElementById('eat').addEventListener('keydown', e => { if (e.key === 'Backspace') e.preventDefault(); });
+    // A broken field that always shows the text twice.
+    document.getElementById('dbl').addEventListener('input', e => { e.target.value = 'abc abc'; });
+    // A field that always starts with '#'.
+    document.getElementById('pre').addEventListener('input', e => { if (!e.target.value.startsWith('#')) e.target.value = '#' + e.target.value; });
+  </script>`;
+
+// Formatting and completing fields (the review's exp3): an inline-completing combobox that blocks Ctrl+A, a currency
+// formatter, a country-code phone, upper case, an IBAN without spaces, and a field with old text that blocks Ctrl+A.
+const FORMAT_PAGE = `<!doctype html><title>Formats</title>
+  <input id="cb" role="combobox" aria-label="From" aria-autocomplete="list">
+  <input id="cur" aria-label="Amount" inputmode="decimal">
+  <input id="cc" aria-label="Country phone" type="tel">
+  <input id="up" aria-label="Code">
+  <input id="iban" aria-label="IBAN">
+  <input id="noa" aria-label="NoSelectAll" value="old">
+  <script>
+    const field = id => document.getElementById(id);
+    field('cb').addEventListener('input', e => { if (/^oslo$/i.test(e.target.value)) e.target.value = 'Oslo (OSL)'; });
+    for (const id of ['cb', 'noa']) field(id).addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'a') e.preventDefault(); });
+    field('cur').addEventListener('input', e => { const d = e.target.value.replace(/[^\\d]/g, ''); e.target.value = d ? '$' + Number(d).toLocaleString('en-US') + '.00' : ''; });
+    field('cc').addEventListener('input', e => { const d = e.target.value.replace(/\\D/g, '').replace(/^1/, ''); e.target.value = '+1 ' + d; });
+    field('up').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase(); });
+    field('iban').addEventListener('input', e => { e.target.value = e.target.value.replace(/\\s/g, '').toUpperCase(); });
+  </script>`;
+
+// input.js's type() on a field, straight from the isolated world (no fallback: what the keys produced is what shows).
+function typeInto(run, selector, text, options = {}) {
+  return run(`(async () => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    el.focus();
+    const r = await __faiInput.type(el, ${JSON.stringify(text)}, ${JSON.stringify(options)});
+    return { typed: r.typed, chunked: r.chunked, fallback: r.fallback, trusted: r.trusted ?? false, corrected: r.corrected, slips: r.slips, ms: r.ms, value: el.value };
+  })()`);
+}
+
+const pageLog = page => page.evaluate(() => window.log.splice(0));
+
+// The page's key log since the last call: rollovers (a key down while another non-modifier key is down), the least
+// time from a keydown to the next keyup, the keydown intervals, and the letters that came with the wrong Shift.
+async function keyRhythm(page) {
+  const entries = (await pageLog(page)).filter(([type]) => type === 'keydown' || type === 'keyup');
+  const held = new Map();
+  let rollovers = 0;
+  let lastDown = null;
+  let quickestUp = Infinity;
+  let downs = 0;
+  const wrongShift = [];
+  const intervals = [];
+  for (const [type, key, code, at, , shiftKey] of entries) {
+    if (key === 'Shift' || key === 'Control' || key === 'Meta') continue;
+    const id = code || key;
+    if (type === 'keydown') {
+      downs++;
+      if (held.size) rollovers++;
+      if (lastDown !== null) intervals.push(at - lastDown);
+      lastDown = at;
+      held.set(id, at);
+      if (/^[a-z]$/i.test(key) && shiftKey !== (key !== key.toLowerCase())) wrongShift.push(key);
+    } else {
+      if (lastDown !== null) quickestUp = Math.min(quickestUp, at - lastDown);
+      held.delete(id);
+    }
+  }
+  const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+  const sd = Math.sqrt(intervals.reduce((a, b) => a + (b - mean) ** 2, 0) / intervals.length);
+  return { entries, downs, rollovers, quickestUp, cv: sd / mean, mean, wrongShift };
+}
+
+// The worker's trusted replay, with Playwright's CDP session standing in for chrome.debugger and trusted-input.js's
+// own step mapping and deadline (runTrustedSteps over a fake chrome.debugger that forwards to CDP).
+async function wireTrusted(run, cdp) {
+  const worker = vm.createContext({
+    setTimeout, clearTimeout, Date, session: { tabId: 1 },
+    chrome: { debugger: { attach: async () => {}, detach: async () => {}, sendCommand: (target, method, params) => cdp.send(method, JSON.parse(JSON.stringify(params))) } },
+  });
+  vm.runInContext(await readFile(new URL('extension/trusted-input.js', ROOT), 'utf8'), worker);
+  vm.runInContext('trustedInputSetting = true;', worker);
+  await cdp.send('Runtime.enable');
+  await cdp.send('Runtime.addBinding', { name: '__faiTrusted', executionContextName: 'fai-test' });
+  cdp.on('Runtime.bindingCalled', async ({ name, payload, executionContextId }) => {
+    if (name !== '__faiTrusted') return;
+    const { id, steps, viewport, deadline } = JSON.parse(payload);
+    const reply = await worker.runTrustedSteps(1, steps, viewport, { deadline });
+    await cdp.send('Runtime.evaluate', { contextId: executionContextId, expression: `globalThis.__answer(${id}, ${JSON.stringify(JSON.stringify(reply))})` }).catch(() => {});
+  });
+  await run(`globalThis.__answers = new Map();
+    globalThis.__answer = (id, reply) => { __answers.get(id)?.(JSON.parse(reply)); __answers.delete(id); };
+    globalThis.chrome = { runtime: { sendMessage: message => new Promise(resolve => {
+      const id = Math.floor(Math.random() * 1e9);
+      __answers.set(id, resolve);
+      __faiTrusted(JSON.stringify({ id, steps: message.steps, viewport: message.viewport, deadline: message.deadline }));
+    }) } };
+    __faiInput.configure({ trusted: true }); true`);
+}
+
+const PATHS = ['synthetic', 'trusted'];
+async function openRhythm(t, path) {
+  const opened = await open(t, RHYTHM_PAGE);
+  if (path === 'trusted') await wireTrusted(opened.run, opened.cdp);
+  return opened;
+}
+
+for (const path of PATHS) {
+  test(`typing rhythm (${path}): exact values for symbols, unicode, emoji and newlines, in full, in part and as a secret; keys roll over`, async t => {
+    const { page, run } = await openRhythm(t, path);
+    const trusted = path === 'trusted';
+    // In full, every character a key (63 keys fit the worker's 400 steps), seeded so the counts below are fixed.
+    const text = trusted ? Array.from(TRICKY).slice(0, 60).join('') : TRICKY;
+    const chars = Array.from(text);
+    await run('__faiInput.configure({ typeBudgetMs: 60000, maxTyped: 1000, keySeed: 11, slipRate: 0 }); true');
+    await pageLog(page);
+    const full = await typeInto(run, '#t', text);
+    assert.deepEqual({ ...full, ms: 0, value: full.value === text },
+      { typed: chars.length, chunked: false, fallback: false, trusted, corrected: false, slips: 0, ms: 0, value: true });
+    const rhythm = await keyRhythm(page);
+    t.diagnostic(`${path} full: ${rhythm.downs} keys, mean interval ${rhythm.mean.toFixed(0)} ms, CV ${rhythm.cv.toFixed(2)}, `
+      + `${rhythm.rollovers} rollovers, quickest keyup ${rhythm.quickestUp.toFixed(1)} ms after a keydown`);
+    assert.equal(rhythm.downs, chars.length);
+    assert.deepEqual(rhythm.wrongShift, []);
+    assert.ok(rhythm.rollovers > 0, 'some keys go down before the previous one is up');
+    assert.ok(rhythm.quickestUp >= 5, `a keyup ${rhythm.quickestUp} ms after a keydown`);
+    assert.ok(rhythm.cv > 0.25, `keydown intervals CV ${rhythm.cv}`);
+    if (trusted) assert.ok(rhythm.entries.every(entry => entry[4]), 'every key event trusted');
+    // In part: the default budget, the rest in one insertion; a second fill replaces (select-all) the first.
+    await run('__faiInput.configure({ typeBudgetMs: 1000, maxTyped: 40 }); true');
+    const part = await typeInto(run, '#t', TRICKY);
+    assert.equal(part.chunked, true);
+    assert.ok(part.typed >= 3 && part.typed < 40, `typed ${part.typed}`);
+    assert.equal(part.value, TRICKY);
+    const line = TRICKY.split('\n')[1];
+    assert.equal((await typeInto(run, '#i', line)).value, line);
+    for (const secret of ['Tr0ub4dor&3!', 'pässwörd 🎉 2', 'aB']) {
+      const typed = await typeInto(run, '#p', secret, { secret: true });
+      assert.equal(typed.value, secret);
+      assert.equal(typed.fallback, false);
+      assert.equal(typed.corrected, false);
+    }
+  });
+
+  test(`value matrix (${path}): ZWJ sequences, flags, combining marks, ligatures, mixed case, one character, empty; over old values; as secrets`, async t => {
+    const { page, run } = await openRhythm(t, path);
+    const values = ['👨‍👩‍👧‍👦 fam', '🇳🇴🇸🇪 flags', 'é café ñ', 'é combining', 'Ǆ ÀÉÎ ﬁ ß ẞ', 'aAaA;:1!', 'x', ''];
+    for (const secret of [false, true]) {
+      for (const value of values) {
+        for (const selector of ['#t', '#i']) {
+          await page.evaluate(sel => { document.querySelector(sel).value = 'old value'; }, selector);
+          const typed = await typeInto(run, selector, value, { secret });
+          assert.equal(typed.value, value, `${selector} ${JSON.stringify(value)} secret ${secret}`);
+          assert.equal(typed.fallback, false);
+        }
+      }
+    }
+  });
+
+  test(`newlines (${path}): a single-line input never gets Enter from a fill; page.js refuses it, a textarea takes it`, async t => {
+    const { page, run } = await openRhythm(t, path);
+    await pageLog(page);
+    const typed = await typeInto(run, '#q', 'abc\ndef\r\nghi');
+    assert.equal(typed.value, 'abcdefghi');
+    assert.equal(await page.evaluate(() => window.submits), 0);
+    assert.ok(!(await pageLog(page)).some(([type, key]) => type === 'keydown' && key === 'Enter'), 'no Enter pressed');
+    const refused = await actOnField(run, 'Query', { type: 'fill_supplied_text', text: 'search\n' });
+    assert.match(refused.error, /^line_break_input: Newlines can't be typed into a single-line field; use submit_field to submit/);
+    assert.equal(await page.evaluate(() => window.submits), 0);
+    const notes = await actOnField(run, 'Notes', { type: 'fill_supplied_text', text: 'line one\r\nline two' });
+    assert.equal(notes.error, undefined);
+    assert.equal(await page.inputValue('#t'), 'line one\nline two');
+  });
+
+  test(`limits (${path}): maxlength cuts by code point; slow key handlers stop the keys and the rest goes in; a formatter's output stands`, async t => {
+    const { page, run } = await openRhythm(t, path);
+    // The emoji does not fit the one unit left and the next letter would ("abcdx", residue after the cut value): the
+    // read-back sets the value cut at maxlength by whole characters; never half an emoji.
+    const cut = await typeInto(run, '#m', 'abcd🎉xy');
+    assert.equal(cut.value, 'abcd');
+    assert.ok(!/[\uD800-\uDFFF]/.test(cut.value), 'no lone surrogate');
+    const slow = await typeInto(run, '#slow', 'the quick brown fox');
+    t.diagnostic(`${path} slow page: ${slow.ms} ms, ${slow.typed} keys planned`);
+    assert.equal(slow.value, 'the quick brown fox');
+    assert.ok(slow.ms < 2600, `slow fill took ${slow.ms} ms`);
+    // A formatter's output holds the value: no select-all and whole-value paste after the keys.
+    await pageLog(page);
+    const phone = await typeInto(run, '#ph', '1234567890');
+    assert.equal(phone.corrected, false);
+    assert.equal(phone.value, '123 456 789 0');
+    const after = await pageLog(page);
+    assert.ok(!after.some(([type, key]) => type === 'keydown' && (key === 'Control' || key === 'Meta')), 'no Ctrl+A');
+    assert.equal(after.filter(([type]) => type === 'keydown').length, 10, 'one key per digit and nothing else');
+    // Through page.js the digits count as kept.
+    const reported = await actOnField(run, 'Phone', { type: 'fill_supplied_text', text: '5551234567' });
+    assert.deepEqual(reported.fill, { kept: true, empty: false });
+  });
+
+  test(`clearing and read-back (${path}): an empty value clears the field and is kept; a field that adds to the value is not`, async t => {
+    const { page, run } = await openRhythm(t, path);
+    await page.evaluate(() => { document.getElementById('i').value = 'old value'; });
+    const cleared = await typeInto(run, '#i', '');
+    assert.equal(cleared.value, '');
+    assert.equal(cleared.corrected, false);
+    await page.evaluate(() => { document.getElementById('i').value = 'old value'; });
+    const reported = await actOnField(run, 'Name', { type: 'fill_supplied_text', text: '' });
+    assert.equal(reported.error, undefined);
+    assert.equal(await page.inputValue('#i'), '');
+    assert.deepEqual(reported.fill, { kept: true, empty: true });
+    // A field that adds a prefix keeps the value (a formatter); one that shows it twice does not.
+    const prefixed = await actOnField(run, 'Prefixed', { type: 'fill_supplied_text', text: 'abc' });
+    assert.equal(await page.inputValue('#pre'), '#abc');
+    assert.deepEqual(prefixed.fill, { kept: true, empty: false });
+    const doubled = await actOnField(run, 'Doubled', { type: 'fill_supplied_text', text: 'abc' });
+    assert.equal(await page.inputValue('#dbl'), 'abc abc');
+    assert.deepEqual(doubled.fill, { kept: false, empty: false, corrected: true }, 'the value twice: residue, corrected once, still not kept');
+  });
+
+  test(`a correction goes into the typed field only (${path}): focus taken back, or the synthetic route when it cannot be`, async t => {
+    const { page, run, cdp } = await open(t, `<!doctype html><title>Focus</title>
+      <input id="jump" aria-label="Jump"><input id="other" aria-label="Other">
+      <input id="stuck" aria-label="Stuck"><input id="other2" aria-label="Other two">
+      <script>
+        // Once the text is in, each field shows it twice (residue to correct) and moves focus to its neighbour; the
+        // second one refuses focus from then on.
+        const moved = new Set();
+        for (const [id, next] of [['jump', 'other'], ['stuck', 'other2']]) {
+          const field = document.getElementById(id);
+          field.addEventListener('input', () => {
+            if (moved.has(id) || field.value !== 'abc') return;
+            moved.add(id);
+            field.value = 'abcabc';
+            document.getElementById(next).focus();
+          });
+          if (id === 'stuck') field.addEventListener('focus', () => { if (moved.has(id)) document.getElementById(next).focus(); });
+        }
+      </script>`);
+    if (path === 'trusted') await wireTrusted(run, cdp);
+    for (const [selector, neighbour] of [['#jump', '#other'], ['#stuck', '#other2']]) {
+      const typed = await typeInto(run, selector, 'abc');
+      assert.equal(typed.value, 'abc', selector);
+      assert.equal(typed.corrected, true, selector);
+      assert.equal(await page.inputValue(neighbour), '', `nothing went into ${neighbour}`);
+    }
+  });
+
+  test(`formatted and completing fields (${path}): kept as the page shows them, a combobox never corrected, Ctrl+A blocked still replaces`, async t => {
+    const { page, run, cdp } = await open(t, FORMAT_PAGE);
+    if (path === 'trusted') await wireTrusted(run, cdp);
+    // A combobox that completes "Oslo" inline and keeps Ctrl+A for itself: no correction, and a second and third fill
+    // replace the value instead of adding to it.
+    const first = await typeInto(run, '#cb', 'Oslo');
+    assert.equal(first.value, 'Oslo (OSL)');
+    assert.equal(first.corrected, false);
+    for (let k = 0; k < 2; k++) {
+      const again = await actOnField(run, 'From', { type: 'fill_supplied_text', text: 'Oslo' });
+      assert.equal(await page.inputValue('#cb'), 'Oslo (OSL)');
+      assert.deepEqual(again.fill, { kept: true, empty: false });
+    }
+    // Formatters: the page's output is kept; only the currency one, whose caret jumps scramble keyed digits, needs a
+    // correction (residue), and ends as the page formats the value.
+    for (const [label, selector, text, shown] of [
+      ['Amount', '#cur', '1500', '$1,500.00'], ['Country phone', '#cc', '5551234567', '+1 5551234567'],
+      ['Code', '#up', 'abc123', 'ABC123'],
+    ]) {
+      const filled = await actOnField(run, label, { type: 'fill_supplied_text', text });
+      assert.equal(await page.inputValue(selector), shown, label);
+      assert.equal(filled.fill.kept, true, `${label}: ${JSON.stringify(filled.fill)}`);
+      if (label !== 'Amount') assert.equal(filled.fill.corrected, undefined, `${label} needed no correction`);
+    }
+    // An IBAN is a payment field page.js keeps fills out of; typed straight in, its formatted value needs no correction.
+    const iban = await typeInto(run, '#iban', 'NO93 8601 1117 947');
+    assert.equal(iban.value, 'NO9386011117947');
+    assert.equal(iban.corrected, false);
+    // Ctrl+A cancelled by the page, old text in the field: the value is selected directly and replaced.
+    const replaced = await actOnField(run, 'NoSelectAll', { type: 'fill_supplied_text', text: 'new text' });
+    assert.equal(await page.inputValue('#noa'), 'new text');
+    assert.deepEqual(replaced.fill, { kept: true, empty: false });
+  });
+
+  test(`slips (${path}): a neighbouring key, Backspace and the right key as a keyboard sends them; exact afterwards; none in a secret`, async t => {
+    const { page, run } = await openRhythm(t, path);
+    await run('__faiInput.configure({ typeBudgetMs: 60000, maxTyped: 1000, keySeed: 5, slipRate: 1 }); true');
+    await pageLog(page);
+    const text = 'reservations for tonight';
+    const typed = await typeInto(run, '#t', text);
+    assert.equal(typed.value, text);
+    assert.equal(typed.corrected, false);
+    assert.ok(typed.slips >= 1, `slips ${typed.slips}`);
+    const log = await pageLog(page);
+    const backs = log.map((entry, k) => [entry, k]).filter(([[type, key]]) => type === 'keydown' && key === 'Backspace');
+    assert.ok(backs.length >= typed.slips);
+    for (const [, k] of backs) {
+      // Backspace's keydown, then its beforeinput and input (deleteContentBackward), then its keyup before the next key.
+      const after = log.slice(k + 1, k + 4).map(([type, what]) => `${type}:${what}`);
+      assert.deepEqual(after.slice(0, 2), ['beforeinput:deleteContentBackward', 'input:deleteContentBackward']);
+      const nextDown = log.findIndex((entry, j) => j > k && entry[0] === 'keydown');
+      const up = log.findIndex((entry, j) => j > k && entry[0] === 'keyup' && entry[1] === 'Backspace');
+      assert.ok(up > k && (nextDown === -1 || up < nextDown), 'Backspace is up before the next key goes down');
+    }
+    if (path === 'trusted') assert.ok(log.every(entry => entry[4]), 'every event trusted');
+    // Random values, slips forced: always the exact value, never a correction needed.
+    const random = (() => { let a = 99; return () => ((a = (a * 1103515245 + 12345) % 2147483648) / 2147483648); })();
+    const letters = 'asdfghjkl qwertyuiop zxcvbnm ASDF, .;!?';
+    for (let k = 0; k < 12; k++) {
+      const value = Array.from({ length: 8 + Math.floor(random() * 20) }, () => letters[Math.floor(random() * letters.length)]).join('');
+      const r = await typeInto(run, '#t', value);
+      assert.equal(r.value, value, JSON.stringify(value));
+      assert.equal(r.corrected, false);
+    }
+    // A secret: no slips, no Backspace.
+    await pageLog(page);
+    const secret = await typeInto(run, '#p', 'abcdefghijklmnop', { secret: true });
+    assert.equal(secret.value, 'abcdefghijklmnop');
+    assert.equal(secret.slips, 0);
+    assert.ok(!(await pageLog(page)).some(([type, key]) => key === 'Backspace'));
+    // A page that eats the Backspace: the wrong key stays, and the read-back corrects it to the exact value.
+    const eaten = await typeInto(run, '#eat', 'reservations');
+    assert.equal(eaten.value, 'reservations');
+    assert.equal(eaten.corrected, true);
+  });
+}
