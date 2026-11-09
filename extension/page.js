@@ -5609,8 +5609,9 @@
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
         };
-        // Typed like any fill (input.js; sign-in pages watch their key events most), the plain set as the fallback.
-        if (realInput()) await realInput().type(el, action.text, { kept: () => fillKept(el, action.text).kept, fallback: setSecret });
+        // Typed like any fill (input.js; sign-in pages watch their key events most), the plain set as the fallback. The
+        // rhythm is planned blind (`secret`): its timing, and so inputMs, depend on the value's length only.
+        if (realInput()) await realInput().type(el, action.text, { kept: () => fillKept(el, action.text).kept, fallback: setSecret, secret: true });
         else setSecret();
         rememberFilledSecret(el, action.text);
         result.fillCheck = () => fillKept(el, action.text);

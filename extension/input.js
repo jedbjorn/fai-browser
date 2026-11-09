@@ -16,10 +16,14 @@
     enabled: true,
     // Think time before each action (ms, a jittered draw between the two).
     think: [15, 70],
-    // Typing: characters typed key by key until this much time went by or this many characters, the rest inserted
-    // in one piece (as an IME commit or autocomplete does), so long text never takes long.
+    // Typing: characters typed key by key while the planned rhythm stays within this much time (a whole value within
+    // RHYTHM.slack of it is typed in full) and up to this many characters, the rest inserted in one piece (as an IME
+    // commit or autocomplete does), so long text never takes long.
     typeBudgetMs: 1000,
     maxTyped: 40,
+    // The typist's speed for this session (RHYTHM): the worker sends one seed per lease, so every document of a task
+    // types at the same pace; 0 means a seed of this document's own.
+    rhythmSeed: 0,
     // Wheel scrolling of the window to an off-screen target: farther than this jumps (scrollIntoView).
     revealMaxPx: 4000,
     // Trusted input (the worker's chrome.debugger replay, trusted-input.js): set by the worker per call, only when
@@ -496,6 +500,263 @@
     return { key: ch, code: '', keyCode: 0, charCode: point, shift: false };
   }
 
+  // ---------------------------------------------------------------------------------------------------------------
+  // Typing rhythm: when each key of a fill goes down and comes up, planned before the first key (pure: no DOM, no
+  // timers, `random` injectable so test/typing-rhythm.test.js runs it seeded). Shaped on keystroke studies of fast
+  // typists rather than a steady metronome:
+  // - a typist per session (config.rhythmSeed, one per lease): the median keydown-to-keydown interval (IKI) and key
+  //   hold, drawn once, so pace differs between tasks and stays put within one;
+  // - log-normal (right-skewed) intervals around that median, scaled by context: common English bigrams and a change
+  //   of hand are quicker; the same finger on another key, Shift, digits, symbols and keys outside the US layout
+  //   slower; a new word, the key after punctuation and the start of a new burst (keys come in runs of 3-8) later;
+  // - rare hesitations (2% of keys, 250-550 ms, at most 600 ms per fill);
+  // - holds log-normal on their own, so a key can still be down when the next goes down (rollover), never across a
+  //   Shift change, on the same key twice, or for Enter and keys outside the US layout; at most two keys down;
+  // - no two events closer than RHYTHM.sep ms (a keyup within a few ms of a keydown reads as a script).
+  // A secret (fill_secret, a password field) is planned blind: intervals and holds from its length alone, no rollover,
+  // Shift slotted into the gaps, so neither the time a fill took nor how much was typed says more than its length.
+  // ---------------------------------------------------------------------------------------------------------------
+
+  const RHYTHM = {
+    iki: [75, 108], // session median IKI range (ms, log-uniform): about 95-130 WPM at the keyboard
+    hold: [62, 92], // session median hold range (ms, log-uniform)
+    ikiSigma: 0.3,
+    holdSigma: 0.22,
+    ikiMin: 35,
+    ikiMax: 650,
+    holdMin: 30,
+    holdMax: 180,
+    burst: [3, 8], // keys per burst
+    inBurst: 0.92,
+    burstStart: 1.3,
+    bigram: 0.8,
+    alternate: 0.88,
+    sameFinger: 1.3,
+    sameKey: 1.05,
+    shift: 1.35,
+    shiftRun: 1.1,
+    digit: 1.25,
+    digitRun: 1.1,
+    symbol: 1.25,
+    foreign: 1.4,
+    enter: 1.6,
+    wordStart: 1.3,
+    afterPunctuation: 1.5,
+    floor: 0.62, // lowest combined context factor
+    hesitation: 0.02, // chance per key
+    hesitationMs: [250, 550],
+    hesitationCap: 600, // most hesitation per fill
+    lead: 45, // median Shift lead before its key (ms)
+    sep: 8, // least time between two events
+    blindIkiMin: 70,
+    slack: 1.4, // a whole value is typed when its plan is within budget * slack
+  };
+
+  // Common English bigrams (letters, either case): the hands know them.
+  const BIGRAMS = new Set(('th he in er an re on at en nd ti es or te of ed is it al ar st to nt ng se ha as ou io le ve co '
+    + 'me de hi ri ro ic ne ea ra ce li ch ll be ma si om ur').split(' '));
+  // Touch-typing fingers on a US keyboard, by physical key: hand (L/R) and finger 0-3 (pinky to index).
+  const FINGERS = {};
+  for (const [finger, codes] of Object.entries({
+    L0: 'Backquote Digit1 KeyQ KeyA KeyZ', L1: 'Digit2 KeyW KeyS KeyX', L2: 'Digit3 KeyE KeyD KeyC',
+    L3: 'Digit4 Digit5 KeyR KeyT KeyF KeyG KeyV KeyB', R3: 'Digit6 Digit7 KeyY KeyU KeyH KeyJ KeyN KeyM',
+    R2: 'Digit8 KeyI KeyK Comma', R1: 'Digit9 KeyO KeyL Period',
+    R0: 'Digit0 Minus Equal KeyP BracketLeft BracketRight Backslash Semicolon Quote Slash',
+  })) for (const code of codes.split(' ')) FINGERS[code] = finger;
+  const PUNCTUATION = /^[.,;:!?)]$/;
+
+  // A small seeded generator (mulberry32): the session's draws, and the tests' per-key draws.
+  function seeded(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /** The typist of a session: median IKI and hold (ms), drawn once from `seed`. */
+  function rhythmSession(seed) {
+    const draw = seeded(seed || 1);
+    const logUniform = ([low, high]) => low * (high / low) ** draw();
+    return { iki: logUniform(RHYTHM.iki), hold: logUniform(RHYTHM.hold) };
+  }
+
+  function describeKey(ch) {
+    const key = keyFor(ch);
+    const kind = ch === ' ' ? 'space' : ch === '\n' ? 'enter' : /^[a-z]$/i.test(ch) ? 'letter' : /^[0-9]$/.test(ch) ? 'digit'
+      : key.code ? 'symbol' : 'foreign';
+    const finger = FINGERS[key.code] ?? null;
+    return { ch, shift: key.shift, kind, id: key.code || ch, finger, hand: finger?.[0] ?? null };
+  }
+
+  // How much slower (above 1) or quicker this key comes after `prev`.
+  function contextFactor(prev, key) {
+    if (!prev) return 1;
+    let f = 1;
+    if (key.kind === 'letter' && prev.kind === 'letter' && BIGRAMS.has((prev.ch + key.ch).toLowerCase())) f *= RHYTHM.bigram;
+    if (prev.hand && key.hand) {
+      if (prev.id === key.id) f *= RHYTHM.sameKey;
+      else if (prev.finger === key.finger) f *= RHYTHM.sameFinger;
+      else if (prev.hand !== key.hand) f *= RHYTHM.alternate;
+    }
+    if (key.shift) f *= prev.shift ? RHYTHM.shiftRun : RHYTHM.shift;
+    if (key.kind === 'digit') f *= prev.kind === 'digit' ? RHYTHM.digitRun : RHYTHM.digit;
+    if (key.kind === 'symbol') f *= RHYTHM.symbol;
+    if (key.kind === 'foreign') f *= RHYTHM.foreign;
+    if (key.kind === 'enter' || prev.kind === 'enter') f *= RHYTHM.enter;
+    if (prev.kind === 'space' && key.kind !== 'space') f *= RHYTHM.wordStart;
+    if (PUNCTUATION.test(prev.ch)) f *= RHYTHM.afterPunctuation;
+    return Math.max(RHYTHM.floor, f);
+  }
+
+  // The random part of a plan, key by key: interval before it, hold, Shift lead, hesitation.
+  function rhythmDraws(keys, session, random, blind) {
+    const normal = () => Math.sqrt(-2 * Math.log(1 - random())) * Math.cos(2 * Math.PI * random());
+    const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
+    const out = { iki: [], hold: [], lead: [], bursts: [], hesitations: 0, hesitationMs: 0, start: 0, tail: 0 };
+    let burstLeft = 0;
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const prev = keys[i - 1];
+      let f = blind ? 1 : contextFactor(prev, key);
+      const wordStart = !blind && prev?.kind === 'space' && key.kind !== 'space';
+      if (i === 0 || wordStart || burstLeft <= 0) {
+        out.bursts.push(i);
+        burstLeft = RHYTHM.burst[0] + Math.floor(random() * (RHYTHM.burst[1] - RHYTHM.burst[0] + 1));
+        if (i > 0 && !wordStart) f *= RHYTHM.burstStart;
+      } else {
+        f *= RHYTHM.inBurst;
+      }
+      burstLeft--;
+      let iki = i === 0 ? 0 : clamp(session.iki * f * Math.exp(RHYTHM.ikiSigma * normal()), blind ? RHYTHM.blindIkiMin : RHYTHM.ikiMin, RHYTHM.ikiMax);
+      if (i > 0 && random() < RHYTHM.hesitation) {
+        const [low, high] = RHYTHM.hesitationMs;
+        const extra = Math.min(low + random() * (high - low), RHYTHM.hesitationCap - out.hesitationMs);
+        if (extra > 0) {
+          iki += extra;
+          out.hesitations++;
+          out.hesitationMs += extra;
+        }
+      }
+      out.iki.push(iki);
+      const space = !blind && key.kind === 'space' ? 0.9 : 1;
+      out.hold.push(clamp(session.hold * space * Math.exp(RHYTHM.holdSigma * normal()), RHYTHM.holdMin, RHYTHM.holdMax));
+      out.lead.push(clamp(RHYTHM.lead * Math.exp(0.3 * normal()), 20, 90));
+    }
+    out.start = clamp(RHYTHM.lead * Math.exp(0.3 * normal()), 30, 90);
+    out.tail = clamp(25 + random() * 30, 2 * RHYTHM.sep, 60);
+    return out;
+  }
+
+  const rollable = key => key.kind !== 'enter' && key.kind !== 'foreign';
+
+  // The events of the first `count` keys: { at, type: 'down'|'up'|'shift', index?, on? }, in time order from 0.
+  function rhythmLayout(keys, d, count) {
+    const { sep, holdMin } = RHYTHM;
+    const events = [];
+    let shift = false;
+    let last = null; // the previous key: { index, key, down, up (tentative until the next key is placed) }
+    let lastUp = -Infinity; // the key before it, already up
+    for (let i = 0; i < count; i++) {
+      const key = keys[i];
+      // At most two keys down: the one before the previous is up before this one goes down.
+      let down = Math.max(i === 0 ? 0 : last.down + d.iki[i], lastUp + sep);
+      const change = key.shift !== shift;
+      let mod = change ? down - d.lead[i] : null;
+      if (last) {
+        last.up = Math.max(last.up, lastUp + sep);
+        const releaseFirst = change || last.key.id === key.id || !rollable(last.key) || !rollable(key);
+        if (releaseFirst) {
+          const before = (mod ?? down) - sep;
+          if (last.up > before) last.up = Math.max(last.down + holdMin, lastUp + sep, before);
+          if (last.up > before) {
+            const push = last.up - before;
+            down += push;
+            if (mod !== null) mod += push;
+          }
+        } else if (Math.abs(last.up - down) < sep) {
+          const earlier = down - sep;
+          last.up = earlier >= last.down + holdMin && earlier >= lastUp + sep ? earlier : down + sep;
+        }
+        events.push({ at: last.up, type: 'up', index: last.index });
+        lastUp = last.up;
+      }
+      if (mod !== null) {
+        if (last) mod = Math.max(mod, last.down + sep);
+        down = Math.max(down, mod + 15);
+        events.push({ at: mod, type: 'shift', on: key.shift });
+        shift = key.shift;
+      }
+      events.push({ at: down, type: 'down', index: i });
+      last = { index: i, key, down, up: down + d.hold[i] };
+    }
+    if (last) {
+      last.up = Math.max(last.up, lastUp + sep);
+      events.push({ at: last.up, type: 'up', index: last.index });
+      if (shift) events.push({ at: last.up + d.tail, type: 'shift', on: false });
+    }
+    events.sort((a, b) => a.at - b.at);
+    const base = events.length ? events[0].at : 0;
+    for (const event of events) event.at -= base;
+    return { events, total: events.length ? events.at(-1).at : 0 };
+  }
+
+  // A secret's events: times from the draws alone (no context, no rollover), Shift halfway through the gap before its
+  // key, and a total that does not depend on which keys needed it.
+  function rhythmLayoutBlind(keys, d, count) {
+    const events = [];
+    let shift = false;
+    let at = d.start;
+    let prevUp = 0;
+    for (let i = 0; i < count; i++) {
+      if (i > 0) at += d.iki[i];
+      const hold = i < count - 1 ? Math.min(d.hold[i], 0.45 * d.iki[i + 1]) : d.hold[i];
+      if (keys[i].shift !== shift) {
+        shift = keys[i].shift;
+        events.push({ at: (prevUp + at) / 2, type: 'shift', on: shift });
+      }
+      events.push({ at, type: 'down', index: i }, { at: at + hold, type: 'up', index: i });
+      prevUp = at + hold;
+    }
+    if (shift) events.push({ at: prevUp + d.tail / 2, type: 'shift', on: false });
+    events.sort((a, b) => a.at - b.at);
+    return { events, total: count ? prevUp + d.tail : 0 };
+  }
+
+  /**
+   * The plan for typing `text`: { events, total, typed, chunked, blind, bursts (the key indices that start one),
+   * hesitations, hesitationMs (drawn over the first maxTyped keys) }. All of it when the whole plan fits within
+   * budgetMs * RHYTHM.slack (and maxTyped), else the longest prefix whose plan fits within budgetMs; `typed` keys are
+   * typed, the rest goes in as one insertion.
+   */
+  function typingPlan(text, { session = rhythmSession(1), random = Math.random, budgetMs = config.typeBudgetMs,
+    maxTyped = config.maxTyped, blind = false } = {}) {
+    const chars = Array.from(text);
+    const n = Math.max(0, Math.min(chars.length, maxTyped));
+    const keys = chars.slice(0, n).map(describeKey);
+    const d = rhythmDraws(keys, session, random, blind);
+    const lay = count => (blind ? rhythmLayoutBlind : rhythmLayout)(keys, d, count);
+    let count = n;
+    let plan = lay(n);
+    if (n < chars.length || plan.total > budgetMs * RHYTHM.slack) {
+      while (count > 0 && plan.total > budgetMs) plan = lay(--count);
+    }
+    return { ...plan, typed: count, chunked: count < chars.length, blind, bursts: d.bursts.filter(i => i < count),
+      hesitations: d.hesitations, hesitationMs: d.hesitationMs };
+  }
+
+  // The session's typist (config.rhythmSeed, else this document's own seed).
+  const documentSeed = (Math.floor(Math.random() * 2 ** 32) >>> 0) || 1;
+  let typist = null;
+  function currentTypist() {
+    const seed = config.rhythmSeed || documentSeed;
+    if (typist?.seed !== seed) typist = { seed, session: rhythmSession(seed) };
+    return typist.session;
+  }
+
   function fireKey(el, type, key, mods = {}) {
     const press = type === 'keypress';
     const code = press ? key.charCode : key.keyCode;
@@ -578,9 +839,39 @@
   const CDP_META = 4;
   const CDP_SHIFT = 8;
 
-  // Trusted typing: select-all when the field holds something, keys within the typing budget (by planned time), the
-  // rest as one insertText. Null when nothing was dispatched (the synthetic path runs instead).
-  async function typeTrusted(el, text) {
+  // The trusted-input steps of a plan: its events with the waits between them (none over TRUSTED_WAIT_MS; the
+  // worker's limit is 600), Shift and keys as the browser's own.
+  const TRUSTED_WAIT_MS = 500;
+  function rhythmSteps(chars, plan) {
+    const steps = [];
+    let clock = 0;
+    let shift = false;
+    const waitUntil = at => {
+      let ms = Math.round(at) - clock;
+      clock += Math.max(0, ms);
+      for (; ms > 0; ms -= TRUSTED_WAIT_MS) steps.push({ wait: Math.min(ms, TRUSTED_WAIT_MS) });
+    };
+    for (const event of plan.events) {
+      waitUntil(event.at);
+      if (event.type === 'shift') {
+        shift = event.on;
+        steps.push({ m: 'key', type: shift ? 'rawKeyDown' : 'keyUp', key: 'Shift', code: 'ShiftLeft', keyCode: 16, modifiers: shift ? CDP_SHIFT : 0 });
+        continue;
+      }
+      const ch = chars[event.index];
+      const key = keyFor(ch);
+      const modifiers = shift ? CDP_SHIFT : 0;
+      steps.push(event.type === 'down'
+        ? { m: 'key', type: 'keyDown', key: key.key, code: key.code, keyCode: key.keyCode, text: ch === '\n' ? '\r' : ch, modifiers }
+        : { m: 'key', type: 'keyUp', key: key.key, code: key.code, keyCode: key.keyCode, modifiers });
+    }
+    if (plan.blind) waitUntil(plan.total);
+    return steps;
+  }
+
+  // Trusted typing: select-all when the field holds something, the plan's keys, the rest as one insertText. Null when
+  // nothing was dispatched (the synthetic path runs instead).
+  async function typeTrusted(el, text, plan) {
     const steps = [];
     if (el.value) {
       const mod = MAC ? NAMED.Meta : NAMED.Control;
@@ -594,29 +885,56 @@
         { wait: Math.round(jitter(60, 30, 15)) });
     }
     const chars = Array.from(text);
-    let planned = 0;
-    let typed = 0;
-    let shift = false;
-    while (typed < chars.length && typed < config.maxTyped && planned < config.typeBudgetMs) {
-      const ch = chars[typed];
-      const key = keyFor(ch);
-      if (key.shift !== shift) {
-        shift = key.shift;
-        steps.push({ m: 'key', type: shift ? 'rawKeyDown' : 'keyUp', key: 'Shift', code: 'ShiftLeft', keyCode: 16, modifiers: shift ? CDP_SHIFT : 0 });
-      }
-      const modifiers = shift ? CDP_SHIFT : 0;
-      const hold = Math.round(jitter(35, 20, 12));
-      const gap = Math.round(jitter(ch === ' ' ? 70 : 40, 30, 10));
-      steps.push({ m: 'key', type: 'keyDown', key: key.key, code: key.code, keyCode: key.keyCode, text: ch === '\n' ? '\r' : ch, modifiers },
-        { wait: hold }, { m: 'key', type: 'keyUp', key: key.key, code: key.code, keyCode: key.keyCode, modifiers }, { wait: gap });
-      planned += hold + gap;
-      typed++;
-    }
-    if (shift) steps.push({ m: 'key', type: 'keyUp', key: 'Shift', code: 'ShiftLeft', keyCode: 16, modifiers: 0 });
-    const chunked = typed < chars.length;
-    if (chunked) steps.push({ m: 'text', text: chars.slice(typed).join('') });
+    steps.push(...rhythmSteps(chars, plan));
+    if (plan.chunked) steps.push({ wait: Math.round(jitter(60, 30, 15)) }, { m: 'text', text: chars.slice(plan.typed).join('') });
     const reply = await sendTrusted(steps);
-    return reply.dispatched ? { typed, chunked } : null;
+    return reply.dispatched ? { typed: plan.typed, chunked: plan.chunked } : null;
+  }
+
+  // How far behind its plan synthetic typing may fall (a page whose key handlers are slow) before the rest goes in
+  // as one insertion.
+  const RHYTHM_LATE_MS = 400;
+
+  // Plays a plan's events on `el` against the clock, so a slow handler eats into the next gap instead of adding to
+  // it. Stops early, releasing what is held, when the field went away or a key would go down more than
+  // RHYTHM_LATE_MS late. Returns how many keys went down.
+  async function playRhythm(el, chars, plan, state) {
+    const started = performance.now();
+    const held = new Map();
+    let typed = 0;
+    let stopped = false;
+    for (const event of plan.events) {
+      if (event.at > 0) await pause(Math.max(event.at - (performance.now() - started), RHYTHM.sep / 2));
+      if (!el.isConnected || (event.type === 'down' && performance.now() - started - event.at > RHYTHM_LATE_MS)) {
+        stopped = true;
+        break;
+      }
+      if (event.type === 'shift') {
+        fireKey(el, event.on ? 'keydown' : 'keyup', NAMED.Shift, { shift: event.on });
+        state.shift = event.on;
+        continue;
+      }
+      const ch = chars[event.index];
+      const key = keyFor(ch);
+      const mods = { shift: state.shift };
+      if (event.type === 'down') {
+        let proceed = fireKey(el, 'keydown', key, mods);
+        if (proceed && key.charCode) proceed = fireKey(el, 'keypress', key, mods);
+        if (proceed) inputText(el, ch, state);
+        held.set(event.index, key);
+        typed = event.index + 1;
+      } else if (held.delete(event.index)) {
+        fireKey(el, 'keyup', key, mods);
+      }
+    }
+    if (stopped && (held.size || state.shift)) await pause(RHYTHM.sep);
+    for (const key of held.values()) fireKey(el, 'keyup', key, { shift: state.shift });
+    if (state.shift) {
+      fireKey(el, 'keyup', NAMED.Shift, {});
+      state.shift = false;
+    }
+    if (plan.blind && !stopped) await pause(plan.total - (performance.now() - started));
+    return typed;
   }
 
   /**
@@ -627,9 +945,11 @@
    * `kept()` says whether the field shows the text afterwards; when it does not (a page that swallowed the keys, or
    * a field that was replaced), `fallback()` sets the value the plain way and the pending change is dropped (the
    * fallback fires its own).
+   * Key timing follows the session's typing rhythm (typingPlan); `secret` (fill_secret; a password field counts as
+   * one) plans it blind, from the length alone.
    * Resolves { typed, chunked, fallback, ms }.
    */
-  async function type(el, text, { kept = () => true, fallback = null } = {}) {
+  async function type(el, text, { kept = () => true, fallback = null, secret = false } = {}) {
     const started = performance.now();
     await think();
     const doc = el.ownerDocument;
@@ -643,8 +963,9 @@
       pending = { el, start: el.value };
       watchBlur(viewOf(el));
     }
+    const plan = typingPlan(text, { session: currentTypist(), blind: secret || el.type === 'password' });
     if (config.trusted && deepActive(doc) === el) {
-      const result = await typeTrusted(el, text);
+      const result = await typeTrusted(el, text, plan);
       if (result) {
         // The browser fires change itself on the blur or Enter that follows trusted typing.
         if (pending?.el === el) pending = null;
@@ -671,27 +992,7 @@
       delete state.onShortcut;
     }
     const chars = Array.from(text);
-    let typed = 0;
-    const typingStarted = performance.now();
-    while (typed < chars.length && el.isConnected) {
-      if (typed >= config.maxTyped || performance.now() - typingStarted > config.typeBudgetMs) break;
-      const ch = chars[typed];
-      const key = keyFor(ch);
-      if (key.shift !== state.shift) {
-        fireKey(el, key.shift ? 'keydown' : 'keyup', NAMED.Shift, { shift: key.shift });
-        state.shift = key.shift;
-        await pause(jitter(35, 20, 8));
-      }
-      const mods = { shift: state.shift };
-      let proceed = fireKey(el, 'keydown', key, mods);
-      if (proceed && key.charCode) proceed = fireKey(el, 'keypress', key, mods);
-      if (proceed) inputText(el, ch, state);
-      await pause(jitter(35, 20, 12));
-      fireKey(el, 'keyup', key, mods);
-      typed++;
-      if (typed < chars.length) await pause(jitter(ch === ' ' ? 70 : 40, 30, 10));
-    }
-    if (state.shift) fireKey(el, 'keyup', NAMED.Shift, {});
+    const typed = await playRhythm(el, chars, plan, state);
     const chunked = typed < chars.length && el.isConnected;
     if (chunked) {
       await pause(jitter(60, 30, 15));
@@ -942,6 +1243,7 @@
     for (const key of ['enabled', 'typeBudgetMs', 'maxTyped', 'revealMaxPx', 'trusted']) {
       if (typeof settings[key] === typeof config[key]) config[key] = settings[key];
     }
+    if (Number.isInteger(settings.rhythmSeed) && settings.rhythmSeed >= 0) config.rhythmSeed = settings.rhythmSeed >>> 0;
     if (Array.isArray(settings.think) && settings.think.length === 2 && settings.think.every(Number.isFinite)) {
       config.think = [Math.max(0, settings.think[0]), Math.max(settings.think[0], settings.think[1])];
     }
@@ -952,5 +1254,7 @@
     get enabled() { return config.enabled; },
     click, keyboardClick, type, enter, press, hover, select, scroll, reveal, configure,
     stats: () => ({ ...totals }),
+    // The typing rhythm's pure parts, for test/typing-rhythm.test.js.
+    rhythm: { session: rhythmSession, plan: typingPlan, steps: rhythmSteps, seeded, params: RHYTHM },
   };
 })();
