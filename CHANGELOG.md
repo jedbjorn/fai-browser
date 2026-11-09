@@ -16,7 +16,7 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 ### Changed
 
 - Approving in the request modal asks the browser for the tab's host and up to 10 other exact origins of the request in one prompt (not only the tab's host); the ones it adds are removed again when the session ends, and a list that cannot be asked for falls back to the tab's host.
-- Screenshots box every cross-origin frame FAI did not read (before, only Strict mode and payment or sign-in widgets).
+- Screenshots box every cross-origin frame, `<object>` and `<embed>` FAI did not read (before, only Strict mode and payment or sign-in widgets).
 - A point click on any cross-origin frame stays refused as `point_frame`; name an approved frame control's action id instead.
 
 ### Known limits
