@@ -2048,12 +2048,12 @@ export function createDaemon(options = {}) {
     // The same client instance (one MCP server, SDK client or CLI run: the whole X-Fai-Client header) asking again
     // with the same arguments while its request still waits for the user (a retried call): that pending request is the
     // answer. A second one would open a second task tab and request window, and the user's click would approve only
-    // one of them. Another instance (another agent session, another CLI run) always gets its own request.
-    // TODO(feat/invite): when record.ownerSession lands, add
-    // `(record.ownerSession ?? null) === (session?.sessionId ?? null)` to this predicate (whichever merges second).
+    // one of them. Another instance (another agent session, another CLI run), or another owner session (X-Fai-Session),
+    // always gets its own request.
     const unique = [...new Set(origins)];
     const repeat = instance && [...requests.values()].find(record => record.state === 'pending'
-      && record.clientInstance === instance && now() < record.createdAt + record.ttlMs
+      && record.clientInstance === instance && (record.ownerSession ?? null) === (session?.sessionId ?? null)
+      && now() < record.createdAt + record.ttlMs
       && record.mode === mode && record.reason === reason && record.instruction === instruction && record.url === url
       && record.ttlMs === ttlMs && record.origins.length === unique.length
       && unique.every(origin => record.origins.includes(origin))
