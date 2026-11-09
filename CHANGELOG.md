@@ -13,6 +13,8 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 - `frames` in observations and act results lists the page's cross-origin frames: the ones read and, for each one not read, its origin and why (`not_approved`, `no_access`, `sandboxed`, `limit`, `unavailable`), as untrusted page content; the trusted `next` counts the unread frames and tells the agent to ask for their origins. Frames from unapproved origins are still never read.
 - An `origin_changed` pause names the origin the tab went to (origin only): `leftOrigin` in the request view and the paused result, as untrusted text, so the agent can request it up front (a sign-in hop, for example).
 - Occasional typing slips: now and then a neighbouring key, a beat, Backspace and the right key (about one per 64 characters when there is time; at most one per fill, two from 40 characters). Letters only, never in secrets, password, numeric or one-time-code fields, fields with `maxlength`, or fields with a suggestion list.
+- **Invite agent.** On any normal web tab the toolbar popup offers **Invite an agent to this tab**: one tap invites the only live coding-agent session (or one tap on its row when there are several, newest first: host · repo · last active), at the level last chosen for invites (initially Use; Read, Use, Act, and Test site on a listed test site), with an optional "What should it do?" in your own words. The click is the approval: the tab is bound at once on its exact origin, gets the usual FAI mark, and the agent is woken with a fixed FAI message naming a single-use invite id (`inv-…`, 10 minutes). It calls `fai_browser_open {"inviteId": "inv-…"}` (`fai_browser_run` with the Jev autopilot) and gets the page. When the agent cannot be woken, the popup shows **Tell your agent: join FAI invite inv-…** with Copy; `fai_browser_status` lists invites too. Invites expire, are used once, are revoked when the tab closes or leaves its site before an agent joins, can be cancelled from the popup, and are limited to 6 a minute per browser.
+- **Wakes for Claude Code and Codex.** Every MCP server registers with the FAI service as an agent session (host, repo folder name, pid, last activity, wake capability) and holds a long-poll for wakes. Claude Code sessions (2.1.224+, token since 2.1.228) are woken through their own messaging socket, Codex sessions (0.149+, once a tool call named the thread) through `codex queue`. Approving or resuming a request now wakes the session that made it, so the agent continues without a background `wait` command; `next.text` says to end the turn for such sessions and keeps the `wait --until active` command for the others. New: `POST /v1/sessions` and its poll, update, report and delete routes, `POST /v1/invites/:id/join`, `sessions` and `invites` in status, `FAI_MCP_REGISTRY`, `FAI_WAKE`, `FAI_CODEX_BIN`. Codex is asked (server instructions) to call `fai_browser_status` once early so it can be invited.
 
 ### Changed
 
@@ -30,6 +32,10 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 - Backspace through trusted input on macOS carries its `deleteBackward` command, which the worker now allows.
 - `maxlength` no longer leaves half an emoji (a lone surrogate) on the synthetic path.
 - A fill with an empty value now clears the field, and is reported kept only when the field is empty.
+
+### Security
+
+- Only a click in the toolbar popup creates an invite: the worker accepts `invite` from `popup.html` only, the service only over the paired extension channel, and no client API route creates one. An invite grants exactly the chosen level on the tab's exact origin; every guardrail applies unchanged. Wake texts are fixed templates without page content. A session's wakes need its own random key, and the MCP server writes only to its own host's channel. See [the safety model](docs/guide/safety-model.md#9-invites-and-wakes).
 
 ### Known limits
 
