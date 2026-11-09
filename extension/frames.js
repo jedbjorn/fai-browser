@@ -31,6 +31,18 @@
   const COMPOSITES_MAX = 32;
   const FRAME_TARGET = /^f([1-9])\.(\d{1,3})$/;
   const ORIGIN = /^https?:\/\/[^/\s?#]+$/;
+  // Every frame call is bounded, so a busy or hung frame never holds a command (or the capture gate) for long: a probe
+  // and a read (observe, approval, redaction) get PROBE_MS and FRAME_CALL_MS; an act gets FRAME_SLOW_MS, then one more
+  // probe of that frame, and fails as `timeout` when that does not answer within PROBE_MS either.
+  const PROBE_MS = 2_000;
+  const FRAME_CALL_MS = 3_000;
+  const FRAME_SLOW_MS = 6_000;
+  const TIMED_OUT = Symbol('timed out');
+  const within = (promise, ms) => {
+    let timer;
+    return Promise.race([promise, new Promise(resolve => { timer = setTimeout(() => resolve(TIMED_OUT), Math.max(0, ms)); })])
+      .finally(() => clearTimeout(timer));
+  };
   // executeScript refusals that happen before the script runs (the target is gone or out of reach).
   const NOT_STARTED = /No document with id|No frame with id|Cannot access|Missing host permission|showing error page/i;
   // How far a frame may have moved (CSS px) between two looks and still count as in place.
@@ -95,10 +107,13 @@
     return exactOrigins().some(origin => origin !== session?.origin) || (session?.scope === 'domain' && (session.sites ?? []).length > 0);
   }
 
+  // The probe's answers, or [] when the browser refuses it, or null when a frame did not answer within PROBE_MS (a
+  // frame busy with its own script, or hung: an allFrames probe waits for every frame).
   async function probeFrames(tabId, frameIds = null) {
     try {
       const target = frameIds ? { tabId, frameIds } : { tabId, allFrames: true };
-      const results = await chrome.scripting.executeScript({ target, func: frameProbe });
+      const results = await within(chrome.scripting.executeScript({ target, func: frameProbe }), PROBE_MS);
+      if (results === TIMED_OUT) return null;
       return (Array.isArray(results) ? results : []).filter(item => Number.isInteger(item?.frameId) && item.frameId !== 0
         && item.result && typeof item.result.origin === 'string' && Array.isArray(item.result.path) && item.result.path.length);
     } catch {
@@ -120,6 +135,24 @@
   // One page.js call inside a frame: pinned to its document where the browser has document ids (Chromium), else to
   // its frame id (page.js then checks its own origin and revision). A fresh document is probed before page.js goes in.
   async function callFrame(tabId, frame, method, args, context = frameContext(tabId)) {
+    if (method !== 'execute') {
+      const value = await within(callFrameOnce(tabId, frame, method, args, context), FRAME_CALL_MS);
+      if (value === TIMED_OUT) throw new ExtensionError('timeout', 'The frame did not answer in time');
+      return value;
+    }
+    // An act may take long (realistic typing, a settle): only a frame that stops answering altogether is given up.
+    const call = callFrameOnce(tabId, frame, method, args, context);
+    let watch;
+    const watchdog = new Promise((_, reject) => {
+      watch = setTimeout(async () => {
+        const probe = await probeFrames(tabId, [frame.frameId]);
+        if (probe === null) reject(new ExtensionError('timeout', 'The frame stopped answering'));
+      }, FRAME_SLOW_MS);
+    });
+    return Promise.race([call, watchdog]).finally(() => clearTimeout(watch));
+  }
+
+  async function callFrameOnce(tabId, frame, method, args, context) {
     const secrets = { ...secretOptions(), context };
     const target = frame.documentId ? { tabId, documentIds: [frame.documentId] } : { tabId, frameIds: [frame.frameId] };
     // The browser refusing the injection itself (the document or frame is gone, no access) means nothing ran: never a
@@ -133,7 +166,7 @@
     const run = () => script({ target, func: pageCall, args: [method, args, secrets] });
     let [injection] = await run();
     if (injection?.result?.missing) {
-      const [probe] = await probeFrames(tabId, [frame.frameId]);
+      const [probe] = (await probeFrames(tabId, [frame.frameId])) ?? [];
       if (!probe || probe.result.origin !== frame.origin || !frameApproved(probe.result.origin)) {
         throw new ExtensionError('cross_origin', 'The frame left the approved origins; observe again', { notStarted: true });
       }
@@ -207,7 +240,10 @@
     const slots = (Array.isArray(top.frameSlots) ? top.frameSlots : []).map(slot => placeSlot(slot, { dx: 0, dy: 0, clip: null }))
       .filter(Boolean);
     if (!slots.length) return { top, read, unread };
-    const probes = anyFrameApprovable() ? await probeFrames(tabId) : [];
+    const probed = anyFrameApprovable() ? await probeFrames(tabId) : [];
+    // No answer within PROBE_MS: which frame is where is unknown, so none is read.
+    const unknown = probed === null;
+    const probes = probed ?? [];
     const byPath = new Map(probes.map(item => [pathKey(item.result.path), item]));
     let level = slots;
     const seen = new Set();
@@ -220,7 +256,9 @@
         seen.add(key);
         const probe = byPath.get(key);
         const origin = probe ? probe.result.origin : slot.declared;
-        if (!probe) {
+        if (!probe && unknown) {
+          unread.push({ origin, reason: 'unavailable', declared: true });
+        } else if (!probe) {
           // Only the frame element's src names this origin (page-provided): `declared`.
           unread.push({ origin, reason: origin && frameApproved(origin) ? 'no_access' : 'not_approved', declared: true });
         } else if (probe.result.opaque) {
@@ -440,7 +478,9 @@
   // approved origin. Else nothing runs: cross_origin (the frame left the approved origins or is gone) or stale (it
   // shows another approved document).
   async function recheckFrame(tabId, frame) {
-    const [probe] = await probeFrames(tabId, [frame.frameId]);
+    const found = await probeFrames(tabId, [frame.frameId]);
+    if (found === null) throw new ExtensionError('timeout', 'The frame did not answer in time; nothing ran');
+    const [probe] = found;
     if (!probe || pathKey(probe.result.path) !== pathKey(frame.path)) {
       throw new ExtensionError('cross_origin', 'The frame is gone or left the approved origins; observe again');
     }
@@ -556,7 +596,7 @@
       const deadline = Date.now() + FRAME_LOAD_CAP_MS;
       while (Date.now() < deadline) {
         if (navigation?.started || navigation?.urlChanged) return { ...kept, fromUrl, target, expectNavigation: true };
-        const [probe] = await probeFrames(tab.id, [frame.frameId]);
+        const [probe] = (await probeFrames(tab.id, [frame.frameId])) ?? [];
         const replaced = !probe || probe.result.page === false || (probe.documentId && frame.documentId && probe.documentId !== frame.documentId);
         if (replaced && (!probe || probe.result.ready === 'complete')) break;
         await delay(NAV_POLL_MS);
@@ -595,7 +635,8 @@
       height: Math.ceil(clip.bottom - clip.top), kind });
     const visible = clip => clip.right > clip.left && clip.bottom > clip.top;
     // Where each frame read last is now (each probed alone: one that is gone does not hide the others).
-    const probes = await Promise.all(frames.map(frame => probeFrames(tabId, [frame.frameId]).then(([probe]) => [frame, probe])));
+    // A probe that does not answer within PROBE_MS leaves its frame unmatched: boxed whole, the capture dirty.
+    const probes = await Promise.all(frames.map(frame => probeFrames(tabId, [frame.frameId]).then(found => [frame, found?.[0] ?? null])));
     const byPath = new Map();
     for (const [frame, probe] of probes) {
       const same = probe && probe.result.origin === frame.origin && !probe.result.opaque && frameApproved(probe.result.origin)
