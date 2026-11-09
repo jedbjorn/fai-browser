@@ -217,6 +217,32 @@ test('an identical repeat from the same client instance while the request waits 
   assert.notEqual(after.body.requestId, late.body.requestId);
 });
 
+test('an identical repeat from the same client instance is the same request only for the same agent session (X-Fai-Session)', async t => {
+  const ctx = await setup(t);
+  const register = async () => {
+    const response = await ctx.api('POST', '/v1/sessions', { host: 'claude', repo: 'my-repo', pid: process.pid,
+      startedAt: new Date().toISOString(), wake: 'claude-socket' });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    return `${response.body.sessionId}:${response.body.key}`;
+  };
+  const [one, two] = [await register(), await register()];
+  const client = 'claude-code/0f6c1d2e-aaaa-4bbb-8ccc-123456789abc';
+  const body = { origins: [ORIGIN], reason: 'Check members' };
+  const ask = session => ctx.api('POST', '/v1/requests', body, { headers: { 'X-Fai-Client': client, ...(session ? { 'X-Fai-Session': session } : {}) } });
+  const first = await ask(one);
+  assert.equal(first.status, 201);
+  const same = await ask(one);
+  assert.equal(same.status, 200);
+  assert.equal(same.body.requestId, first.body.requestId, 'the same session gets its pending request back');
+  const other = await ask(two);
+  assert.equal(other.status, 201);
+  assert.notEqual(other.body.requestId, first.body.requestId, 'another session owns its own request');
+  const none = await ask(null);
+  assert.equal(none.status, 201);
+  assert.ok(![first.body.requestId, other.body.requestId].includes(none.body.requestId), 'no session is not session one');
+  assert.equal((await ask(two)).body.requestId, other.body.requestId);
+});
+
 test('request url: the start page on the origins, else a default; on the view and the pushed list', async t => {
   const ctx = await setup(t);
   for (const url of ['ftp://example.com/', 'not a url', `${ORIGIN}/${'x'.repeat(2100)}`, 42]) {
