@@ -19,8 +19,8 @@ never used.
   sites do not carry the grant.
 - **Frames are a boundary too.** A frame from another origin inside the approved page is read only when its own
   origin is one of the request's origins (or under an approved domain root), and only when every frame above it was
-  read as well. Any other frame is never read: its text, controls and fields stay out of what the agent gets, and the
-  result only names its origin so the agent can ask you for it. An act on an approved frame's control runs in that frame
+  read as well. Any other frame is never read: its text, controls and fields stay out of what the agent gets, it is
+  blacked out on screenshots, and the result only names its origin (as page content) so the agent can ask you for it. An act on an approved frame's control runs in that frame
   after its origin is checked again; a frame that moved to another origin refuses it. Inside an approved frame every
   layer below applies exactly as on the page, and one page context covers the tab: a checkout page, a password field or
   a credentials page in any frame restricts every frame and the page.

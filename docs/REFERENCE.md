@@ -234,28 +234,41 @@ screenshot boxes is used, and it is only named.
 - **One revision.** With frames read, the observation's revision stands for the page and every frame
   (`<page revision>.<n>`). An act on `f<n>.<id>` runs in that frame on the frame's own revision; the worker first
   probes the frame again: gone or on an origin the request does not approve, `cross_origin` (nothing runs, the
-  session stays active); another document on an approved origin, `stale`. In the frame, `page.js` checks again that
+  session stays active); another document on an approved origin, `stale`. It also looks at the page again (one cheap
+  read of the top document): a page whose revision changed since the observation is `stale`, and the frame runs with
+  the page's current facts (a page that turned into a checkout makes the frame's "Continue" a purchase). An act on a
+  page control (click, Enter in a field, a key) first takes one cheap look at each frame read, for the same reason. A
+  frame document the browser no longer has when the act is injected is never reported as done: the frame is probed
+  again (`stale` or `cross_origin`). In the frame, `page.js` checks again that
   the frame and every ancestor the browser names (`location.ancestorOrigins`, Chromium) are on approved origins. A
   link that would navigate the tab from a frame (`_top`) must stay on the tab's approved site; a link that navigates
   the frame must land on an approved origin. A frame-local navigation is waited for (3 s cap), then the whole page is
   observed again.
 - **Same protections.** The frame runs the same page script with the same level, `forbid` list, Approve gate, secret
-  redaction, vault and consent detection. One page context covers the tab: a purchase page, a password or payment
+  redaction, vault and consent detection. An Approve card for a frame control names the frame's own origin "in a frame
+  of" the page, and the approval is bound to that origin (a secret's cross-site warning compares with it). One page context covers the tab: a purchase page, a password or payment
   field, or a credentials page in any document (page or frame) applies to every document (a "Continue" in a frame
   of a checkout page is a purchase control; a search submit is not a safe submit when a frame holds a password
-  field). Screenshots box each frame's own secrets and fields (moved into the page's coordinates); a frame that does
-  not answer is boxed whole. Strict mode still boxes every cross-origin frame. A point click on a frame is refused as
+  field). One that no longer applies anywhere is dropped again, and the documents are read again without it.
+  Screenshots place each read frame's own boxes (secrets and fields) by where the frame is at the capture (the page
+  script names every cross-origin frame's current box); a read frame that does not answer, and **every cross-origin
+  frame that was not read**, is boxed whole, so nothing of it shows. A read frame that moved more than 2 px between the
+  queries before and after the capture, or that no query can place, makes the capture be taken again, then withheld.
+  Strict mode still boxes every cross-origin frame. A frame whose own size does not match the box `page.js` saw at its
+  position (the page moved its frames in between) is not read (`unavailable`), and an opaque (`null`) ancestor refuses
+  every call in the frame. A point click on a frame is refused as
   `point_frame`: name the frame control's action id instead.
 - **Results.** `frames` lists the page's cross-origin frames: `{id: "f1", origin, read: true}` for the ones read and
   `{origin, read: false, reason}` for the others, `reason` one of `not_approved` (the request does not list the
   origin), `no_access` (it does, but the browser gives the extension no access to it), `sandboxed` (an opaque
   origin), `limit` and `unavailable`. `declared: true` marks an origin only the frame element's `src` names (the
-  browser did not report one): page-provided, so check it before asking for it. Any unread frame keeps the
-  `cross_origin_frame` warning, and `next` says to ask the user and call `fai_browser_open` with the missing origins
-  added. Origins are all a result ever carries of an unread frame.
+  browser did not report one). Every origin there is page content (a page chooses its frames): `frames` sits with the
+  untrusted page text, and the trusted `next` only counts the unread frames and says to ask the user and call
+  `fai_browser_open` with their origins added; check them with the user first. Any unread frame keeps the
+  `cross_origin_frame` warning. Origins are all a result ever carries of an unread frame.
 - **Browser access.** The extension needs host access to the frame's origin. Approving in the request modal asks
-  the browser for every exact origin of the request in one prompt (the ones it adds are removed again when the
-  session ends); "Allow on all sites" covers every origin. A toolbar-icon approval grants `activeTab`, which covers
+  the browser for the tab's host and the request's other exact origins in one prompt (at most 10 of them; the ones it
+  adds are removed again when the session ends; a list it cannot ask for falls back to the tab's host alone); "Allow on all sites" covers every origin. A toolbar-icon approval grants `activeTab`, which covers
   the tab's own origin only, so approved frames on other origins come back as `no_access`: approve from the request
   modal instead. Firefox: the same code path (`frameIds` in place of document ids, no `ancestorOrigins` check) is
   untested.
@@ -547,9 +560,10 @@ Stdout is exactly one JSON line (`--pretty` indents it). `step`, `run` and `act`
 | `failed` | Configuration, daemon or runtime failure, or the run reached an HTTP error page | `config`, `daemon_unreachable`, `unknown_request`, `provider_error`, `timeout`, `error_page` | 1 |
 
 A request paused as `origin_changed` because the tab went to an origin the request does not list names that origin
-when the browser showed it: `leftOrigin` in the request view (status, `wait`) and a sentence in `needs.message` ("The
-tab went to https://login.example.org, an origin this request does not list"). It is the origin only, never the path
-or query, redacted like any reported URL; with a toolbar approval the browser often withholds the URL and nothing is
+when the browser showed it: `leftOrigin` in the request view (status, `wait`) and in the paused result, shown with
+the untrusted page text (a page decides where it sends the tab). `needs.message` only says that it went to an origin
+the request does not list and where to find it. It is the origin only, never the path or query, redacted like any
+reported URL; with a toolbar approval the browser often withholds the URL and nothing is
 named. Ask the user and request that origin up front next time (a sign-in hop through another host, for example).
 
 `wait <requestId> --until active` has its own exit codes (see [Waking the agent on Resume](#running-a-task-from-the-shell)): 0 active, 2 timeout, 3 ended or unknown, 130 interrupted, 1 error. Other commands exit 0 on success and 1 on an error.
@@ -687,9 +701,10 @@ When the current tab is not on a requested origin (or is not an http page), the 
   It names the client, host, reason and tab-access mode and offers **Allow**, **Approve Read / Use / Act / Test site**
   and **Deny this request**. The selector cannot exceed the requested level; Test site also requires listed test origins.
   Before enabling Approve, the worker prepares a tab/request/timestamp-bound permission intent. The click calls
-  `permissions.request` synchronously for the task tab's host and, in the same prompt, every other exact origin of the
-  request (approved [frames](#frames) and sign-in hops need host access; the ones not held before are tracked and
-  removed when the session ends); the worker then verifies the sender, original arm, current and pending URL,
+  `permissions.request` synchronously for the task tab's host and, in the same prompt, up to 10 other exact origins of
+  the request (approved [frames](#frames) and sign-in hops need host access; the ones not held before are tracked and
+  removed when the session ends; a list that fails validation or that the browser refuses to ask falls back to the
+  task host alone); the worker then verifies the sender, original arm, current and pending URL,
   host permission, requested ceiling and testing eligibility before and after leasing. Denial, revocation or stale
   state never adopts another tab. Newly acquired access is tracked while live arms/sessions need it; preexisting
   browser grants remain. If the worker restarts after a cancellation while the native prompt is still pending,
@@ -760,7 +775,7 @@ An agent that reads a settings page must never hold a value the user would then 
 
 **Screenshots.** Every screenshot is redacted on its pixels before it leaves the extension; the page is never touched (no style, attribute or element, so a site cannot detect it). Right before `captureVisibleTab` the worker asks the page script for the boxes to fill (`redactionRects`): every element that holds a secret the text scan found (PEM lines included), every password field whatever its value, every payment field, every field that holds a secret, every cross-origin frame of a payment or sign-in widget (Stripe, Braintree, Google Pay, Google accounts, PayPal, Adyen, Checkout.com, Square, Klarna, Recurly, Chargebee, Apple ID, Microsoft and Okta/Auth0 sign-in, and a few more), and in Strict mode or on a secret page also every canvas, every other cross-origin frame and every `code`/`pre`/`kbd`/`samp` block; each box is padded 4 px and clipped to the viewport. It asks again right after the capture, with a watch armed in between (a MutationObserver and capture-phase scroll and input listeners in the extension's isolated world, invisible to the page). The offscreen document fills the union of both sets solid black on the captured frame, before control boxes, badges and the footer are drawn, and labels a box with its placeholder number (`secret:3`) when it holds one, so image and text agree; a point click still works on the image (boxes move no pixels). When the page changed between the two queries (a mutation, a scroll, boxes that moved by more than 2 px) the frame is taken again once; still unstable, or a scan that hit its node, holder or box cap, and the whole frame is filled solid black (`redaction: "withheld"`). A query that fails or takes over 2 s, or an offscreen document that does not confirm every box, means no image at all (`capture_failed`). Screenshot metadata carries `redactions` (the box count) and `redaction`; the MCP image caption tells the agent the black boxes (or the full-frame fill) are deliberate and to use the digest.
 
-**Limits.** Text drawn on a canvas, text inside images, cross-origin frames the request does not approve (never read; approved ones are scanned by their own page script, see [Frames](#frames)) and closed shadow roots are not scanned; on screenshots they are boxed only in Strict mode or on a secret page (payment and sign-in widget frames always). A value with no known format, shorter than 20 characters and with no context word nearby (a short password in plain prose) is not found. `node scripts/secret-sweep.mjs [--strict]` observes every fixture page and lists every placeholder; the corpus has none outside `fixtures/secrets`.
+**Limits.** Text drawn on a canvas, text inside images, cross-origin frames the request does not approve (never read; approved ones are scanned by their own page script, see [Frames](#frames)) and closed shadow roots are not scanned; on screenshots canvases and code are boxed only in Strict mode or on a secret page, and every cross-origin frame that was not read is always boxed (with the extension's frames.js; payment and sign-in widget frames always). A value with no known format, shorter than 20 characters and with no context word nearby (a short password in plain prose) is not found. `node scripts/secret-sweep.mjs [--strict]` observes every fixture page and lists every placeholder; the corpus has none outside `fixtures/secrets`.
 
 ### Secret handles
 

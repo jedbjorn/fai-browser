@@ -468,7 +468,10 @@ test('an origin_changed pause that names the origin: the request view and needs.
   const blocked = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About' });
   assert.equal(blocked.body.result.code, 'origin_changed');
   assert.match(blocked.body.result.needs.message, /^The tab lease is paused\./);
-  assert.match(blocked.body.result.needs.message, /went to https:\/\/login\.example\.org, an origin this request does not list/);
+  // The origin is page-chosen: in leftOrigin (untrusted), never in the trusted needs.message.
+  assert.match(blocked.body.result.needs.message, /The tab went to an origin this request does not list \(leftOrigin/);
+  assert.doesNotMatch(blocked.body.result.needs.message, /login\.example\.org/);
+  assert.equal(blocked.body.result.leftOrigin, 'https://login.example.org');
 });
 
 test('disconnect pauses; hello with the same leaseId resumes it; unknown and empty sessions', async t => {
