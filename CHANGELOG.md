@@ -10,11 +10,21 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 ### Added
 
 - Several browsers at once. The extension may be paired in more than one browser (the Firefox add-on and an unpacked Chromium, or two Chrome profiles) with one FAI service, and all of them stay connected. Each install keeps a random browser id and reports its product (`firefox`, `chrome`, `chromium`, `edge`, `brave`, ...). A new tab request opens in the browser you used FAI in last (your last approval, popup open or toolbar click); every other browser's popup lists it as **In another browser** with **Open here**, which moves it there. Agents may name a browser: `browser` on `fai_browser_open` and `fai_browser_run`, `request-tab --browser`, `POST /v1/requests`; one that is not connected is refused with `browser_not_connected`, naming the connected ones. Each browser holds its own tab: approving in one no longer ends the other's, commands go only to the browser that holds the tab, and a browser that disconnects or restarts pauses only its own.
-- `daemon status`, `status` and `fai_browser_status` list the connected browsers (`extension.browsers`: id, product, name, transport, connectedAt, lastSeen, lastUsedAt, leases); request views carry the `browser` that holds or awaits the tab, and the granted line names it. A connection that keeps dropping adds the warning `extension_flapping`.
+- `daemon status`, `status` and `fai_browser_status` list the connected browsers (`extension.browsers`: id, product, name, browser version, transport, connectedAt, lastSeen, lastUsedAt, leases); request views carry the `browser` that holds or awaits the tab, and the granted line names it. A connection that keeps dropping adds the warning `extension_flapping`; two installs sharing one identity (a copied profile) add `extension_duplicate_identity`.
+- Each browser keeps its own popup settings: its budget, "Open requested pages right away" and Approve gate asks apply to the requests it holds or awaits. The browser used last is remembered across restarts and updates (`browsers.json` in the state directory: ids, extension Origins and times only).
+- A request named for (or moved to) a browser that goes away moves to the one used last once the grace period passes, and the agent's approval hint says so.
+
+### Security
+
+- A browser id is bound to the extension Origin it first connected from, so a client holding the pairing secret cannot take over another browser's connection or its tab by claiming its id; extensions are never sent other browsers' ids; results from a connection that was not sent the command are dropped, and only the browser holding a tab can release it.
+
+### Legacy extensions
+
+- The 0.5.0 Firefox add-on and older unpacked builds connect side by side with other browsers without fighting, but see only their own requests and no Open here until they update (the next release's signed add-on carries it). Two legacy Chromium-family builds of the same unpacked extension still count as one browser and can flap; `extension_flapping` shows it.
 
 ### Fixed
 
-- Two paired browsers no longer replace each other's connection about twice a second, forever (issue #9). The service closed the previous connection with code 4000 on every new one, whichever browser it came from, and each extension reconnected at once; windows flickered, the agent could not hold a tab, and status still said connected. Now only a newer connection of the same browser (a restarted worker) replaces the old one, with code 4003, on which the extension does not reconnect. Against an older service the extension backs off on repeated 4000s (4, 8, 15 s) and its popup says another browser keeps taking the connection; a connection only resets the backoff after lasting 10 s.
+- Two paired browsers no longer replace each other's connection about twice a second, forever (issue #9). The service closed the previous connection with code 4000 on every new one, whichever browser it came from, and each extension reconnected at once; windows flickered, the agent could not hold a tab, and status still said connected. Now only a newer connection of the same browser (a restarted worker) replaces the old one, with code 4003, on which the extension does not reconnect (it says "Another copy of this browser profile took the FAI connection" and tries again when the popup opens or after five minutes). Against an older service the extension backs off on repeated 4000s (4, 8, 15 s) and its popup says another browser keeps taking the connection; a connection only resets the backoff after lasting 10 s.
 
 ### Changed
 
