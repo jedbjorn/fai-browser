@@ -182,6 +182,17 @@ test('Agent direct: an act that lands on the browser\'s own error page is error_
   assert.equal(landed.code, 'step_complete');
 });
 
+test('Agent direct: an observe of the browser\'s own error page carries the warning and offers no scroll', async () => {
+  const bridge = new BrowserErrorBridge({ pages: { '/monthly': BROWSER_ERROR }, path: '/monthly' });
+  const observed = await new BrowserRuntime({ bridge }).observe({ mode: 'read-only', grant: { level: 'read-only' }, allowedOrigins: [ORIGIN] });
+  assert.ok(observed.observation.warnings.includes('browser_error_page'));
+  assert.deepEqual(observed.actions.map(action => action.type), ['wait']);
+  // An ordinary page still offers both scrolls.
+  const plain = await new BrowserRuntime({ bridge: new StatusBridge({ pages: DASHBOARD, path: '/dashboard' }) })
+    .observe({ mode: 'read-only', grant: { level: 'read-only' }, allowedOrigins: [ORIGIN] });
+  assert.equal(plain.actions.filter(action => action.type === 'scroll').length, 2);
+});
+
 // The stand-in keeps the URL the tab tried and a fixed text: an expectation must never pass there (a false verified
 // completion). A URL expectation and a textAbsent expectation would both match it.
 for (const expectation of [{ urlIncludes: '/monthly' }, { textAbsent: 'Reports' }]) {
