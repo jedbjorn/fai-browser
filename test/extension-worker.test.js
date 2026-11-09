@@ -1356,6 +1356,10 @@ test('a page that commits as the browser error page after a click is observed as
     }
     return update(id, info);
   };
+  // Only from an observation of this error page: another revision is stale, and the tab is not touched.
+  const stale = h.command('execute', { action: { type: 'navigate_allowed_url', url: ORIGIN + '/home' }, expectedRevision: 'doc:1' });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === stale)).error.code, 'stale');
+  assert.deepEqual(updates, []);
   const open = h.command('execute', { action: { type: 'navigate_allowed_url', url: ORIGIN + '/home' },
     expectedRevision: reply.result.observation.revision });
   const opened = await h.waitFor(m => m.type === 'result' && m.id === open, 6000);
@@ -1395,6 +1399,18 @@ test('a browser error page off the approved origin, or a tab whose URL Chrome wi
   const call = denied.command('observe');
   assert.equal((await denied.waitFor(m => m.type === 'result' && m.id === call)).error.code, 'origin_changed');
   assert.equal((await denied.waitFor(m => m.type === 'status' && m.status === 'paused')).reason, 'origin_changed');
+
+  // Page-controlled text that merely contains "chrome-error://" (a URL's query) is not the browser's error page.
+  for (const spoof of [
+    'Cannot access contents of url "https://evil.test/?x=chrome-error://chromewebdata/". Extension manifest must request permission to access this host.',
+    'Cannot access contents of url "https://evil.test/?x=Frame%20with%20ID%200%20is%20showing%20error%20page".',
+  ]) {
+    const spoofed = await started();
+    spoofed.scriptOverride = () => throwing(spoof);
+    const observe = spoofed.command('observe');
+    assert.equal((await spoofed.waitFor(m => m.type === 'result' && m.id === observe)).error.code, 'origin_changed', spoof);
+    assert.equal((await spoofed.waitFor(m => m.type === 'status' && m.status === 'paused')).reason, 'origin_changed');
+  }
 });
 
 // --- permission levels (configurable-guardrails.md §3.4, extension side) -------------------------------------------

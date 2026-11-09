@@ -8,9 +8,10 @@
 // Two browser runs, one after the other (never two Chromiums at once):
 // - host access: the temporary manifest grants http://127.0.0.1/* (the exact host, as the request modal's site access
 //   does), so the worker can read the tab after the error page;
-// - toolbar access: no host permission, activeTab granted by a toolbar action (CDP Extensions.triggerAction). Chrome
-//   withdraws activeTab when its own error page commits (an opaque origin), so tab.url is withheld and nothing can be
-//   read: the session pauses as origin_changed, as for leaving the site. This case documents that browser behaviour.
+// - toolbar access: no host permission, activeTab granted by a toolbar action (CDP Extensions.triggerAction; skipped
+//   when the browser does not offer it). Chrome withdraws activeTab when its own error page commits (an opaque
+//   origin), so tab.url is withheld and nothing can be read: the session pauses as origin_changed, as for leaving the
+//   site. This case documents that browser behaviour.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -80,9 +81,16 @@ async function launch(t, { hostPermissions, origin, startUrl, toolbar = false })
   await page.goto(startUrl);
   if (toolbar) {
     const cdp = await context.browser().newBrowserCDPSession();
-    const tabs = (await cdp.send('Target.getTargets', { filter: [{ type: 'tab' }] })).targetInfos;
-    await cdp.send('Extensions.triggerAction', { id: extensionId, targetId: tabs[0].targetId });
-    await cdp.detach();
+    try {
+      const tabs = (await cdp.send('Target.getTargets', { filter: [{ type: 'tab' }] })).targetInfos;
+      await cdp.send('Extensions.triggerAction', { id: extensionId, targetId: tabs[0].targetId });
+    } catch (error) {
+      // A browser without --enable-unsafe-extension-debugging or Extensions.triggerAction cannot grant activeTab here.
+      t.skip(`Extensions.triggerAction is unavailable: ${String(error?.message ?? error).slice(0, 120)}`);
+      return null;
+    } finally {
+      await cdp.detach().catch(() => {});
+    }
   }
   const leased = companion.waitForLease({ timeoutMs: 10_000 });
   const started = await worker.evaluate(async ({ endpoint, secret }) => {
@@ -171,8 +179,10 @@ test('toolbar access only: Chrome withdraws activeTab at its own error page, so 
   const site = await startSite(state);
   t.after(() => new Promise(done => { site.closeAllConnections?.(); site.close(done); }));
   const origin = `http://127.0.0.1:${site.address().port}`;
-  const { companion } = await launch(t, { hostPermissions: [], origin, startUrl: `${origin}/`, toolbar: true });
-  const { bridge } = companion;
+  const launched = await launch(t, { hostPermissions: [], origin, startUrl: `${origin}/`, toolbar: true });
+  if (!launched) return;
+  const { bridge } = launched.companion;
+  const { companion } = launched;
   const home = await bridge.observe();
   const link = home.controls.find(control => control.label === 'Down page');
   assert.ok(link);
