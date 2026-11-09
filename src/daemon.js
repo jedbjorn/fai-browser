@@ -763,11 +763,15 @@ export function createDaemon(options = {}) {
    */
   function staleOf(record, t = now()) {
     if (record.state !== 'paused') return null;
+    // A tab the user invited an agent to and nobody joined yet waits for that agent (the invite lives 10 minutes).
+    if (record.invite && invites.get(record.invite)?.state === 'open') return null;
     const owner = record.ownerSession ?? null;
     const instance = owner ? null : record.clientInstance ?? null;
     if (owner || instance) {
       for (const other of requests.values()) {
         if (other === record || (other.seq ?? 0) <= (record.seq ?? 0)) continue;
+        // A newer request that ended without ever being approved (denied, cancelled, expired) did not replace it.
+        if (TERMINAL.has(other.state) && !other.lease) continue;
         if (owner ? other.ownerSession === owner : !other.ownerSession && other.clientInstance === instance) return 'newer_request';
       }
     }
@@ -900,14 +904,18 @@ export function createDaemon(options = {}) {
   /**
    * Compatibility for an extension that names no request (a v2 popup's "Select tab and start"): the newest pending
    * request for the tab's origin; with none pending, a paused one only on its own tab. Never the oldest request, never a
-   * paused request on another tab, and never a paused one while a request for the origin waits (issue #13).
+   * paused request on another tab, and never a paused one while a request for the origin waits (issue #13). Never an
+   * invited tab (it is bound only through its invite, at the level the user chose), never a request pinned to another
+   * browser, and never a paused request another browser holds (tab ids are per browser).
    */
-  function pickRequestFor(origin, tabId = null) {
+  function pickRequestFor(origin, tabId = null, browserId = null) {
+    const other = id => Boolean(browserId && id && id !== browserId);
     const candidates = [...requests.values()]
-      .filter(record => originCovered(origin, record.origins))
+      .filter(record => !record.invite && originCovered(origin, record.origins))
       .sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0) || b.createdAt - a.createdAt);
-    return candidates.find(record => record.state === 'pending')
-      ?? candidates.find(record => record.state === 'paused' && Number.isInteger(tabId) && record.lease?.tabId === tabId)
+    return candidates.find(record => record.state === 'pending' && !(record.browserPinned && other(record.browser?.id)))
+      ?? candidates.find(record => record.state === 'paused' && Number.isInteger(tabId) && record.lease?.tabId === tabId
+        && !other(record.lease?.browserId))
       ?? null;
   }
 
@@ -966,7 +974,8 @@ export function createDaemon(options = {}) {
       return replyTo(event, { error: { code: 'update_running',
         message: 'FAI Browser is installing an update and restarts in a moment. Approve again in a minute.' } });
     }
-    const record = event.requestId ? requests.get(event.requestId) : pickRequestFor(event.origin, event.tabId);
+    const record = event.requestId ? requests.get(event.requestId) : pickRequestFor(event.origin, event.tabId,
+      typeof event.browserId === 'string' ? event.browserId : null);
     if (!record) return replyTo(event, { error: { code: 'no_request', message: 'No such tab request' } });
     // Re-approval: the user changes the level of the active lease on the same tab (no new lease). A lower level
     // takes effect on the next command (the hub clamps every command to it); a higher one on the next run.

@@ -204,3 +204,54 @@ test('status text marks a stale request', () => {
   assert.match(text, /^request: req_a paused read-only, origins \S+, stale \(newer_request\)$/m);
   assert.doesNotMatch(text.split('\n').find(line => line.includes('req_b')), /stale/);
 });
+
+// Review findings: a nameless lease never picks an invited tab (open or joined: it would take the level the extension
+// names, above the invite's), never resumes a paused request another browser holds, and never takes a request pinned
+// to another browser.
+test('a lease that names no request never picks an invited tab, open or joined', async t => {
+  const ctx = await setup(t);
+  const open = await ctx.hub.emit({ type: 'invite', tabId: 7, origin: ORIGIN, title: 'T', level: 'reversible' });
+  await ctx.hub.emit({ type: 'status', leaseId: open.leaseId, status: 'paused', reason: 'paused' });
+  const nameless = await ctx.hub.emit({ type: 'lease', tabId: 7, origin: ORIGIN, title: 'x', level: 'full' });
+  assert.equal(nameless.error?.code, 'no_request');
+  assert.equal(ctx.daemon.request(open.requestId).state, 'paused');
+  assert.equal(ctx.daemon.request(open.requestId).grant.level, 'reversible');
+  // An open invite waits for its agent: never stale while it is open.
+  assert.equal(ctx.daemon.request(open.requestId).stale, undefined);
+
+  const agent = await register(ctx);
+  const invited = await ctx.hub.emit({ type: 'invite', tabId: 8, origin: ORIGIN, title: 'T', level: 'read-only', sessionId: agent.sessionId });
+  const joined = await ctx.api('POST', `/v1/invites/${invited.invite.inviteId}/join`, {}, { headers: agent.headers });
+  assert.equal(joined.status, 200, JSON.stringify(joined.body));
+  await ctx.hub.emit({ type: 'status', leaseId: invited.leaseId, status: 'paused', reason: 'paused' });
+  const again = await ctx.hub.emit({ type: 'lease', tabId: 8, origin: ORIGIN, title: 'x', level: 'full' });
+  assert.equal(again.error?.code, 'no_request');
+  assert.equal(ctx.daemon.request(invited.requestId).grant.level, 'read-only');
+});
+
+test('a lease that names no request never resumes another browser\'s paused request on the same tab id', async t => {
+  const ctx = await setup(t);
+  const a = await request(ctx, { reason: 'A' });
+  const bound = await ctx.hub.emit({ type: 'lease', requestId: a, tabId: 4, origin: ORIGIN, title: 'x', browserId: 'chrome-aaaa' });
+  await ctx.hub.emit({ type: 'status', leaseId: bound.leaseId, status: 'paused', reason: 'paused' });
+  const elsewhere = await ctx.hub.emit({ type: 'lease', tabId: 4, origin: ORIGIN, title: 'x', browserId: 'firefox-bbbb' });
+  assert.equal(elsewhere.error?.code, 'no_request');
+  assert.deepEqual([ctx.daemon.request(a).state, ctx.daemon.request(a).lease.browserId], ['paused', 'chrome-aaaa']);
+  const own = await ctx.hub.emit({ type: 'lease', tabId: 4, origin: ORIGIN, title: 'x', browserId: 'chrome-aaaa' });
+  assert.equal(own.requestId, a);
+});
+
+test('stale: a newer request that was denied, cancelled or expired unapproved does not make the older one stale', async t => {
+  const ctx = await setup(t);
+  const me = await register(ctx);
+  const a = await request(ctx, { headers: me.headers, reason: 'A' });
+  await pausedOn(ctx, a);
+  const denied = await request(ctx, { headers: me.headers, reason: 'B', origins: ['https://signup.example.org'] });
+  assert.equal(ctx.daemon.request(a).stale, 'newer_request', 'while B waits, A is stale');
+  await ctx.hub.emit({ type: 'deny', requestId: denied });
+  assert.equal(ctx.daemon.request(a).stale, undefined, 'B was denied: A is the live task again');
+  const cancelled = await request(ctx, { headers: me.headers, reason: 'C', origins: ['https://other.example.org'] });
+  await ctx.api('DELETE', `/v1/requests/${cancelled}`, undefined, { headers: me.headers });
+  assert.equal(ctx.daemon.request(cancelled).state, 'cancelled');
+  assert.equal(ctx.daemon.request(a).stale, undefined);
+});
