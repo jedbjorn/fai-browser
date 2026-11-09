@@ -1202,10 +1202,16 @@
   const EXACT_TYPES = new Set(['text', 'search', 'tel', 'password', 'email', 'url']);
   // Whether the field holds the value well enough to leave it: a field with a suggestion list always (its completion
   // is its own), a field of another type always, else the value shown once (containedOnce): a formatter's output
-  // stands, only real residue (a slip's leftover, a dropped or doubled key) is corrected.
-  function holds(el, expected) {
+  // stands, only real residue (a slip's leftover, a dropped or doubled key) is corrected. After a slip (`slipped`),
+  // the whole value (whitespace and case aside): a wrong key a page kept next to the right one ("rreservations") still
+  // shows the value once, but is residue.
+  function holds(el, expected, slipped = false) {
     if (el.tagName !== 'TEXTAREA' && (el.tagName !== 'INPUT' || !EXACT_TYPES.has(el.type))) return true;
     if (suggests(el)) return true;
+    if (slipped) {
+      const squash = s => String(s).replace(/\s+/g, '').toLowerCase();
+      return squash(el.value) === squash(expected);
+    }
     return containedOnce(el.value, expected);
   }
 
@@ -1225,7 +1231,7 @@
   // output), one correction: select all and insert the value (Backspace for an empty one). Trusted when the keys
   // were. Skipped when the whole value cannot be selected (it would add to the value, not replace it). Resolves
   // whether it corrected.
-  async function completeValue(el, expected, { stopped, trusted }) {
+  async function completeValue(el, expected, { stopped, trusted, slipped = false }) {
     if (!el.isConnected) return false;
     if (stopped && el.value !== expected && expected.startsWith(el.value)) {
       const rest = expected.slice(el.value.length);
@@ -1241,7 +1247,7 @@
         inputText(el, rest, state);
       }
     }
-    if (!el.isConnected || holds(el, expected)) return false;
+    if (!el.isConnected || holds(el, expected, slipped)) return false;
     if (trusted && (await trustedSelect(el))) {
       if (!el.isConnected || !wholeSelected(el)) return false;
       const steps = expected ? [{ m: 'text', text: expected }]
@@ -1297,7 +1303,7 @@
       if (trusted) {
         // The browser fires change itself on the blur or Enter that follows trusted typing.
         if (pending?.el === el) pending = null;
-        const corrected = await completeValue(el, expected, { stopped: trusted.late, trusted: true });
+        const corrected = await completeValue(el, expected, { stopped: trusted.late, trusted: true, slipped: plan.slips > 0 });
         result = { typed: trusted.typed, chunked: trusted.chunked, slips: trusted.late ? 0 : plan.slips, corrected, trusted: true };
       }
     }
@@ -1321,7 +1327,7 @@
           inputText(el, chars.slice(plan.typed).join(''), state);
         }
       }
-      const corrected = await completeValue(el, expected, { stopped, trusted: false });
+      const corrected = await completeValue(el, expected, { stopped, trusted: false, slipped: plan.slips > 0 });
       result = { typed: plan.typed, chunked: plan.chunked && el.isConnected, slips: stopped ? 0 : plan.slips, corrected };
     }
     let fellBack = false;
