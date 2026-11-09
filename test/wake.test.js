@@ -1,0 +1,219 @@
+// The wake channel (src/wake.js): host detection, capabilities, the FAI-authored texts, delivery to a fake Claude Code
+// messaging socket (auth line + user line) and to a fake `codex` binary. Nothing here touches a real session: every
+// socket and binary is a throwaway this test starts, and every environment is built from scratch.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import net from 'node:net';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  claudeSocket, cleanInviteText, codexSupportsQueue, codexThreadId, deliverClaudeSocket, deliverCodexQueue, deliverWake,
+  detectHost, hostSessionId, repoName, resetCodexSupport, wakeCapability, wakeText,
+} from '../src/wake.js';
+
+const TOKEN = 'fake-messaging-token-0123456789ab';
+
+/**
+ * A fake Claude Code messaging socket: reads newline-delimited JSON, checks the auth line, records the user lines.
+ * `mode`: accept (default), refuse (answers an error line and closes), silent (accepts, never reads or closes).
+ */
+export async function startFakeClaudeSocket(t, { mode = 'accept', token = TOKEN } = {}) {
+  const dir = await mkdtemp(join(tmpdir(), 'fai-fake-cc-'));
+  const path = join(dir, 's.sock');
+  const received = [];
+  const connections = [];
+  const server = net.createServer(socket => {
+    connections.push(socket);
+    if (mode === 'silent') {
+      socket.pause();
+      return;
+    }
+    let buffer = '';
+    let authed = false;
+    socket.setEncoding('utf8');
+    socket.on('data', chunk => {
+      buffer += chunk;
+      let index;
+      while ((index = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, index);
+        buffer = buffer.slice(index + 1);
+        const message = JSON.parse(line);
+        if (!authed) {
+          authed = message.type === 'auth' && message.token === token;
+          if (!authed || mode === 'refuse') {
+            socket.end(`${JSON.stringify({ type: 'error', message: mode === 'refuse' ? 'crossSessionInbound is refuse' : 'unauthorized' })}\n`);
+            return;
+          }
+          continue;
+        }
+        received.push(message);
+      }
+    });
+    socket.on('end', () => socket.end());
+    socket.on('error', () => {});
+  });
+  await new Promise(resolve => server.listen(path, resolve));
+  t.after(async () => {
+    for (const socket of connections) socket.destroy();
+    await new Promise(resolve => server.close(resolve));
+    await rm(dir, { recursive: true, force: true });
+  });
+  return { path, token, received, dir };
+}
+
+/** A fake `codex` that records its argv (one JSON line per call) and answers per FAKE_CODEX_MODE. */
+export async function fakeCodex(t, { mode = 'ok' } = {}) {
+  const dir = await mkdtemp(join(tmpdir(), 'fai-fake-codex-'));
+  const bin = join(dir, 'codex');
+  const log = join(dir, 'argv.log');
+  await writeFile(bin, `#!${process.execPath}
+const fs = require('fs');
+fs.appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ argv: process.argv.slice(2), fai: Object.keys(process.env).filter(k => k.startsWith('FAI_')) }) + '\\n');
+const args = process.argv.slice(2);
+if (args[0] === 'queue' && args[1] === '--help') { console.log('Usage: codex queue [OPTIONS] --thread <THREAD> --message <TEXT>'); process.exit(0); }
+const mode = process.env.FAKE_CODEX_MODE || 'ok';
+if (mode === 'unknown') { console.error('Error: no rollout found for thread ' + args[2]); process.exit(1); }
+if (mode === 'crash') { console.error('boom'); process.exit(3); }
+process.exit(0);
+`);
+  await chmod(bin, 0o755);
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const env = { PATH: '/usr/bin:/bin', FAI_CODEX_BIN: bin, FAKE_CODEX_LOG: log, FAKE_CODEX_MODE: mode, FAI_CLIENT_TOKEN: 'never-passed' };
+  const calls = async () => {
+    try {
+      return (await readFile(log, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+    } catch {
+      return [];
+    }
+  };
+  return { bin, env, calls, dir };
+}
+
+test('host detection: the MCP client name first, then the environment', () => {
+  assert.equal(detectHost({ name: 'claude-code' }, {}), 'claude');
+  assert.equal(detectHost({ name: 'codex-mcp-client' }, {}), 'codex');
+  assert.equal(detectHost({ name: 'opencode' }, { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'x' }), 'opencode',
+    'an OpenCode started from a Claude Code shell is OpenCode');
+  assert.equal(detectHost({ name: 'test-host' }, { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'x' }), 'unknown',
+    'a named other client is never taken for Claude Code (so a test harness never writes to a real socket)');
+  assert.equal(detectHost(null, { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'abc' }), 'claude');
+  assert.equal(detectHost(null, { OPENCODE: '1' }), 'opencode');
+  assert.equal(detectHost(null, {}), 'unknown');
+});
+
+test('repo name is the folder name only, never the path', () => {
+  assert.equal(repoName({ CLAUDE_PROJECT_DIR: '/home/me/secret/projects/fai-browser' }, '/x'), 'fai-browser');
+  assert.equal(repoName({}, '/home/me/work/app/'), 'app');
+  assert.equal(repoName({}, '/'), 'unknown');
+});
+
+test('capabilities: claude-socket needs Claude Code and both variables; codex-queue a thread and codex queue', () => {
+  const env = { CLAUDE_CODE_MESSAGING_SOCKET: '/tmp/x.sock', CLAUDE_CODE_MESSAGING_TOKEN: 't' };
+  assert.deepEqual(claudeSocket(env), { path: '/tmp/x.sock', token: 't' });
+  assert.deepEqual(claudeSocket({ CLAUDE_CODE_MESSAGING_SOCKET: '/s', CLAUDE_CODE_MESSAGING_SOCKET_TOKEN: 'u' }), { path: '/s', token: 'u' });
+  assert.equal(claudeSocket({ CLAUDE_CODE_MESSAGING_SOCKET: '/s' }), null, 'no token (a --bare or older session)');
+  assert.equal(wakeCapability({ host: 'claude', env }), 'claude-socket');
+  assert.equal(wakeCapability({ host: 'unknown', env }), 'none');
+  assert.equal(wakeCapability({ host: 'claude', env: { ...env, FAI_WAKE: '0' } }), 'none');
+  assert.equal(wakeCapability({ host: 'codex', env: {}, threadId: 't1', codexReady: true }), 'codex-queue');
+  assert.equal(wakeCapability({ host: 'codex', env: {}, threadId: null, codexReady: true }), 'none', 'no thread yet');
+  assert.equal(wakeCapability({ host: 'codex', env: {}, threadId: 't1', codexReady: false }), 'none');
+  assert.equal(hostSessionId('claude', { CLAUDE_CODE_SESSION_ID: '655645a7-9481-41d0-9ebc-892634b309cf' }), '655645a7-9481-41d0-9ebc-892634b309cf');
+  assert.equal(hostSessionId('codex', { CLAUDE_CODE_SESSION_ID: 'x' }), null);
+});
+
+test('the Codex thread id comes from a tools/call _meta', () => {
+  const id = '01a1c03e-9e28-72a2-8cdb-bb6ca9545521';
+  assert.equal(codexThreadId({ 'x-codex-turn-metadata': { thread_id: id, session_id: id } }), id);
+  assert.equal(codexThreadId({ threadId: id }), id);
+  assert.equal(codexThreadId({ 'claudecode/toolUseId': 'toolu_1' }), null);
+  assert.equal(codexThreadId({ threadId: 'bad id; rm -rf /' }), null);
+  assert.equal(codexThreadId(undefined), null);
+});
+
+test('wake texts are fixed FAI templates: ids, level and the user\'s own words only', () => {
+  const invite = wakeText({ kind: 'invite', inviteId: 'inv-abc12345', requestId: 'req_1', level: 'reversible',
+    userText: 'Find the\ncheapest   flight\u0000' });
+  assert.match(invite, /^\[FAI Browser\] The user invited you/);
+  assert.match(invite, /Call fai_browser_open with \{"inviteId": "inv-abc12345"\}/);
+  assert.match(invite, /level Use/);
+  assert.match(invite, /the user's own words\): "Find the cheapest flight"/);
+  assert.equal(invite.split('\n').length, 2, 'the user text is one labelled line');
+  assert.match(wakeText({ kind: 'invite', inviteId: 'inv-abc12345', level: 'full' }), /typed no task/);
+  assert.match(wakeText({ kind: 'invite', inviteId: 'inv-abc12345', level: 'full', driver: 'jev' }), /fai_browser_run/);
+  assert.match(wakeText({ kind: 'resume', requestId: 'req_9' }), /resumed tab request req_9.*fai_browser_observe with requestId req_9/);
+  assert.match(wakeText({ kind: 'approved', requestId: 'req_9', level: 'interactive' }), /approved tab request req_9 at level Use/);
+  assert.match(wakeText({ kind: 'resume', requestId: 'req 9; evil' }), /request unknown/, 'an id that is not one is never echoed');
+  assert.equal(cleanInviteText('x'.repeat(900)).length, 500);
+  assert.equal(cleanInviteText(42), '');
+});
+
+test('Claude socket: delivered writes the auth line then one user line', async t => {
+  const fake = await startFakeClaudeSocket(t);
+  const outcome = await deliverClaudeSocket({ path: fake.path, token: fake.token, text: 'hello from FAI' });
+  assert.deepEqual(outcome, { ok: true });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.deepEqual(fake.received, [{ type: 'user', message: { role: 'user', content: 'hello from FAI' } }]);
+});
+
+test('Claude socket: a refusal line, no socket and a write that never lands each fail with a code', async t => {
+  const refusing = await startFakeClaudeSocket(t, { mode: 'refuse' });
+  const refused = await deliverClaudeSocket({ path: refusing.path, token: refusing.token, text: 'x' });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'refused');
+  assert.match(refused.message, /crossSessionInbound/);
+  assert.equal(refusing.received.length, 0);
+
+  const wrongToken = await startFakeClaudeSocket(t);
+  const unauthorized = await deliverClaudeSocket({ path: wrongToken.path, token: 'wrong', text: 'x' });
+  assert.equal(unauthorized.code, 'refused');
+
+  const missing = await deliverClaudeSocket({ path: join(refusing.dir, 'nope.sock'), token: 't', text: 'x' });
+  assert.deepEqual([missing.ok, missing.code], [false, 'no_socket']);
+  const unset = await deliverClaudeSocket({ path: '', token: '', text: 'x' });
+  assert.equal(unset.code, 'no_socket');
+
+  // A session that never reads: a write too large for the socket buffer never completes, so the wake times out.
+  const silent = await startFakeClaudeSocket(t, { mode: 'silent' });
+  const started = Date.now();
+  const timedOut = await deliverClaudeSocket({ path: silent.path, token: silent.token, text: 'x'.repeat(8 * 1024 * 1024), timeoutMs: 300 });
+  assert.deepEqual([timedOut.ok, timedOut.code], [false, 'timeout']);
+  assert.ok(Date.now() - started < 3000);
+});
+
+test('deliverWake routes by capability and never throws', async t => {
+  const fake = await startFakeClaudeSocket(t);
+  const env = { CLAUDE_CODE_MESSAGING_SOCKET: fake.path, CLAUDE_CODE_MESSAGING_TOKEN: fake.token };
+  assert.deepEqual(await deliverWake({ capability: 'claude-socket', text: 'one', env }), { ok: true });
+  assert.equal((await deliverWake({ capability: 'none', text: 'x', env })).code, 'no_wake');
+  assert.equal((await deliverWake({ capability: 'claude-socket', text: 'x', env: {} })).code, 'no_socket');
+  assert.equal((await deliverWake({ capability: 'claude-socket', text: 'x', env: { ...env, FAI_WAKE: '0' } })).code, 'disabled');
+});
+
+test('Codex: codex queue --thread <id> --message <text> as argv (no shell), outcomes from the exit and stderr', async t => {
+  resetCodexSupport();
+  const fake = await fakeCodex(t);
+  assert.equal(await codexSupportsQueue(fake.env), true);
+  const text = 'it\'s "quoted"; $(echo nope) `uname`';
+  assert.deepEqual(await deliverCodexQueue({ threadId: 'thread-1', text, env: fake.env }), { ok: true });
+  const calls = await fake.calls();
+  assert.deepEqual(calls.at(-1).argv, ['queue', '--thread', 'thread-1', '--message', text], 'the text is one argv entry, unexpanded');
+  assert.deepEqual(calls.at(-1).fai, [], 'no FAI_ variable (the client token) reaches codex');
+
+  const unknown = await fakeCodex(t, { mode: 'unknown' });
+  const missingThread = await deliverCodexQueue({ threadId: 'gone', text: 'x', env: unknown.env });
+  assert.deepEqual([missingThread.ok, missingThread.code], [false, 'unknown_thread']);
+
+  const crash = await fakeCodex(t, { mode: 'crash' });
+  const failed = await deliverCodexQueue({ threadId: 't', text: 'x', env: crash.env });
+  assert.deepEqual([failed.ok, failed.code], [false, 'codex_failed']);
+
+  const absent = await deliverCodexQueue({ threadId: 't', text: 'x', env: { PATH: '', FAI_CODEX_BIN: join(fake.dir, 'nope') } });
+  assert.deepEqual([absent.ok, absent.code], [false, 'no_codex']);
+  const noPath = await deliverCodexQueue({ threadId: 't', text: 'x', env: { PATH: '' } });
+  assert.equal(noPath.code, 'no_codex');
+  assert.equal(await codexSupportsQueue({ PATH: '' }), false);
+  const badThread = await deliverCodexQueue({ threadId: '-rf', text: 'x', env: fake.env });
+  assert.equal(badThread.code, 'unknown_thread', 'a thread id that is not one never reaches argv');
+});
