@@ -602,8 +602,12 @@ client call does) and then registers. Every new connection (the first, and every
 as `503 shutting_down`, or a transport error) asks `GET /v1/health?challenge=<nonce>` without the token and checks
 `proof`, an HMAC-SHA256 of `fai-health:<daemon port>:<nonce>` under the client token, before the token or the session
 key is sent, so a process squatting on the port gets nothing and cannot inject wakes (a daemon without the proof, an
-older one, turns invites and wakes off). The server acts on each wake id once (the last 256 remembered), at most 4
-new ones from one poll and 12 a minute.
+older one, turns invites and wakes off). The daemon hands out at most 4 wakes a poll; the server acts on each wake id
+once (the last 256 remembered) and at most 12 a minute, and reports one over a cap as `failed`/`rate_limited` at once.
+It reports an outcome only over the connection the wake came from, while that is still its current, verified one
+(otherwise the daemon fails the wake as `no_report`). After any failed wake the server's relay texts name the
+`wait --until active` command again for ten minutes, and the request view's `ownerWake` (the owner's last Approve or
+Resume wake) shows the failure, which the popup turns into "Could not wake … Tell it to continue.".
 A session the daemon dropped for not polling registers again with `previous: {sessionId, key}` and takes its requests
 and invites back; at most two entries per pid. A server registers (up to 3 s) before it creates a request or joins an
 invite, so the daemon records it as the owner; a relay `next.text` says "FAI Browser wakes this session" only for
