@@ -360,13 +360,13 @@ export function createUpdateChecker({ paths, currentVersion, enabled = () => tru
   log = () => {}, startupDelayMs = STARTUP_DELAY_MS, pollMs = POLL_MS, intervalMs = CHECK_INTERVAL_MS } = {}) {
   let startTimer = null;
   let pollTimer = null;
-  let inFlight = null;
+  let pending = null;
   let controller = new AbortController();
 
   function check({ force = false } = {}) {
-    if (inFlight) return inFlight;
+    if (pending) return pending;
     if (!force && !enabled()) return Promise.resolve(readCheckState(paths));
-    inFlight = runCheck({ paths, currentVersion, fetch: fetchImpl, now, force, intervalMs, signal: controller.signal })
+    pending = runCheck({ paths, currentVersion, fetch: fetchImpl, now, force, intervalMs, signal: controller.signal })
       .then(state => {
         // Codes and versions only: never a URL with data, a header or a body.
         log('update_check', { status: state.status, error: state.error, latest: state.latest?.version ?? null,
@@ -378,9 +378,9 @@ export function createUpdateChecker({ paths, currentVersion, enabled = () => tru
         return readCheckState(paths);
       })
       .finally(() => {
-        inFlight = null;
+        pending = null;
       });
-    return inFlight;
+    return pending;
   }
 
   return {
@@ -404,8 +404,8 @@ export function createUpdateChecker({ paths, currentVersion, enabled = () => tru
     },
     check,
     view: () => updateView({ paths, currentVersion, enabled: enabled() }),
-    get inFlight() {
-      return inFlight;
+    get pending() {
+      return pending;
     },
   };
 }

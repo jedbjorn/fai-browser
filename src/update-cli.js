@@ -79,7 +79,9 @@ export async function updateCommand(flags, { home, env = process.env, ...options
   if (flags.check) return { value: { update: view }, exitCode: view.status === 'error' ? 1 : 0 };
   if (!view.available) {
     const failed = ['error', 'rate_limited', 'never'].includes(view.status);
-    return { value: { state: failed ? 'check_failed' : 'up_to_date', update: view }, exitCode: failed ? 1 : 0 };
+    // not_found: GitHub shows no published release (none yet, or the repository is not public).
+    const state = failed ? 'check_failed' : view.status === 'not_found' ? 'no_release' : 'up_to_date';
+    return { value: { state, update: view }, exitCode: failed ? 1 : 0 };
   }
   const running = runningUpdate(paths);
   if (running) return { value: { state: 'refused', code: 'update_running', message: `An update (pid ${running}) is running.` }, exitCode: 1 };

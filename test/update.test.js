@@ -369,6 +369,17 @@ test('refused: a tag naming another commit than the release, a missing tag, a ma
   assert.equal(r.git(r.checkout, 'rev-parse', 'HEAD'), r.v4, 'nothing moved');
 });
 
+test('a failed fetch is refused without the credentials a remote URL carries', async t => {
+  const r = await repos(t);
+  const url = 'https://someone:not-a-real-password-123@127.0.0.1:9/fai-browser.git';
+  r.git(r.checkout, 'remote', 'set-url', 'origin', url);
+  await assert.rejects(install(r, { remoteOk: candidate => candidate === url }), error => {
+    assert.equal(error.code, 'fetch_failed', error.message);
+    assert.doesNotMatch(error.message, /not-a-real-password-123/);
+    return true;
+  });
+});
+
 test('install on main: fast-forwards to the tag, runs npm only when the lock changed, refreshes and restarts', async t => {
   const r = await repos(t, { lockChange: true });
   await mkdir(join(r.checkout, 'node_modules'));

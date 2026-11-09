@@ -23,6 +23,7 @@ import { appendFile, mkdir, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { PACKAGE_ROOT } from './paths.js';
+import { scrubSecrets } from './secrets.js';
 import { UPDATE_REPO, clearStaleLock, isCommitSha, parseTag, parseVersion, updatePaths, writeInstallState } from './update.js';
 
 const execFileAsync = promisify(execFile);
@@ -202,9 +203,10 @@ export async function verifyTarget({ git, remote, target }) {
   return commit;
 }
 
+/** The first line of a git or npm error, without credentials a remote URL may carry (it goes to the log and status). */
 function firstLine(error) {
   const text = String(error?.stderr || error?.message || error).trim().split('\n').find(Boolean) ?? 'error';
-  return text.slice(0, 200);
+  return scrubSecrets(text.replace(/\/\/[^/@\s]+@/g, '//[redacted]@')).slice(0, 200);
 }
 
 /** `npm` next to the running node, else on PATH. */
