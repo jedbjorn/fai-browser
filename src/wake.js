@@ -198,6 +198,7 @@ export function deliverClaudeSocket({ path, token, text, timeoutMs = SOCKET_TIME
       if (written && !refusalIn(scrub(answer))) return finish(reply() ? { ok: true, reply: reply() } : { ok: true });
       finish({ ok: false, code: 'timeout', message: `The messaging socket did not answer within ${timeoutMs} ms.` });
     }, timeoutMs);
+    timer.unref?.();
     socket.setEncoding('utf8');
     socket.on('data', chunk => {
       answer = (answer + chunk).slice(-4000);
@@ -218,6 +219,7 @@ export function deliverClaudeSocket({ path, token, text, timeoutMs = SOCKET_TIME
         // Half-close: the session reads both lines; whatever it answers before closing is checked for a refusal.
         socket.end();
         quiet = setTimeout(judge, quietMs);
+        quiet.unref?.();
       });
     });
   });
