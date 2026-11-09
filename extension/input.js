@@ -518,7 +518,7 @@
   // ---------------------------------------------------------------------------------------------------------------
 
   const RHYTHM = {
-    iki: [75, 108], // session median IKI range (ms, log-uniform): about 95-130 WPM at the keyboard
+    iki: [75, 108], // session median IKI range (ms, log-uniform): with the context factors about 95-120 WPM overall
     hold: [62, 92], // session median hold range (ms, log-uniform)
     ikiSigma: 0.3,
     holdSigma: 0.22,
