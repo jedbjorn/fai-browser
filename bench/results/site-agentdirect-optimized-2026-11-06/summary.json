@@ -53,7 +53,7 @@
       "server": {
         "command": "/usr/bin/node",
         "args": [
-          "/home/j3d1/Repos/fai-browser/src/mcp-main.js"
+          "src/mcp-main.js"
         ]
       },
       "tools": [

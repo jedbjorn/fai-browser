@@ -22,7 +22,7 @@
         "https://consent.google.com"
       ],
       "mode": "reversible",
-      "answerPattern": "(\u20ac|EUR|US\\$|\\$|\u00a3)\\s?\\d",
+      "answerPattern": "(€|EUR|US\\$|\\$|£)\\s?\\d",
       "notes": "Opening the price graph is a button (reversible). answerPattern only checks that a price is reported; the owner checks the day against the graph."
     },
     {
@@ -113,38 +113,6 @@
       ],
       "mode": "interactive",
       "notes": "Dates {{DATE+14}} to {{DATE+16}}. Expedia often shows a bot wall to automation (bench/real census): a blocked receipt is a recorded outcome, not a harness failure. Manual grading."
-    },
-    {
-      "id": "dosarch-recon",
-      "prompt": "Describe what is on this workspace page: its main sections and the controls available, without changing anything. It's my dos-arch sandbox workspace, open in Chrome at https://dos-arch.designs-os.com/sandbox/workspace.",
-      "startUrl": "https://dos-arch.designs-os.com/sandbox/workspace",
-      "origins": [
-        "https://dos-arch.designs-os.com"
-      ],
-      "mode": "read-only",
-      "notes": "The owner's own app, signed in in the Public profile. A sign-in page returns login (FAI never signs in below testing). Manual grading; its answer seeds dosarch-t1..t3."
-    },
-    {
-      "id": "dosarch-t1-sections",
-      "prompt": "Use my browser on my dos-arch sandbox workspace (https://dos-arch.designs-os.com/sandbox/workspace, I'm signed in). Open the Projects section, then Orgs, then Flags, using the navigation buttons at the top. For each of the three, tell me how many items are listed and their names (or that it's empty). Only navigate between sections; don't send chat messages, attach, share or change any data.",
-      "startUrl": "https://dos-arch.designs-os.com/sandbox/workspace",
-      "origins": [
-        "https://dos-arch.designs-os.com"
-      ],
-      "mode": "reversible",
-      "notes": "From dosarch-recon. The top navigation entries are buttons, not links (reversible). Hand runs 2026-10-06: Sonnet first sent instruction together with steps (invalid_params), then a 3-step list. Manual grading: count and names per section."
-    },
-    {
-      "id": "dosarch-t2",
-      "prompt": "TODO after recon",
-      "skip": true,
-      "skipReason": "placeholder: write after dosarch-recon"
-    },
-    {
-      "id": "dosarch-t3",
-      "prompt": "TODO after recon",
-      "skip": true,
-      "skipReason": "placeholder: write after dosarch-recon"
     },
     {
       "id": "price-compare-live",

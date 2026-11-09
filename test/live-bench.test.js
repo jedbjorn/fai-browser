@@ -36,12 +36,12 @@ test('the shipped live task file loads, fills dates, skips placeholders and keep
   const { tasks, skipped } = loadLiveTasks(file, { now: NOW });
   const ids = tasks.map(task => task.id);
   for (const id of ['gf-week-window', 'gf-cheapest-day', 'gf-date-grid', 'wiki-tagus', 'hn-comments', 'mdn-array-at',
-    'github-license', 'pydocs-read-text', 'booking-search', 'expedia-search', 'dosarch-recon', 'dosarch-t1-sections']) {
+    'github-license', 'pydocs-read-text', 'booking-search', 'expedia-search']) {
     assert.ok(ids.includes(id), `${id} present`);
   }
-  assert.deepEqual(skipped.map(item => item.id), ['dosarch-t2', 'dosarch-t3']);
-  const sections = tasks.find(task => task.id === 'dosarch-t1-sections');
-  assert.deepEqual([sections.mode, sections.answerPattern, graderFor(sections).kind], ['reversible', undefined, 'manual']);
+  assert.deepEqual(skipped, []);
+  const booking = tasks.find(task => task.id === 'booking-search');
+  assert.deepEqual([booking.mode, booking.answerPattern, graderFor(booking).kind], ['interactive', undefined, 'manual']);
   const gf = tasks.find(task => task.id === 'gf-week-window');
   assert.match(gf.prompt, /Wednesday 7 October 2026 to Tuesday 13 October 2026/);
   assert.doesNotMatch(JSON.stringify(tasks), /\{\{DATE/, 'every placeholder filled');
@@ -49,18 +49,30 @@ test('the shipped live task file loads, fills dates, skips placeholders and keep
     assert.deepEqual(task.origins, ['https://www.google.com', 'https://consent.google.com']);
   }
   assert.deepEqual(tasks.find(task => task.id === 'gf-date-grid').expectSignals, ['unreadable_region:canvas']);
-  assert.equal(tasks.find(task => task.id === 'dosarch-recon').mode, 'read-only');
   // The public comparisons reuse bench/real's answerPatterns.
   const real = JSON.parse(readFileSync(join(ROOT, 'bench', 'real', 'tasks.json'), 'utf8')).tasks;
   for (const id of ['wiki-tagus', 'hn-comments', 'mdn-array-at', 'github-license', 'pydocs-read-text']) {
     assert.equal(tasks.find(task => task.id === id).answerPattern, real.find(task => task.id === id).answerPattern, id);
     assert.equal(tasks.find(task => task.id === id).mode, real.find(task => task.id === id).mode, id);
   }
-  // Explicitly asked-for skipped tasks are still not run; unknown ids throw.
-  const picked = loadLiveTasks(file, { ids: ['wiki-tagus', 'dosarch-t2'], now: NOW });
-  assert.deepEqual(picked.tasks.map(task => task.id), ['wiki-tagus']);
-  assert.deepEqual(picked.skipped.map(item => item.id), ['dosarch-t2']);
   assert.throws(() => loadLiveTasks(file, { ids: ['nope'] }), /unknown task id/);
+});
+
+test('skipped placeholders are listed and never run, even when asked for', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'live-bench-'));
+  try {
+    const file = join(dir, 'tasks.json');
+    await writeFile(file, JSON.stringify({ tasks: [
+      { id: 'a', prompt: 'p', origins: ['https://a.com'], mode: 'read-only' },
+      { id: 'later', prompt: 'TODO', skip: true, skipReason: 'placeholder' }] }));
+    const all = loadLiveTasks(file, { now: NOW });
+    assert.deepEqual([all.tasks.map(task => task.id), all.skipped.map(item => item.id)], [['a'], ['later']]);
+    const picked = loadLiveTasks(file, { ids: ['a', 'later'], now: NOW });
+    assert.deepEqual(picked.tasks.map(task => task.id), ['a']);
+    assert.deepEqual(picked.skipped.map(item => item.id), ['later']);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('live task validation rejects bad origins, modes and patterns', async () => {
@@ -156,18 +168,18 @@ test('grading: answerPattern and expected are auto, the rest manual; owner grade
   const manual = gradeFinal({}, 'The page has three sections.');
   assert.deepEqual([manual.grading, manual.pass, manual.answer], ['manual', null, 'The page has three sections.']);
   const records = [
-    { taskId: 'dosarch-recon', host: 'h', rep: 1, grading: 'manual', pass: null, answerText: 'three sections' },
+    { taskId: 'booking-search', host: 'h', rep: 1, grading: 'manual', pass: null, answerText: 'three sections' },
     { taskId: 'wiki-tagus', host: 'h', rep: 1, grading: 'auto', pass: true, answerText: '1,007 km' },
   ];
   const grades = gradesFile(records);
-  assert.equal(grades['dosarch-recon|h|1'].pass, null);
-  assert.equal(grades['dosarch-recon|h|1'].answer, 'three sections');
-  grades['dosarch-recon|h|1'].pass = true;
+  assert.equal(grades['booking-search|h|1'].pass, null);
+  assert.equal(grades['booking-search|h|1'].answer, 'three sections');
+  grades['booking-search|h|1'].pass = true;
   const applied = applyGrades(records, grades);
   assert.deepEqual([applied[0].pass, applied[0].gradedBy], [true, 'owner']);
   assert.equal(applied[1].pass, true);
-  assert.equal(gradesFile(applied, grades)['dosarch-recon|h|1'].pass, true, 'owner grade survives a rewrite');
-  assert.equal(runKey(records[0]), 'dosarch-recon|h|1');
+  assert.equal(gradesFile(applied, grades)['booking-search|h|1'].pass, true, 'owner grade survives a rewrite');
+  assert.equal(runKey(records[0]), 'booking-search|h|1');
 });
 
 test('the live checklist fails without a daemon or extension and warns loudly on an old daemon', () => {
@@ -210,7 +222,7 @@ test('summary rendering: rows, totals, grading column, no answer text, home sani
       reason: null, cost: { usd: 0.1 }, answerText: 'SECRET PAGE ANSWER' },
   ];
   const summary = sanitizeHome(buildSummary(records, { meta: { mode: 'live', tasksFile: '/home/me/x/tasks.json' },
-    skipped: [{ id: 'dosarch-t1', reason: 'placeholder' }] }), '/home/me');
+    skipped: [{ id: 'later-task', reason: 'placeholder' }] }), '/home/me');
   assert.equal(summary.totals['claude:s:low'].passed, 1);
   assert.equal(summary.totals['claude:s:low'].graded, 1);
   assert.equal(summary.totals['claude:s:low'].ungraded, 1);
@@ -219,7 +231,7 @@ test('summary rendering: rows, totals, grading column, no answer text, home sani
   assert.match(md, /\| wiki-tagus \| claude:s:low \| 1 \| auto \| PASS \| 30\.0 \| 8\.0 \| 3 \| - \| 2 \| 1 \| - \| - \| 0 \| - \| - \| - \| 4 \| 2\.5 \| 2 \| 1 \| none \| 0 \| \$0\.050 \|/);
   assert.match(md, /\| gf-date-grid \| .* \| manual \| to grade \|/);
   assert.match(md, /unreadable_region:canvas seen/);
-  assert.match(md, /Skipped tasks: dosarch-t1/);
+  assert.match(md, /Skipped tasks: later-task/);
   assert.match(md, /tasks ~\/x\/tasks\.json/);
   assert.doesNotMatch(JSON.stringify(summary) + md, /SECRET PAGE ANSWER/);
 });
