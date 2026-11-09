@@ -904,7 +904,8 @@
     let typed = 0;
     let stopped = false;
     for (const event of plan.events) {
-      if (event.at > 0) await pause(Math.max(event.at - (performance.now() - started), RHYTHM.sep / 2));
+      // Behind the plan, still a few ms between two events (never a keyup a moment after a keydown).
+      if (event.at > 0) await pause(Math.max(event.at - (performance.now() - started), 6));
       if (!el.isConnected || (event.type === 'down' && performance.now() - started - event.at > RHYTHM_LATE_MS)) {
         stopped = true;
         break;
