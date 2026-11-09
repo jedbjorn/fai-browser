@@ -49,11 +49,15 @@ test('worker restart never sends saved pairing token to an invalid draft endpoin
         return {};
       },
     });
-    await new Promise(resolve => setImmediate(resolve));
+    // A few turns: the worker reads (and creates) its browser identity before it connects.
+    for (let turn = 0; turn < 5; turn++) await new Promise(resolve => setImmediate(resolve));
     assert.equal(requests.length, 0, `no HTTP request on startup: ${endpoint}`);
     if (endpoint === 'http://127.0.0.1:4318') {
       // The restarted worker reconnects; its hello (session:null) tells the companion to pause the old lease.
-      assert.deepEqual(sockets, [{ url: 'ws://127.0.0.1:4318/ext/ws', protocols: ['fai-browser.v3', 'fai-auth.fixture-pairing-token'] }]);
+      // The URL names this install's browser identity (several browsers may be paired, issue #9).
+      assert.equal(sockets.length, 1);
+      assert.match(sockets[0].url, /^ws:\/\/127\.0\.0\.1:4318\/ext\/ws\?browser=b-[A-Za-z0-9]{8,24}$/);
+      assert.deepEqual(sockets[0].protocols, ['fai-browser.v3', 'fai-auth.fixture-pairing-token']);
     } else {
       assert.equal(sockets.length, 0, `Invalid saved endpoint contacted: ${endpoint}`);
     }
