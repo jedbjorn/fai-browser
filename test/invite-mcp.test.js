@@ -14,7 +14,7 @@ import { homePaths, saveDriver } from '../src/home.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
 import { ORIGIN, link } from './runtime-fixtures.js';
-import { fakeCodex, startFakeClaudeSocket } from './helpers/fake-agents.js';
+import { fakeCodex, startFakeClaudeSocket, startFakePiSocket } from './helpers/fake-agents.js';
 
 const SECRET_TITLE = 'Payroll - TOP SECRET 5521';
 const SECRET_TEXT = 'Salary of Ada Lovelace: 98,765';
@@ -212,4 +212,52 @@ test('MCP: a Codex thread codex does not know is reported as a failed wake (the 
     return view?.state === 'failed' ? view : null;
   }, 'the failed report');
   assert.equal(failed.error.code, 'unknown_thread');
+});
+
+// pi: the FAI pi extension registers the server with its socket (named after pi's pid, here this test process: the
+// server's parent), token and session id. A fake extension socket stands in for pi.
+test('MCP: pi registers with its extension socket, names its tools pi\'s way, and an acknowledged wake is delivered', async t => {
+  const fake = await startFakePiSocket(t);
+  const ctx = await setup(t, { clientName: 'pi', socket: false,
+    env: { FAI_PI_WAKE_SOCKET: fake.path, FAI_PI_WAKE_TOKEN: fake.token, FAI_PI_SESSION_ID: '01a1c20b-3ac0-7271-9837-9f9f0bd19838',
+      CLAUDE_CODE_SESSION_ID: '' } });
+  assert.equal(ctx.session.host, 'pi');
+  assert.equal(ctx.session.wake, 'pi-socket');
+  const reply = await ctx.hub.emit({ type: 'invite', tabId: 7, origin: ORIGIN, title: SECRET_TITLE, level: 'reversible',
+    sessionId: ctx.session.sessionId, text: 'Check the form' });
+  const message = await until(() => fake.received[0], 'the wake on the fake pi socket');
+  assert.equal(message.type, 'wake');
+  assert.match(message.text, /^\[FAI Browser\] The user invited you/);
+  assert.match(message.text, new RegExp(`Call mcp__fai_browser__fai_browser_open with \\{"inviteId": "${reply.invite.inviteId}"\\}`));
+  assert.ok(!message.text.includes(SECRET_TITLE));
+  const delivered = await until(async () => {
+    const view = inviteOf(ctx, reply.requestId)?.wake;
+    return view?.state === 'delivered' ? view : null;
+  }, 'the delivered report');
+  assert.equal(delivered.detail, 'turn', 'pi acknowledged: a new turn');
+  // pi-socket counts as wakeable: a paused tab's next says FAI wakes the session, not the background wait command.
+  const opened = await ctx.mcp.callTool('fai_browser_open', { inviteId: reply.invite.inviteId });
+  assert.ok(!opened.isError, text(opened));
+  await ctx.hub.emit({ type: 'status', leaseId: reply.leaseId, status: 'paused', reason: 'tab_changed' });
+  const paused = await ctx.mcp.callTool('fai_browser_wait', { requestId: reply.requestId, maxMs: 0 });
+  assert.match(text(paused), /FAI Browser wakes this session with a message once the user has done it/);
+  assert.ok(!/--until active/.test(text(paused)));
+});
+
+test('MCP: pi without the extension (or a refusing one) falls back to the copy line', async t => {
+  const plain = await setup(t, { clientName: 'pi', socket: false, env: { CLAUDE_CODE_SESSION_ID: '' } });
+  assert.equal(plain.session.host, 'pi');
+  assert.equal(plain.session.wake, 'none');
+  const status = await plain.mcp.callTool('fai_browser_status', {});
+  assert.match(text(status), /no wake channel \(the FAI pi extension registers the server/);
+
+  const refusing = await startFakePiSocket(t, { mode: 'refuse', code: 'busy_limit' });
+  const ctx = await setup(t, { clientName: 'pi', socket: false,
+    env: { FAI_PI_WAKE_SOCKET: refusing.path, FAI_PI_WAKE_TOKEN: refusing.token, CLAUDE_CODE_SESSION_ID: '' } });
+  const reply = await ctx.hub.emit({ type: 'invite', tabId: 7, origin: ORIGIN, level: 'reversible', sessionId: ctx.session.sessionId });
+  const failed = await until(async () => {
+    const view = inviteOf(ctx, reply.requestId)?.wake;
+    return view?.state === 'failed' ? view : null;
+  }, 'the failed report');
+  assert.equal(failed.error.code, 'refused');
 });
