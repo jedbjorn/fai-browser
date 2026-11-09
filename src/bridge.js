@@ -909,6 +909,8 @@ export function createHub({
 
   // --- inbound messages ------------------------------------------------------------------------------------
 
+  const LEFT_ORIGIN = /^https?:\/\/[a-z0-9.[\]:-]{1,260}$/i;
+
   // The browser's most recently bound active lease; used for v2-style /status reports that carry no leaseId.
   function currentActiveLease(browser) {
     let found = null;
@@ -926,7 +928,10 @@ export function createHub({
     if (lease.status === 'active') deactivate(lease, status, reason);
     else if (status === 'stopped' && lease.status !== 'stopped') lease.status = 'stopped';
     lease.state = status;
-    emit({ type: 'status', leaseId: lease.leaseId, requestId: lease.requestId, status, reason, browserId: browser.id });
+    // An origin_changed pause names the origin the tab went to (origin only; the extension redacts it like any URL).
+    const left = reason === 'origin_changed' && typeof message.origin === 'string' && LEFT_ORIGIN.test(message.origin)
+      ? { origin: message.origin } : {};
+    emit({ type: 'status', leaseId: lease.leaseId, requestId: lease.requestId, status, reason, browserId: browser.id, ...left });
   }
 
   // Routes one extension message from `browser` (over `connection` when via the WebSocket). `answer(ok, payload)`

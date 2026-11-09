@@ -1689,7 +1689,8 @@ function sameDocument(a, b) {
   const doc = value => {
     const text = String(value ?? '');
     const at = text.lastIndexOf(':');
-    return at > 0 && /^\d+$/.test(text.slice(at + 1)) ? text.slice(0, at) : null;
+    // A revision that also stands for approved frames (extension/frames.js) is "<documentId>:<sequence>.<n>".
+    return at > 0 && /^\d+(?:\.\d+)?$/.test(text.slice(at + 1)) ? text.slice(0, at) : null;
   };
   const left = doc(a);
   return left !== null && left === doc(b);
@@ -4457,7 +4458,7 @@ class Session {
     this.result.page = compactPage(this.result.observation, this.question());
     // The lease's tabs, a JavaScript dialog and Test-site logs on the final page (src/result.js pageExtras).
     const final = this.result.observation;
-    if (final) Object.assign(this.result, pageExtras({ tabs: final.tabs, ...(this.config.level === 'testing' ? { dialog: final.dialog } : {}) }));
+    if (final) Object.assign(this.result, pageExtras({ tabs: final.tabs, frames: final.frames, ...(this.config.level === 'testing' ? { dialog: final.dialog } : {}) }));
     if (this.retries.length) {
       // A back-out's outcome is how the run ended after it.
       for (const entry of this.retries) if (entry.kind === 'back_out') entry.outcome = this.result.code;
@@ -5608,7 +5609,7 @@ export class BrowserRuntime {
             ...(observation.recordState ? { recordState: observation.recordState } : {}) } : {}),
           ...(observation.overlay ? { overlay: observation.overlay } : {}),
           // Logs only when asked for on a Test site, a dialog only on a Test site (the hook exists only there).
-          ...pageExtras({ tabs: observation.tabs, ...(config.level === 'testing' ? { dialog: observation.dialog } : {}),
+          ...pageExtras({ tabs: observation.tabs, frames: observation.frames, ...(config.level === 'testing' ? { dialog: observation.dialog } : {}),
             ...(session.wantLogs ? { logs: observation.logs ?? [], logsDropped: observation.logsDropped } : {}) }) },
         actions: actions.map(action => ({ ...action })),
         offer: { cap: listing.cap, listed: listing.actions.map(action => action.id), dropped: listing.dropped },

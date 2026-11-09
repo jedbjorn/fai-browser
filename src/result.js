@@ -692,6 +692,11 @@ export function pageExtras(observation) {
     if (['accept', 'dismiss'].includes(dialog.answered)) out.dialog.answered = dialog.answered;
     if (dialog.open === true) out.dialog.open = true;
   }
+  // The page's cross-origin frames (extension/frames.js): the ones read (`id` f<n>, their controls carry it) and the
+  // ones not read with why (`not_approved`: the request does not list the origin; `no_access`: the browser gives the
+  // extension no access to it; `sandboxed`, `limit`, `unavailable`). Origins only, written by the extension.
+  const frames = pageFrames(observation.frames);
+  if (frames) out.frames = frames;
   if (Array.isArray(observation.logs)) {
     out.logs = observation.logs.slice(-MAX_PAGE_LOGS).filter(entry => entry && LOG_KINDS.has(entry.kind)).map(entry => {
       const item = { kind: entry.kind, text: line(entry.text, 300) };
@@ -703,6 +708,45 @@ export function pageExtras(observation) {
     if (Number.isInteger(observation.logsDropped) && observation.logsDropped > 0) out.logsDropped = observation.logsDropped;
   }
   return out;
+}
+
+const FRAME_REASONS = new Set(['not_approved', 'no_access', 'sandboxed', 'limit', 'unavailable']);
+const FRAME_ORIGIN = /^https?:\/\/[a-z0-9.[\]:-]{1,260}$/i;
+
+/** The observation's `frames` list, cleaned: [{id?, origin, read, reason?}] (at most 16), or null when empty. */
+export function pageFrames(frames) {
+  if (!Array.isArray(frames)) return null;
+  const out = [];
+  for (const frame of frames.slice(0, 16)) {
+    if (!frame || typeof frame !== 'object') continue;
+    const origin = typeof frame.origin === 'string' && FRAME_ORIGIN.test(frame.origin) ? frame.origin : null;
+    if (frame.read === true && typeof frame.id === 'string' && /^f[1-9]$/.test(frame.id) && origin) {
+      out.push({ id: frame.id, origin, read: true });
+    } else if (frame.read === false && FRAME_REASONS.has(frame.reason)) {
+      out.push({ origin, read: false, reason: frame.reason });
+    }
+  }
+  return out.length ? out : null;
+}
+
+/**
+ * The next-step note for frames the page holds but FAI did not read because the request does not cover their origin
+ * (or the browser gives no access): the origins to ask for. '' when there are none.
+ */
+export function framesNote(result) {
+  const frames = pageFrames(result?.frames ?? result?.page?.frames) ?? [];
+  const missing = [...new Set(frames.filter(frame => !frame.read && frame.origin && frame.reason === 'not_approved').map(frame => frame.origin))];
+  const blocked = [...new Set(frames.filter(frame => !frame.read && frame.origin && frame.reason === 'no_access').map(frame => frame.origin))];
+  let note = '';
+  if (missing.length) {
+    note += ` The page embeds frames from ${missing.join(', ')} that this request does not cover, so they were not read. `
+      + 'If the task needs them, tell the user and call fai_browser_open with those origins added to origins (the user approves them).';
+  }
+  if (blocked.length) {
+    note += ` Frames from ${blocked.join(', ')} are approved but the browser gives FAI Browser no access to them (toolbar `
+      + 'approval only covers the tab\'s own site): ask the user to approve the request from its request window, which asks the browser for every origin of the request.';
+  }
+  return note;
 }
 
 /** Compact post-action observation stored on each step. */
@@ -1341,6 +1385,12 @@ function approvalPendingText(result, waitMs = null) {
 
 /** The trusted next step `{kind, text}` of a host-driven (Agent direct) result: choose, observe, answer, relay, approve, stop. */
 export function directNext(result, context = {}) {
+  const next = directNextStep(result, context);
+  const note = ['choose', 'observe', 'answer'].includes(next.kind) ? framesNote(result) : '';
+  return note ? { ...next, text: `${next.text}${note}` } : next;
+}
+
+function directNextStep(result, context = {}) {
   const ref = context.requestId ?? result.requestId ?? result.lease?.requestId ?? 'from this result';
   const code = result.code;
   const offered = offerOf(result);
@@ -1820,7 +1870,8 @@ export function agentResult(source) {
   // A host act: one line per action that ran (runtime-written; labels are page text, a typed value only its length).
   if (Array.isArray(result.did) && result.did.length) out.did = result.did.filter(line => typeof line === 'string').slice(0, 25);
   // The lease's tabs, a JavaScript dialog and Test-site logs on the page the act ended on (pageExtras; untrusted).
-  Object.assign(out, pageExtras({ tabs: result.tabs, dialog: result.dialog, logs: result.logs, logsDropped: result.logsDropped }));
+  Object.assign(out, pageExtras({ tabs: result.tabs, dialog: result.dialog, logs: result.logs, logsDropped: result.logsDropped,
+    frames: result.frames }));
   // Trusted: an act with a point: the pixels given, the CSS point they map to, the image size assumed and the control
   // under them (ref "point" for one the observation left out; label is page text), also when the act was refused.
   if (result.point && typeof result.point === 'object' && result.point.image) {

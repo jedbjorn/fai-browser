@@ -26,8 +26,9 @@
   // Same-origin frames (depth 1): read into blocks and controls like the top document. Control ids stay one
   // sequence across the document, its open shadow roots and these frames ("1".."100" in output order); a frame's
   // controls also carry `frame` (1-based index of the readable frame in document order), and act() resolves the id
-  // against the last observation whatever document it is in. Cross-origin frames are never read; they are listed
-  // as the warning cross_origin_frame.
+  // against the last observation whatever document it is in. Cross-origin frames are never read here; they are
+  // listed as the warning cross_origin_frame and as slots for the worker, which runs this script inside the ones whose
+  // origin the request approved (frameSlots, pageFacts, useContext below).
   const MAX_FRAMES = 8;
   const FRAME_ELEMENT_BUDGET = 20_000;
   // A click that navigates only a frame waits at most this long for the frame's load (the tab's own NAV_CAP_MS).
@@ -499,6 +500,13 @@
   // The domain roots the user approved for the session ("example.com"), from the last call that named them: a link or
   // allowed URL may leave this origin only for another https page under one of them that also covers this page.
   let currentSites = [];
+  // The page context the worker sends with every call (useContext): facts of the other documents of the same tab that
+  // this one cannot see (approved cross-origin frames, or the top document seen from such a frame). They only add
+  // restrictions here: `purchase` (a purchase page), `sensitive` (a password or payment field), `secretPage` (a
+  // credentials page). In an approved cross-origin frame (`frame: true`) also the tab's origin (`topOrigin`) and the
+  // request's approved exact origins (`origins`): a link that leaves the frame or navigates the tab is checked against
+  // them, and every dispatch first checks that this frame and its ancestors are still on approved origins.
+  let pageContext = { purchase: false, sensitive: false, secretPage: false, frame: false, topOrigin: null, origins: [] };
   // Risk ({ cls, form?, consentReject? }) of each offered control in the last observation, by id.
   let targetRisks = new Map();
   // The consent dialog of the last observation (detectConsent), for a located control's consent kind.
@@ -554,10 +562,11 @@
   }
 
   // Same-origin iframes of the top document (not nested), rendered and within the element budget. A frame whose
-  // document cannot be read is cross-origin; visible ones are counted for the cross_origin_frame warning.
+  // document cannot be read is cross-origin; visible ones are counted for the cross_origin_frame warning and listed
+  // as slots (crossOriginSlots) for the worker.
   function collectFrames() {
     const frames = new Map();
-    let crossOrigin = 0;
+    const crossOrigin = [];
     for (const el of document.querySelectorAll('iframe,frame')) {
       if (frames.size >= MAX_FRAMES) break;
       const rect = el.getBoundingClientRect();
@@ -572,7 +581,7 @@
       // (about:blank and srcdoc frames inherit it), never because a relaxed document.domain made it reachable.
       if (doc && !sameLeaseOrigin(el)) doc = null;
       if (!doc) {
-        if (rect.width >= 2 && rect.height >= 2) crossOrigin++;
+        if (rect.width >= 2 && rect.height >= 2) crossOrigin.push(el);
         continue;
       }
       if (!doc.body || doc.getElementsByTagName('*').length > FRAME_ELEMENT_BUDGET) continue;
@@ -583,7 +592,162 @@
         clip: { left: dx, top: dy, right: dx + el.clientWidth, bottom: dy + el.clientHeight },
       });
     }
+    // Cross-origin frames inside the readable same-origin frames: listed as slots too (never read here).
+    for (const frame of frames.values()) {
+      for (const el of frame.doc.querySelectorAll('iframe,frame')) {
+        if (crossOrigin.length >= MAX_SLOTS) break;
+        if (sameLeaseOrigin(el) || !rendered(el)) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.width >= 2 && rect.height >= 2) crossOrigin.push(el);
+      }
+    }
     return { frames, crossOrigin };
+  }
+
+  // --- Approved cross-origin frames (docs/REFERENCE.md "Frames") ------------------------------------------------
+  // This script never reads a cross-origin frame. It lists each one it sees as a slot for the worker: where the frame
+  // sits (`path`, its position in window.frames from the top document down; a frame identifies itself by the same path,
+  // framePath), its content box in top-viewport CSS px and the origin its element names (`declared`, the src
+  // attribute: a hint for the warning, never trusted for access). The worker reads a frame only when the frame's own
+  // origin, as its isolated content script reports it, is one the request approved, and runs this same script there.
+  const MAX_SLOTS = 16;
+  const MAX_FRAME_DEPTH = 4;
+
+  // The index of a frame element's window among `view.frames`, or -1.
+  function frameIndexIn(view, el) {
+    try {
+      const child = el.contentWindow;
+      if (!child) return -1;
+      for (let i = 0; i < Math.min(view.frames.length, 200); i++) if (view.frames[i] === child) return i;
+    } catch {
+      // A window that went away.
+    }
+    return -1;
+  }
+
+  // This document's path from the top window (the indexes in each ancestor's window.frames), or null past
+  // MAX_FRAME_DEPTH or when a step cannot be found. [] in the top document. Cross-origin WindowProxy access allows
+  // exactly this: parent, top, length and indexed frames.
+  function framePath() {
+    const path = [];
+    let view = window;
+    try {
+      while (view !== view.top) {
+        if (path.length >= MAX_FRAME_DEPTH) return null;
+        const parent = view.parent;
+        let index = -1;
+        for (let i = 0; i < Math.min(parent.length, 200); i++) {
+          if (parent[i] === view) {
+            index = i;
+            break;
+          }
+        }
+        if (index < 0) return null;
+        path.unshift(index);
+        view = parent;
+      }
+    } catch {
+      return null;
+    }
+    return path;
+  }
+
+  // The origin a frame element names (its src), or null for none, about:, data: or blob: frames.
+  function declaredOrigin(el) {
+    try {
+      const url = new URL(el.getAttribute('src') || 'about:blank', el.baseURI);
+      return ['http:', 'https:'].includes(url.protocol) ? url.origin : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // The cross-origin frame slots of this observation: [{ path, box: {x, y, width, height}, clip, declared }] in this
+  // document's viewport (the worker shifts a nested frame's slots by its own box). `path` is relative to the top window:
+  // this document's own path plus the frame's index (through a readable same-origin frame for one nested in it).
+  function crossOriginSlots(elements) {
+    const own = framePath();
+    if (!own) return [];
+    const slots = [];
+    for (const el of elements.slice(0, MAX_SLOTS)) {
+      const doc = el.ownerDocument;
+      const frame = frameByDoc.get(doc);
+      let path = null;
+      if (doc === document) {
+        const index = frameIndexIn(window, el);
+        if (index >= 0) path = [...own, index];
+      } else if (frame) {
+        const outer = frameIndexIn(window, frame.el);
+        const index = frameIndexIn(doc.defaultView, el);
+        if (outer >= 0 && index >= 0) path = [...own, outer, index];
+      }
+      if (!path || path.length > MAX_FRAME_DEPTH) continue;
+      const rect = toTop(el.getBoundingClientRect(), frame);
+      const left = rect.left + el.clientLeft;
+      const top = rect.top + el.clientTop;
+      const width = el.clientWidth;
+      const height = el.clientHeight;
+      let clip = { left, top, right: left + width, bottom: top + height };
+      if (frame) {
+        clip = { left: Math.max(clip.left, frame.clip.left), top: Math.max(clip.top, frame.clip.top),
+          right: Math.min(clip.right, frame.clip.right), bottom: Math.min(clip.bottom, frame.clip.bottom) };
+      }
+      slots.push({ path, box: { x: left, y: top, width, height }, clip, declared: declaredOrigin(el) });
+    }
+    return slots;
+  }
+
+  // Facts of this document alone (never the context it was sent): what the worker unions across the tab's documents.
+  function ownPageFacts(text) {
+    return {
+      purchase: purchasePage({ path: location.pathname, text, payment: pagePayment() }),
+      sensitive: pageSensitiveOwn(),
+      secretPage: secretMode().ownPage === true,
+    };
+  }
+
+  // The worker's page context (see pageContext). Anything malformed is the empty context.
+  function useContext(context) {
+    const origins = Array.isArray(context?.origins)
+      ? context.origins.filter(origin => typeof origin === 'string' && /^https?:\/\/[^/\s]+$/.test(origin)).slice(0, 20) : [];
+    const topOrigin = typeof context?.topOrigin === 'string' && /^https?:\/\/[^/\s]+$/.test(context.topOrigin) ? context.topOrigin : null;
+    const next = {
+      purchase: context?.purchase === true, sensitive: context?.sensitive === true, secretPage: context?.secretPage === true,
+      frame: context?.frame === true && window !== window.top, topOrigin, origins,
+    };
+    if (JSON.stringify(next) === JSON.stringify(pageContext)) return;
+    pageContext = next;
+    secretState = null;
+    secretScanned = null;
+  }
+
+  // True when `origin` is on the approved site of an approved frame: one of the request's exact origins, or an https
+  // origin on the default port under an approved domain root.
+  function approvedOrigin(origin) {
+    if (pageContext.origins.includes(origin)) return true;
+    try {
+      const url = new URL(origin);
+      return url.protocol === 'https:' && !url.port
+        && currentSites.some(root => url.hostname === root || url.hostname.endsWith(`.${root}`));
+    } catch {
+      return false;
+    }
+  }
+
+  // In an approved cross-origin frame, before anything runs: this frame and every ancestor the browser names
+  // (location.ancestorOrigins, Chromium) must still be on approved origins, else nothing runs (fail closed).
+  function assertFrameApproved() {
+    if (!pageContext.frame) return;
+    if (window.origin === 'null' || !approvedOrigin(location.origin)) {
+      throw new PageError('cross_origin', 'This frame is no longer on an approved origin');
+    }
+    const ancestors = location.ancestorOrigins;
+    for (let i = 0; ancestors && i < ancestors.length; i++) {
+      const origin = ancestors[i];
+      if (origin !== 'null' && origin !== pageContext.topOrigin && !approvedOrigin(origin)) {
+        throw new PageError('cross_origin', 'This frame is no longer inside approved pages');
+      }
+    }
   }
 
   // Frame controls are spliced in where their iframe sits among the top document's controls.
@@ -1250,6 +1414,20 @@
       && currentSites.some(root => inRoot(url.hostname, root) && inRoot(location.hostname, root));
   }
 
+  // A link in an approved cross-origin frame: one that navigates the tab (_top, or _parent from a child of the top)
+  // must stay on the tab's approved site, as a link in the top document must; one that navigates a frame must land on
+  // an approved origin, so the frame stays readable.
+  function frameLinkAllowed(url, frameTarget) {
+    const tabWide = frameTarget === '_top' || (frameTarget === '_parent' && window.parent === window.top);
+    if (!tabWide) return onApprovedSite(url) || approvedOrigin(url.origin);
+    if (!pageContext.topOrigin) return false;
+    if (url.origin === pageContext.topOrigin) return true;
+    const top = new URL(pageContext.topOrigin);
+    const inRoot = (host, root) => host === root || host.endsWith(`.${root}`);
+    return url.protocol === 'https:' && !url.port && top.protocol === 'https:' && !top.port
+      && currentSites.some(root => inRoot(url.hostname, root) && inRoot(top.hostname, root));
+  }
+
   // A payment input: an autocomplete cc-* token, or a name, id, label or placeholder for a card number, expiry,
   // security code or IBAN (src/guardrails.js paymentField, applied to the element).
   function paymentField(el) {
@@ -1264,7 +1442,11 @@
   // Whether the page (the top document and its readable frames) has a password or payment field; computed once per
   // observation. A form submit on such a page is never a safe submit.
   let sensitivePage = null;
+  // A password or payment field in another document of the tab (an approved frame, or the top seen from one) counts.
   function pageSensitive() {
+    return pageSensitiveOwn() || pageContext.sensitive;
+  }
+  function pageSensitiveOwn() {
     if (sensitivePage === null) {
       sensitivePage = false;
       // Open shadow roots count too; a page too large to scan in full counts as sensitive (fail closed).
@@ -1541,7 +1723,8 @@
 
   // Applies the page rules to every described control (observe, after the page text is read).
   function applyGates(controls, text) {
-    const purchase = purchasePage({ path: location.pathname, text, payment: pagePayment() });
+    // A purchase page in another document of the tab (an approved frame, or the top seen from one) counts here too.
+    const purchase = purchasePage({ path: location.pathname, text, payment: pagePayment() }) || pageContext.purchase;
     for (const control of controls) {
       const el = targets.get(control.id);
       const risk = targetRisks.get(control.id);
@@ -4305,7 +4488,10 @@
       }
       page = secretPageSignal(location.pathname, headings);
     }
-    secretState = { relaxed, page, strict: !relaxed && (secretSettings.strict || page) };
+    // A credentials page elsewhere in the tab (pageContext) makes this document strict too; `ownPage` is this one's.
+    const ownPage = page;
+    if (!relaxed && pageContext.secretPage) page = true;
+    secretState = { relaxed, page, ownPage, strict: !relaxed && (secretSettings.strict || page) };
     return secretState;
   }
 
@@ -4889,6 +5075,7 @@
     const normalized = normalizeTerms(terms);
     if (normalized) currentTerms = normalized;
     usePolicy({ forbid, allow, sites });
+    assertFrameApproved();
     const roots = collectShadowRoots();
     const { frames, crossOrigin } = collectFrames();
     frameByDoc = frames;
@@ -4956,7 +5143,7 @@
     if (password) warnings.push('password_field');
     if (loginWall(password)) warnings.push('login_wall');
     if (capped) warnings.push('controls_capped');
-    if (crossOrigin) warnings.push('cross_origin_frame');
+    if (crossOrigin.length) warnings.push('cross_origin_frame');
     if (views?.unreadable.length) warnings.push('unreadable_region');
     if (withBlocks && secretMode().page) warnings.push('secret_page');
     const status = httpStatus();
@@ -4985,7 +5172,16 @@
       viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
       // How far the document scrolls (CSS px): the runtime scrolls a lazy list whose end is near (scrollToLoad).
       scroll: documentScroll(),
+      // For the worker only (it removes both before anything leaves the extension): the cross-origin frames this
+      // document holds, and in a page with such frames, or in a frame, this document's own page facts.
+      ...frameExtras(crossOrigin, text),
     };
+  }
+
+  function frameExtras(crossOrigin, text) {
+    const slots = crossOrigin.length ? crossOriginSlots(crossOrigin) : [];
+    if (!slots.length && window === window.top) return {};
+    return { ...(slots.length ? { frameSlots: slots } : {}), pageFacts: ownPageFacts(text) };
   }
 
   function documentScroll() {
@@ -5061,7 +5257,9 @@
       el = hit;
       if (hit.tagName !== 'IFRAME' && hit.tagName !== 'FRAME') return el;
       const frame = Array.from(frameByDoc.values()).find(entry => entry.el === hit);
-      if (!frame) throw new PageError('point_frame', 'The point is inside a frame this page cannot read');
+      if (!frame) {
+        throw new PageError('point_frame', 'The point is inside a frame this page cannot read; use an action id for a control of an approved frame');
+      }
       doc = frame.doc;
       px -= frame.dx;
       py -= frame.dy;
@@ -5283,10 +5481,10 @@
         if (el.tagName === 'A') {
           const url = new URL(el.href);
           if (url.protocol === 'javascript:') throw new PageError('blocked_risky', 'javascript: links are not allowed');
-          if (!onApprovedSite(url)) {
+          const frameTarget = (el.target || el.ownerDocument.querySelector('base[target]')?.target || '').toLowerCase();
+          if (!(pageContext.frame ? frameLinkAllowed(url, frameTarget) : onApprovedSite(url))) {
             throw new PageError('cross_origin', 'Cross-origin link requires user action');
           }
-          const frameTarget = (el.target || el.ownerDocument.querySelector('base[target]')?.target || '').toLowerCase();
           if (frameTarget && !['_self', '_parent', '_top'].includes(frameTarget)) {
             // Opening a child tab would leave the leased tab; hand off instead of letting it open.
             throw new PageError('child_tab', 'Link opens a new tab; user handoff required');
@@ -5630,6 +5828,7 @@
     approvalInfo: secretReported(approvalInfo),
     useSecrets,
     useGates,
+    useContext,
     secretNodes,
     // Numbers and fixed words only (rects, kinds, `[secret:~<hash>]` tags): nothing to scrub.
     redactionRects,
