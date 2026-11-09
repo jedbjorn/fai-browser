@@ -31,9 +31,12 @@ export function encodeWake(token, text) {
  */
 export function checkWakeText(text) {
   if (typeof text !== 'string' || !text.startsWith(WAKE_PREFIX) || text.length > MAX_WAKE_TEXT) return false;
-  // eslint-disable-next-line no-control-regex
-  return !/[\u0000-\u0009\u000b-\u001f\u007f-\u009f  ]/.test(text);
+  return !CONTROL.test(text);
 }
+
+// Control characters other than a newline, and the line and paragraph separators (U+2028, U+2029).
+// eslint-disable-next-line no-control-regex
+const CONTROL = new RegExp('[\\u0000-\\u0009\\u000b-\\u001f\\u007f-\\u009f\\u2028\\u2029]');
 
 /**
  * A value pi may get in an MCP server config: pi expands `${VAR}` and runs a value that starts with `!` as a shell
