@@ -210,3 +210,40 @@ test('in an approved frame: links may not leave the approved origins; a _top lin
   if (portal) assert.equal(portal.error, undefined, JSON.stringify(portal.error));
   await navigated;
 });
+
+test('review #8: a frame under an opaque (null) ancestor refuses every call, even on approved origins', async t => {
+  if (!browser) {
+    t.skip('no Chromium');
+    return;
+  }
+  const page = await browser.newPage();
+  t.after(() => page.close());
+  const routes = {
+    [`${TOP}/`]: doc('Portal', '<iframe sandbox="allow-scripts" src="https://other.test/sandboxed" width="600" height="300"></iframe>'),
+    [`${FRAME}/sandboxed`]: doc('Sandboxed', '<iframe src="https://other.test/inner" width="500" height="200"></iframe>'),
+    [`${FRAME}/inner`]: doc('Inner', '<p>Inner text</p><button>Inner button</button>'),
+  };
+  const serve = route => {
+    const url = new URL(route.request().url());
+    return route.fulfill({ contentType: 'text/html', body: routes[url.origin + url.pathname] ?? doc('Missing', 'missing') });
+  };
+  await page.route(`${TOP}/**`, serve);
+  await page.route(`${FRAME}/**`, serve);
+  await page.goto(`${TOP}/`);
+  let inner = null;
+  for (let i = 0; i < 50 && !inner; i++) {
+    inner = page.frames().find(item => item.url() === `${FRAME}/inner`) ?? null;
+    if (!inner) await new Promise(done => setTimeout(done, 50));
+  }
+  assert.ok(inner, 'the inner frame loaded');
+  await inner.waitForLoadState('load');
+  await inner.addScriptTag({ path: PAGE_SCRIPT });
+  const ancestors = await inner.evaluate(() => Array.from(location.ancestorOrigins ?? []));
+  if (!ancestors.includes('null')) {
+    t.skip(`this browser names no opaque ancestor (${JSON.stringify(ancestors)})`);
+    return;
+  }
+  const refused = await inFrame(inner, 'observe', [{ allow: USE }]);
+  assert.equal(refused.error?.code, 'cross_origin', JSON.stringify(refused));
+  assert.doesNotMatch(JSON.stringify(refused), /Inner text/);
+});
