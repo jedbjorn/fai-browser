@@ -581,7 +581,8 @@ token or a message `crossSessionInbound` holds or refuses, checked on 2.1.319, s
 popup says "Sent to …"; anything the socket does write back is kept as the wake's `detail`; for Codex, `codex queue`
 exited 0; for OpenCode, the plugin queued the turn), `failed` (`no_socket`, `connect_failed`, `refused`, `timeout`,
 `unknown_thread`, `no_codex`, `codex_failed`; OpenCode adds `unknown_session` and `ambiguous_session`, and a `refused`
-names the plugin's reason in `detail`: `bad_token`, `not_fai_session`, `bad_text`, `prompt_failed`) or `skipped` (a call already waiting on that request returns the page itself); a wake no
+carries the plugin's reason in its message: a wrong token, a session that never used FAI, a text that is not a FAI
+wake, or OpenCode not queuing the turn) or `skipped` (a call already waiting on that request returns the page itself); a wake no
 poll picks up fails after 10 s (`not_polling`), one never reported after 25 s (`no_report`).
 
 **Invite agent.** In the toolbar popup on any normal http(s) tab, the **Invite an agent to this tab** card lists the
