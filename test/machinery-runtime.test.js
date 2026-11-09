@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BrowserRuntime, legalActions } from '../src/runtime.js';
 import { errorPageOf } from '../src/oversight.js';
-import { agentResult } from '../src/result.js';
+import { agentResult, directNext } from '../src/result.js';
 import { instructionFingerprint } from '../src/mcp.js';
 import { FakeBridge, ORIGIN, clickProvider, link } from './runtime-fixtures.js';
 import { startStubDaemon } from './helpers/stub-daemon.js';
@@ -111,6 +111,75 @@ test('a start page with an HTTP 503 status ends error_page without a provider ca
   assert.equal(result.code, 'error_page');
   assert.equal(provider.calls.length, 0);
   assert.match(agentResult(result).next.text, /HTTP 503 error page \(Service Unavailable\)/);
+});
+
+// The browser's own error page (chrome-error://chromewebdata/ for an HTTP error without a page body or a network
+// failure) as the extension reports it: no controls, a fixed text, browserErrorPage and the warning, no status.
+const BROWSER_ERROR = {
+  title: 'www.example.com',
+  text: 'The browser shows its own error page for this address.',
+  browserErrorPage: true,
+  warnings: ['browser_error_page'],
+  controls: [],
+};
+
+class BrowserErrorBridge extends StatusBridge {
+  get observation() {
+    const observation = super.observation;
+    if (this.pages[this.path].browserErrorPage) observation.browserErrorPage = true;
+    return observation;
+  }
+}
+
+test('errorPageOf: the browser\'s own error page is an error page of unknown status', () => {
+  assert.deepEqual(errorPageOf({ browserErrorPage: true, title: 'www.example.com' }), { status: null, source: 'browser' });
+  assert.deepEqual(errorPageOf({ browserErrorPage: true, httpStatus: 503 }), { status: 503, source: 'http' });
+  assert.equal(errorPageOf({ browserErrorPage: false, title: 'Home' }), null);
+});
+
+test('a link that lands on the browser\'s own error page ends error_page; next stop says the tab can be reloaded later', async () => {
+  const pages = { ...DASHBOARD, '/monthly': BROWSER_ERROR };
+  const bridge = new BrowserErrorBridge({ pages, path: '/dashboard' });
+  const provider = clickProvider(['Monthly report']);
+  const result = await new BrowserRuntime({ bridge, provider }).run(
+    'From the Dashboard, open Monthly report. Read the total revenue and stop there.',
+    { expectation: { textIncludes: 'Total revenue' }, maxActions: 4 },
+  );
+  assert.equal(result.status, 'failed');
+  assert.equal(result.code, 'error_page');
+  assert.equal(provider.calls.length, 1, 'no decision on the error page');
+  assert.ok(result.verdict.why.includes('http:error'));
+  assert.ok(result.verdict.why.includes('error_source:browser'));
+  const lean = agentResult(result);
+  assert.equal(lean.next.kind, 'stop');
+  assert.match(lean.next.text, /browser showed its own error page/);
+  assert.match(lean.next.text, /can be reloaded later/);
+});
+
+test('Agent direct: an act that lands on the browser\'s own error page is error_page with the page\'s offer kept', async () => {
+  const pages = { ...DASHBOARD, '/monthly': BROWSER_ERROR };
+  const bridge = new BrowserErrorBridge({ pages, path: '/dashboard' });
+  const runtime = new BrowserRuntime({ bridge });
+  const observed = await runtime.observe({ mode: 'read-only', grant: { level: 'read-only' }, allowedOrigins: [ORIGIN] });
+  const monthly = observed.actions.find(action => action.label === 'Monthly report');
+  const result = await runtime.act(monthly.id, { revision: observed.observation.revision });
+  assert.equal(result.code, 'error_page');
+  assert.ok(result.verdict.why.includes('error_source:browser'));
+  assert.equal(result.observation.browserErrorPage, true);
+  assert.ok(result.offer?.revision, 'the error page has an offer: the host can reload from it');
+  const next = directNext(result, { requestId: 'req_1' });
+  assert.equal(next.kind, 'stop');
+  assert.match(next.text, /browser showed its own error page.*; do not retry the same link\. The tab stays approved/);
+  // A reload from that offer runs (a history move needs no page script).
+  bridge.pages['/monthly'] = DASHBOARD['/dashboard'];
+  const reloaded = await runtime.act({ nav: 'reload' }, { revision: result.offer.revision });
+  assert.equal(reloaded.code, 'step_complete');
+  assert.equal(bridge.executions.at(-1).action.type, 'history');
+  // An ordinary HTTP error page with a body is still read by the host in Agent direct (unchanged).
+  const plain = new BrowserRuntime({ bridge: new StatusBridge({ pages: DASHBOARD, path: '/dashboard' }) });
+  const first = await plain.observe({ mode: 'read-only', grant: { level: 'read-only' }, allowedOrigins: [ORIGIN] });
+  const landed = await plain.act(first.actions.find(action => action.label === 'Billing').id, { revision: first.observation.revision });
+  assert.equal(landed.code, 'step_complete');
 });
 
 const SIZES = {
