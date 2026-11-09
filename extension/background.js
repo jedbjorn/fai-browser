@@ -1828,13 +1828,26 @@ function clearVault() {
 }
 
 // One typing-rhythm seed per lease (input.js RHYTHM), random and unrelated to the lease id, so every document of a
-// task types at the same pace and the next task at another.
+// task types at the same pace and the next task at another. Kept in storage.session, so a worker restart in the middle
+// of a task keeps the pace.
 let typingRhythm = { leaseId: null, seed: 0 };
+function sessionStore(method, value) {
+  try {
+    return Promise.resolve(chrome.storage?.session?.[method]?.(value)).catch(() => null);
+  } catch {
+    return Promise.resolve(null);
+  }
+}
+sessionStore('get', ['typingRhythm']).then(saved => {
+  const kept = saved?.typingRhythm;
+  if (!typingRhythm.seed && Number.isInteger(kept?.seed) && kept.seed > 0) typingRhythm = { leaseId: kept.leaseId ?? null, seed: kept.seed };
+});
 function rhythmSeed() {
   const leaseId = session?.leaseId ?? null;
   if (!typingRhythm.seed || typingRhythm.leaseId !== leaseId) {
     const seed = globalThis.crypto?.getRandomValues?.(new Uint32Array(1))[0] ?? Math.floor(Math.random() * 2 ** 32);
     typingRhythm = { leaseId, seed: seed || 1 };
+    sessionStore('set', { typingRhythm });
   }
   return typingRhythm.seed;
 }
