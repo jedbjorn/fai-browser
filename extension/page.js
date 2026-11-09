@@ -5817,10 +5817,6 @@
     return forms;
   }
 
-  // Whether a text field holds the supplied text after a fill, read from the field itself (never from page text):
-  // `kept` when its value contains the text (whitespace collapsed, case ignored), the same digits for a text of
-  // digits and separators (a field that formats numbers), or the same date in another form for an ISO date;
-  // `empty` when the field holds nothing at all. The value itself is never returned.
   // A line break typed into a single-line input is Enter, and Enter there submits the form: a fill would get past the
   // submit gate and the request's forbid list. Refused; submit_field is the way to submit.
   function refuseLineBreak(el, text) {
@@ -5838,19 +5834,25 @@
       && !el.hasAttribute('list') && popup === 'false' && !el.readOnly;
   }
 
-  // Whether the field shows the text (whitespace and case aside): exactly it in a plain text field (not the text with
-  // something left over before or after it), else containing it (a picker's textbox completes what was typed); the
-  // same digits, or the same ISO date in another form. An empty text is kept by an empty field.
+  // Whether a text field holds the supplied text after a fill, read from the field itself (never from page text):
+  // `kept` when its value is the text (whitespace collapsed, case ignored) in a plain text field, or contains it in a
+  // picker's or combobox's textbox (which completes what was typed); the same digits for a text of digits and
+  // separators (a field that formats numbers); or the same date in another form for an ISO date (a field may add the
+  // weekday). An empty text is kept by an empty field. `empty` when the field holds nothing at all. The value itself
+  // is never returned.
   function fillKept(el, text) {
     const normalize = value => String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
     const want = normalize(text);
     const have = el.isConnected ? normalize(el.value) : '';
     if (!want) return { kept: !have, empty: !have };
     const exact = plainTextField(el);
-    const match = (value, wanted) => (exact ? value === wanted : value.includes(wanted));
-    let kept = match(have, want);
-    if (!kept && /\d/.test(want) && /^[\d\s()+.-]+$/.test(want)) kept = match(have.replace(/\D/g, ''), want.replace(/\D/g, ''));
-    if (!kept) kept = dateForms(want).some(form => match(have, form));
+    let kept = exact ? have === want : have.includes(want);
+    if (!kept && /\d/.test(want) && /^[\d\s()+.-]+$/.test(want)) {
+      const digits = have.replace(/\D/g, '');
+      const wanted = want.replace(/\D/g, '');
+      kept = exact ? digits === wanted : digits.includes(wanted);
+    }
+    if (!kept) kept = dateForms(want).some(form => have.includes(form));
     return { kept, empty: !have };
   }
 
