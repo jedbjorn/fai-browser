@@ -901,6 +901,16 @@ export function offeredActions(observation, options = {}) {
   // Links are offered only on the approved site: to the current page's origin, or (with a domain root the user
   // approved) to another https subdomain of the same root. The extension refuses any other link click.
   const linkAllowed = href => Boolean(href) && Boolean(leaseOrigin) && sameSite(observation.url, href, allowedOrigins);
+  // A link inside an approved cross-origin frame (extension/frames.js, `frameOrigin`) that navigates only a frame
+  // must land on an approved origin (the frame stays readable); one that navigates the tab (_top, or _parent from a
+  // frame directly under the page) follows the page's rule above. The frame's page script checks the same again at dispatch.
+  const frameLinkAllowed = control => {
+    const target = String(control.linkTarget ?? '').toLowerCase();
+    // _parent navigates the tab only from a frame whose parent is the top document (frameDepth 1), as page.js checks.
+    if (target === '_top' || (target === '_parent' && control.frameDepth === 1)) return linkAllowed(control.href);
+    return Boolean(control.href) && Boolean(leaseOrigin) && (sameSite(control.frameOrigin, control.href, allowedOrigins)
+      || allowedOrigin(control.href, allowedOrigins));
+  };
 
   const controlActions = [];
   const intentActions = [];
@@ -969,7 +979,8 @@ export function offeredActions(observation, options = {}) {
         continue;
       }
       // Read-only: real same-origin links only. With controls: also script links without an href.
-      if (linkAllowed(control.href) || (controls && !control.href)) {
+      const admitted = typeof control.frameOrigin === 'string' ? frameLinkAllowed(control) : linkAllowed(control.href);
+      if (admitted || (controls && !control.href)) {
         const action = { type: 'click', ...base, description: `Click link ${ref}: ${label}` };
         if (control.href) action.href = control.href;
         controlActions.push(action);
@@ -1689,7 +1700,8 @@ function sameDocument(a, b) {
   const doc = value => {
     const text = String(value ?? '');
     const at = text.lastIndexOf(':');
-    return at > 0 && /^\d+$/.test(text.slice(at + 1)) ? text.slice(0, at) : null;
+    // A revision that also stands for approved frames (extension/frames.js) is "<documentId>:<sequence>.<n>".
+    return at > 0 && /^\d+(?:\.\d+)?$/.test(text.slice(at + 1)) ? text.slice(0, at) : null;
   };
   const left = doc(a);
   return left !== null && left === doc(b);
@@ -4457,7 +4469,7 @@ class Session {
     this.result.page = compactPage(this.result.observation, this.question());
     // The lease's tabs, a JavaScript dialog and Test-site logs on the final page (src/result.js pageExtras).
     const final = this.result.observation;
-    if (final) Object.assign(this.result, pageExtras({ tabs: final.tabs, ...(this.config.level === 'testing' ? { dialog: final.dialog } : {}) }));
+    if (final) Object.assign(this.result, pageExtras({ tabs: final.tabs, frames: final.frames, ...(this.config.level === 'testing' ? { dialog: final.dialog } : {}) }));
     if (this.retries.length) {
       // A back-out's outcome is how the run ended after it.
       for (const entry of this.retries) if (entry.kind === 'back_out') entry.outcome = this.result.code;
@@ -5608,7 +5620,7 @@ export class BrowserRuntime {
             ...(observation.recordState ? { recordState: observation.recordState } : {}) } : {}),
           ...(observation.overlay ? { overlay: observation.overlay } : {}),
           // Logs only when asked for on a Test site, a dialog only on a Test site (the hook exists only there).
-          ...pageExtras({ tabs: observation.tabs, ...(config.level === 'testing' ? { dialog: observation.dialog } : {}),
+          ...pageExtras({ tabs: observation.tabs, frames: observation.frames, ...(config.level === 'testing' ? { dialog: observation.dialog } : {}),
             ...(session.wantLogs ? { logs: observation.logs ?? [], logsDropped: observation.logsDropped } : {}) }) },
         actions: actions.map(action => ({ ...action })),
         offer: { cap: listing.cap, listed: listing.actions.map(action => action.id), dropped: listing.dropped },

@@ -255,6 +255,19 @@ test('extension status reports end the lease and emit a status event', async t =
   assert.match(browserId, /^origin-[0-9a-f]{16}$/, 'an extension that reports no identity is known by its Origin');
 });
 
+test('an origin_changed status passes the origin the tab went to on; anything but an origin is dropped', async t => {
+  for (const [origin, expected] of [['https://login.example.org', 'https://login.example.org'],
+    ['https://login.example.org/oauth?code=1', undefined]]) {
+    const setup = await daemon(t);
+    const { ext } = await leased(t, setup);
+    ext.send('status', { leaseId: 'lease-1', status: 'paused', reason: 'origin_changed', origin });
+    await new Promise(done => setTimeout(done, 30));
+    const event = setup.events.find(e => e.type === 'status');
+    assert.equal(event.reason, 'origin_changed');
+    assert.equal(event.origin, expected);
+  }
+});
+
 test('updateLease pushes lease_update, fails pending commands with the code, and can reactivate', async t => {
   const setup = await daemon(t);
   const { ext, bridge } = await leased(t, setup);

@@ -10,6 +10,8 @@ import { readFile } from 'node:fs/promises';
 const source = await readFile(new URL('../extension/background.js', import.meta.url), 'utf8');
 // The worker loads the Public Suffix List with importScripts('psl-data.js'); the harness runs it in the VM first.
 const pslData = await readFile(new URL('../extension/psl-data.js', import.meta.url), 'utf8');
+// Approved cross-origin frames: the worker loads frames.js with importScripts too (globalThis.faiFrames).
+const framesSource = await readFile(new URL('../extension/frames.js', import.meta.url), 'utf8');
 const ORIGIN = 'https://example.com';
 const ENDPOINT = 'http://127.0.0.1:4318';
 const SECRET = 'x'.repeat(30);
@@ -95,7 +97,12 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
   let observationText = 'Hello';
   let pageVault = null;
   let scriptOverride = null;
+  // Approved frames: fields the fake top page adds to its observation (frameSlots, pageFacts), and a handler for every
+  // executeScript aimed at frames (allFrames, frameIds or documentIds); see frameWorld below.
+  let observationExtra = null;
+  let frameScript = null;
   const observation = () => ({
+    ...(typeof observationExtra === 'function' ? observationExtra() : clone(observationExtra ?? {})),
     revision: `doc:${revision}`,
     documentId: 'doc',
     url: tab.url,
@@ -139,6 +146,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     },
     execute(action, expectedRevision, settleOptions, terms, forbid, allow, sites, expectText, approval) {
       pageArgs.push({ method: 'execute', args: clone([action, expectedRevision, settleOptions, terms ?? null, forbid ?? null, allow ?? null]),
+        context: clone(secretCalls.at(-1)?.context ?? null),
         expectText: clone(expectText ?? null), approval: clone(approval ?? null) });
       if (expectedRevision !== `doc:${revision}`) throw Object.assign(new Error('Stale observation'), { code: 'stale' });
       revision++;
@@ -397,7 +405,11 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       async captureVisibleTab() { return 'data:image/jpeg;base64,UkFX'; },
     },
     scripting: {
-      async executeScript({ func, files, args }) {
+      async executeScript({ func, files, args, target }) {
+        if (frameScript && (target?.allFrames || target?.frameIds || target?.documentIds)) {
+          const answered = await frameScript({ func, files, args, target });
+          if (answered !== undefined) return answered;
+        }
         if (files) {
           injections++;
           context.__faiPage = fakePage;
@@ -471,6 +483,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     Math: Object.create(Math, { random: { value: () => 0.5 } }),
   });
   vm.runInNewContext(pslData, context);
+  vm.runInNewContext(framesSource, context);
   vm.runInNewContext(source, context);
 
   let commandSequence = 0;
@@ -543,6 +556,8 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     // `fn(method)` returns a replacement for that executeScript call (a function returning the injection
     // results, or throwing), or nothing to run page.js normally.
     set scriptOverride(fn) { scriptOverride = fn; },
+    set observationExtra(value) { observationExtra = value; },
+    set frameScript(fn) { frameScript = fn; },
     // Simulates a document navigation of the leased tab: loading at `start` ms, the new URL committed at
     // `commit`, complete at `complete`. With `events: false` only chrome.tabs.get shows it (no onUpdated).
     navigate(url, { start = 0, commit = start, complete = commit + 50, events = true, load = true } = {}) {
@@ -3066,4 +3081,596 @@ test('a refused browser id over the long-poll fallback (403 identity_refused) is
   assert.notEqual(h.local.browserId, 'b-stalestale00000001');
   assert.equal(hello.headers['X-Fai-Browser'], h.local.browserId);
   assert.ok(h.sent.some(m => m.refusedId === 'b-stalestale00000001'));
+});
+
+// --- Approved cross-origin frames (extension/frames.js, docs/REFERENCE.md "Frames") ------------------------------
+const PORTAL = 'https://portal.example.net';
+const ELSEWHERE = 'https://ads.example.org';
+// The top page's slot for one cross-origin frame at (10, 20) in its 100x100 viewport.
+const SLOT = { path: [0], box: { x: 10, y: 20, width: 80, height: 70 }, clip: { left: 10, top: 20, right: 90, bottom: 90 }, declared: PORTAL };
+const NO_FACTS = { purchase: false, sensitive: false, secretPage: false };
+
+// A fake page.js inside a frame: one button, a heading and its own revision; `calls` records what reached it.
+function framePage({ origin = PORTAL, doc = 'framedoc', label = 'Save settings', text = 'Tenant ID 4711', facts = {}, slots = null,
+  cls = 'submit', rects = null } = {}) {
+  let rev = 1;
+  const calls = [];
+  const page = {
+    calls,
+    origin,
+    observe: (...args) => {
+      calls.push({ method: 'observe', args: clone(args) });
+      return {
+        revision: `${doc}:${rev}`, documentId: doc, url: `${origin}/blade`, title: 'Blade', text, textTruncated: false,
+        blocks: [{ t: 'h2', text: 'Overview' }, { t: 'button', text: label, ref: '1' }], blocksTruncated: false,
+        controls: [{ id: '1', role: 'button', label, bounds: { x: 5, y: 6, width: 30, height: 10 } }],
+        consent: null, warnings: [], viewport: { width: 80, height: 70, dpr: 1 },
+        pageFacts: { ...NO_FACTS, ...facts }, ...(slots ? { frameSlots: slots } : {}),
+      };
+    },
+    execute(action, expected, settle, terms, forbid, allow, sites, expectText, approval) {
+      calls.push({ method: 'execute', action: clone(action), expected, approval: clone(approval ?? null), allow: clone(allow ?? null) });
+      if (expected !== `${doc}:${rev}`) throw Object.assign(new Error('Stale observation'), { code: 'stale' });
+      rev++;
+      return { fromUrl: `${origin}/blade`, target: { id: action.target, role: 'button', label }, settle: { reason: 'quiet', ms: 5 },
+        observation: page.observe() };
+    },
+    approvalInfo(target, expected, kind) {
+      calls.push({ method: 'approvalInfo', target, expected, kind });
+      if (expected !== `${doc}:${rev}`) throw Object.assign(new Error('Stale observation'), { code: 'stale' });
+      return { revision: expected, documentId: doc, target, label, labelHash: 'h-frame', cls, origin };
+    },
+    redactionRects({ arm } = {}) {
+      calls.push({ method: 'redactionRects', arm });
+      if (rects === 'silent') return new Promise(() => {});
+      return { rects: rects ?? [{ x: 1, y: 2, width: 20, height: 8, kind: 'password' }], viewport: { width: 80, height: 70, dpr: 1 },
+        scroll: { x: 0, y: 0 }, strict: false, ...(slots ? { frameBoxes: slots.map(({ path, box, clip }) => ({ path, box, clip })) } : {}),
+        ...(arm ? {} : { dirty: false }) };
+    },
+  };
+  return page;
+}
+
+// Answers the worker's frame calls: the allFrames probe (each frame's origin and path) and page calls pinned to a frame.
+// `frames`: [{ frameId, documentId, path, page }]; a frame's `origin` may change (it navigated).
+function frameWorld(h, frames) {
+  const log = [];
+  h.frameScript = async ({ func, files, args, target }) => {
+    // The top document ('doc') is the harness's own page.
+    if (target.documentIds?.includes('doc')) return undefined;
+    const chosen = target.allFrames ? frames
+      : frames.filter(frame => target.frameIds?.includes(frame.frameId) || target.documentIds?.includes(frame.documentId));
+    if (target.documentIds && !chosen.length) throw new Error(`No document with id ${target.documentIds[0]}`);
+    if (files) {
+      log.push({ kind: 'inject', frames: chosen.map(frame => frame.frameId) });
+      return chosen.map(frame => ({ frameId: frame.frameId, documentId: frame.documentId, result: null }));
+    }
+    if (func.name === 'frameProbe') {
+      log.push({ kind: 'probe', all: Boolean(target.allFrames) });
+      return chosen.map(frame => ({ frameId: frame.frameId, documentId: frame.documentId,
+        result: { origin: frame.origin ?? frame.page.origin, opaque: false, path: frame.path, ready: 'complete', page: true,
+          width: frame.width ?? 80, height: frame.height ?? 70 } }));
+    }
+    const [method, callArgs, secrets] = args;
+    // `frame.refuse(method)`: the browser refuses that injection before anything runs (the document went away).
+    for (const frame of chosen) {
+      const refusal = frame.refuse?.(method);
+      if (refusal) throw new Error(refusal);
+    }
+    return Promise.all(chosen.map(async frame => {
+      log.push({ kind: 'call', frameId: frame.frameId, method, args: clone(callArgs), context: clone(secrets?.context ?? null) });
+      try {
+        return { frameId: frame.frameId, documentId: frame.documentId, result: { value: await frame.page[method](...callArgs) } };
+      } catch (error) {
+        return { frameId: frame.frameId, documentId: frame.documentId, result: { error: { code: error.code ?? 'unsupported', message: error.message } } };
+      }
+    }));
+  };
+  return log;
+}
+
+async function observed(h, args = {}) {
+  const id = h.command('observe', args);
+  const reply = await h.waitFor(m => m.type === 'result' && m.id === id);
+  assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+  return reply.result;
+}
+
+async function executed(h, action, expectedRevision, level = 'full') {
+  const id = h.command('execute', { action, expectedRevision, level });
+  return h.waitFor(m => m.type === 'result' && m.id === id);
+}
+
+test('frames: an approved cross-origin frame is read into the observation: controls f1.<id> moved into the viewport, text, blocks, one revision', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const page = framePage();
+  const log = frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
+  const observation = await observed(h);
+  const control = observation.controls.find(item => item.id === 'f1.1');
+  assert.ok(control, JSON.stringify(observation.controls));
+  assert.equal(control.frame, 'f1');
+  assert.equal(control.frameOrigin, PORTAL);
+  assert.deepEqual(control.bounds, { x: 15, y: 26, width: 30, height: 10 }, 'moved into the top viewport');
+  assert.equal(control.offscreen, undefined);
+  assert.ok(observation.controls.some(item => item.id === '1' && item.frame === undefined), 'the top control keeps its id');
+  assert.match(observation.text, /Hello\n\nTenant ID 4711/);
+  assert.deepEqual(observation.blocks.slice(-2), [{ t: 'h2', text: 'Overview' }, { t: 'button', text: 'Save settings', ref: 'f1.1' }]);
+  assert.match(observation.revision, /^doc:\d+\.\d+$/, 'one revision for the top document and the frame');
+  assert.deepEqual(observation.frames, [{ id: 'f1', origin: PORTAL, read: true }]);
+  assert.ok(!observation.warnings.includes('cross_origin_frame'), 'every frame was read');
+  assert.equal(observation.frameSlots, undefined, 'worker-only fields never leave the extension');
+  assert.equal(observation.pageFacts, undefined);
+  // The frame's page.js ran pinned to its document, with the frame context (the tab's origin and the request's origins).
+  const call = log.find(entry => entry.kind === 'call' && entry.method === 'observe');
+  assert.deepEqual(call.context, { ...NO_FACTS, frame: true, topOrigin: ORIGIN, origins: [ORIGIN, PORTAL] });
+  // Unchanged page and frame: the same revision again.
+  assert.equal((await observed(h)).revision, observation.revision);
+});
+
+test('frames: a frame the request does not cover is never read; the warning and frames name its origin', async () => {
+  // Only the tab's origin approved: nothing to probe, the frame element's declared origin is named.
+  const h = await started({ leaseOrigins: [ORIGIN] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const page = framePage();
+  const log = frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
+  const observation = await observed(h);
+  assert.deepEqual(log, [], 'no script reached any frame');
+  assert.deepEqual(observation.frames, [{ origin: PORTAL, read: false, reason: 'not_approved', declared: true }],
+    'only the element names that origin');
+  assert.ok(observation.warnings.includes('cross_origin_frame'));
+  assert.ok(!observation.controls.some(control => String(control.id).startsWith('f')));
+  assert.doesNotMatch(observation.text, /Tenant/);
+
+  // The request lists the portal, but the frame shows another origin now (its src still names the portal): the probe
+  // reports where it is, and that frame is not read either.
+  const other = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  other.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const moved = framePage({ origin: ELSEWHERE });
+  const seen = frameWorld(other, [{ frameId: 5, documentId: 'D5', path: [0], page: moved }]);
+  const second = await observed(other);
+  assert.deepEqual(seen.map(entry => entry.kind), ['probe'], 'only the origin probe, never a page call');
+  assert.equal(moved.calls.length, 0);
+  assert.deepEqual(second.frames, [{ origin: ELSEWHERE, read: false, reason: 'not_approved' }]);
+  assert.ok(second.warnings.includes('cross_origin_frame'));
+  assert.doesNotMatch(second.text, /Tenant/);
+
+  // Approved but out of the extension's reach (no host access, e.g. a toolbar approval): no_access.
+  const third = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  third.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  frameWorld(third, []);
+  assert.deepEqual((await observed(third)).frames, [{ origin: PORTAL, read: false, reason: 'no_access', declared: true }]);
+});
+
+test('frames: an act on a frame control runs in that frame on the frame revision; the result is the merged page', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const page = framePage();
+  const log = frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
+  const before = await observed(h);
+  const topExecutes = h.pageArgs.filter(call => call.method === 'execute').length;
+  const reply = await executed(h, { type: 'click', target: 'f1.1' }, before.revision);
+  assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+  const call = page.calls.find(entry => entry.method === 'execute');
+  assert.deepEqual(call.action, { type: 'click', target: '1' }, 'the frame-local id');
+  assert.equal(call.expected, 'framedoc:1', 'the frame revision the observation was made of');
+  assert.equal(h.pageArgs.filter(entry => entry.method === 'execute').length, topExecutes, 'nothing ran in the top document');
+  assert.ok(log.some(entry => entry.kind === 'probe' && !entry.all), 'the frame origin was probed again before the act');
+  assert.notEqual(reply.result.observation.revision, before.revision);
+  assert.ok(reply.result.observation.controls.some(control => control.id === 'f1.1'));
+  // A top control on the merged revision runs in the top document on the top part of it.
+  const again = reply.result.observation;
+  const top = await executed(h, { type: 'click', target: '1' }, again.revision);
+  assert.equal(top.error, undefined, JSON.stringify(top.error));
+  assert.equal(h.pageArgs.filter(entry => entry.method === 'execute').at(-1).args[1], again.revision.replace(/\.\d+$/, ''));
+});
+
+test('frames: an act is refused when the frame moved to another origin, and stale on an unknown or old frame revision', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const page = framePage();
+  const frame = { frameId: 5, documentId: 'D5', path: [0], page };
+  frameWorld(h, [frame]);
+  const before = await observed(h);
+  // The frame navigated to an origin the request does not list between observe and act: nothing runs there.
+  frame.origin = ELSEWHERE;
+  const refused = await executed(h, { type: 'click', target: 'f1.1' }, before.revision);
+  assert.equal(refused.error.code, 'cross_origin', JSON.stringify(refused.error));
+  assert.equal(page.calls.filter(entry => entry.method === 'execute').length, 0);
+  assert.ok(!h.sent.some(m => m.type === 'status' && m.status === 'paused'), 'the tab itself stays approved');
+  // Back on the portal, but another document (the frame reloaded): stale, nothing runs.
+  frame.origin = PORTAL;
+  frame.documentId = 'D6';
+  const reloaded = await executed(h, { type: 'click', target: 'f1.1' }, before.revision);
+  assert.equal(reloaded.error.code, 'stale', JSON.stringify(reloaded.error));
+  // A frame target on a revision the worker never made: stale.
+  const unknown = await executed(h, { type: 'click', target: 'f1.1' }, 'doc:1');
+  assert.equal(unknown.error.code, 'stale');
+  assert.equal(page.calls.filter(entry => entry.method === 'execute').length, 0);
+});
+
+test('frames: one page context for the tab: a purchase or password frame restricts the top document and every frame', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  const second = { ...SLOT, path: [1], box: { ...SLOT.box, y: 95 }, clip: { ...SLOT.clip, top: 95, bottom: 100 } };
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT, second], pageFacts: NO_FACTS };
+  const page = framePage({ facts: { purchase: true, sensitive: true } });
+  const plain = framePage({ doc: 'plaindoc' });
+  const log = frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }, { frameId: 6, documentId: 'D6', path: [1], page: plain }]);
+  const topReads = h.pageArgs.filter(call => call.method === 'observe').length;
+  const observation = await observed(h);
+  // The top document was read again with the checkout frame's facts, and so was the other frame; the checkout frame
+  // itself had them already.
+  assert.equal(h.pageArgs.filter(call => call.method === 'observe').length, topReads + 2);
+  assert.deepEqual(clone(h.secretCalls.at(-1).context), { purchase: true, sensitive: true, secretPage: false });
+  const reads = frameId => log.filter(entry => entry.kind === 'call' && entry.method === 'observe' && entry.frameId === frameId);
+  assert.equal(reads(5).length, 1);
+  assert.equal(reads(6).length, 2, 'the plain frame was read again with the tab context');
+  assert.equal(reads(6).at(-1).context.purchase, true);
+  assert.equal(reads(6).at(-1).context.frame, true);
+  // A second observe of the same page reads every document once: the context is known now.
+  await observed(h);
+  assert.equal(reads(6).length, 3);
+  assert.equal(h.pageArgs.filter(call => call.method === 'observe').length, topReads + 3);
+  // Every later page call carries it: the top execute too.
+  const top = await executed(h, { type: 'click', target: '1' }, observation.revision);
+  assert.equal(top.error, undefined, JSON.stringify(top.error));
+  assert.equal(h.secretCalls.at(-1).context.purchase, true);
+});
+
+test('frames: the Approve gate reads a frame control in its frame; the execute carries the approval with the local target', async () => {
+  const h = await started({ level: 'full', leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const page = framePage({ label: 'Delete tenant', cls: 'delete' });
+  frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
+  const before = await observed(h);
+  const { id, entry } = await asked(h, { target: 'f1.1', expectedRevision: before.revision, cls: 'delete' });
+  assert.equal(entry.label, 'Delete tenant', 'the label the frame page script read');
+  assert.deepEqual(page.calls.find(call => call.method === 'approvalInfo'), { method: 'approvalInfo', target: '1', expected: 'framedoc:1', kind: null });
+  await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  const { approvalId } = (await h.waitFor(m => m.type === 'result' && m.id === id)).result;
+  // The approval names f1.1: a top control cannot use it.
+  const wrong = await executed(h, { type: 'click', target: '1', approvalId }, before.revision);
+  assert.equal(wrong.error.code, 'blocked_risky');
+  assert.equal(page.calls.filter(call => call.method === 'execute').length, 0);
+  // Approved again, for the frame control itself: it runs there with the local target.
+  const { id: second, entry: next } = await asked(h, { target: 'f1.1', expectedRevision: before.revision, cls: 'delete' });
+  await h.send({ type: 'approval_decision', id: next.id, decision: 'approve' }, APPROVE_PAGE);
+  const granted = (await h.waitFor(m => m.type === 'result' && m.id === second)).result.approvalId;
+  const ran = await executed(h, { type: 'click', target: 'f1.1', approvalId: granted }, before.revision);
+  assert.equal(ran.error, undefined, JSON.stringify(ran.error));
+  const call = page.calls.find(item => item.method === 'execute');
+  assert.deepEqual(call.approval, { target: '1', cls: 'delete', labelHash: 'h-frame' });
+});
+
+// The top page's redaction answer naming its cross-origin frames where they are now (page.js redactionRects).
+const topBoxes = (arm, boxes) => ({ rects: [], frameBoxes: boxes, viewport: { width: 100, height: 100, dpr: 1 }, scroll: { x: 0, y: 0 },
+  strict: false, ...(arm ? {} : { dirty: false }) });
+const at = (x, y) => ({ path: [0], box: { x, y, width: 80, height: 70 }, clip: { left: x, top: y, right: x + 80, bottom: y + 70 } });
+const hasBox = (rects, x, y, width, height) => rects.some(rect => rect.x === x && rect.y === y && rect.width === width && rect.height === height);
+
+async function captured(h) {
+  const id = h.command('capture', { action: null });
+  const reply = await h.waitFor(m => m.type === 'result' && m.id === id, 12000);
+  assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+  return { reply, redact: h.annotations.at(-1).redact };
+}
+
+test('frames: screenshot boxes from a frame land where the frame is now; a frame that does not answer is boxed whole', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const page = framePage();
+  frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
+  h.redaction = ({ arm }) => topBoxes(arm, [at(10, 20)]);
+  let { redact } = await captured(h);
+  assert.ok(hasBox(redact.rects, 11, 22, 20, 8), JSON.stringify(redact.rects));
+  assert.equal(redact.withheld, false);
+  assert.deepEqual(page.calls.filter(call => call.method === 'redactionRects').map(call => call.arm), [true, false]);
+
+  // The page moved the frame down 15px after the observation (a banner): the password box follows the frame (review #1).
+  h.redaction = ({ arm }) => topBoxes(arm, [at(10, 35)]);
+  ({ redact } = await captured(h));
+  assert.ok(hasBox(redact.rects, 11, 37, 20, 8), JSON.stringify(redact.rects));
+  assert.ok(!hasBox(redact.rects, 11, 22, 20, 8), 'never at the place the frame left');
+
+  const silent = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  silent.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  frameWorld(silent, [{ frameId: 5, documentId: 'D5', path: [0], page: framePage({ rects: 'silent' }) }]);
+  silent.redaction = ({ arm }) => topBoxes(arm, [at(10, 20)]);
+  assert.ok(hasBox((await captured(silent)).redact.rects, 10, 20, 80, 70), 'the whole frame is boxed');
+});
+
+test('frames: a frame moving during the capture withholds it; a read frame no query can place is boxed and withheld', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page: framePage() }]);
+  // Before the capture at y 20, after it at y 60, every time: never stable.
+  h.redaction = ({ arm }) => topBoxes(arm, [at(10, arm ? 20 : 60)]);
+  let { redact } = await captured(h);
+  assert.equal(redact.withheld, true, 'a frame that moved between the two queries withholds the frame');
+
+  // The frame is gone from the page's frames (or its path no longer matches): boxed where it was, withheld.
+  h.redaction = ({ arm }) => topBoxes(arm, []);
+  ({ redact } = await captured(h));
+  assert.ok(hasBox(redact.rects, 10, 20, 80, 70), JSON.stringify(redact.rects));
+  assert.equal(redact.withheld, true);
+});
+
+test('frames: every cross-origin frame that was not read is boxed whole on screenshots', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page: framePage() }]);
+  h.redaction = ({ arm }) => topBoxes(arm, [at(10, 20)]);
+  const { redact, reply } = await captured(h);
+  assert.ok(hasBox(redact.rects, 10, 20, 80, 70), JSON.stringify(redact.rects));
+  assert.equal(redact.withheld, false);
+  assert.equal(reply.result.screenshot.redactions, 1);
+});
+
+test('frames: a nested approved frame is read inside its approved parent, at the summed offset', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL, 'https://blade.example.net'] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const inner = { path: [0, 1], box: { x: 4, y: 4, width: 40, height: 30 }, clip: { left: 4, top: 4, right: 44, bottom: 34 },
+    declared: 'https://blade.example.net' };
+  const outer = framePage({ slots: [inner] });
+  const blade = framePage({ origin: 'https://blade.example.net', doc: 'bladedoc', label: 'Add domain', text: 'Custom domains' });
+  frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page: outer },
+    { frameId: 6, documentId: 'D6', path: [0, 1], page: blade, width: 40, height: 30 }]);
+  const observation = await observed(h);
+  const control = observation.controls.find(item => item.id === 'f2.1');
+  assert.ok(control, JSON.stringify(observation.controls.map(item => item.id)));
+  assert.equal(control.frameOrigin, 'https://blade.example.net');
+  assert.deepEqual(control.bounds, { x: 19, y: 30, width: 30, height: 10 }, '10+4+5, 20+4+6');
+  assert.match(observation.text, /Custom domains/);
+  assert.deepEqual(observation.frames.map(frame => frame.id), ['f1', 'f2']);
+  // Its parent unapproved: the nested frame is not read either (its box is unknown and so is what embeds it).
+  const lone = await started({ leaseOrigins: [ORIGIN, 'https://blade.example.net'] });
+  lone.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  frameWorld(lone, [{ frameId: 5, documentId: 'D5', path: [0], page: framePage({ slots: [inner] }) },
+    { frameId: 6, documentId: 'D6', path: [0, 1], page: framePage({ origin: 'https://blade.example.net' }), width: 40, height: 30 }]);
+  const second = await observed(lone);
+  assert.ok(!second.controls.some(item => String(item.id).startsWith('f')));
+  assert.deepEqual(second.frames, [{ origin: PORTAL, read: false, reason: 'not_approved' }]);
+});
+
+test('an origin_changed pause names the origin the tab went to, never its path', async () => {
+  const h = await started();
+  h.navigate('https://login.example.org/oauth2/authorize?client_id=abc&code=secret');
+  const status = await h.waitFor(m => m.type === 'status' && m.status === 'paused');
+  assert.equal(status.reason, 'origin_changed');
+  assert.equal(status.origin, 'https://login.example.org');
+});
+
+test('modal approval asks for every exact origin of the request in one prompt, and gives back the ones it added on stop', async () => {
+  const h = harness({ hostGrants: [], leaseOrigins: [SHOP, PORTAL], local: {}, permissions: { defaultLevel: 'read-only' } });
+  await h.waitFor(m => m.type === 'hello');
+  h.push({ type: 'requests', requests: [pendingRequest('req_1', { mode: 'reversible', origins: [SHOP, PORTAL, 'https://*.example.org'] })] });
+  await h.until(() => h.session.armedTabs?.length === 1 && h.session.armedTabs[0].promptWindowId !== null);
+  const arm = h.session.armedTabs[0];
+  const base = { tabId: 9, requestId: arm.requestId, at: arm.at };
+  const { approval } = await h.send({ type: 'arm_prepare', ...base }, MODAL_SENDER);
+  assert.deepEqual(approval.patterns, [`${SHOP}/*`, `${PORTAL}/*`], 'the task origin first; a domain root is not an exact origin');
+  for (const pattern of approval.patterns) h.grant(pattern);
+  const reply = await h.send({ type: 'arm_approve', ...base, ...approval, level: arm.level, granted: true }, MODAL_SENDER);
+  assert.equal(reply.status, 'active', JSON.stringify(reply));
+  await sleep(20);
+  assert.ok(h.grants.has(`${PORTAL}/*`), 'kept while the session lives');
+  await h.send({ type: 'stop' });
+  await h.until(() => !h.grants.has(`${PORTAL}/*`) && !h.grants.has(`${SHOP}/*`));
+});
+
+// --- Security review of approved frames: regressions ---------------------------------------------------------------
+test('frames review #2: the approval card names the frame origin "in a frame of" the page, and the approval binds it', async () => {
+  const h = await started({ level: 'full', leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const page = framePage({ label: 'Delete tenant', cls: 'delete' });
+  frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
+  const before = await observed(h);
+  const { entry } = await asked(h, { target: 'f1.1', expectedRevision: before.revision, cls: 'delete' });
+  assert.equal(entry.origin, PORTAL, 'the site the control is on');
+  assert.equal(entry.frameOf, ORIGIN, 'the page that embeds it');
+  // A top control's card is unchanged.
+  const top = await started({ level: 'full' });
+  const { entry: plain } = await asked(top);
+  assert.equal(plain.origin, ORIGIN);
+  assert.equal(plain.frameOf, undefined);
+});
+
+test('frames review #2: a frame whose page script reports another origin than the one probed is refused', async () => {
+  const h = await started({ level: 'full', leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const page = framePage({ label: 'Delete tenant', cls: 'delete' });
+  page.approvalInfo = (target, expected) => ({ revision: expected, documentId: 'framedoc', target, label: 'Delete tenant',
+    labelHash: 'h-frame', cls: 'delete', origin: ELSEWHERE });
+  frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
+  const before = await observed(h);
+  const id = h.command('approve', { target: 'f1.1', expectedRevision: before.revision, cls: 'delete', waitMs: 100 });
+  const reply = await h.waitFor(m => m.type === 'result' && m.id === id);
+  assert.equal(reply.error?.code, 'cross_origin', JSON.stringify(reply));
+  assert.equal((h.session.approvals ?? []).length, 0, 'no card');
+});
+
+test('frames review #3: a frame act sees the page as it is now: a changed page is stale, a checkout page is the context', async () => {
+  const h = await started({ level: 'full', leaseOrigins: [ORIGIN, PORTAL] });
+  let topFacts = NO_FACTS;
+  h.observationExtra = () => ({ warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: topFacts });
+  const page = framePage({ label: 'Continue', cls: 'submit' });
+  const log = frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
+  let before = await observed(h);
+  // The page turned into a checkout (same semantic revision): the frame runs with purchase in its context.
+  topFacts = { ...NO_FACTS, purchase: true };
+  const ran = await executed(h, { type: 'click', target: 'f1.1' }, before.revision);
+  assert.equal(ran.error, undefined, JSON.stringify(ran.error));
+  const call = log.filter(item => item.kind === 'call' && item.method === 'execute').pop();
+  assert.equal(call.context.purchase, true, 'the current page facts, not the observation\'s');
+  // The page changed (another revision) since the observation: stale, nothing runs in the frame.
+  topFacts = NO_FACTS;
+  before = await observed(h);
+  h.bumpRevision();
+  const executes = page.calls.filter(item => item.method === 'execute').length;
+  const stale = await executed(h, { type: 'click', target: 'f1.1' }, before.revision);
+  assert.equal(stale.error?.code, 'stale', JSON.stringify(stale.error));
+  assert.equal(page.calls.filter(item => item.method === 'execute').length, executes);
+  // The Approve gate's read of a frame control checks the page the same way.
+  const asking = h.command('approve', { target: 'f1.1', expectedRevision: before.revision, cls: 'submit', waitMs: 100 });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === asking)).error?.code, 'stale');
+});
+
+test('frames review #3: a top act first looks at the frames again: a frame that became a payment form restricts it', async () => {
+  const h = await started({ level: 'full', leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const facts = {};
+  const page = framePage({ facts });
+  const log = frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
+  const before = await observed(h);
+  facts.purchase = true;
+  const ran = await executed(h, { type: 'click', target: '1' }, before.revision);
+  assert.equal(ran.error, undefined, JSON.stringify(ran.error));
+  const looks = log.filter(item => item.kind === 'call' && item.method === 'observe' && item.args[0]?.blocks === false);
+  assert.equal(looks.length, 1, 'one cheap look per frame before the act');
+  const execute = h.pageArgs.filter(item => item.method === 'execute').at(-1);
+  assert.equal(execute.context?.purchase, true, 'the top execute ran with the frame\'s purchase fact');
+});
+
+test('frames review #4: a frame document gone before the act ran is never a success (stale or cross_origin)', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const page = framePage();
+  const frame = { frameId: 5, documentId: 'D5', path: [0], page };
+  frameWorld(h, [frame]);
+  const before = await observed(h);
+  // The browser refuses the injection (the document went away between the probe and the call), then the frame is
+  // found on another approved document: stale.
+  frame.refuse = method => {
+    if (method !== 'execute') return null;
+    frame.documentId = 'D7';
+    return 'No document with id D5';
+  };
+  const gone = await executed(h, { type: 'click', target: 'f1.1' }, before.revision);
+  assert.equal(gone.error?.code, 'stale', JSON.stringify(gone));
+  assert.equal(page.calls.filter(item => item.method === 'execute').length, 0);
+  // Or on an unapproved origin: cross_origin.
+  frame.documentId = 'D5';
+  const again = await observed(h);
+  frame.refuse = method => {
+    if (method !== 'execute') return null;
+    frame.origin = ELSEWHERE;
+    return 'No document with id D5';
+  };
+  const moved = await executed(h, { type: 'click', target: 'f1.1' }, again.revision);
+  assert.equal(moved.error?.code, 'cross_origin', JSON.stringify(moved));
+});
+
+test('frames review #9 and #10: a frame of another size than its slot, or a nested slot outside its parent, is not read', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const page = framePage();
+  frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page, width: 300, height: 100 }]);
+  const observation = await observed(h);
+  assert.equal(page.calls.length, 0, 'the frame at that path is not the one page.js placed there');
+  assert.deepEqual(observation.frames, [{ origin: PORTAL, read: false, reason: 'unavailable' }]);
+
+  // An approved frame that names a slot outside itself (path [1], a sibling) is ignored.
+  const other = await started({ leaseOrigins: [ORIGIN, PORTAL, 'https://blade.example.net'] });
+  other.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const sibling = { path: [1], box: { x: 0, y: 0, width: 40, height: 30 }, clip: { left: 0, top: 0, right: 40, bottom: 30 },
+    declared: 'https://blade.example.net' };
+  const blade = framePage({ origin: 'https://blade.example.net', doc: 'bladedoc', label: 'Sibling button' });
+  frameWorld(other, [{ frameId: 5, documentId: 'D5', path: [0], page: framePage({ slots: [sibling] }) },
+    { frameId: 6, documentId: 'D6', path: [1], page: blade, width: 40, height: 30 }]);
+  const second = await observed(other);
+  assert.equal(blade.calls.length, 0);
+  assert.ok(!second.controls.some(control => control.label === 'Sibling button'));
+});
+
+test('frames review #11: when a fact leaves the tab, the documents are read again without it', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const facts = { purchase: true };
+  const log = frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page: framePage({ facts }) }]);
+  await observed(h);
+  assert.equal(h.secretCalls.at(-1).context.purchase, true);
+  facts.purchase = false;
+  const topReads = h.pageArgs.filter(item => item.method === 'observe').length;
+  await observed(h);
+  // The top document was read with purchase from the last context; it is read again without it.
+  assert.equal(h.pageArgs.filter(item => item.method === 'observe').length, topReads + 2);
+  assert.equal(h.secretCalls.at(-1).context.purchase, false);
+  assert.equal(log.filter(item => item.kind === 'call' && item.method === 'observe').at(-1).context.purchase, false);
+});
+
+test('frames review: an extra origin the user already allowed survives the session stop; a declined prompt keeps nothing', async () => {
+  const h = harness({ hostGrants: [`${PORTAL}/*`], leaseOrigins: [SHOP, PORTAL], local: {}, permissions: { defaultLevel: 'read-only' } });
+  await h.waitFor(m => m.type === 'hello');
+  h.push({ type: 'requests', requests: [pendingRequest('req_1', { mode: 'reversible', origins: [SHOP, PORTAL] })] });
+  await h.until(() => h.session.armedTabs?.length === 1 && h.session.armedTabs[0].promptWindowId !== null);
+  const arm = h.session.armedTabs[0];
+  const base = { tabId: 9, requestId: arm.requestId, at: arm.at };
+  const { approval } = await h.send({ type: 'arm_prepare', ...base }, MODAL_SENDER);
+  for (const pattern of approval.patterns) h.grant(pattern);
+  const reply = await h.send({ type: 'arm_approve', ...base, ...approval, level: arm.level, granted: true }, MODAL_SENDER);
+  assert.equal(reply.status, 'active', JSON.stringify(reply));
+  await h.send({ type: 'stop' });
+  await h.until(() => !h.grants.has(`${SHOP}/*`));
+  await sleep(50);
+  assert.ok(h.grants.has(`${PORTAL}/*`), 'the user-held grant stays');
+
+  const declined = harness({ hostGrants: [], leaseOrigins: [SHOP, PORTAL], local: {}, permissions: { defaultLevel: 'read-only' } });
+  await declined.waitFor(m => m.type === 'hello');
+  declined.push({ type: 'requests', requests: [pendingRequest('req_1', { mode: 'reversible', origins: [SHOP, PORTAL] })] });
+  await declined.until(() => declined.session.armedTabs?.length === 1 && declined.session.armedTabs[0].promptWindowId !== null);
+  const armed = declined.session.armedTabs[0];
+  const at2 = { tabId: 9, requestId: armed.requestId, at: armed.at };
+  const prepared = await declined.send({ type: 'arm_prepare', ...at2 }, MODAL_SENDER);
+  const refused = await declined.send({ type: 'arm_approve', ...at2, ...prepared.approval, level: armed.level, granted: false }, MODAL_SENDER);
+  assert.notEqual(refused.status, 'active');
+  assert.equal(declined.grants.size, 0);
+});
+
+test('frames review: screenshot boxes follow each read frame by its frame id, not by a window index another frame shifted', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  const slot = (path, y) => ({ path: [path], box: { x: 10, y, width: 80, height: 20 }, clip: { left: 10, top: y, right: 90, bottom: y + 20 },
+    declared: PORTAL });
+  // Read: A at index 1 (no secret), B at index 2 (a password field); index 0 is an unread ad.
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [{ ...slot(0, 0), declared: ELSEWHERE }, slot(1, 30), slot(2, 60)],
+    pageFacts: NO_FACTS };
+  const a = { frameId: 5, documentId: 'D5', path: [1], width: 80, height: 20, page: framePage({ rects: [] }) };
+  const b = { frameId: 6, documentId: 'D6', path: [2], width: 80, height: 20, page: framePage({ doc: 'bdoc' }) };
+  const ad = { frameId: 4, documentId: 'D4', path: [0], width: 80, height: 20, page: framePage({ origin: ELSEWHERE, doc: 'addoc' }) };
+  frameWorld(h, [ad, a, b]);
+  await observed(h);
+  // The ad is removed: A is index 0 now, B index 1; an unread frame takes index 2.
+  a.path = [0];
+  b.path = [1];
+  ad.path = [9];
+  const boxes = [{ path: [0], box: { x: 10, y: 30, width: 80, height: 20 }, clip: { left: 10, top: 30, right: 90, bottom: 50 } },
+    { path: [1], box: { x: 10, y: 60, width: 80, height: 20 }, clip: { left: 10, top: 60, right: 90, bottom: 80 } },
+    { path: [2], box: { x: 10, y: 85, width: 80, height: 10 }, clip: { left: 10, top: 85, right: 90, bottom: 95 } }];
+  h.redaction = ({ arm }) => topBoxes(arm, boxes);
+  const { redact } = await captured(h);
+  assert.ok(hasBox(redact.rects, 11, 62, 20, 8), `B's field where B is now: ${JSON.stringify(redact.rects)}`);
+  assert.ok(hasBox(redact.rects, 10, 85, 80, 10), 'the new unread frame is boxed whole');
+  assert.ok(!redact.rects.some(rect => rect.y === 87), 'never B\'s boxes on the unread frame');
+});
+
+test('frames review: a frame whose size no longer matches its box is boxed whole, never placed', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const frame = { frameId: 5, documentId: 'D5', path: [0], page: framePage() };
+  frameWorld(h, [frame]);
+  await observed(h);
+  frame.width = 300;
+  h.redaction = ({ arm }) => topBoxes(arm, [at(10, 20)]);
+  const { redact } = await captured(h);
+  // The capture's own fresh observation no longer reads it (unavailable): it is boxed whole like any unread frame.
+  assert.ok(hasBox(redact.rects, 10, 20, 80, 70), JSON.stringify(redact.rects));
+  assert.ok(!hasBox(redact.rects, 11, 22, 20, 8), 'its own boxes are never placed by a box of another size');
+  // Resized between that observation and the queries: boxed whole, and the capture is not trusted.
+  frame.width = 80;
+  h.redaction = ({ arm }) => {
+    if (arm) frame.width = 300;
+    return topBoxes(arm, [at(10, 20)]);
+  };
+  const second = (await captured(h)).redact;
+  assert.ok(hasBox(second.rects, 10, 20, 80, 70), JSON.stringify(second.rects));
+  assert.equal(second.withheld, true);
 });
