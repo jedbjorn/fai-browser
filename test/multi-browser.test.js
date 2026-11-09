@@ -4,10 +4,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BridgeError, CLOSE_SUPERSEDED, connectionIdentity, createHub, pickBrowser } from '../src/bridge.js';
+import {
+  BridgeError, CLOSE_IDENTITY_REFUSED, CLOSE_SUPERSEDED, browserMatches, connectionIdentity, createHub, pickBrowser,
+} from '../src/bridge.js';
 import { createDaemon } from '../src/daemon.js';
 import { FaiBrowserClient } from '../src/client.js';
 import { EXTENSION_ID, EXTENSION_ORIGIN, FakeExtension, SECRET } from './helpers/fake-extension.js';
@@ -240,6 +242,11 @@ test('long-poll fallback with two browsers: each polls its own commands, pushes 
   assert.equal(setup.hub.lease(inChromium).browserId, CHROMIUM.id);
   assert.equal(setup.hub.lease(inFirefox).browserId, FIREFOX.id);
 
+  // Firefox connected after Chromium's hello: Chromium's next poll answers at once with the new browser list.
+  const caughtUp = await setup.post(CHROMIUM, '/commands?wait=3000');
+  assert.equal(caughtUp.body.command, null);
+  assert.deepEqual(caughtUp.body.browsers.map(browser => [browser.name, browser.self]).sort(),
+    [['Chromium', true], ['Firefox', false]]);
   // A held Chromium poll is not woken by a Firefox command.
   const held = setup.post(CHROMIUM, '/commands?wait=3000');
   await until(() => setup.hub.stats().heldPolls === 1);
@@ -338,24 +345,124 @@ test('pickBrowser: the agent\'s choice by product, name, alias or id; else the b
   assert.match(pickBrowser([], 'edge').error.message, /No browser with FAI Browser is connected/);
 });
 
+test('regression: a client with the secret cannot take over another browser by claiming its id from another Origin', async t => {
+  // The review's spoof: read Firefox's id from the snapshot, connect with it from the Chromium Origin, and so close the
+  // real Firefox (4003) and receive its lease's commands.
+  const setup = await hubServer(t);
+  const firefox = await setup.connect(FIREFOX);
+  await setup.hello(firefox, FIREFOX);
+  const chromium = await setup.connect(CHROMIUM);
+  await setup.hello(chromium, CHROMIUM);
+  const lease = await firefox.lease({ requestId: 'req_f', tabId: 3, origin: ORIGIN });
+  // (b) No extension is sent another browser's id: names and self/mine only.
+  setup.hub.publishRequests([{ requestId: 'req_f', state: 'active', origins: [ORIGIN],
+    browser: { id: FIREFOX.id, product: 'firefox', name: 'Firefox' } }]);
+  const snapshot = await chromium.client.message(message => message.type === 'requests' && message.requests.length === 1
+    && message.browsers?.length === 2);
+  assert.equal(JSON.stringify(snapshot).includes(FIREFOX.id), false, 'Firefox\'s id never reaches Chromium');
+  assert.deepEqual(snapshot.requests[0].browser, { product: 'firefox', name: 'Firefox', mine: false });
+  assert.deepEqual(snapshot.browsers.map(browser => Object.keys(browser).sort()), [['name', 'product', 'self'], ['name', 'product', 'self']]);
+  // (a) Even knowing the id, a connection from another Origin is refused and closes no one.
+  const spoof = await setup.connect({ ...FIREFOX, origin: EXTENSION_ORIGIN });
+  const refused = await spoof.client.next(event => event.type === 'close');
+  assert.equal(refused.code, CLOSE_IDENTITY_REFUSED);
+  await sleep(50);
+  assert.deepEqual(closes(firefox), [], 'the real Firefox keeps its connection');
+  assert.ok(setup.logs.some(entry => entry.event === 'extension_identity_refused'));
+  const http = await setup.post({ id: FIREFOX.id, origin: EXTENSION_ORIGIN }, '/hello', { v: 3, session: null });
+  assert.equal(http.status, 403);
+  // The lease's commands still go to the real Firefox only.
+  const observed = setup.hub.bridgeFor(lease.data.leaseId).observe();
+  const command = await firefox.command();
+  // A result for it from another connection is dropped.
+  chromium.result(command.id, { revision: 'forged:1' });
+  await sleep(30);
+  firefox.result(command.id, { revision: 'ff:1' });
+  assert.equal((await observed).revision, 'ff:1');
+  assert.ok(setup.logs.some(entry => entry.event === 'extension_result_dropped'));
+});
+
+test('a known id stays bound to its Origin across a restart (knownBrowsers); odd ids are no ids', async t => {
+  const setup = await hubServer(t, { knownBrowsers: { [FIREFOX.id]: { usedAt: 5, origin: FIREFOX_ORIGIN } } });
+  const spoof = await setup.connect({ ...FIREFOX, origin: EXTENSION_ORIGIN });
+  assert.equal((await spoof.client.next(event => event.type === 'close')).code, CLOSE_IDENTITY_REFUSED);
+  const firefox = await setup.connect(FIREFOX);
+  await setup.hello(firefox, FIREFOX);
+  assert.equal(setup.hub.candidates()[0].usedAt, 5, 'the last use survives the restart');
+  // __proto__, constructor or any other shape than b-<letters and digits> is treated as no id (the Origin's identity).
+  for (const id of ['__proto__', 'constructor', 'a'.repeat(20)]) {
+    assert.equal(connectionIdentity(id, EXTENSION_ORIGIN).legacy, true, id);
+  }
+  const proto = await setup.connect({ id: '__proto__', origin: EXTENSION_ORIGIN });
+  await setup.hello(proto, { product: 'chrome', name: 'Chrome' });
+  assert.ok(setup.hub.extension().browsers.every(browser => browser.id !== '__proto__'));
+});
+
+test('a superseded socket that said hello and lived on is reported as extension_duplicate_identity, once', async t => {
+  const setup = await hubServer(t, { duplicateAfterMs: 40 });
+  const restarted = await setup.connect(FIREFOX);
+  // A worker restart: the old socket is replaced right away, no warning.
+  const quick = await setup.connect(FIREFOX);
+  await setup.hello(quick, FIREFOX);
+  assert.equal((await restarted.client.next(event => event.type === 'close')).code, CLOSE_SUPERSEDED);
+  assert.deepEqual(setup.hub.warnings(), []);
+  // A live copy that said hello long ago is taken over twice: one warning, logged once.
+  await sleep(60);
+  const copy = await setup.connect(FIREFOX);
+  await setup.hello(copy, FIREFOX);
+  await sleep(60);
+  const again = await setup.connect(FIREFOX);
+  await setup.hello(again, FIREFOX);
+  const warnings = setup.hub.warnings();
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^extension_duplicate_identity: a second FAI Browser install took over the connection of Firefox \(b-firefox00000000001\)/);
+  assert.equal(setup.logs.filter(entry => entry.event === 'extension_duplicate_identity').length, 1);
+});
+
+test('two connected browsers with one name are told apart in every popup: "Chrome" and "Chrome (2)"', async t => {
+  const setup = await hubServer(t);
+  const work = { id: 'b-chromework000000001', product: 'chrome', name: 'Chrome', origin: EXTENSION_ORIGIN };
+  const home = { id: 'b-chromehome000000001', product: 'chrome', name: 'Chrome', origin: EXTENSION_ORIGIN };
+  const first = await setup.connect(work);
+  await setup.hello(first, work);
+  await sleep(5);
+  const second = await setup.connect(home);
+  await setup.hello(second, home);
+  const snapshot = await second.client.message(message => message.type === 'requests' && message.browsers?.length === 2);
+  assert.deepEqual(snapshot.browsers, [{ product: 'chrome', name: 'Chrome', self: false },
+    { product: 'chrome', name: 'Chrome (2)', self: true }]);
+  // hello.browser.version is kept for status.
+  assert.equal(setup.hub.browsers().find(browser => browser.id === home.id).browserVersion, '1.0');
+});
+
+test('browserMatches: the one matcher for the daemon\'s choice and the MCP reuse check', () => {
+  const chrome = { id: 'b-chrome00000000000001', product: 'chrome', name: 'Chrome' };
+  for (const wanted of ['chrome', 'Chrome', 'Google Chrome', ' google chrome ', chrome.id]) assert.ok(browserMatches(chrome, wanted), wanted);
+  for (const wanted of ['firefox', 'chromium', 'b-other', '', null]) assert.equal(browserMatches(chrome, wanted), false, String(wanted));
+  assert.ok(browserMatches({ id: 'b-edge00000000000001', product: 'edge', name: 'Edge' }, 'Microsoft Edge'));
+  assert.equal(browserMatches(null, 'chrome'), false);
+});
+
 // --- the daemon with the real hub ------------------------------------------------------------------------------------
 
 // A real daemon (agent driver) and two browsers over real WebSockets, each serving observes from its own page.
-async function daemonWithBrowsers(t, { grace } = {}) {
-  const home = await mkdtemp(join(tmpdir(), 'fai-multi-browser-'));
+async function daemonWithBrowsers(t, { grace, home: given } = {}) {
+  const home = given ?? await mkdtemp(join(tmpdir(), 'fai-multi-browser-'));
   const env = { FAI_BRIDGE_SECRET: SECRET, FAI_EXTENSION_ID: EXTENSION_ID };
   const daemon = createDaemon({ home, env, port: 0, sweepIntervalMs: 60_000, warm: false,
     ...(grace ? { hubFactory: options => createHub({ ...options, disconnectGraceMs: grace }) } : {}) });
   await daemon.listen();
   t.after(async () => {
     await daemon.close();
-    await rm(home, { recursive: true, force: true });
+    if (!given) await rm(home, { recursive: true, force: true });
   });
   const client = new FaiBrowserClient({ port: daemon.port, token: daemon.token, clientName: 'multi' });
-  const open = async browser => {
+  // `settings`: the popup settings this browser's hello reports.
+  const open = async (browser, { settings } = {}) => {
     const ext = await FakeExtension.connect({ port: daemon.port, origin: browser.origin, path: `/ext/ws?browser=${browser.id}` });
     t.after(() => ext.close());
-    const hello = await ext.hello(null, { browser: { product: browser.product, name: browser.name, version: '1.0' } });
+    const hello = await ext.hello(null, { browser: { product: browser.product, name: browser.name, version: '1.0' },
+      ...(settings !== undefined ? { settings } : {}) });
     assert.equal(hello.ok, true);
     const page = new FakeBridge();
     const served = [];
@@ -392,8 +499,9 @@ test('daemon: a new request waits in the browser used last; the agent may name o
   assert.match(first.message, /approve this request in Firefox/);
   // Every popup lists it, marked with the browser it waits in.
   const inChromium = await latestRequests(chromium.ext, message => message.requests.some(view => view.requestId === first.requestId));
+  // Marked for each popup without the id (another extension could claim it): not this browser's.
   assert.deepEqual(inChromium.find(view => view.requestId === first.requestId).browser,
-    { id: FIREFOX.id, product: 'firefox', name: 'Firefox' });
+    { product: 'firefox', name: 'Firefox', mine: false });
 
   chromium.ext.send('used');
   await until(() => ctx.daemon.hub.candidates().find(browser => browser.id === CHROMIUM.id).usedAt > 0);
@@ -494,8 +602,98 @@ test('daemon: a pending request waiting in a browser that leaves goes to the one
   await sleep(20);
   assert.equal((await ctx.client.getRequest(created.requestId)).browser.id, CHROMIUM.id);
   const pushed = await latestRequests(chromium.ext, message => message.requests.some(view => view.requestId === created.requestId
-    && view.browser?.id === CHROMIUM.id));
+    && view.browser?.mine === true));
   assert.equal(pushed.length, 1);
+});
+
+test('daemon: each browser\'s popup settings apply to its own requests; another browser\'s hello does not reset them', async t => {
+  const ctx = await daemonWithBrowsers(t);
+  const chromium = await ctx.open(CHROMIUM, { settings: { budget: { maxCalls: 12, maxMs: 600_000 }, openRightAway: true,
+    approvals: { purchase: false, secret: true, level: true } } });
+  // Firefox says hello later with no budget and its pages not opened right away.
+  const firefox = await ctx.open(FIREFOX, { settings: { budget: null, openRightAway: false } });
+  chromium.ext.send('used');
+  await until(() => ctx.daemon.hub.candidates().some(browser => browser.id === CHROMIUM.id && browser.usedAt));
+  const inChromium = await ctx.client.requestTab({ origins: [ORIGIN], reason: 'Chromium task', mode: 'reversible' });
+  const inFirefox = await ctx.client.requestTab({ origins: [ORIGIN], reason: 'Firefox task', mode: 'reversible', browser: 'firefox' });
+  assert.equal(inChromium.request.approval, 'page', 'Chromium opens requested pages right away');
+  assert.equal(inFirefox.request.approval, 'window', 'Firefox does not');
+  const chromiumWait = await ctx.client.wait({ requestId: inChromium.requestId, maxMs: 0 });
+  const firefoxWait = await ctx.client.wait({ requestId: inFirefox.requestId, maxMs: 0 });
+  assert.deepEqual(chromiumWait.budget, { maxCalls: 12, maxMs: 600_000, source: 'extension' });
+  assert.equal(firefoxWait.budget.source, 'default');
+  // A later Firefox settings message changes nothing for Chromium's request.
+  await firefox.ext.request('settings', { settings: { budget: { maxCalls: 3, maxMs: 90_000 } } });
+  assert.deepEqual((await ctx.client.wait({ requestId: inChromium.requestId, maxMs: 0 })).budget,
+    { maxCalls: 12, maxMs: 600_000, source: 'extension' });
+  assert.deepEqual((await ctx.client.wait({ requestId: inFirefox.requestId, maxMs: 0 })).budget,
+    { maxCalls: 3, maxMs: 90_000, source: 'extension' });
+  // Once approved, the browser holding the tab decides; each hello answers with its own budget.
+  assert.equal((await chromium.ext.lease({ requestId: inChromium.requestId, tabId: 1, origin: ORIGIN })).ok, true);
+  assert.equal((await ctx.client.wait({ requestId: inChromium.requestId, maxMs: 0 })).budget.maxCalls, 12);
+  const again = await FakeExtension.connect({ port: ctx.daemon.port, origin: FIREFOX.origin, path: `/ext/ws?browser=${FIREFOX.id}` });
+  t.after(() => again.close());
+  assert.equal((await again.hello(null, { browser: { product: 'firefox', name: 'Firefox' } })).data.budget.maxCalls, 3);
+});
+
+test('daemon: a request pinned to a browser that leaves is unpinned after the grace and says so', async t => {
+  const ctx = await daemonWithBrowsers(t, { grace: 60 });
+  const chromium = await ctx.open(CHROMIUM);
+  const firefox = await ctx.open(FIREFOX);
+  chromium.ext.send('used');
+  await until(() => ctx.daemon.hub.candidates().some(browser => browser.id === CHROMIUM.id && browser.usedAt));
+  const named = await ctx.client.requestTab({ origins: [ORIGIN], reason: 'Named Firefox', browser: 'firefox' });
+  assert.equal(named.request.browser.id, FIREFOX.id);
+  firefox.ext.close();
+  await until(() => ctx.daemon.hub.candidates().length === 1, 'firefox gone', 3000);
+  await sleep(20);
+  const view = await ctx.client.getRequest(named.requestId);
+  assert.equal(view.browser.id, CHROMIUM.id);
+  assert.equal(view.browserNote, 'Firefox disconnected; the request now waits in Chromium.');
+  assert.equal(chromium.served.length, 0);
+});
+
+test('daemon: a browser cannot release a tab another browser holds; Deny of a pending request works anywhere', async t => {
+  const ctx = await daemonWithBrowsers(t);
+  const chromium = await ctx.open(CHROMIUM);
+  const firefox = await ctx.open(FIREFOX);
+  chromium.ext.send('used');
+  await until(() => ctx.daemon.hub.candidates().some(browser => browser.id === CHROMIUM.id && browser.usedAt));
+  const held = await ctx.client.requestTab({ origins: [ORIGIN], reason: 'Held in Chromium' });
+  assert.equal((await chromium.ext.lease({ requestId: held.requestId, tabId: 1, origin: ORIGIN })).ok, true);
+  const release = await firefox.ext.request('deny', { requestId: held.requestId });
+  assert.equal(release.ok, false);
+  assert.equal(release.error.code, 'request_not_pending');
+  assert.equal((await ctx.client.getRequest(held.requestId)).state, 'active');
+  const waiting = await ctx.client.requestTab({ origins: [ORIGIN], reason: 'Waits in Chromium' });
+  assert.equal((await firefox.ext.request('deny', { requestId: waiting.requestId })).ok, true);
+  assert.equal((await ctx.client.getRequest(waiting.requestId)).state, 'denied');
+});
+
+test('daemon: the browser used last is remembered across a restart (browsers.json, no secrets)', async t => {
+  const home = await mkdtemp(join(tmpdir(), 'fai-multi-browser-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  {
+    const ctx = await daemonWithBrowsers(t, { home });
+    const firefox = await ctx.open(FIREFOX);
+    await ctx.open(CHROMIUM);
+    firefox.ext.send('used');
+    await until(() => ctx.daemon.hub.candidates().some(browser => browser.id === FIREFOX.id && browser.usedAt));
+    firefox.ext.close();
+    await ctx.daemon.close();
+  }
+  const saved = JSON.parse(await readFile(join(home, 'browsers.json'), 'utf8'));
+  assert.deepEqual(Object.keys(saved).sort(), [CHROMIUM.id, FIREFOX.id].sort());
+  assert.ok(saved[FIREFOX.id].usedAt > 0);
+  assert.equal(saved[FIREFOX.id].origin, FIREFOX_ORIGIN);
+  assert.deepEqual(Object.keys(saved[FIREFOX.id]).sort(), ['origin', 'usedAt']);
+  const ctx = await daemonWithBrowsers(t, { home });
+  await ctx.open(FIREFOX);
+  await sleep(5);
+  await ctx.open(CHROMIUM);
+  // Chromium connected last, but Firefox was used last before the restart.
+  const created = await ctx.client.requestTab({ origins: [ORIGIN], reason: 'After the restart' });
+  assert.equal(created.request.browser.id, FIREFOX.id);
 });
 
 test('MCP: fai_browser_open with an unknown browser names the connected ones; with a known one it opens there', async t => {
@@ -521,8 +719,8 @@ test('MCP: fai_browser_open with an unknown browser names the connected ones; wi
   // Firefox approves the request meant for it as soon as it is listed there (the user's click).
   (async () => {
     const views = await latestRequests(firefox.ext, message => message.requests.some(view => view.state === 'pending'
-      && view.browser?.id === FIREFOX.id));
-    const view = views.find(item => item.state === 'pending' && item.browser?.id === FIREFOX.id);
+      && view.browser?.mine === true));
+    const view = views.find(item => item.state === 'pending' && item.browser?.mine === true);
     await firefox.ext.lease({ requestId: view.requestId, tabId: 4, origin: ORIGIN });
   })();
   const opened = await mcp.callTool('fai_browser_open', { origins: [ORIGIN], reason: 'Read the page', task: 'Read it',

@@ -2952,7 +2952,7 @@ test('a 4003 close (this browser\'s newer connection took over) is never answere
   await sleep(200);
   assert.equal(h.sockets.length, 1, 'no reconnect');
   assert.equal(h.session.connection.connected, false);
-  assert.match(h.local.status, /another window of this browser/);
+  assert.match(h.local.status, /Another copy of this browser profile took the FAI connection/);
   // The alarm leaves it alone for a while too.
   h.alarmFire();
   await sleep(30);
@@ -2984,9 +2984,10 @@ test('only the browser a request waits in opens its approval UI and badge; other
   const h = harness({ local: WINDOW_ONLY });
   await h.waitFor(m => m.type === 'hello');
   const self = h.local.browserId;
-  const elsewhere = pendingRequest('req_other', { browser: { id: 'b-firefox00000000001', product: 'firefox', name: 'Firefox' } });
-  h.push({ type: 'requests', requests: [elsewhere], browsers: [{ id: self, product: 'chromium', name: 'Chromium' },
-    { id: 'b-firefox00000000001', product: 'firefox', name: 'Firefox' }] });
+  // The service marks requests `mine` per connection and lists browsers by name with `self`, never with ids.
+  const elsewhere = pendingRequest('req_other', { browser: { product: 'firefox', name: 'Firefox', mine: false } });
+  h.push({ type: 'requests', requests: [elsewhere], browsers: [{ product: 'chromium', name: 'Chromium', self: true },
+    { product: 'firefox', name: 'Firefox', self: false }] });
   await h.until(() => h.session.requests?.length === 1);
   await sleep(20);
   assert.deepEqual(h.popupWindows, [], 'no window for another browser\'s request');
@@ -2997,9 +2998,14 @@ test('only the browser a request waits in opens its approval UI and badge; other
   assert.equal(reply.error, undefined);
   const move = await h.waitFor(m => m.type === 'move');
   assert.equal(move.requestId, 'req_other');
-  await withPending(h, [{ ...elsewhere, browser: { id: self, product: 'chromium', name: 'Chromium' } }]);
+  await withPending(h, [{ ...elsewhere, browser: { product: 'chromium', name: 'Chromium', mine: true } }]);
   assert.equal(h.popupWindows.length, 1);
   assert.equal(h.badge, '?');
+  // A service from before `mine` sends ids: compared with this install's own.
+  await withPending(h, [pendingRequest('req_old', { browser: { id: 'b-firefox00000000001', name: 'Firefox' } })]);
+  assert.equal(h.badge, '', 'another browser\'s id: not here');
+  await withPending(h, [pendingRequest('req_own', { browser: { id: self, name: 'Chromium' } })]);
+  assert.equal(h.badge, '?', 'its own id: here');
 });
 
 test('opening the toolbar popup or clicking the icon reports this browser as used; the approval window does not', async () => {

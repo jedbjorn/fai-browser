@@ -120,6 +120,7 @@ function age(createdAt) {
 
 // Whether a request is meant for this browser: one that names none (an older FAI service) or names this one.
 function here(request) {
+  if (typeof request?.browser?.mine === 'boolean') return request.browser.mine;
   const self = view.connection?.browserId;
   return !request?.browser?.id || !self || request.browser.id === self;
 }
@@ -154,8 +155,7 @@ function elsewhereCard(request) {
 
 // "Connected to the FAI service", and the other browsers connected to it when there are any.
 function renderBrowsers() {
-  const self = view.connection?.browserId;
-  const others = (view.connection?.browsers ?? []).filter(browser => browser.id !== self)
+  const others = (view.connection?.browsers ?? []).filter(browser => browser.self !== true)
     .map(browser => String(browser.name || browser.product || 'Browser'));
   connectionText.textContent = others.length
     ? ` Connected to the FAI service, with ${others.join(', ')}`

@@ -4,7 +4,7 @@
 import http from 'node:http';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { BrowserRuntime, actionLabels, checkActChoice, redactionMeta, resolveRetry, resolveSlim } from './runtime.js';
 import { checkDeclarative, validateExpectation } from './expectation.js';
@@ -528,14 +528,15 @@ export function createDaemon(options = {}) {
   let settings = null;
   let config = { driver: defaultDriver };
   let driverChanges = Promise.resolve();
-  // The user's per-request call budget from the extension popup ({maxCalls, maxMs}), null until one is reported.
-  let userBudget = null;
-  // Whether the extension opens a request's page by itself (its "Open requested pages right away" setting, reported
-  // with the budget in the hello and settings messages); null until an extension reports it (an older one never does).
-  let openRightAway = null;
-  // The Approve gate's asks the extension reports ({purchase, secret, level}; booleans, never anything sensitive), so
-  // an agent's offer marks "(asks the user)" only what the extension will ask about. All on until reported.
-  let approvalAsks = { purchase: true, secret: true, level: true };
+  // The popup settings each browser reported (hello and settings messages), by browserId: {budget, openRightAway,
+  // approvalAsks}. `budget` is the user's per-request call budget ({maxCalls, maxMs}) or null; `openRightAway` whether
+  // that extension opens a request's page by itself (null when it never said: an older one); `approvalAsks` the
+  // Approve gate's asks ({purchase, secret, level}; all on until reported), so an offer marks "(asks the user)" only
+  // what that browser will ask about. A run, gate or approval wording uses the settings of the browser that holds or
+  // awaits the tab; the browser used last only when none is known (several browsers, issue #9).
+  const browserSettings = new Map();
+  let lastSettingsFrom = null;
+  const DEFAULT_ASKS = { purchase: true, secret: true, level: true };
   let token = null;
   let tokenDigest = null;
   let hub = null;
@@ -598,14 +599,36 @@ export function createDaemon(options = {}) {
     const connected = new Set(candidates.map(browser => browser.id));
     let preferred;
     for (const record of requests.values()) {
-      if (record.state !== 'pending' || record.browserPinned) continue;
+      if (record.state !== 'pending') continue;
       if (record.browser?.id && connected.has(record.browser.id)) continue;
+      // A browser the agent named (or the user moved it to) that has been gone longer than the hub's grace period: the
+      // request no longer waits for it, and says so (`browserNote`, in the agent's next text).
+      const gone = record.browserPinned ? record.browser : null;
       preferred ??= pickBrowser(candidates).browser;
       if (!preferred) return;
+      record.browserPinned = false;
       record.browser = browserRef(preferred);
-      log('request_browser', { requestId: record.requestId, browserId: preferred.id, reason: 'assigned' });
+      if (gone) {
+        record.browserNote = `${gone.name ?? 'The browser it was meant for'} disconnected; the request now waits in `
+          + `${preferred.name ?? 'the browser used last'}.`;
+      }
+      log('request_browser', { requestId: record.requestId, browserId: preferred.id, reason: gone ? 'unpinned' : 'assigned' });
     }
   }
+
+  // The browser whose settings apply to a request: the one holding its tab, else the one it waits in.
+  const browserOf = record => record?.lease?.browserId ?? record?.browser?.id ?? null;
+
+  // The settings of `browserId`; when it is unknown (or reported none), those of the browser used last, else of the
+  // browser that reported last.
+  function settingsFor(browserId) {
+    if (browserId && browserSettings.has(browserId)) return browserSettings.get(browserId);
+    const latest = pickBrowser(browserCandidates()).browser?.id;
+    if (!browserId && latest && browserSettings.has(latest)) return browserSettings.get(latest);
+    if (!browserId && lastSettingsFrom !== null && browserSettings.has(lastSettingsFrom)) return browserSettings.get(lastSettingsFrom);
+    return null;
+  }
+  const asksFor = record => settingsFor(browserOf(record))?.approvalAsks ?? DEFAULT_ASKS;
 
   // The lease belongs to `browserId` (null: the event or hub names no browser, as with an older hub: any).
   const sameBrowser = (record, browserId) => !browserId || !record.lease?.browserId || record.lease.browserId === browserId;
@@ -663,6 +686,8 @@ export function createDaemon(options = {}) {
       // The browser that holds the tab (once approved), else the one the request waits in; null while no browser
       // with the extension is connected.
       browser: record.browser ? { ...record.browser } : null,
+      // Set when the browser the request was meant for went away and it moved to another one.
+      ...(record.browserNote ? { browserNote: record.browserNote } : {}),
       activeRunId: record.activeRunId,
       lastRunId: record.lastRunId,
       // How a pending request is approved (`page`: its page opened by itself, the icon click on it approves; `window`:
@@ -848,7 +873,7 @@ export function createDaemon(options = {}) {
       level: grant.level,
       tabMode: grant.tabMode,
     });
-    record.runtime = new BrowserRuntime({ bridge: hub.bridgeFor(leaseId), asks: () => approvalAsks });
+    record.runtime = new BrowserRuntime({ bridge: hub.bridgeFor(leaseId), asks: () => asksFor(record) });
     // Password values filled at testing stay redacted in every later result, across leases (a re-approval at another
     // level is a new lease and a new runtime on the same tab, and the page may still echo the value).
     record.runtime.secrets = filledSecrets;
@@ -895,6 +920,10 @@ export function createDaemon(options = {}) {
   function onDenyEvent(event) {
     const record = requests.get(event.requestId);
     if (!record) return replyTo(event, { error: { code: 'no_request', message: 'No such tab request' } });
+    // A tab another browser holds is only released there (a pending request can be denied from any browser).
+    if (LEASED.has(record.state) && !sameBrowser(record, event.browserId)) {
+      return replyTo(event, { error: { code: 'request_not_pending', message: 'Another browser holds this tab' } });
+    }
     // The popup uses its deny control as "Release" for a paused request.
     if (record.state === 'paused') {
       endRequest(record, 'released', 'released', { interrupt: 'cancelled' });
@@ -942,30 +971,37 @@ export function createDaemon(options = {}) {
    * The per-request call budget in effect, the ceiling the MCP server enforces: the user's popup setting, else
    * config.json `budget` (validated by loadConfig), else DEFAULT_BUDGET; `source` names which.
    */
-  function effectiveBudget() {
+  function effectiveBudget(browserId = null) {
+    const userBudget = settingsFor(browserId)?.budget ?? null;
     if (userBudget) return { ...userBudget, source: 'extension' };
     const configured = config.budget && typeof config.budget === 'object' ? config.budget : null;
     if (configured && Object.keys(configured).length) return { ...DEFAULT_BUDGET, ...configured, source: 'config' };
     return { ...DEFAULT_BUDGET, source: 'default' };
   }
 
-  /** The extension's popup settings (hello or a settings message): the budget, when valid and complete, else none. */
-  function applySettings(settings) {
-    let next = null;
+  /**
+   * A browser's popup settings (hello or a settings message): the budget, when valid and complete, else none; "open
+   * right away" and the Approve gate's asks when reported (an older extension leaves its earlier ones standing).
+   */
+  function applySettings(settings, browserId = null) {
+    const key = typeof browserId === 'string' ? browserId : '';
+    const before = browserSettings.get(key) ?? { budget: null, openRightAway: null, approvalAsks: DEFAULT_ASKS };
+    let budget = null;
     try {
       const clean = checkBudget(settings?.budget ?? null);
-      if (clean.maxCalls !== undefined && clean.maxMs !== undefined) next = clean;
+      if (clean.maxCalls !== undefined && clean.maxMs !== undefined) budget = clean;
     } catch {
-      next = null;
+      budget = null;
     }
-    const changedBudget = JSON.stringify(next) !== JSON.stringify(userBudget);
-    userBudget = next;
-    if (changedBudget) log('budget_setting', { budget: userBudget });
-    if (typeof settings?.openRightAway === 'boolean') openRightAway = settings.openRightAway;
+    const next = { ...before, budget };
+    if (JSON.stringify(budget) !== JSON.stringify(before.budget)) log('budget_setting', { budget, browserId: key || null });
+    if (typeof settings?.openRightAway === 'boolean') next.openRightAway = settings.openRightAway;
     const asks = settings?.approvals;
     if (asks && typeof asks === 'object') {
-      approvalAsks = { purchase: asks.purchase !== false, secret: asks.secret !== false, level: asks.level !== false };
+      next.approvalAsks = { purchase: asks.purchase !== false, secret: asks.secret !== false, level: asks.level !== false };
     }
+    browserSettings.set(key, next);
+    lastSettingsFrom = key;
   }
 
   // How the user approves a pending request, for the agent's wording (result.js approvalSteps): `page` when the
@@ -973,7 +1009,7 @@ export function createDaemon(options = {}) {
   // and no live session on a tab that already covers it), where the icon click on that page approves; else `window`.
   function approvalOf(record) {
     const extension = hub.extension();
-    if (!extension.connected || openRightAway !== true) return 'window';
+    if (!extension.connected || settingsFor(browserOf(record))?.openRightAway !== true) return 'window';
     const hasPage = Boolean(record.url) || record.origins.some(entry => !isSiteEntry(entry));
     if (!hasPage || levelRank(record.mode) > levelRank('interactive')) return 'window';
     const live = extension.session;
@@ -984,8 +1020,8 @@ export function createDaemon(options = {}) {
   }
 
   function onSettingsEvent(event) {
-    applySettings(event.settings);
-    replyTo(event, { budget: effectiveBudget() });
+    applySettings(event.settings, event.browserId);
+    replyTo(event, { budget: effectiveBudget(event.browserId ?? '') });
   }
 
   function driverView() {
@@ -1077,13 +1113,13 @@ export function createDaemon(options = {}) {
   }
 
   function onHelloEvent(event) {
-    if (event.settings !== undefined) applySettings(event.settings);
+    if (event.settings !== undefined) applySettings(event.settings, event.browserId);
     const reply = endSession => replyTo(event, {
       mode: 'daemon',
       daemonVersion: version,
       endSession,
       requests: liveViews(),
-      budget: effectiveBudget(),
+      budget: effectiveBudget(event.browserId ?? ''),
       control: driverView(),
       update: updates.view(),
     });
@@ -1165,6 +1201,8 @@ export function createDaemon(options = {}) {
           return changed();
         case 'move':
           return onMoveEvent(event);
+        case 'usage':
+          return saveKnownBrowsers(event.browsers);
         default:
           return undefined;
       }
@@ -1672,7 +1710,8 @@ export function createDaemon(options = {}) {
     await waitUntil(() => !watched.includes(record.state), maxMs, signal);
     touch(record);
     // `budget`: the call budget in effect for this request (the MCP server reads its ceiling from here).
-    return { state: record.state, request: view(record), waitedMs: Date.now() - started, budget: effectiveBudget() };
+    return { state: record.state, request: view(record), waitedMs: Date.now() - started,
+      budget: effectiveBudget(browserOf(record)) };
   }
 
   function runSpec(body, record, operation) {
@@ -2381,6 +2420,31 @@ export function createDaemon(options = {}) {
 
   // --- lifecycle --------------------------------------------------------------------------------------------
 
+  // Each browser's last use and extension Origin ({id: {usedAt, origin}}), in browsers.json in the state directory, so
+  // new requests still go to the browser used last after a restart or an update. Nothing secret is kept there.
+  const knownBrowsersFile = () => join(paths.stateDir, 'browsers.json');
+  async function loadKnownBrowsers() {
+    try {
+      const parsed = JSON.parse(await readFile(knownBrowsersFile(), 'utf8'));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  let savingBrowsers = Promise.resolve();
+  function saveKnownBrowsers(browsers) {
+    if (!browsers || typeof browsers !== 'object') return savingBrowsers;
+    const text = `${JSON.stringify(browsers)}\n`;
+    savingBrowsers = savingBrowsers.then(async () => {
+      const file = knownBrowsersFile();
+      const temp = `${file}.${process.pid}.tmp`;
+      await mkdir(paths.stateDir, { recursive: true });
+      await writeFile(temp, text, { mode: 0o600 });
+      await rename(temp, file);
+    }).catch(error => log('browsers_save_error', { message: String(error?.message ?? error).slice(0, 200) }));
+    return savingBrowsers;
+  }
+
   async function resolveHub() {
     const hubOptions = {
       secret: settings.secret,
@@ -2388,6 +2452,8 @@ export function createDaemon(options = {}) {
       mode: 'daemon',
       log,
       version,
+      // Each browser's last use and extension Origin, kept across restarts and updates (browsers.json).
+      knownBrowsers: await loadKnownBrowsers(),
     };
     if (options.hub) return options.hub;
     if (options.hubFactory) return options.hubFactory(hubOptions);
@@ -2499,6 +2565,7 @@ export function createDaemon(options = {}) {
       wake();
       try {
         await hub?.close();
+        await savingBrowsers;
       } catch (error) {
         log('hub_close_error', { message: String(error?.message ?? error) });
       }

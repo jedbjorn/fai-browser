@@ -27,6 +27,7 @@ import { lintExpectation, validateExpectation } from './expectation.js';
 import { scrubSecrets } from './secrets.js';
 import { withResumeWait } from './resume.js';
 import { LEVELS, levelRank, normalizeAdditions } from './guardrails.js';
+import { browserMatches } from './bridge.js';
 import { BUDGET_LIMITS, DEFAULT_BUDGET, checkBudget, loadOversightConfig } from './settings.js';
 import {
   LIST_MAX_ACTIONS, MAX_STEPS, RUN_MAX_ACTIONS, checkSummary, foldTopLevel, listActionBudget,
@@ -325,13 +326,16 @@ RUN_PROPERTIES.steps = {
   }, ['instruction', 'expectation']),
 };
 
-/** True when a request is in the browser the agent named (an id, product or name), or when it named none. */
+/** True when a request is in the browser the agent named (the daemon's matcher: id, product, alias or name), or none. */
 function inBrowser(view, wanted) {
   if (wanted === undefined || wanted === null) return true;
-  const browser = view?.browser;
-  if (!browser) return false;
-  const key = String(wanted).trim().toLowerCase();
-  return browser.id === String(wanted).trim() || browser.product === key || String(browser.name ?? '').toLowerCase() === key;
+  return browserMatches(view?.browser, wanted);
+}
+
+// The browser a pending request waits in, for the approval hint: {name, note} or null.
+function browserHint(view) {
+  if (!view?.browser?.name && !view?.browserNote) return null;
+  return { name: view?.browser?.name ?? null, note: view?.browserNote ?? null };
 }
 
 /**
@@ -1312,10 +1316,13 @@ function waitHint(runId) {
 // `approval`: the request view's `approval` (`page` when its page opened by itself, else `window`; see result.js).
 // `driver`: agent (fai_browser_open) or jev (fai_browser_run).
 // `env`: the MCP server's environment, whose daemon location the wait command carries (src/resume.js).
-function approveHint(origin, requestId, approval = null, driver = 'agent', env = undefined) {
+function approveHint(origin, requestId, approval = null, driver = 'agent', env = undefined, browser = null) {
   const root = siteRoot(origin);
   const site = root ?? (origin ? origin.replace(/^https:\/\//, '') : null);
-  return withResumeWait(`Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: `
+  // Several paired browsers: the one it waits in, and why it moved there when its own browser went away.
+  const where = browser?.name ? `in ${oneLine(browser.name, 40)}` : 'in the browser';
+  const note = browser?.note ? `${oneLine(browser.note, 200)} ` : '';
+  return withResumeWait(`${note}Ask the user to approve the request${site ? ` for ${site}` : ''} ${where}: `
     + `${approvalSteps(approval)}. Then call ${driver === 'jev' ? 'fai_browser_run again' : 'fai_browser_observe'} with `
     + `requestId ${requestId}${driver === 'jev' ? '; no origins needed' : ''}.`, requestId, { env });
 }
@@ -1347,7 +1354,7 @@ function nextForRequest(state, view, requestId, driver = 'agent', env = undefine
           + 'and an expectation.')
         : nextStep('observe', `The tab is ready. Call fai_browser_observe with requestId ${requestId}, then choose.`);
     case 'pending':
-      return nextStep('relay', approveHint(view?.origins?.[0], requestId, view?.approval, driver, env));
+      return nextStep('relay', approveHint(view?.origins?.[0], requestId, view?.approval, driver, env, browserHint(view)));
     case 'paused':
       return nextStep('relay', withResumeWait(`The tab lease is paused${view?.stateReason ? ` (${view.stateReason})` : ''}. `
         + 'Ask the user to return to the tab and click Resume in the FAI Browser extension, then call '
@@ -1928,7 +1935,7 @@ class McpServer {
       return okResult({
         state: 'pending',
         requestId: call.requestId,
-        next: nextStep('relay', approveHint(call.origin, call.requestId, call.approval, this.driver, this.env)),
+        next: nextStep('relay', approveHint(call.origin, call.requestId, call.approval, this.driver, this.env, call.browser)),
       });
     }
     return errorResult('timeout', `FAI Browser did not answer within ${this.maxCallMs} ms. Check \`fai-browser `
@@ -2066,7 +2073,7 @@ class McpServer {
     this.ownedRequests.add(requestId);
     this.lastRequestId = requestId;
     return { requestId, state: response.state ?? 'pending', extensionConnected: response.extensionConnected,
-      approval: response.request?.approval ?? null };
+      approval: response.request?.approval ?? null, browser: browserHint(response.request) };
   }
 
   /** Current view of a request without waiting, or null when the daemon no longer knows it. */
@@ -2167,6 +2174,7 @@ class McpServer {
         const state = response.state ?? response.request?.state;
         // The latest word on how the request is approved (its page may have opened by itself meanwhile).
         if (response.request?.approval) call.approval = response.request.approval;
+        if (response.request) call.browser = browserHint(response.request);
         if ((state !== 'pending' && state !== 'paused') || waitUntil - Date.now() <= 0) return state;
         const early = APPROVAL_ROUND_MIN_MS - (Date.now() - roundStarted);
         if (early > 0) await delay(early, undefined, { signal: call.signal });
@@ -2280,6 +2288,7 @@ class McpServer {
     call.requestId = requestId;
     call.origin = args.origins?.[0] ?? request.view?.origins?.[0];
     call.approval = request.view?.approval ?? request.created?.approval ?? null;
+    call.browser = browserHint(request.view) ?? request.created?.browser ?? null;
     this.settleBudget(this.ledger(requestId));
     const refusal = this.budgetRefusal(requestId);
     if (refusal) return refusal;
@@ -2310,6 +2319,7 @@ class McpServer {
     call.origin = args.origins?.[0] ?? request.view?.origins?.[0];
     // How a pending request is approved (the daemon's view, or the creation reply), for the approval hint's wording.
     call.approval = request.view?.approval ?? request.created?.approval ?? null;
+    call.browser = browserHint(request.view) ?? request.created?.browser ?? null;
     const entry = this.ledger(requestId);
     // The host's budget for this request: lowers the user's ceiling, never raises it (a higher ask warns once). An
     // ask holds for the request until the host sends another.

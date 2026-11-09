@@ -56,9 +56,16 @@ export const CLOSE_REPLACED_LEGACY = 4000;
 export const CLOSE_PAIRING_CHANGED = 4001;
 // A newer connection of the same browser identity took over: the extension must not reconnect on it.
 export const CLOSE_SUPERSEDED = 4003;
+// The connection claimed a browser id that belongs to another extension Origin.
+export const CLOSE_IDENTITY_REFUSED = 4004;
 // The header (HTTP fallback) and query parameter (WebSocket) that carry the extension's browser identity.
 export const BROWSER_HEADER = 'x-fai-browser';
-export const BROWSER_ID = /^[A-Za-z0-9_-]{8,64}$/;
+// The ids the extension creates (b- and 8-40 letters or digits). Anything else is treated as no id at all.
+export const BROWSER_ID = /^b-[A-Za-z0-9]{8,40}$/;
+// A superseded socket that completed its hello and lived this long was not a restarted worker: another install (a
+// copied browser profile) shares the identity. Reported as extension_duplicate_identity.
+export const DUPLICATE_AFTER_MS = 10_000;
+const DUPLICATE_WARN_MS = 10 * 60_000;
 const BROWSER_PRODUCT = /^[a-z0-9-]{1,24}$/;
 // A connection that closes more than this many times within FLAP_WINDOW_MS is reported as flapping.
 export const FLAP_LIMIT = 8;
@@ -242,6 +249,19 @@ export function describeBrowsers(browsers) {
 }
 
 /**
+ * Whether `browser` ({id, product, name}) is the one an agent named: its id, its product (or an alias such as
+ * "Google Chrome") or its name, case-insensitive. The daemon's choice and the MCP server's reuse check share it.
+ */
+export function browserMatches(browser, wanted) {
+  if (!browser || wanted === undefined || wanted === null) return false;
+  const raw = String(wanted).trim();
+  const key = raw.toLowerCase();
+  const product = PRODUCT_ALIASES[key] ?? key;
+  return (Boolean(browser.id) && browser.id === raw) || (Boolean(browser.product) && browser.product === product)
+    || (Boolean(browser.name) && String(browser.name).toLowerCase() === key);
+}
+
+/**
  * The browser a new tab request goes to: `wanted` (what the agent named: an id, a product such as "firefox" or a
  * name, case-insensitive) when given, else the one the user used FAI in most recently (`usedAt`: the last approval,
  * popup open or toolbar click), else the most recently connected one. Several matches: the most recently used.
@@ -254,10 +274,7 @@ export function pickBrowser(browsers, wanted) {
   if (wanted === undefined || wanted === null || wanted === '') {
     return { browser: [...list].sort(recent)[0] ?? null };
   }
-  const key = String(wanted).trim().toLowerCase();
-  const product = PRODUCT_ALIASES[key] ?? key;
-  const matches = list.filter(browser => browser.id === String(wanted).trim() || browser.product === product
-    || (browser.name && browser.name.toLowerCase() === key));
+  const matches = list.filter(browser => browserMatches(browser, wanted));
   if (matches.length) return { browser: matches.sort(recent)[0] };
   const message = list.length
     ? `No connected browser matches "${String(wanted).slice(0, 40)}". Connected: ${describeBrowsers(list)}. Pass one of `
@@ -287,6 +304,11 @@ export function createHub({
   // More closes than flapLimit within flapWindowMs: the browser's connection is flapping (a warning in status).
   flapLimit = FLAP_LIMIT,
   flapWindowMs = FLAP_WINDOW_MS,
+  // A superseded socket older than this (after its hello) means two installs share an identity.
+  duplicateAfterMs = DUPLICATE_AFTER_MS,
+  // What the daemon kept from earlier runs, per browser id: {usedAt, origin}. The last use routes new requests after a
+  // restart; the origin binds the id (a known id from another extension Origin is refused).
+  knownBrowsers = {},
 } = {}) {
   validateCredentials(secret, extensionId);
   const extensionOrigin = `chrome-extension://${extensionId}`;
@@ -337,17 +359,51 @@ export function createHub({
 
   // --- browsers (one connection each) ---------------------------------------------------------------------
 
+  // Each id belongs to the extension Origin it first came from (kept across restarts with `knownBrowsers`): a client
+  // holding the pairing secret cannot take over another browser's connection by claiming its id from another origin.
+  const known = new Map();
+  for (const [id, entry] of Object.entries(knownBrowsers && typeof knownBrowsers === 'object' ? knownBrowsers : {})) {
+    if (!BROWSER_ID.test(id) || !entry || typeof entry !== 'object') continue;
+    known.set(id, { usedAt: Number.isFinite(entry.usedAt) ? entry.usedAt : 0,
+      origin: typeof entry.origin === 'string' ? entry.origin : null });
+  }
+  const boundOrigin = id => browsers.get(id)?.origin ?? known.get(id)?.origin ?? null;
+
+  // The identity of a connection, or null when it claims an id that belongs to another extension Origin.
+  function identify(reported, origin) {
+    const identity = connectionIdentity(reported, origin);
+    if (identity.legacy) return identity;
+    const bound = boundOrigin(identity.id);
+    if (bound && bound !== origin) {
+      logEvent('extension_identity_refused', { browserId: identity.id });
+      return null;
+    }
+    return identity;
+  }
+
+  // Remembers a browser's last use and origin, and tells the daemon (which keeps them in its state directory).
+  function noteUsage(browser, used = false) {
+    if (browser.legacy) return;
+    if (used) browser.usedAt = Date.now();
+    const before = known.get(browser.id);
+    if (before && before.usedAt === browser.usedAt && before.origin === browser.origin) return;
+    known.set(browser.id, { usedAt: browser.usedAt, origin: browser.origin });
+    while (known.size > 64) known.delete(known.keys().next().value);
+    emit({ type: 'usage', browsers: Object.fromEntries(known) });
+  }
+
   function browserFor({ id, legacy }, origin) {
     let browser = browsers.get(id);
     if (!browser) {
       browser = {
-        id, legacy, origin, product: originProduct(origin), name: null, version: null,
-        socket: null, socketReady: false, connected: false, transport: 'none', connectedAt: 0, lastSeen: Date.now(),
-        graceTimer: null, outbox: [], waiters: new Set(), settings: null, usedAt: 0, closes: [], sentJson: null,
-        flapping: false,
+        id, legacy, origin, product: originProduct(origin), name: null, version: null, browserVersion: null,
+        socket: null, socketReady: false, socketOpenedAt: 0, connected: false, transport: 'none', connectedAt: 0,
+        lastSeen: Date.now(), graceTimer: null, outbox: [], waiters: new Set(), settings: null,
+        usedAt: known.get(id)?.usedAt ?? 0, closes: [], sentJson: null, flapping: false, duplicateAt: 0,
       };
       browsers.set(id, browser);
       pruneBrowsers(browser);
+      noteUsage(browser);
     }
     return browser;
   }
@@ -451,6 +507,7 @@ export function createHub({
       product: browser.product,
       name: browserLabel(browser),
       version: browser.version,
+      browserVersion: browser.browserVersion,
       transport: transportOf(browser),
       connected: browser.connected || Boolean(browser.socket?.open),
       connectedAt: iso(browser.connectedAt),
@@ -464,9 +521,23 @@ export function createHub({
     };
   }
 
-  // The connected browsers as each popup lists them.
-  const browserList = () => connectedBrowsers().sort((a, b) => a.connectedAt - b.connectedAt)
-    .map(browser => ({ id: browser.id, product: browser.product, name: browserLabel(browser) }));
+  // The connected browsers' display names, in connection order; a name two of them share gets " (2)", " (3)" ...
+  function displayNames() {
+    const names = new Map();
+    const seen = new Map();
+    for (const browser of connectedBrowsers().sort((a, b) => a.connectedAt - b.connectedAt)) {
+      const label = browserLabel(browser);
+      const count = (seen.get(label) ?? 0) + 1;
+      seen.set(label, count);
+      names.set(browser.id, count > 1 ? `${label} (${count})` : label);
+    }
+    return names;
+  }
+
+  // The connected browsers as one popup lists them: names only, with `self` for its own. Ids never go to an
+  // extension (another one could claim them); agents see them in status.
+  const browserList = (self, names = displayNames()) => connectedBrowsers().sort((a, b) => a.connectedAt - b.connectedAt)
+    .map(browser => ({ product: browser.product, name: names.get(browser.id), self: browser === self }));
 
   // --- outbound --------------------------------------------------------------------------------------------
 
@@ -485,11 +556,14 @@ export function createHub({
 
   // The request views one browser gets: all of them with the browser list (a current extension marks the ones meant
   // for another browser itself), or only its own and unassigned ones for an older extension that cannot tell.
+  // Each view's `browser` becomes {product, name, mine}: whether the request is this browser's, never an id.
   function snapshotFor(browser) {
-    if (browser.legacy) {
-      return { requests: requests.filter(view => !view?.browser?.id || view.browser.id === browser.id) };
-    }
-    return { requests, browsers: browserList() };
+    const names = displayNames();
+    const own = view => !view?.browser?.id || view.browser.id === browser.id;
+    const marked = view => (view?.browser?.id ? { ...view, browser: { product: view.browser.product ?? null,
+      name: names.get(view.browser.id) ?? view.browser.name ?? null, mine: view.browser.id === browser.id } } : view);
+    if (browser.legacy) return { requests: requests.filter(own).map(marked) };
+    return { requests: requests.map(marked), browsers: browserList(browser, names) };
   }
 
   // Sends each ready socket its snapshot when it changed, and wakes held long-polls.
@@ -548,8 +622,7 @@ export function createHub({
         if (!browser.socketReady) continue;
         for (let command = takeCommand(browser); command; command = takeCommand(browser)) {
           browser.socket.send({ v: 3, type: 'command', command });
-          const entry = pending.get(command.id);
-          if (entry) entry.delivered = true;
+          delivered(command.id, browser);
         }
         continue;
       }
@@ -557,11 +630,19 @@ export function createHub({
     }
   }
 
-  function longPollBody(browser, command) {
-    if (command) {
-      const entry = pending.get(command.id);
-      if (entry) entry.delivered = true;
+  // A command went to `browser`: only that connection may answer it (result, screenshot).
+  function delivered(id, browser) {
+    const entry = pending.get(id);
+    if (entry) {
+      entry.delivered = true;
+      entry.browserId = browser.id;
     }
+    const shot = screenshots.get(id);
+    if (shot) shot.browserId = browser.id;
+  }
+
+  function longPollBody(browser, command) {
+    if (command) delivered(command.id, browser);
     const snapshot = snapshotFor(browser);
     browser.sentJson = JSON.stringify(snapshot);
     return { command, ...snapshot, messages: browser.outbox.splice(0) };
@@ -761,8 +842,13 @@ export function createHub({
     entry.timer.unref?.();
   }
 
-  function handleResult(body) {
+  function handleResult(body, browser) {
     const entry = pending.get(body.id);
+    // A result from a connection that was not sent the command is dropped.
+    if (entry?.browserId && entry.browserId !== browser.id) {
+      logEvent('extension_result_dropped', { browserId: browser.id });
+      return;
+    }
     if (!entry) {
       // Late result for a cancelled or timed-out command; drop any screenshot slot it reserved.
       settleScreenshot(body.id, null);
@@ -839,6 +925,7 @@ export function createHub({
         const info = sanitizeBrowserInfo(message.browser);
         if (info.product) browser.product = info.product;
         if (info.name) browser.name = info.name;
+        if (info.version) browser.browserVersion = info.version;
         const session = sanitizeSession(message.session);
         // An older extension sends no settings: the ones last reported (if any) stand.
         if (message.settings !== undefined) {
@@ -869,7 +956,7 @@ export function createHub({
       }
       case 'used': {
         // The user opened the popup or clicked the toolbar icon in this browser: new tab requests go here.
-        browser.usedAt = Date.now();
+        noteUsage(browser, true);
         emit({ type: 'used', browserId });
         if (message.ref !== undefined || via === 'http') answer(true, { ok: true });
         return;
@@ -877,7 +964,7 @@ export function createHub({
       case 'move': {
         // The popup's "Open here": the user wants a request that waits in another browser in this one.
         const requestId = typeof message.requestId === 'string' ? message.requestId : null;
-        browser.usedAt = Date.now();
+        noteUsage(browser, true);
         const event = { type: 'move', requestId, browserId, browser: browserRef(), reply };
         if (!emit(event)) reply({ error: { code: 'no_request', message: 'No tab request is pending' } });
         return;
@@ -887,7 +974,7 @@ export function createHub({
         // with what is in effect.
         extensionSettings = sanitizeSettings(message.settings) ?? { budget: null };
         browser.settings = extensionSettings;
-        const event = { type: 'settings', settings: extensionSettings, reply };
+        const event = { type: 'settings', settings: extensionSettings, browserId, reply };
         if (!emit(event)) reply({ settings: extensionSettings });
         return;
       }
@@ -951,7 +1038,7 @@ export function createHub({
           reply,
         };
         // An approval is the strongest sign of where the user works: new tab requests go here.
-        browser.usedAt = Date.now();
+        noteUsage(browser, true);
         if (!emit(event)) reply({ error: { code: 'no_request', message: 'No tab request is pending' } });
         return;
       }
@@ -993,13 +1080,15 @@ export function createHub({
         return;
       }
       case 'result':
-        handleResult(message);
+        handleResult(message, browser);
         if (via === 'http') answer(true, { ok: true });
         return;
-      case 'screenshot':
-        settleScreenshot(message.id, normalizeScreenshot(message));
+      case 'screenshot': {
+        const slot = screenshots.get(message.id);
+        if (!slot?.browserId || slot.browserId === browserId) settleScreenshot(message.id, normalizeScreenshot(message));
         if (via === 'http') answer(true, { ok: true });
         return;
+      }
       default:
         if (message?.ref !== undefined || via === 'http') {
           reply({ error: { code: 'bad_request', message: 'Unknown message type' } });
@@ -1031,13 +1120,31 @@ export function createHub({
     if (!protocols.includes(WS_PROTOCOL)) return reject(400, 'unsupported_protocol');
     const connection = acceptUpgrade(req, rawSocket, head, { protocol: WS_PROTOCOL, pingIntervalMs, idleTimeoutMs });
     if (!connection) return true;
-    const browser = browserFor(connectionIdentity(url.searchParams.get('browser'), req.headers.origin), req.headers.origin);
+    const identity = identify(url.searchParams.get('browser'), req.headers.origin);
+    if (!identity) {
+      connection.close(CLOSE_IDENTITY_REFUSED, 'This browser id belongs to another extension');
+      return true;
+    }
+    const browser = browserFor(identity, req.headers.origin);
     const previous = browser.socket;
+    const previousReady = browser.socketReady;
+    const previousOpenedAt = browser.socketOpenedAt;
     browser.socket = connection;
     browser.socketReady = false;
+    browser.socketOpenedAt = Date.now();
     browser.sentJson = null;
     // Only this browser's own older socket is replaced (a restarted worker); never another browser's (issue #9).
-    if (previous?.open) previous.close(CLOSE_SUPERSEDED, "Superseded by this browser's newer connection");
+    if (previous?.open) {
+      previous.close(CLOSE_SUPERSEDED, "Superseded by this browser's newer connection");
+      // A restarted worker's old socket is new or already dead. One that said hello and lived on is another install
+      // with the same identity (a copied profile), or someone claiming it.
+      if (previousReady && Date.now() - previousOpenedAt >= duplicateAfterMs) {
+        if (!browser.duplicateAt || Date.now() - browser.duplicateAt > DUPLICATE_WARN_MS) {
+          logEvent('extension_duplicate_identity', { browserId: browser.id });
+        }
+        browser.duplicateAt = Date.now();
+      }
+    }
     logEvent('extension_ws_open', { browserId: browser.id });
     markSeen(browser, 'websocket');
     connection.on('message', text => {
@@ -1128,7 +1235,12 @@ export function createHub({
     }
     // Which browser this is (the X-Fai-Browser header; an older extension by its Origin). Any authenticated request
     // proves that browser is alive.
-    const browser = browserFor(connectionIdentity(req.headers[BROWSER_HEADER], req.headers.origin), req.headers.origin);
+    const identity = identify(req.headers[BROWSER_HEADER], req.headers.origin);
+    if (!identity) {
+      reply(403, { error: 'This browser id belongs to another extension', code: 'identity_refused' });
+      return true;
+    }
+    const browser = browserFor(identity, req.headers.origin);
     markSeen(browser, 'longpoll');
     (async () => {
       try {
@@ -1137,7 +1249,9 @@ export function createHub({
           const command = takeCommand(browser);
           const requested = Number(url.searchParams.get('wait') ?? 0);
           const waitMs = Number.isFinite(requested) ? Math.min(Math.max(requested, 0), MAX_LONG_POLL_MS) : 0;
-          if (command || browser.outbox.length || !waitMs || closed) return reply(200, longPollBody(browser, command));
+          // A changed request list is answered at once, not held until the next change or the wait's end.
+          const stale = browser.sentJson !== null && JSON.stringify(snapshotFor(browser)) !== browser.sentJson;
+          if (command || browser.outbox.length || !waitMs || closed || stale) return reply(200, longPollBody(browser, command));
           return holdLongPoll(browser, res, waitMs, reply);
         }
         const answer = (ok, payload) => {
@@ -1199,12 +1313,20 @@ export function createHub({
     candidates: () => connectedBrowsers().map(browser => ({ id: browser.id, product: browser.product,
       name: browserLabel(browser), usedAt: browser.usedAt, connectedAt: browser.connectedAt })),
     // Status warnings: a browser whose connection keeps closing (a reconnect loop, issue #9).
-    warnings: () => [...browsers.values()].filter(browser => browser.flapping).map(browser => {
-      const closes = browser.closes.filter(at => Date.now() - at < flapWindowMs).length;
-      return `extension_flapping: ${browserLabel(browser)} (${browser.id}) lost its connection ${closes} times in `
-        + `${Math.round(flapWindowMs / 1000)} s; another FAI Browser install with the same identity, or an older `
-        + 'FAI service, may be fighting over it';
-    }),
+    warnings: () => [
+      ...[...browsers.values()].filter(browser => browser.flapping).map(browser => {
+        const closes = browser.closes.filter(at => Date.now() - at < flapWindowMs).length;
+        return `extension_flapping: ${browserLabel(browser)} (${browser.id}) lost its connection ${closes} times in `
+          + `${Math.round(flapWindowMs / 1000)} s; another FAI Browser install with the same identity, or an older `
+          + 'FAI service, may be fighting over it';
+      }),
+      ...[...browsers.values()].filter(browser => browser.duplicateAt && Date.now() - browser.duplicateAt < DUPLICATE_WARN_MS)
+        .map(browser => `extension_duplicate_identity: a second FAI Browser install took over the connection of `
+          + `${browserLabel(browser)} (${browser.id}) from a live one; a copied browser profile shares its identity. `
+          + 'Remove the extension from one copy, or reinstall it there'),
+    ],
+    // The settings a browser last reported (sanitizeSettings), or null.
+    settingsOf: browserId => browsers.get(browserId)?.settings ?? null,
     publishRequests(views = []) {
       const next = JSON.parse(JSON.stringify(Array.isArray(views) ? views : []));
       const json = JSON.stringify(next);
