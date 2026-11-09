@@ -86,7 +86,7 @@ async function launchLeased(t, { hostPermissions, allowedOrigins, startUrl }) {
   }, { endpoint: `http://127.0.0.1:${port}`, secret: SECRET });
   assert.equal(started, 'ok');
   assert.equal((await leased).status, 'active');
-  return { page, companion };
+  return { page, companion, worker };
 }
 
 const codeOf = promise => promise.then(() => 'ok', error => String(error?.code ?? error?.message));
@@ -101,6 +101,10 @@ test('approved cross-origin frames in real Chromium: read, act, refuse, nest, pr
         + `<p>Deploy token: ${TOKEN}</p>`
         + '<button type="button" onclick="document.getElementById(\'s\').textContent=\'Review state: reviewed\'">Mark reviewed</button>'
         + '<p id="s">Review state: pending</p></body>';
+    }
+    if (path === '/settings') {
+      return '<title>Settings</title><body style="margin:0"><p>Settings</p><input id="pw" type="password" value="hunter2-hunter2" '
+        + 'style="position:absolute;left:10px;top:40px;width:200px;height:20px;border:0;padding:0"></body>';
     }
     if (path === '/outer') {
       return `<title>Outer</title><body><h2>Outer blade</h2><iframe src="${origins.nested}/inner" width="360" height="160" `
@@ -122,6 +126,11 @@ test('approved cross-origin frames in real Chromium: read, act, refuse, nest, pr
         + `<iframe id="blade" src="${origins.blade}/blade" width="600" height="320" style="border:0;display:block"></iframe>`
         + `<iframe id="ad" src="${origins.other}/ad" width="300" height="120" style="border:0;display:block"></iframe></body>`;
     }
+    if (path === '/shifting') {
+      return '<title>Shifting</title><body style="margin:0"><div id="pad"></div><h1 style="margin:0;height:40px">Portal</h1>'
+        + `<iframe id="blade" src="${origins.blade}/settings" width="600" height="200" style="border:0;display:block"></iframe>`
+        + `<iframe id="ad" src="${origins.other}/ad" width="300" height="100" style="border:0;display:block"></iframe></body>`;
+    }
     if (path === '/nested') {
       return `<title>Nested</title><body style="margin:0"><h1>Nested</h1><iframe src="${origins.blade}/outer" width="600" height="320" `
         + 'style="border:0;display:block;margin-left:20px"></iframe></body>';
@@ -141,7 +150,7 @@ test('approved cross-origin frames in real Chromium: read, act, refuse, nest, pr
   const launched = await launchLeased(t, { hostPermissions: ['<all_urls>'], startUrl: `${origins.top}/`,
     allowedOrigins: [origins.top, origins.blade, origins.nested] });
   if (!launched) return;
-  const { page, companion } = launched;
+  const { page, companion, worker } = launched;
   const { bridge } = companion;
 
   await t.test('an approved frame is read: its text, its controls (f1.<id>), its secret redacted; the other one is named only', async () => {
@@ -175,7 +184,76 @@ test('approved cross-origin frames in real Chromium: read, act, refuse, nest, pr
     assert.equal(await frame.evaluate(() => document.getElementById('s').textContent), 'Review state: reviewed');
   });
 
+  await t.test('review #4: the frame document vanishing between the probe and the act is cross_origin, never a success', async () => {
+    await page.goto(`${origins.top}/`);
+    await page.waitForLoadState('load');
+    await sleep(300);
+    const observation = await bridge.observe();
+    const button = observation.controls.find(control => control.label === 'Mark reviewed');
+    assert.ok(button);
+    // Right after the worker's re-probe of that frame, the frame navigates to an origin the request does not list:
+    // the act's injection then finds no document.
+    assert.equal(await worker.evaluate(target => {
+      const original = chrome.scripting.executeScript.bind(chrome.scripting);
+      globalThis.__restoreScript = () => { chrome.scripting.executeScript = original; };
+      chrome.scripting.executeScript = async options => {
+        const results = await original(options);
+        if (options.func?.name === 'frameProbe' && options.target.frameIds) {
+          chrome.scripting.executeScript = original;
+          await original({ target: { tabId: options.target.tabId, frameIds: options.target.frameIds }, func: url => { location.href = url; },
+            args: [target] });
+          await new Promise(done => setTimeout(done, 800));
+        }
+        return results;
+      };
+      return 'hooked';
+    }, `${origins.other}/landing`), 'hooked');
+    try {
+      const code = await codeOf(bridge.execute({ type: 'click', target: button.id }, observation.revision, { capture: false }));
+      assert.equal(code, 'cross_origin');
+      // Nothing was clicked anywhere: the partner page's button is untouched and the blade is gone from the frame.
+      const partner = page.frames().find(item => item.url().startsWith(origins.other) && item.url().includes('/landing'));
+      assert.equal(await partner.evaluate(() => document.title), 'Ad');
+    } finally {
+      await worker.evaluate(() => globalThis.__restoreScript?.());
+    }
+  });
+
+  await t.test('review #1 and #5: screenshot boxes follow a frame the page moved after the observation; unread frames are boxed', async () => {
+    await page.goto(`${origins.top}/shifting`);
+    await page.waitForLoadState('load');
+    await sleep(300);
+    const result = await worker.evaluate(async () => {
+      const tabId = session.tabId;
+      await faiFrames.observeTab(tabId);
+      // The page shifts its frames down by 150px after the observation (a banner, an ad, a lazy image).
+      await chrome.scripting.executeScript({ target: { tabId }, func: () => { document.getElementById('pad').style.height = '150px'; } });
+      await new Promise(done => setTimeout(done, 100));
+      const before = await redactionQuery(tabId, true).then(value => faiFrames.redaction(tabId, value, true));
+      const after = await redactionQuery(tabId, false).then(value => faiFrames.redaction(tabId, value, false));
+      return { before: before.rects, after: after.rects, dirty: after.dirty ?? null };
+    });
+    const real = await page.evaluate(() => {
+      const blade = document.getElementById('blade').getBoundingClientRect();
+      const ad = document.getElementById('ad').getBoundingClientRect();
+      return { field: { x: blade.x + 10, y: blade.y + 40 }, ad: { x: ad.x, y: ad.y, width: ad.width, height: ad.height } };
+    });
+    // The approved frame's password field is boxed where it is now (4px padding around it).
+    const near = (rect, x, y) => Math.abs(rect.x - (x - 4)) <= 2 && Math.abs(rect.y - (y - 4)) <= 2;
+    for (const rects of [result.before, result.after]) {
+      assert.ok(rects.some(rect => near(rect, real.field.x, real.field.y) && rect.width >= 200), JSON.stringify({ rects, real }));
+      assert.ok(!rects.some(rect => near(rect, real.field.x, real.field.y - 150) && rect.width < 300), 'never at the old place');
+      // The partner frame, not read, is boxed whole.
+      assert.ok(rects.some(rect => Math.abs(rect.x - real.ad.x) <= 1 && Math.abs(rect.y - real.ad.y) <= 1
+        && rect.width >= real.ad.width - 1 && rect.height >= real.ad.height - 1), JSON.stringify({ rects, ad: real.ad }));
+    }
+    assert.equal(result.dirty, false, 'nothing moved between the two queries');
+  });
+
   await t.test('a frame that moved to an unapproved origin after the observation refuses the act', async () => {
+    await page.goto(`${origins.top}/`);
+    await page.waitForLoadState('load');
+    await sleep(300);
     const observation = await bridge.observe();
     const button = observation.controls.find(control => control.label === 'Mark reviewed');
     const frame = page.frames().find(item => item.url().startsWith(origins.blade));
