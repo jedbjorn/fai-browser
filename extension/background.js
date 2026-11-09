@@ -697,7 +697,7 @@ async function reloadForUpdate(daemonVersion) {
   const manifest = chrome.runtime.getManifest?.() ?? {};
   if (manifest.browser_specific_settings?.gecko || typeof chrome.runtime.reload !== 'function') return;
   if (session || !newerVersion(daemonVersion, manifest.version)) return;
-  const { updateReloadedFor } = await chrome.storage.local.get('updateReloadedFor');
+  const { updateReloadedFor } = await chrome.storage.local.get(['updateReloadedFor']);
   if (updateReloadedFor === daemonVersion) return;
   await chrome.storage.local.set({ updateReloadedFor: daemonVersion });
   chrome.runtime.reload();

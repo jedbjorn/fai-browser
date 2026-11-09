@@ -38,7 +38,9 @@ test.afterEach(() => {
 // options.daemonBudget: the per-request budget the fake daemon reports in effect (hello and settings replies).
 function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode = 'daemon', leaseOrigins = null, permissions,
   hostGrants, local: extraLocal = {}, leaseError = null, opened = null, sessionStore = {}, daemonBudget = null,
-  driverControl = null, native = null, actionOpenPopup = null, lastWindow = undefined, normalWindows = [], tabCreateFails = false } = {}) {
+  driverControl = null, native = null, actionOpenPopup = null, lastWindow = undefined, normalWindows = [], tabCreateFails = false,
+  daemonVersion = '0.2.0', daemonUpdate = null, manifest = {} } = {}) {
+  const reloads = []; // chrome.runtime.reload() calls (an update's reload of the unpacked extension)
   const nativeCalls = []; // chrome.runtime.sendNativeMessage(host, message) calls
   const events = name => ({
     listeners: [],
@@ -167,8 +169,13 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
   // The fake daemon's answer to a ref'd message.
   function answer(message) {
     if (message.type === 'hello') {
-      return { ok: true, data: { mode, daemonVersion: '0.2.0', endSession: false,
+      return { ok: true, data: { mode, daemonVersion, endSession: false, ...(daemonUpdate ? { update: daemonUpdate } : {}),
         ...(daemonBudget ? { budget: daemonBudget } : {}), ...(driverControl ? { control: driverControl } : {}) } };
+    }
+    if (message.type === 'update' && daemonUpdate) {
+      if (message.action === 'install' && state.updateError) return { ok: false, error: { code: 'lease_active', message: state.updateError } };
+      const install = message.action === 'install' ? { state: 'running', to: daemonUpdate.latest, message: 'Installing.' } : daemonUpdate.install;
+      return { ok: true, data: { update: { ...daemonUpdate, install: install ?? null } } };
     }
     if (message.type === 'driver') {
       if (state.driverError && message.driver) return { ok: false, error: { code: 'driver_save_failed', message: 'Could not save' } };
@@ -232,7 +239,8 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       onMessage: events('onMessage'),
       onStartup: events('onStartup'),
       onInstalled: events('onInstalled'),
-      getManifest: () => ({ version: '0.3.0' }),
+      getManifest: () => ({ version: '0.3.0', ...manifest }),
+      reload: () => reloads.push(Date.now()),
       getURL: path => `chrome-extension://ext/${path}`,
       ...(native ? { async sendNativeMessage(host, message) {
         nativeCalls.push({ host, message: clone(message) });
@@ -462,6 +470,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     },
     state,
     sent,
+    reloads,
     sockets,
     delays,
     intervals,
@@ -2095,6 +2104,46 @@ test('a page cannot change the driver through a runtime message', async () => {
   const result = await h.send({ type: 'set_driver', driver: 'agent' }, { id: 'ext', url: ORIGIN });
   assert.match(result.error, /popup/);
   assert.ok(!h.sent.some(message => message.type === 'driver' && message.driver));
+});
+
+// --- updates (docs/REFERENCE.md "Updates") ------------------------------------------------------------------------
+
+const UPDATE = { enabled: true, current: '0.3.0', latest: '0.9.0', tag: 'v0.9.0', available: true,
+  notesUrl: 'https://github.com/jedbjorn/fai-browser/releases/tag/v0.9.0', status: 'ok', install: null };
+
+test('update: the hello and the popup connect carry a cleaned update view; Update from the popup asks the service', async () => {
+  const h = harness({ daemonUpdate: { ...UPDATE, notesUrl: 'https://evil.example/', extra: 'x' } });
+  await h.until(() => h.session.connection?.update);
+  assert.deepEqual(h.session.connection.update, { current: '0.3.0', latest: '0.9.0', available: true, notesUrl: null, install: null },
+    'only versions, a notes link of the release itself, and the install');
+  const page = await h.send({ type: 'update_install' }, { id: 'ext', url: ORIGIN });
+  assert.match(page.error, /popup/);
+  assert.ok(!h.sent.some(message => message.type === 'update' && message.action === 'install'), 'a page cannot install');
+  const clicked = await h.send({ type: 'update_install' }, { id: 'ext', url: 'chrome-extension://ext/popup.html' });
+  assert.equal(clicked.connection.update.install.state, 'running');
+  assert.ok(h.sent.some(message => message.type === 'update' && message.action === 'install' && message.via === 'ws'));
+  h.state.updateError = 'An agent holds a browser tab.';
+  const refused = await h.send({ type: 'update_install' }, { id: 'ext', url: 'chrome-extension://ext/popup.html' });
+  assert.match(refused.error, /holds a browser tab/);
+  assert.equal(h.reloads.length, 0);
+});
+
+test('update: a newer service reloads the unpacked extension once per version; Firefox and an older service never', async () => {
+  const h = harness({ daemonVersion: '0.9.0' });
+  await h.until(() => h.reloads.length === 1);
+  assert.equal(h.local.updateReloadedFor, '0.9.0');
+  h.dispose();
+  const again = harness({ daemonVersion: '0.9.0', local: { updateReloadedFor: '0.9.0' } });
+  await again.waitFor(message => message.type === 'hello');
+  await sleep(30);
+  assert.equal(again.reloads.length, 0, 'not twice for the same version (no reload loop)');
+  for (const options of [{ daemonVersion: '0.9.0', manifest: { browser_specific_settings: { gecko: { id: 'x@y' } } } },
+    { daemonVersion: '0.3.0' }, { daemonVersion: '0.2.9' }]) {
+    const other = harness(options);
+    await other.waitFor(message => message.type === 'hello');
+    await sleep(30);
+    assert.equal(other.reloads.length, 0, JSON.stringify(options));
+  }
 });
 
 // --- per-request budget (Setup & connection) ---------------------------------------------------------------------
