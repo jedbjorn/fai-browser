@@ -455,15 +455,18 @@ test('review: a session the daemon dropped comes back as itself with its key; a 
     /already registered/, 'at most two entries per process');
   t0 += 91_000;
   registry.sweep();
-  const forged = registry.register({ host: 'claude', pid: 7, previous: { sessionId: first.sessionId, key: 'wrong' } });
+  const forged = registry.register({ host: 'claude', pid: 4242, previous: { sessionId: first.sessionId, key: 'wrong' } });
   assert.equal(forged.replaced, undefined, 'a wrong key takes nothing over');
-  const back = registry.register({ host: 'claude', pid: 8, previous: { sessionId: first.sessionId, key: first.key } });
+  const otherProcess = registry.register({ host: 'claude', pid: 8, previous: { sessionId: first.sessionId, key: first.key } });
+  assert.equal(otherProcess.replaced, undefined, 'the right key from another process takes nothing over');
+  const back = registry.register({ host: 'claude', pid: 4242, previous: { sessionId: first.sessionId, key: first.key } });
   assert.equal(back.replaced, first.sessionId);
-  const again = registry.register({ host: 'claude', pid: 9, previous: { sessionId: first.sessionId, key: first.key } });
+  registry.unregister(registry.authenticate(forged.sessionId, forged.key));
+  const again = registry.register({ host: 'claude', pid: 4242, previous: { sessionId: first.sessionId, key: first.key } });
   assert.equal(again.replaced, undefined, 'used once');
   const dead = registry.register({ host: 'claude', pid: 99 });
   registry.sweep();
-  assert.equal(registry.register({ host: 'claude', pid: 10, previous: { sessionId: dead.sessionId, key: dead.key } }).replaced, undefined);
+  assert.equal(registry.register({ host: 'claude', pid: 99, previous: { sessionId: dead.sessionId, key: dead.key } }).replaced, undefined);
 });
 
 test('review: re-registering with the old key gives the session its requests back (Approve still wakes it)', async t => {
@@ -491,8 +494,48 @@ test('review: the health answer proves the daemon holds the client token', async
   const challenge = 'abcdefghijklmnopqrstuvwx';
   const answer = (await call(ctx.daemon.port, 'GET', `/v1/health?challenge=${challenge}`)).body;
   const { createHmac } = await import('node:crypto');
-  assert.equal(answer.proof, createHmac('sha256', ctx.daemon.token).update(`fai-health:${challenge}`).digest('hex'));
+  assert.equal(answer.proof, createHmac('sha256', ctx.daemon.token).update(`fai-health:${ctx.daemon.port}:${challenge}`).digest('hex'));
   assert.equal((await call(ctx.daemon.port, 'GET', '/v1/health')).body.proof, undefined);
   assert.equal((await call(ctx.daemon.port, 'GET', '/v1/health?challenge=short')).body.proof, undefined);
+});
+
+test('re-review: runs and observes of an invited tab are the owner\'s alone: list, get, evidence, stop, status', async t => {
+  const ctx = await setup(t);
+  const a = await register(ctx, { repo: 'repo-a' });
+  const b = await register(ctx, { repo: 'repo-b' });
+  const reply = await invite(ctx, { sessionId: a.sessionId, level: 'full' });
+  assert.equal((await ctx.api('POST', `/v1/invites/${reply.invite.inviteId}/join`, {}, { headers: a.headers })).status, 200);
+  const observed = await ctx.api('POST', '/v1/observe', { requestId: reply.requestId }, { headers: a.headers });
+  assert.equal(observed.status, 200);
+  const id = observed.body.observeId;
+  assert.ok(id);
+  for (const extra of [{ headers: b.headers }, {}]) {
+    const status = (await ctx.api('GET', '/v1/status', undefined, extra)).body;
+    assert.ok(!JSON.stringify(status.runs).includes(reply.requestId), 'status runs');
+    const list = (await ctx.api('GET', `/v1/runs?requestId=${reply.requestId}`, undefined, extra)).body;
+    assert.deepEqual(list.runs, [], 'runs list');
+    const got = await ctx.api('GET', `/v1/runs/${id}`, undefined, extra);
+    assert.deepEqual([got.status, got.body.error?.code], [403, 'not_owner'], 'runs get');
+    for (const kind of ['trace', 'screenshot']) {
+      const evidence = await ctx.api('GET', `/v1/runs/${id}/evidence?kind=${kind}`, undefined, extra);
+      assert.deepEqual([evidence.status, evidence.body.error?.code], [403, 'not_owner'], `evidence ${kind}`);
+    }
+    const stop = await ctx.api('POST', `/v1/runs/${id}/stop`, {}, extra);
+    assert.deepEqual([stop.status, stop.body.error?.code], [403, 'not_owner'], 'runs stop');
+    const waited = await ctx.api('POST', '/v1/wait', { runId: id, maxMs: 0 }, extra);
+    assert.equal(waited.body.error?.code, 'not_owner', 'wait on the run');
+  }
+  // The owner: everything works, and the trace on disk carries who may read it after the request record is gone.
+  const own = await ctx.api('GET', `/v1/runs/${id}`, undefined, { headers: a.headers });
+  assert.equal(own.status, 200);
+  const trace = await ctx.api('GET', `/v1/runs/${id}/evidence?kind=trace`, undefined, { headers: a.headers });
+  assert.equal(trace.status, 200);
+  assert.deepEqual([trace.body.trace.options.invite, trace.body.trace.options.ownerSession], [true, a.sessionId]);
+  assert.ok((await ctx.api('GET', `/v1/runs?requestId=${reply.requestId}`, undefined, { headers: a.headers })).body.runs.length >= 1);
+  // An ordinary request's observe stays readable to any token holder, as before.
+  const plain = await ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Check' });
+  await ctx.hub.approve(plain.body.requestId, { tabId: 31 });
+  const plainObserve = await ctx.api('POST', '/v1/observe', { requestId: plain.body.requestId });
+  assert.equal((await ctx.api('GET', `/v1/runs/${plainObserve.body.observeId}`, undefined, { headers: b.headers })).status, 200);
 });
 

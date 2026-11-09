@@ -114,9 +114,13 @@ registers with the service under a random key only it holds, so it only receives
 never writes to another session's socket: the socket variables are inherited by everything Claude Code starts, so the
 server uses the socket only when it is named after its own parent process (Claude Code started it directly; through a
 wrapper such as npx or a shell script it fails closed to the copy line). The registry needs the client token, lists
-sessions without keys or paths (the repository's folder name only), and an MCP server registers only after the
-service proved, in its health answer, that it holds that token (a process squatting on the port learns nothing and
-cannot inject wakes); a server never stops or starts a service of another version from its background loop.
+sessions without keys or paths (the repository's folder name only). Every new connection of an MCP server's session
+loop, the first one and every one after the service shut down or a connection failed, first asks the service to prove
+it holds that token (an HMAC of a fresh nonce and the service's own port, in its open health answer); only then does
+the token or the session key go out, so a process squatting on the port learns neither and cannot inject wakes. A
+server acts on each wake once, at most 4 from one poll and 12 a minute, and never stops or starts a service of another
+version from its background loop. Runs and observes of an invited tab (their results, traces and screenshots) are the
+joining session's alone, also from disk after the request is gone.
 
 **Threat model.** Any process running as your user can already write to Claude Code's messaging socket (its path and
 token are in the session's environment and its child processes) or run `codex queue`, so FAI adds no new way in: it

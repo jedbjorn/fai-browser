@@ -18,6 +18,10 @@ const POLL_MS = 25_000;
 const BACKOFF_MIN_MS = 2_000;
 const BACKOFF_MAX_MS = 30_000;
 const STOP_TIMEOUT_MS = 2_000;
+// Wakes this server acts on: each id once (the last 256 remembered), at most 4 from one poll and 12 a minute.
+const HANDLED_KEEP = 256;
+const WAKES_PER_POLL = 4;
+const WAKES_PER_MINUTE = 12;
 
 export class AgentSession {
   /**
@@ -29,7 +33,7 @@ export class AgentSession {
    */
   constructor({ env, home, connect, clientName, host, log = () => {}, driver = () => 'agent', waiting = () => false,
     deliver = deliverWake, pollMs = POLL_MS, backoffMs = BACKOFF_MIN_MS, cwd = process.cwd(), pid = process.pid,
-    ppid = process.ppid }) {
+    ppid = undefined }) {
     this.env = env;
     this.home = home;
     this.connect = connect;
@@ -43,7 +47,8 @@ export class AgentSession {
     this.backoffMinMs = backoffMs;
     this.repo = repoName(env, cwd);
     this.pid = pid;
-    this.ppid = ppid;
+    // A test's fixed parent pid; otherwise read live, so a server orphaned by its Claude Code (reparented) fails closed.
+    this.ppidOverride = ppid;
     this.startedAt = new Date().toISOString();
     this.threadId = null;
     this.hostSessionId = hostSessionId(host, env);
@@ -65,6 +70,12 @@ export class AgentSession {
     // Waiting for this server's own tool call after a version mismatch (no polling, no registration until then).
     this.held = false;
     this.registered = [];
+    this.handled = new Set();
+    this.recentWakes = [];
+  }
+
+  get ppid() {
+    return this.ppidOverride ?? process.ppid;
   }
 
   /** claude-socket, codex-queue or none, from the host, its environment and what is known so far. */
@@ -137,6 +148,8 @@ export class AgentSession {
     // Never starts a daemon, never stops one of another version (`version_mismatch` instead).
     const client = await this.connect({ home: this.home, env: this.env, autoStart: false, takeover: false,
       clientName: this.clientName });
+    // Every new connection proves the daemon holds the client token before the token or the session key is sent to it.
+    await this.verifyDaemon(client);
     client.sessionAuth = () => this.auth();
     this.client = client;
     return client;
@@ -148,7 +161,7 @@ export class AgentSession {
     // No token on this request: a squatter learns nothing from it.
     const { status, body } = await httpJson({ port: client.port, method: 'GET', path: `/v1/health?challenge=${challenge}`,
       timeoutMs: 3_000 });
-    const expected = createHmac('sha256', client.token).update(`fai-health:${challenge}`).digest('hex');
+    const expected = createHmac('sha256', client.token).update(`fai-health:${client.port}:${challenge}`).digest('hex');
     if (status !== 200 || body?.proof !== expected) {
       const error = new Error('The FAI Browser daemon on this port did not prove it holds the client token');
       error.code = body?.service === 'fai-browser' && body?.proof === undefined ? 'no_proof' : 'unproven';
@@ -158,7 +171,6 @@ export class AgentSession {
 
   async register() {
     const client = await this.ensureClient();
-    await this.verifyDaemon(client);
     const response = await client.request('POST', '/v1/sessions', withoutUndefined({
       host: this.host,
       hostSessionId: this.hostSessionId ?? undefined,
@@ -178,6 +190,12 @@ export class AgentSession {
     this.log(`registered agent session ${this.sessionId} (${this.host}, wake ${this.capability})`);
   }
 
+  // Forget the connection, keep the session: the next round connects and verifies the daemon again; if it no longer
+  // knows this session (a restart), the poll's unknown_session registers again.
+  dropClient() {
+    this.client = null;
+  }
+
   forget({ keepPrevious = false } = {}) {
     if (keepPrevious && this.sessionId && this.key) this.previous = { sessionId: this.sessionId, key: this.key };
     this.sessionId = null;
@@ -193,6 +211,7 @@ export class AgentSession {
         continue;
       }
       try {
+        await this.ensureClient();
         if (!this.sessionId) await this.register();
         const body = { maxMs: this.pollMs, wake: this.capability };
         if (this.lastToolCallAt && this.lastToolCallAt !== this.sentToolCallAt) body.lastToolCallAt = this.lastToolCallAt;
@@ -201,7 +220,15 @@ export class AgentSession {
           { timeoutMs: this.pollMs + 10_000, signal: this.abort.signal });
         this.sentToolCallAt = body.lastToolCallAt ?? this.sentToolCallAt;
         backoff = this.backoffMinMs;
-        for (const wake of Array.isArray(response?.wakes) ? response.wakes : []) this.handle(wake);
+        // New wakes only, at most WAKES_PER_POLL of them (the rest come again on the next poll from a real daemon).
+        const wakes = (Array.isArray(response?.wakes) ? response.wakes : [])
+          .filter(wake => typeof wake?.wakeId === 'string' && !this.handled.has(wake.wakeId));
+        for (const wake of wakes.slice(0, WAKES_PER_POLL)) this.handle(wake);
+        if (response?.closed) {
+          // The daemon is shutting down: whatever answers on this port next proves itself before it gets anything.
+          this.dropClient();
+          await this.rest(backoff);
+        }
       } catch (error) {
         if (this.stopped) break;
         if (error?.code === 'version_mismatch') {
@@ -222,10 +249,15 @@ export class AgentSession {
           this.disabled = true;
           break;
         }
-        if (error?.code === 'unproven' || error?.status === 401 || error?.code === 'daemon_unreachable') {
-          // A new daemon (another token or port), none yet, or something else on the port: connect again later.
+        if (error?.code === 'unproven' || error?.status === 401) {
+          // A new daemon (another token or port), or something else on the port: connect again later. The old id and key
+          // go along only to a daemon that proved itself, and take over only for this same process.
           this.client = null;
-          this.forget();
+          this.forget({ keepPrevious: true });
+        } else {
+          // Shutting down (503), any other server error, a transport error, a timeout: the next round connects and
+          // proves the daemon again before it sends the token or the session key anywhere.
+          this.dropClient();
         }
         await this.rest(backoff);
         backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
@@ -252,8 +284,21 @@ export class AgentSession {
 
   /** Deliver one wake to this session's own host (never another one's) and report how it went. */
   handle(wake) {
+    if (!wake || typeof wake.wakeId !== 'string') return;
+    // Each wake once; and never a flood, whatever a daemon (or something posing as one) sends.
+    if (this.handled.has(wake.wakeId)) return;
+    this.handled.add(wake.wakeId);
+    if (this.handled.size > HANDLED_KEEP) this.handled.delete(this.handled.values().next().value);
+    const now = Date.now();
+    this.recentWakes = this.recentWakes.filter(at => now - at < 60_000);
+    if (this.recentWakes.length >= WAKES_PER_MINUTE) {
+      this.log('wake dropped: more than 12 a minute');
+      return;
+    }
+    this.recentWakes.push(now);
+    const sessionId = this.sessionId;
+    const client = this.client;
     const task = (async () => {
-      if (!wake || typeof wake.wakeId !== 'string') return;
       let outcome;
       if (wake.kind !== 'invite' && this.waiting(wake)) {
         outcome = { outcome: 'skipped' };
@@ -266,8 +311,11 @@ export class AgentSession {
           : { outcome: 'failed', code: delivered.code ?? 'wake_failed', message: delivered.message ?? 'The wake failed.' };
         this.log(`wake ${wake.kind} ${outcome.outcome}${delivered.ok ? '' : ` (${outcome.code})`}`);
       }
-      await this.client?.request('POST', `/v1/sessions/${encodeURIComponent(this.sessionId)}/wakes/${encodeURIComponent(wake.wakeId)}`,
-        outcome, { timeoutMs: 5_000 }).catch(() => null);
+      // Reported to the daemon that handed it out (the client it came from), never to a new one.
+      if (client && sessionId) {
+        await client.request('POST', `/v1/sessions/${encodeURIComponent(sessionId)}/wakes/${encodeURIComponent(wake.wakeId)}`,
+          outcome, { timeoutMs: 5_000 }).catch(() => null);
+      }
     })().catch(error => this.log(`wake failed: ${error?.message ?? error}`));
     this.deliveries.add(task);
     task.finally(() => this.deliveries.delete(task));

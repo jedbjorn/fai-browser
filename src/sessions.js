@@ -117,7 +117,8 @@ export function createSessionRegistry(options = {}) {
     const previous = body.previous;
     if (previous && typeof previous === 'object' && typeof previous.sessionId === 'string' && typeof previous.key === 'string') {
       const stone = tombstones.get(previous.sessionId);
-      if (stone && timingSafeEqual(digest(previous.key), stone.keyDigest)) {
+      // The same process only: the key proves the id, the pid that it is still the same MCP server.
+      if (stone && stone.pid === pid && timingSafeEqual(digest(previous.key), stone.keyDigest)) {
         replaced = previous.sessionId;
         tombstones.delete(previous.sessionId);
       }
@@ -301,7 +302,7 @@ export function createSessionRegistry(options = {}) {
         release(session, { wakes: [], closed: true });
         sessions.delete(session.sessionId);
         // Only a session that went quiet may come back as itself; a dead process never does.
-        if (silent && isAlive(session.pid)) tombstones.set(session.sessionId, { keyDigest: session.keyDigest, at: t });
+        if (silent && isAlive(session.pid)) tombstones.set(session.sessionId, { keyDigest: session.keyDigest, pid: session.pid, at: t });
         failWakesOf(session.sessionId, 'session_gone', 'The agent session is no longer running.');
         log('session_dropped', { sessionId: session.sessionId, reason: silent ? 'stale' : 'pid' });
         dirty = true;
