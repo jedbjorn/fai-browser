@@ -30,7 +30,7 @@ async function until(predicate, what, ms = 8000) {
   }
 }
 
-async function setup(t, { clientInfo = { name: 'opencode', version: '1.19.5' }, plugin = true } = {}) {
+async function setup(t, { clientInfo = { name: 'opencode', version: '1.19.5' }, plugin = true, parents = {} } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-oc-mcp-'));
   saveDriver('agent', homePaths({ home, env: {} }));
   const hub = createFakeHub({ bridgeOptions: { pages: PAGES } });
@@ -41,7 +41,7 @@ async function setup(t, { clientInfo = { name: 'opencode', version: '1.19.5' }, 
     session: {
       promptAsync: async request => { prompts.push(request); return { response: { status: 204 } }; },
       messages: async () => ({ data: [{ info: { role: 'user', agent: 'plan', model: { providerID: 'opencode', modelID: 'm1' } } }] }),
-      get: async ({ path }) => ({ data: { id: path.id } }),
+      get: async ({ path }) => ({ data: { id: path.id, ...(parents[path.id] ? { parentID: parents[path.id] } : {}) } }),
     },
   };
   const savedRuntime = process.env.XDG_RUNTIME_DIR;
@@ -127,6 +127,24 @@ test('MCP (OpenCode): Approve wakes exactly the session that asked; with two ses
   }, 'the failed invite wake');
   assert.equal(failed.error.code, 'ambiguous_session');
   assert.equal(ctx.prompts.length, 1);
+});
+
+test('MCP (OpenCode): a request a subagent (a task inside a task) made wakes the root conversation, never the child', async t => {
+  const child = 'ses_cccccccccccccccccccc';
+  const grandchild = 'ses_dddddddddddddddddddd';
+  const ctx = await setup(t, { parents: { [child]: SES_A, [grandchild]: child } });
+  const opened = await ctx.callAs(grandchild, 'fai_browser_open', { origins: [ORIGIN], reason: 'Read the page', task: 'read' });
+  assert.ok(!opened.isError, text(opened));
+  assert.match(text(opened), /FAI Browser wakes this session/);
+  const pending = await until(() => ctx.hub.published.at(-1)?.find(item => item.state === 'pending'), 'the request');
+  await ctx.hub.approve(pending.requestId, { level: 'read-only' });
+  await until(() => ctx.prompts.length === 1, 'the approval wake');
+  assert.deepEqual(ctx.prompts[0].path, { id: SES_A });
+  const session = await sessionNow(ctx);
+  const reply = await ctx.hub.emit({ type: 'invite', tabId: 8, origin: ORIGIN, level: 'reversible', sessionId: session.sessionId });
+  await until(() => ctx.prompts.length === 2, 'the invite wake');
+  assert.deepEqual(ctx.prompts[1].path, { id: SES_A }, 'one conversation: the invite goes to its root');
+  assert.ok(reply.invite.inviteId);
 });
 
 test('MCP (OpenCode): a request no tagged call made keeps the wait command and its Approve wake fails closed', async t => {
