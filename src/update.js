@@ -40,7 +40,7 @@ const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z$/;
 const OFF = new Set(['0', 'false', 'off', 'no']);
 const CHECK_STATES = new Set(['ok', 'not_found', 'error', 'rate_limited']);
 const INSTALL_STATES = new Set(['running', 'succeeded', 'failed', 'rolled_back']);
-const ERROR_CODE = /^[a-z_]{1,40}$/;
+const ERROR_CODE = /^[a-z0-9_]{1,40}$/;
 
 /** [major, minor, patch] of a plain "X.Y.Z" version, or null. */
 export function parseVersion(text) {
@@ -82,6 +82,11 @@ export function notesUrl(tag) {
   return isReleaseTag(tag) ? `${RELEASES_PAGE}/tag/${tag}` : null;
 }
 
+/** True inside node --test (this process or the environment handed to a daemon). */
+export function underTest(env = process.env) {
+  return Boolean(env.NODE_TEST_CONTEXT || process.env.NODE_TEST_CONTEXT);
+}
+
 /**
  * Whether the automatic check runs: `{ enabled, reason }`, reason naming what turned it off (`env`, `config`, `test`,
  * `option`). `override` is the createDaemon option (true/false), which wins over the test rule but not the user's
@@ -92,7 +97,7 @@ export function automaticCheck({ env = process.env, config = {}, override } = {}
   if (typeof value === 'string' && OFF.has(value.trim().toLowerCase())) return { enabled: false, reason: 'env' };
   if (config?.updateCheck === false) return { enabled: false, reason: 'config' };
   if (override === false) return { enabled: false, reason: 'option' };
-  if (override !== true && env.NODE_TEST_CONTEXT) return { enabled: false, reason: 'test' };
+  if (override !== true && underTest(env)) return { enabled: false, reason: 'test' };
   return { enabled: true, reason: null };
 }
 
@@ -277,6 +282,8 @@ export function checkDue(state, { now = Date.now, intervalMs = CHECK_INTERVAL_MS
   const at = now();
   const retryAt = msOf(state.retryAt);
   if (retryAt && at < retryAt) return false;
+  // Rate limited: due again once GitHub's reset time has passed.
+  if (state.status === 'rate_limited') return true;
   const attempt = msOf(state.attemptAt);
   if (!attempt) return true;
   const wait = state.status === 'error' ? Math.min(RETRY_AFTER_ERROR_MS, intervalMs) : intervalMs;
