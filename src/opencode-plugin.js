@@ -13,8 +13,10 @@
 // - A connection that presents the token may ask it to prompt one of those sessions with a text that matches one of
 //   FAI's three wake templates exactly. The turn runs with the agent and model of the session's last user message
 //   (without them OpenCode would use its default agent: a session in `plan` must stay in `plan`); a session without
-//   one is refused. It answers {"ok":true} once OpenCode accepted the prompt and reported no error for that session
-//   within 2 s: accepted, not answered.
+//   one is refused. It answers {"ok":true} once OpenCode accepted the prompt and reported no error before the turn
+//   started (waiting at most 2 s; a busy session queues it and is not watched): accepted, not answered.
+// - The socket is removed on a clean exit. It installs no signal handlers (that would change OpenCode's own exit on
+//   SIGTERM or SIGINT): a socket left by a killed OpenCode is swept at the next plugin start.
 // It never logs arguments, texts or the token, and never throws out of a hook. FAI_WAKE=0 or opencode --pure: off.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, lstatSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
@@ -108,20 +110,30 @@ function wakeTextOk(text) {
 
 // The agent and model of the session's last user message: a wake continues the session as the user left it. null when
 // there is none (OpenCode would pick its default agent, which may have more rights than the session's).
+// Only the newest messages are read (20, then 200 when a long run of steps hides the last user turn).
 async function sessionTurnSettings(client, id) {
-  const result = await client.session.messages({ path: { id } });
-  if (result?.error) return null;
-  const list = Array.isArray(result?.data) ? result.data : [];
-  for (let index = list.length - 1; index >= 0; index -= 1) {
-    const info = list[index]?.info;
-    if (info?.role !== 'user') continue;
-    const model = info.model;
-    if (typeof info.agent !== 'string' || !info.agent || typeof model?.providerID !== 'string' || !model.providerID
-      || typeof model.modelID !== 'string' || !model.modelID) return null;
-    return { agent: info.agent, model: { providerID: model.providerID, modelID: model.modelID },
-      ...(typeof model.variant === 'string' && model.variant ? { variant: model.variant } : {}) };
+  for (const limit of [20, 200]) {
+    const result = await client.session.messages({ path: { id }, query: { limit } });
+    if (result?.error) return null;
+    const list = Array.isArray(result?.data) ? result.data : [];
+    // The newest user message, whatever order the page comes in.
+    let info = null;
+    for (const item of list) {
+      if (item?.info?.role !== 'user') continue;
+      if (!info || Number(item.info.time?.created ?? 0) >= Number(info.time?.created ?? 0)) info = item.info;
+    }
+    if (info) return turnSettings(info);
+    if (list.length < limit) return null;
   }
   return null;
+}
+
+function turnSettings(info) {
+  const model = info.model;
+  if (typeof info.agent !== 'string' || !info.agent || typeof model?.providerID !== 'string' || !model.providerID
+    || typeof model.modelID !== 'string' || !model.modelID) return null;
+  return { agent: info.agent, model: { providerID: model.providerID, modelID: model.modelID },
+    ...(typeof model.variant === 'string' && model.variant ? { variant: model.variant } : {}) };
 }
 
 // The root session of `id` (a subagent's task session has a parentID), from OpenCode and cached; null when unknown.
@@ -162,10 +174,16 @@ function settle(state, sessionID) {
 }
 
 function onEvent(state, event) {
-  if (!state.waiters.size) return;
   const type = event?.type;
   const properties = event?.properties ?? {};
   const sessionID = properties.sessionID ?? properties.info?.sessionID;
+  // Which sessions are running a turn now (a wake to one of them is queued behind it).
+  if (type === 'session.status' && SESSION.test(String(sessionID ?? ''))) {
+    state.busy.delete(sessionID);
+    if (properties.status?.type && properties.status.type !== 'idle') state.busy.add(sessionID);
+    if (state.busy.size > 512) state.busy.delete(state.busy.values().next().value);
+  } else if (type === 'session.idle') state.busy.delete(sessionID);
+  if (!state.waiters.size) return;
   for (const waiter of [...state.waiters]) {
     if (!sessionID || waiter.sessionID !== sessionID) continue;
     if (type === 'session.error') waiter.done('error');
@@ -201,7 +219,10 @@ async function answerWake(state, auth, wake) {
   if (!settings) {
     return { ok: false, code: 'prompt_failed', message: 'The session has no earlier turn to take its agent and model from.' };
   }
-  const settled = settle(state, sessionID);
+  // A session already running a turn queues the prompt: an error then belongs to the turn that is running, not to the
+  // wake, so it is not watched for.
+  const busyBefore = state.busy.has(sessionID);
+  const settled = busyBefore ? Promise.resolve('queued') : settle(state, sessionID);
   let result;
   let thrown = null;
   try {
@@ -276,7 +297,7 @@ function start() {
     // Best effort.
   }
   const state = { token: randomBytes(32).toString('hex'), path, sessions: new Map(), parents: new Map(),
-    clients: new Map(), waiters: new Set(), server: null };
+    clients: new Map(), waiters: new Set(), busy: new Set(), server: null };
   state.server = createServer(connection => serve(state, connection));
   state.server.on('error', () => {});
   state.server.listen(path, () => {
