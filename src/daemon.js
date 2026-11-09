@@ -34,6 +34,7 @@ import { DEFAULT_BUDGET, checkBudget, envFileMtime, loadDaemonSettings } from '.
 import { DEFAULT_THRESHOLDS, resolveThresholds } from './oversight.js';
 import { LEVELS, clampLevel, isLevel, levelRank, normalizeAdditions } from './guardrails.js';
 import { probeHealth } from './client.js';
+import { pickBrowser } from './bridge.js';
 import { createDomainStore, domainStatsDir, resolveProfiles } from './domains.js';
 import { checkOriginEntry, isSiteEntry, leaseOrigins, originCovered, siteRoots, urlCovered } from './origins.js';
 import { scrubSecrets } from './secrets.js';
@@ -96,7 +97,7 @@ const OBSERVE_WAIT_POLL_MS = 400;
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 // The most page text one observe's digest may carry when the host asks for more (digestChars).
 export const OBSERVE_DIGEST_MAX_CHARS = 6000;
-const REQUEST_KEYS = new Set(['origins', 'mode', 'reason', 'instruction', 'url', 'ttlMs']);
+const REQUEST_KEYS = new Set(['origins', 'mode', 'reason', 'instruction', 'url', 'ttlMs', 'browser']);
 const WAIT_KEYS = new Set(['requestId', 'runId', 'maxMs', 'afterStep', 'while']);
 
 function readPackageVersion() {
@@ -568,6 +569,7 @@ export function createDaemon(options = {}) {
   }
 
   function changed() {
+    assignBrowsers();
     wake();
     try {
       hub?.publishRequests(liveViews());
@@ -575,6 +577,36 @@ export function createDaemon(options = {}) {
       log('hub_publish_error', { message: String(error?.message ?? error) });
     }
   }
+
+  // --- browsers (several may be connected; issue #9) ---------------------------------------------------------
+
+  // The connected browsers a request can go to ({id, product, name, usedAt, connectedAt}); an injected hub without
+  // multi-browser support has none, and requests then carry no browser.
+  const browserCandidates = () => hub?.candidates?.() ?? [];
+  const browserRef = browser => (browser ? { id: browser.id, product: browser.product ?? null, name: browser.name ?? null } : null);
+
+  /**
+   * Gives every pending request a browser to wait in: one the agent named keeps it; any other one without a connected
+   * browser goes to the browser the user used FAI in last (pickBrowser). Approved requests keep the browser that
+   * holds their tab.
+   */
+  function assignBrowsers() {
+    const candidates = browserCandidates();
+    if (!candidates.length) return;
+    const connected = new Set(candidates.map(browser => browser.id));
+    let preferred;
+    for (const record of requests.values()) {
+      if (record.state !== 'pending' || record.browserPinned) continue;
+      if (record.browser?.id && connected.has(record.browser.id)) continue;
+      preferred ??= pickBrowser(candidates).browser;
+      if (!preferred) return;
+      record.browser = browserRef(preferred);
+      log('request_browser', { requestId: record.requestId, browserId: preferred.id, reason: 'assigned' });
+    }
+  }
+
+  // The lease belongs to `browserId` (null: the event or hub names no browser, as with an older hub: any).
+  const sameBrowser = (record, browserId) => !browserId || !record.lease?.browserId || record.lease.browserId === browserId;
 
   /** Resolve when predicate() holds, at the deadline, or when the signal aborts. Uses real time. */
   async function waitUntil(predicate, maxMs, signal) {
@@ -626,6 +658,9 @@ export function createDaemon(options = {}) {
       createdAt: iso(record.createdAt),
       expiresAt: iso(expiresAt(record)),
       lease: record.lease ? { ...record.lease } : null,
+      // The browser that holds the tab (once approved), else the one the request waits in; null while no browser
+      // with the extension is connected.
+      browser: record.browser ? { ...record.browser } : null,
       activeRunId: record.activeRunId,
       lastRunId: record.lastRunId,
       // How a pending request is approved (`page`: its page opened by itself, the icon click on it approves; `window`:
@@ -737,6 +772,7 @@ export function createDaemon(options = {}) {
     // Re-approval: the user changes the level of the active lease on the same tab (no new lease). A lower level
     // takes effect on the next command (the hub clamps every command to it); a higher one on the next run.
     if (record.state === 'active' && event.requestId && record.lease?.tabId === event.tabId
+      && sameBrowser(record, event.browserId)
       && originCovered(event.origin, record.origins) && event.level !== undefined && event.level !== null) {
       const scope = leaseScope(event, record);
       const grant = grantFor(event.level, record, iso(now()), scope, event.tabMode ?? 'single');
@@ -777,19 +813,33 @@ export function createDaemon(options = {}) {
       return replyTo(event, { error: { code: 'bad_request', message: `level must be one of ${LEVELS.join(', ')}` } });
     }
     const origins = leaseOrigins(record.origins, event.origin, scope);
-    // Phase 2: one active lease at a time. Approving another request supersedes the current one.
+    // One active lease per browser (its extension holds one session): approving another request in the same browser
+    // supersedes the current one there. A lease in another browser is left alone.
+    const browserId = typeof event.browserId === 'string' ? event.browserId : null;
     for (const other of requests.values()) {
-      if (other !== record && LEASED.has(other.state)) {
+      if (other !== record && LEASED.has(other.state) && sameBrowser(other, browserId)) {
         endRequest(other, 'released', 'superseded', { interrupt: 'request_closed' });
       }
     }
+    // A paused request resumed in another browser: the old browser's session for it ends.
+    const previous = record.lease;
+    if (previous?.leaseId && browserId && previous.browserId && previous.browserId !== browserId) {
+      try {
+        hub.updateLease(previous.leaseId, 'released', 'superseded');
+      } catch (error) {
+        log('hub_update_error', { message: String(error?.message ?? error) });
+      }
+    }
     const leaseId = randomBytes(16).toString('hex');
-    record.lease = { leaseId, tabId: event.tabId, origin: event.origin, origins, grantedAt: grant.grantedAt };
+    record.lease = { leaseId, tabId: event.tabId, origin: event.origin, origins, grantedAt: grant.grantedAt,
+      ...(browserId ? { browserId } : {}) };
+    if (browserId) record.browser = browserRef(event.browser ?? { id: browserId });
     record.grant = grant;
     record.lastCallAt = now();
     hub.bindLease({
       leaseId,
       requestId: record.requestId,
+      browserId,
       tabId: event.tabId,
       origin: event.origin,
       allowedOrigins: [...origins],
@@ -853,6 +903,23 @@ export function createDaemon(options = {}) {
     }
     setState(record, 'denied', 'denied');
     replyTo(event, { requestId: record.requestId, state: 'denied' });
+  }
+
+  // The popup's "Open here" in another browser: the pending request now waits there (and stays there: the user chose).
+  function onMoveEvent(event) {
+    const record = event.requestId ? requests.get(event.requestId) : null;
+    if (!record) return replyTo(event, { error: { code: 'no_request', message: 'No such tab request' } });
+    if (record.state !== 'pending') {
+      return replyTo(event, { error: { code: 'request_not_pending', message: `This request is ${record.state}` } });
+    }
+    if (typeof event.browserId !== 'string') {
+      return replyTo(event, { error: { code: 'bad_request', message: 'No browser to move the request to' } });
+    }
+    record.browser = browserRef(event.browser ?? { id: event.browserId });
+    record.browserPinned = true;
+    log('request_browser', { requestId: record.requestId, browserId: event.browserId, reason: 'moved' });
+    changed();
+    return replyTo(event, { requestId: record.requestId, browser: { ...record.browser } });
   }
 
   function onStatusEvent(event) {
@@ -1019,10 +1086,12 @@ export function createDaemon(options = {}) {
       update: updates.view(),
     });
     const session = event.session;
+    const browserId = typeof event.browserId === 'string' ? event.browserId : null;
     if (!session) {
-      // The worker restarted and lost its session: any active lease can no longer be served.
+      // The worker restarted and lost its session: the leases of THIS browser can no longer be served. Another
+      // browser's lease is not affected.
       for (const record of requests.values()) {
-        if (record.state === 'active') {
+        if (record.state === 'active' && sameBrowser(record, browserId)) {
           interruptActive(record, 'session_inactive');
           setState(record, 'paused', 'session_inactive');
         }
@@ -1030,7 +1099,8 @@ export function createDaemon(options = {}) {
       return reply(false);
     }
     const record = findByLease(session.leaseId);
-    if (!record) return reply(true);
+    // Unknown, or a lease another browser holds: that session is over.
+    if (!record || !sameBrowser(record, browserId)) return reply(true);
     // The worker may have lowered its level while the lease_level message could not reach us (disconnected): its
     // hello carries the level it holds now. Only a lower level is taken from it.
     if (session.level && record.grant && levelRank(session.level) < levelRank(record.grant.level)) {
@@ -1043,6 +1113,7 @@ export function createDaemon(options = {}) {
         leaseId: record.lease.leaseId,
         requestId: record.requestId,
         tabId: record.lease.tabId,
+        browserId: record.lease.browserId ?? browserId,
         origin: record.lease.origin,
         allowedOrigins: coveredOrigins(record),
         // The grant stays the hub's ceiling for the resumed lease.
@@ -1054,9 +1125,11 @@ export function createDaemon(options = {}) {
     return reply(false);
   }
 
-  function onDisconnected() {
+  // A browser went away: only the leases it holds pause (every lease when the hub names no browser).
+  function onDisconnected(event) {
+    const browserId = typeof event?.browserId === 'string' ? event.browserId : null;
     for (const record of requests.values()) {
-      if (record.state === 'active') {
+      if (record.state === 'active' && sameBrowser(record, browserId)) {
         interruptActive(record, 'disconnected');
         setState(record, 'paused', 'disconnected');
       }
@@ -1084,9 +1157,12 @@ export function createDaemon(options = {}) {
         case 'update':
           return onUpdateEvent(event);
         case 'disconnected':
-          return onDisconnected();
+          onDisconnected(event);
+          return changed();
         case 'connected':
           return changed();
+        case 'move':
+          return onMoveEvent(event);
         default:
           return undefined;
       }
@@ -1453,6 +1529,8 @@ export function createDaemon(options = {}) {
         log: log.path ?? null,
       },
       extension: hub.extension(),
+      // Every browser with the extension the hub knows: connected ones, and recently gone ones that hold a lease.
+      browsers: hub.browsers?.() ?? [],
       driver: config.driver,
       provider: { default: config.driver === 'agent' ? null : config.provider ?? 'typesafe',
         keyConfigured: Boolean(env.TYPESAFE_API_KEY) },
@@ -1466,7 +1544,7 @@ export function createDaemon(options = {}) {
         recent: all.filter(run => run.state === 'done').sort((a, b) => b.finishedAt - a.finishedAt).slice(0, 10)
           .map(runSummary),
       },
-      warnings: [...warnings],
+      warnings: [...warnings, ...(hub.warnings?.() ?? [])],
     };
   }
 
@@ -1498,6 +1576,17 @@ export function createDaemon(options = {}) {
     if (pending >= MAX_PENDING_REQUESTS) {
       throw new HttpError(429, 'too_many_requests', 'Too many pending tab requests; cancel one first', { retryable: true });
     }
+    // The browser the request waits in: the one the agent named (it must be connected), else the one the user used
+    // FAI in last (assigned again when it goes away, or when none is connected yet).
+    let wanted;
+    if (body.browser !== undefined) {
+      if (typeof body.browser !== 'string' || !body.browser.trim() || body.browser.length > 64) {
+        throw badOptions('browser must name a connected browser, such as firefox, chrome, chromium, edge or brave');
+      }
+      const picked = pickBrowser(browserCandidates(), body.browser);
+      if (picked.error) throw new HttpError(409, picked.error.code, picked.error.message);
+      wanted = picked.browser;
+    }
     const record = {
       requestId: newRequestId(),
       state: 'pending',
@@ -1515,6 +1604,8 @@ export function createDaemon(options = {}) {
       pausedAt: null,
       endedAt: null,
       lease: null,
+      browser: browserRef(wanted ?? null),
+      browserPinned: Boolean(wanted),
       activeRunId: null,
       lastRunId: null,
       runtime: null,
@@ -1530,7 +1621,7 @@ export function createDaemon(options = {}) {
         state: 'pending',
         extensionConnected: Boolean(hub.extension().connected),
         expiresAt: iso(expiresAt(record)),
-        message: `Ask the user to approve this request in Chrome: ${approvalSteps(approvalOf(record))}.`,
+        message: `Ask the user to approve this request in ${record.browser?.name ?? 'their browser'}: ${approvalSteps(approvalOf(record))}.`,
         request: view(record),
       },
     };
