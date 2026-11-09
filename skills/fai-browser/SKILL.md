@@ -16,12 +16,12 @@ Flights or hotels: read `tasks/<name>/SKILL.md` beside this file first (`tasks/f
 - `policy` (`{"forbid": ["Upgrade"]}`) refuses more controls. Supplied values, URLs and policy stay with the request.
 
 ## B. Read, then act
-Each result is one text block (no `structuredContent`): `next`, status, `revision`, `page.digest` (`page.truncated`: more exists) and `actions` (`a3  click "About"`).
+Each result is one text block: `next`, status, `revision`, `page.digest` (`page.truncated`: more exists) and `actions` (`a3  click "About"`).
 - If the digest answers the task, reply from it. An observation is evidence, not a verified result.
 - Otherwise `fai_browser_act` with one `actions[].id` as `actionId`. `revision` (single-use) is optional for plain clicks, links, fills and navigation (matched on the current page); required for actions marked `needsApproval`, secrets and points.
 - `fill "Search" (act with text)` takes `text`; `submit: true` then performs `press Enter in` that field. Several fields: `fills: [{actionId, text}]`. Never passwords or codes.
 - Other acts: `url` (on the granted origins), `nav` (`back`, `forward`, `reload`), `key` (Escape, Tab, Shift+Tab, arrows, Home, End, PageUp, PageDown, Space; Ctrl/Cmd+letter at `full`), `hover: true` with an `actionId` (menus).
-- **One task tab** is default; children pause control. **Multiple task tabs** requires fresh approval: `openTab: "https://approved.example/path"` opens, `tab: "t1"` switches. Only approved origins and returned tab IDs, at most eight; never personal tabs. Enabling the preference alone cannot expand access.
+- **One task tab** is default; children pause control. **Multiple task tabs** requires fresh approval: `openTab: "https://approved.example/path"` opens, `tab: "t1"` switches. Only approved origins and returned tab IDs, at most eight; never personal tabs.
 - Give the act that finishes the task an `expectation`: `{"urlIncludes": "/members"}` or text only that page has. Only `status: "completed"` with `verification.passed: true` is verified.
 - Loading? `fai_browser_observe` with `waitFor` (`{"textAbsent": "Loading"}`) and `maxMs`.
 - `moreActions` counts unlisted actions: observe with a sharper `task` or `focus`; `digestChars` (up to 6000) reads more.
@@ -33,8 +33,8 @@ Each result is one text block (no `structuredContent`): `next`, status, `revisio
 | `choose` | Answer from `page.digest` if it answers the task; else act. |
 | `observe` | The page changed or the action could not land: `fai_browser_observe`, then choose. |
 | `answer` | Verified. Report the outcome; no tool call needed. |
-| `relay` | Tell the user `needs.message`. With `needs.level`: "approve the new FAI Browser request; its level is preselected", then `fai_browser_open` with the `requestId` and `mode` = `needs.level`. Otherwise call what `next.text` names once they have done it. |
-| `approve` | A `needsApproval` action waits for the user's Approve once: relay `next.text`, then repeat the act unchanged; each call waits up to a minute. |
+| `relay` | Tell the user `needs.message`. With `needs.level`: "approve the new FAI Browser request; its level is preselected", then `fai_browser_open` with the `requestId` and `mode` = `needs.level`. Paused/pending: if a background command's exit can wake you, run `next.text`'s `wait` command that way. Else follow `next.text` once they have. |
+| `approve` | A `needsApproval` action waits for the user's Approve once: relay `next.text`, then repeat the act unchanged. |
 | `wait` | `fai_browser_wait` with the `requestId` (or `runId`). |
 | `stop` | Report `next.text` (`refused_action`, `error_page`); no retry. |
 
@@ -56,4 +56,4 @@ Reject cookies first; below `full` an accept-only dialog returns `consent_banner
 Never log in, enter passwords or MFA codes outside testing mode. A purchase is offered as `needsApproval` ("asks the user") and runs only after the user's Approve once; if refused, tell the user to do it themselves. Ask for the lowest `mode`: `read-only` (links, scroll, navigation), `reversible` (buttons, fills, keys), `interactive` (searches, filters, paging), `full` (save, send, submit, delete, uploads). `testing` (no guardrails) only on the user's stated test environment. Submit, send, save or delete only when the user asked and granted the level.
 
 ## Without MCP
-`fai-browser request-tab --origin <origin> --reason "…"`, `fai-browser wait <requestId>`, then `fai-browser observe --request <id>` and `fai-browser act --request <id> --action a3 --revision <revision> --expect-url-includes /path`. Each prints one JSON line with `next`. Act exits 0 completed, 2 needs the user or host, 1 failed.
+`fai-browser request-tab --origin <origin> --reason "…"`, `fai-browser wait <requestId> --until active`, then `fai-browser observe --request <id>` and `fai-browser act --request <id> --action a3 --revision <revision> --expect-url-includes /path`. Each prints one JSON line with `next`. Act exits 0 completed, 2 needs the user or host, 1 failed.

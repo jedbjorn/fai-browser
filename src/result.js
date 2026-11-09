@@ -12,6 +12,7 @@ import { ratingValue } from './facts.js';
 import { siteRoot } from './origins.js';
 import { LEVEL_NAMES } from './oversight.js';
 import { capOffer, relevanceHints } from './relevance.js';
+import { withResumeWait } from './resume.js';
 
 export const RESULT_VERSION = 2;
 
@@ -368,16 +369,16 @@ const OUTCOMES = {
   },
 };
 
-const LEASE_PAUSED_MESSAGE = 'The tab lease is paused. Ask the user to return to the tab and press Resume for this '
-  + 'request in the extension, then wait on the requestId.';
+const LEASE_PAUSED_MESSAGE = 'The tab lease is paused. Ask the user to return to the tab and click Resume for this '
+  + 'request in the FAI Browser extension; next says how to continue once they do.';
 
 /**
  * `needs.message` overrides the daemon applies to results of runs on a tab request (design section 2.3). These are
  * runtime-written and trusted; they tell the agent how to continue with the lease.
  */
 export const LEASE_MESSAGES = Object.freeze({
-  paused: 'The user paused the tab. Call wait with requestId until state is active, then start a new run from the '
-    + 'current page.',
+  paused: 'The user paused the tab. Ask them to click Resume in the FAI Browser extension when the task may continue; '
+    + 'next says how to continue once they do.',
   tab_changed: LEASE_PAUSED_MESSAGE,
   origin_changed: LEASE_PAUSED_MESSAGE,
   child_tab: LEASE_PAUSED_MESSAGE,
@@ -1056,20 +1057,22 @@ export function selectTabMessage(approval) {
   return OUTCOMES.select_tab.message;
 }
 
-function approveText(origin, requestId, approval) {
+function approveText(origin, requestId, approval, env) {
   const root = siteRoot(origin);
   const site = root ?? (origin ? origin.replace(/^https:\/\//, '') : null);
-  return `Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: ${approvalSteps(approval)}. `
-    + `Then call fai_browser_run again with requestId ${requestId}; no origins needed.`;
+  return withResumeWait(`Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: `
+    + `${approvalSteps(approval)}. Then call fai_browser_run again with requestId ${requestId}; no origins needed.`,
+  requestId, { env });
 }
 
-function relayText(result, ref) {
+// `env`: the environment whose daemon location the wait command carries (the MCP server's; src/resume.js).
+function relayText(result, ref, env) {
   const code = result.code;
-  if (code === 'select_tab') return approveText(result.origin, ref, result.approval);
+  if (code === 'select_tab') return approveText(result.origin, ref, result.approval, env);
   if (code === 'approval_pending') return approvalPendingText(result);
   if (RESUME_CODES.has(code)) {
-    return `Relay needs.message to the user, then call fai_browser_run again with requestId ${ref}; it waits for `
-      + 'the tab and starts from the current page.';
+    return withResumeWait('Relay needs.message to the user (they click Resume in the FAI Browser extension), then '
+      + `call fai_browser_run again with requestId ${ref}; it starts from the current page.`, ref, { env });
   }
   // A level request: a refusal a higher level would lift, or a login wall on a run that asked for testing.
   if ((code === 'refused_action' || code === 'login') && typeof result.needs?.level === 'string') {
@@ -1129,7 +1132,14 @@ function stopText(result) {
     case 'refused_action':
       return refusalStopText(result);
     case 'error_page': {
-      const status = (result.verdict?.why ?? []).map(code => /^http:(\d{3})$/.exec(code)?.[1]).find(Boolean);
+      const why = result.verdict?.why ?? [];
+      // The browser's own error page (an HTTP error sent without a page body, or a network failure): status unknown.
+      if (why.includes('error_source:browser')) {
+        return 'The browser showed its own error page: the server answered with an HTTP error and no page, or the site '
+          + 'could not be reached. Report that to the user and do not retry the same link. The tab stays approved: it '
+          + 'can be reloaded later, once the site is back.';
+      }
+      const status = why.map(code => /^http:(\d{3})$/.exec(code)?.[1]).find(Boolean);
       return `The page is an HTTP ${status ? `${status} ` : ''}error page${status ? ` (${STATUS_NAMES[status] ?? 'error'})` : ''}: `
         + 'the link or page is broken. Report that to the user and do not retry the same link.';
     }
@@ -1246,7 +1256,7 @@ export function nextFor(result, context = {}) {
         + 'page.digest into the instruction of the run after it.';
       break;
     case 'relay':
-      text = relayText({ ...result, origin: context.origin, approval: context.approval ?? null }, ref);
+      text = relayText({ ...result, origin: context.origin, approval: context.approval ?? null }, ref, context.env);
       break;
     case 'approve':
       text = 'State the action (label and page) to the user; run again only after they agree.';
@@ -1303,11 +1313,11 @@ function directChooseText(revision) {
   return `Answer from page.digest if it answers the task; else fai_browser_act with one actions[].id and revision "${revision}".`;
 }
 
-function directApproveText(origin, requestId, approval) {
+function directApproveText(origin, requestId, approval, env) {
   const root = siteRoot(origin);
   const site = root ?? (origin ? origin.replace(/^https:\/\//, '') : null);
-  return `Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: ${approvalSteps(approval)}. `
-    + `Then call fai_browser_open again with requestId ${requestId}.`;
+  return withResumeWait(`Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: `
+    + `${approvalSteps(approval)}. Then call fai_browser_observe with requestId ${requestId}.`, requestId, { env });
 }
 
 // The label is page text (redacted, clipped, quotes and line breaks removed), quoted inside a trusted sentence.
@@ -1339,7 +1349,7 @@ export function directNext(result, context = {}) {
     return { kind: 'answer', text: 'Verified: the expectation passed. Report the outcome from page.digest; no tool call '
       + `needed${offered ? ' unless the task needs more actions' : ''}.` };
   }
-  if (code === 'select_tab') return { kind: 'relay', text: directApproveText(context.origin, ref, context.approval ?? result.approval) };
+  if (code === 'select_tab') return { kind: 'relay', text: directApproveText(context.origin, ref, context.approval ?? result.approval, context.env) };
   if (code === 'approval_pending') return { kind: 'approve', text: approvalPendingText(result, context.gateWaitMs) };
   if (level && (code === 'refused_action' || code === 'login')) {
     if (result.needs?.who === 'host') {
@@ -1366,7 +1376,13 @@ export function directNext(result, context = {}) {
   if (DIRECT_OBSERVE_CODES.has(code) || (result.status === 'needs_host' && code !== 'request_closed')) {
     return { kind: 'observe', text: 'The page changed or the action could not land. Observe again (fai_browser_observe), then choose.' };
   }
-  if (RESUME_CODES.has(code) || RELAY_AND_RERUN.has(code) || result.status === 'needs_user') {
+  if (RESUME_CODES.has(code)) {
+    // The lease is paused: the user's Resume in the extension makes it active again (wait --until active wakes a host).
+    return { kind: 'relay', text: withResumeWait('Relay needs.message to the user (they click Resume in the FAI '
+      + `Browser extension); once the tab is active again, call fai_browser_observe with requestId ${ref}.`, ref,
+    { env: context.env }) };
+  }
+  if (RELAY_AND_RERUN.has(code) || result.status === 'needs_user') {
     return { kind: 'relay', text: `Relay needs.message to the user; once they have done it, call fai_browser_observe with requestId ${ref}.` };
   }
   if (code === 'config') return { kind: 'relay', text: 'Relay needs.message to the user. Never ask for API keys in chat.' };
