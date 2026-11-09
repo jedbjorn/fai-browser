@@ -347,14 +347,14 @@ export function createHub({
         flapping: false,
       };
       browsers.set(id, browser);
-      pruneBrowsers();
+      pruneBrowsers(browser);
     }
     return browser;
   }
 
-  // Forgets disconnected browsers without a lease (long gone, or too many).
-  function pruneBrowsers() {
-    const idle = [...browsers.values()].filter(browser => !browser.connected && !browser.socket?.open
+  // Forgets disconnected browsers without a lease (long gone, or too many), never `keep` (one just seen).
+  function pruneBrowsers(keep = null) {
+    const idle = [...browsers.values()].filter(browser => browser !== keep && !browser.connected && !browser.socket?.open
       && !browser.waiters.size && ![...leases.values()].some(lease => lease.browserId === browser.id));
     for (const browser of idle) {
       if (browsers.size > MAX_BROWSERS || Date.now() - browser.lastSeen > FORGET_BROWSER_MS) {
@@ -1193,7 +1193,7 @@ export function createHub({
         browsers: live.map(browserView),
       };
     },
-    // Every browser known to the hub (connected first), for status.
+    // Every browser known to the hub (connected ones and recently gone ones), for status.
     browsers: () => [...browsers.values()].map(browserView),
     // The connected browsers a new tab request can go to, for pickBrowser(): {id, product, name, usedAt, connectedAt}.
     candidates: () => connectedBrowsers().map(browser => ({ id: browser.id, product: browser.product,

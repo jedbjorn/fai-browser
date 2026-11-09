@@ -3527,7 +3527,8 @@ async function expireArms(byRequest = false) {
     if (now - (intent.started || intent.arm.at) > ARM_MS && armed.get(tabId) !== intent.arm) modalIntents.delete(tabId);
   }
   for (const arm of [...armed.values()]) {
-    const live = requests.some(item => item.requestId === arm.requestId && ['pending', 'paused'].includes(item.state));
+    // A request moved to another browser ("Open here" there) is no longer this tab's to approve.
+    const live = requests.some(item => item.requestId === arm.requestId && ['pending', 'paused'].includes(item.state) && here(item));
     const leasing = modalIntents.get(arm.tabId)?.running && requests.some(item => item.requestId === arm.requestId && item.state === 'active');
     if ((byRequest && !live && !leasing) || now - arm.at > ARM_MS) await disarm(arm.tabId);
   }
