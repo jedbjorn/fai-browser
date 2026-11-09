@@ -46,7 +46,7 @@ export function resumeWaitCommand(requestId, { env = process.env, execPath = pro
 export function resumeWaitText(requestId, options = {}) {
   // Only a daemon-issued id goes into a command (a result without one names no command).
   if (!REQUEST_ID.test(String(requestId ?? ''))) return '';
-  // A session FAI can wake (options.wake: claude-socket or codex-queue, src/wake.js) gets a message when the user
+  // A session FAI can wake (options.wake: claude-socket, codex-queue or opencode-plugin, src/wake.js) gets a message when the user
   // approves or resumes this request: it ends its turn instead of starting a wait command.
   if (options.wake) return WAKE_TEXT;
   return 'If you can run a background command that notifies you when it exits (for example Claude Code\'s Bash '

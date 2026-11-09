@@ -108,7 +108,7 @@ on the tab (`invite_not_joined`); after it every observe, act, run and release m
 would end another agent's task in the same browser, the popup says so and needs a second tap.
 
 To wake an idle agent, FAI's MCP server (the agent's own child process) writes one fixed FAI message to that agent's
-own channel: Claude Code's messaging socket, or `codex queue` for its own thread. The message names the invite or
+own channel: Claude Code's messaging socket, `codex queue` for its own thread, or FAI's own plugin inside OpenCode. The message names the invite or
 request id, the level and the tool to call, and never carries a page title, URL or page text. Each MCP server
 registers with the service under a random key only it holds, so it only receives the wakes addressed to it, and it
 never writes to another session's socket: the socket variables are inherited by everything Claude Code starts, so the
@@ -122,6 +122,19 @@ server acts on each wake once, at most 4 from one poll and 12 a minute, and neve
 version from its background loop. Runs and observes of an invited tab (their results, traces and screenshots) are the
 joining session's alone, also from disk after the request is gone.
 
+**OpenCode's plugin.** OpenCode (1.19 to 1.x) offers no channel an MCP server can use to start a turn, so
+`install --host opencode` installs a small FAI plugin (`plugins/fai-browser.js`) that OpenCode loads at startup; FAI
+installs it only on that command (or setup's OpenCode registration), and only replaces a file there that carries its
+marker. The plugin runs inside OpenCode with OpenCode's own rights: it has no dependencies, never throws out of a hook,
+logs nothing of arguments, texts or its token, and turns itself off when it cannot open its socket safely. It listens
+on a private socket (a 0700 directory it owns, never a symlink; the socket 0600, named after OpenCode's pid) and
+accepts a request only with the random token it minted at startup. It prompts only sessions it saw call a FAI tool,
+only with one text part that is one of FAI's wake templates (`[FAI Browser] The user approved / resumed / invited …`),
+never with a model, agent, tool or system field. The MCP server uses the socket only when OpenCode itself is its parent
+(socket name and `OPENCODE_PID` both name the parent pid). One OpenCode serves several sessions with one MCP server, so
+Approve and Resume wake exactly the session whose call made or joined that request, never a guess; an invite goes to
+the only session that used FAI in the last 10 minutes, and with two or more the popup shows the copy line instead.
+
 **Threat model.** Any process running as your user can already write to Claude Code's messaging socket (its path and
 token are in the session's environment and its child processes) or run `codex queue`, so FAI adds no new way in: it
 uses the same channel, from inside the session's own process tree, with text it authored. A local process with FAI's
@@ -129,6 +142,15 @@ client token can register as an agent session and join an invite made for no ses
 already request tabs); you see which agent joined in the popup. Claude Code's own `crossSessionInbound` setting
 (accept, hold, refuse) still decides what happens to an inbound message; its socket answers nothing either way, so
 the popup says "Sent", not "received". A Codex queued message runs with that session's own permissions, never more.
+OpenCode adds three things to weigh. FAI's plugin is code of ours running in your agent with its rights: keep it to
+the reviewed file `install` copies (or links with `--link`), and remove `plugins/fai-browser.js` to turn wakes off (or
+run OpenCode with `--pure`, or `FAI_WAKE=0`). The plugin adds the calling session's id as `_faiHostSession` to every
+FAI tool call's arguments, so it shows in OpenCode's tool display and transcript and goes to the model provider with
+the tool input: an opaque id, no secret, which the MCP server strips before use. And the socket path and token are in
+OpenCode's environment, so its bash tool's children inherit them, as Claude Code's socket variables are: a same-user
+process with the token could ask the plugin to prompt a session that used FAI with a FAI wake text, which is no more
+than such a process can already do to Claude Code's socket; the MCP server itself is not fooled (the parent-pid rule),
+and the service never passes these variables on to processes it starts.
 As before, a process that can read the extension's pairing secret could speak for the extension on the service's
 extension channel (approve a request, or make an invite) without your click: keep `.env.local` and the browser
 profile to yourself.
