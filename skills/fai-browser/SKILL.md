@@ -35,7 +35,7 @@ Each result: `next`, status, `revision`, `page.digest` (`page.truncated`: more e
 | `choose` | Answer from `page.digest` if it answers the task; else act. |
 | `observe` | The page changed or the action could not land: `fai_browser_observe`, then choose. |
 | `answer` | Verified. Report the outcome; no tool call needed. |
-| `relay` | Tell the user `needs.message`. With `needs.level`: "approve the new FAI Browser request; its level is preselected", then `fai_browser_open` with the `requestId` and `mode` = `needs.level`. Paused/pending: end your turn (FAI wakes you) or run `next.text`'s `wait` command. |
+| `relay` | Tell the user `needs.message`. With `needs.level`: "approve the new FAI Browser request; its level is preselected", then `fai_browser_open` with the `requestId` and `mode` = `needs.level`. Paused/pending: end your turn (FAI wakes you) or run `next.text`'s `wait` command. OpenCode shows a `_faiHostSession` argument on FAI calls: FAI's plugin adds it; ignore it. |
 | `approve` | A `needsApproval` action waits for the user's Approve once: relay `next.text`, then repeat the act unchanged. |
 | `wait` | `fai_browser_wait` with the `requestId` (or `runId`). |
 | `stop` | Report `next.text` (`refused_action`, `error_page`); no retry. |
