@@ -1132,7 +1132,14 @@ function stopText(result) {
     case 'refused_action':
       return refusalStopText(result);
     case 'error_page': {
-      const status = (result.verdict?.why ?? []).map(code => /^http:(\d{3})$/.exec(code)?.[1]).find(Boolean);
+      const why = result.verdict?.why ?? [];
+      // The browser's own error page (an HTTP error sent without a page body, or a network failure): status unknown.
+      if (why.includes('error_source:browser')) {
+        return 'The browser showed its own error page: the server answered with an HTTP error and no page, or the site '
+          + 'could not be reached. Report that to the user and do not retry the same link. The tab stays approved: it '
+          + 'can be reloaded later, once the site is back.';
+      }
+      const status = why.map(code => /^http:(\d{3})$/.exec(code)?.[1]).find(Boolean);
       return `The page is an HTTP ${status ? `${status} ` : ''}error page${status ? ` (${STATUS_NAMES[status] ?? 'error'})` : ''}: `
         + 'the link or page is broken. Report that to the user and do not retry the same link.';
     }

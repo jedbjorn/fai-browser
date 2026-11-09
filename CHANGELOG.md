@@ -17,6 +17,14 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 - The paused lease messages ask the user to click Resume in the FAI Browser extension and leave how to continue to `next`; after Resume or approval the agent observes the page (Agent direct) instead of calling `fai_browser_open` again: the request keeps the opening `task`, which observe ranks the digest by.
 - `--until` and `--timeout` are refused by every command but `wait`.
 
+### Fixed
+
+- Chrome's own error page on the approved site (an HTTP error sent without a page body, such as an empty 500, or a dropped or refused connection) no longer pauses the task as `origin_changed` or fails as `unsupported`. The extension reports it as an error page (`browser_error_page` warning), a run or act that lands there ends `error_page`, the session stays active, and a reload or another approved URL works once the site is back.
+
+### Known limits
+
+- With a toolbar (activeTab) approval, Chrome withdraws access when its own error page appears, so that session still pauses as `origin_changed`; approve the tab again once the site is back. Approval in the request modal (browser site access) keeps the session. Firefox is not covered by this fix (untested): its network error pages (`about:neterror`) may still pause as `origin_changed`.
+
 ## 0.4.0 (2026-11-07)
 
 ### Added
