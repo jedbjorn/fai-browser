@@ -186,7 +186,7 @@ const REQUEST_ID = {
 const INVITE_ID = {
   type: 'string',
   pattern: '^inv-[0-9a-z]{8}$',
-  description: 'From the user\'s FAI popup invite (or a FAI wake): opens that tab; no origins or reason needed.',
+  description: 'An invite from the user\'s FAI popup: opens that tab, no origins needed.',
 };
 const ORIGINS = {
   type: 'array',
