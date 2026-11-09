@@ -11,6 +11,7 @@ import {
 } from './permissions.js';
 import { mountApprovals } from './approval-card.js';
 import { mountUpdate } from './update-card.js';
+import { mountInvite } from './invite-card.js';
 import {
   PIN_HINT, TESTING_WARNING, actionShortcut, allSitesGranted, askSiteAccess, element, fillLevelSelect, iconPinned,
   orShortcut, removeAllSites, replaceCardsPreservingFocus, requestAllSites,
@@ -89,6 +90,8 @@ let currentOrigin = null;
 let currentTabId = null;
 let busy = false;
 let closing = false;
+// "Invite agent" (extension/invite-card.js), mounted once the current tab is known.
+let invitePanel = null;
 
 const STATUS_TEXT = {
   active: "The agent is using its tab. Close that tab's window or press Stop to end it.",
@@ -573,6 +576,8 @@ function render() {
   const active = view.status === 'active';
   const servingId = active ? view.session?.requestId ?? null : null;
   const visible = (view.requests ?? []).filter(request => {
+    // An active invited tab has its own card (extension/invite-card.js).
+    if (request.invite && request.state === 'active') return false;
     if (request.requestId === servingId) return true;
     // Another browser's paused request stays there; its pending ones are listed with Open here.
     return request.state === 'pending' || (request.state === 'paused' && here(request));
@@ -597,6 +602,7 @@ function render() {
   renderSetup();
   renderBudgetEffective();
   renderDriver();
+  invitePanel?.render();
 }
 
 function applyState(state) {
@@ -870,7 +876,19 @@ allSitesButton.addEventListener('click', () => ignoreError(toggleAllSites(!allSi
 setupAllSites.addEventListener('click', () => ignoreError(toggleAllSites(true)));
 ignoreError(renderAllSites());
 
-// Opening the popup connects a paired worker that is not connected yet, and refreshes the view.
-chrome.runtime.sendMessage({ type: 'connect' }).then(applyState, () => {});
+// "Invite agent": the tab the user is on, for a live agent session (one tap), at the level last chosen for invites.
+invitePanel = mountInvite({
+  root: document.getElementById('invite'),
+  context: () => ({ connected: Boolean(view.connection?.connected), currentOrigin, currentTabId, windowMode,
+    testingOrigins: permissions.testingOrigins, session: view.session, requests: view.requests, here }),
+  onState: applyState,
+  say: text => { status.textContent = text; },
+});
+
+// Opening the popup connects a paired worker that is not connected yet, and refreshes the view (and the agent list).
+chrome.runtime.sendMessage({ type: 'connect' }).then(state => {
+  applyState(state);
+  invitePanel.refresh();
+}, () => {});
 // Initialized (handlers wired): test harnesses wait for this.
 document.body.dataset.ready = '1';

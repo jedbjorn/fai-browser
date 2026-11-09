@@ -113,7 +113,8 @@ const KNOWN_CODES = new Set([
 ]);
 const RECOVERABLE = new Set(['stale', 'target_unavailable', 'capture_failed']);
 // Message types that get exactly one reply, and their HTTP fallback paths.
-const REPLY_TYPES = new Set(['hello', 'lease', 'lease_level', 'deny', 'validate', 'settings', 'driver', 'update', 'move']);
+const REPLY_TYPES = new Set(['hello', 'lease', 'lease_level', 'deny', 'validate', 'settings', 'driver', 'update', 'move',
+  'invite', 'invite_cancel', 'agents']);
 const HTTP_PATHS = {
   hello: '/hello',
   lease: '/lease',
@@ -128,6 +129,9 @@ const HTTP_PATHS = {
   screenshot: '/screenshots',
   used: '/used',
   move: '/move',
+  invite: '/invite',
+  invite_cancel: '/invite-cancel',
+  agents: '/agents',
 };
 const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
@@ -1172,10 +1176,23 @@ function reconcileSites() {
   return reconciling;
 }
 
+// The daemon's agent list as the popup may show it: names, repo folder names and states only.
+const AGENT_HOSTS = ['claude', 'codex', 'opencode', 'unknown'];
+function cleanAgents(data) {
+  const text = (value, max) => (typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, max) : '');
+  const sessions = (Array.isArray(data?.sessions) ? data.sessions : []).slice(0, 32)
+    .filter(item => typeof item?.sessionId === 'string')
+    .map(item => ({ sessionId: text(item.sessionId, 64), host: AGENT_HOSTS.includes(item.host) ? item.host : 'unknown',
+      repo: text(item.repo, 60) || 'unknown', lastActiveAt: text(item.lastActiveAt, 40) || null,
+      wake: ['claude-socket', 'codex-queue'].includes(item.wake) ? item.wake : 'none', ready: item.ready !== false }));
+  return { sessions };
+}
+
 function sessionView() {
   if (!session) return null;
   const { requestId, leaseId, tabId, origin, status } = session;
-  return { requestId, leaseId, tabId, origin, status, level: grantedLevel(), scope: session.scope ?? 'origin', tabMode: session.tabMode ?? 'single' };
+  return { requestId, leaseId, tabId, origin, status, level: grantedLevel(), scope: session.scope ?? 'origin', tabMode: session.tabMode ?? 'single',
+    ...(session.inviteId ? { inviteId: session.inviteId } : {}) };
 }
 
 // --- permission levels -------------------------------------------------------------------------------------------
@@ -3354,18 +3371,21 @@ async function startSession(message, given = null) {
   await chrome.storage.local.set({ endpoint: next.endpoint, secret: next.secret });
   await usePairing(next);
   if (!connected) await waitForAttempt(CONNECT_WAIT_MS);
+  // `invite`: the popup's Invite click ({sessionId, text}): no request exists yet; the daemon makes one for this tab.
+  const invite = message.invite && typeof message.invite === 'object' ? message.invite : null;
   let requestId = typeof message.requestId === 'string' ? message.requestId : null;
   const [tab] = given ? [given] : await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.url || !/^https?:/.test(tab.url)) throw new Error('Select an HTTP page');
+  if (invite && tab.incognito) throw new Error('Invite works in a normal window, not a private one.');
   const origin = new URL(tab.url).origin;
-  if (!requestId) requestId = pickRequest(origin);
+  if (!requestId && !invite) requestId = pickRequest(origin);
   // The level the user picked on the request card. Anything unknown or missing is read-only.
   const level = cleanLevel(message.level) ?? 'read-only';
   if (level === 'testing') {
     // Re-checked here, not only in the popup: testing needs a known request whose every origin, and this tab's
     // origin, is a listed testing environment, read fresh from storage.
     const listed = await loadTestingOrigins();
-    const request = requests.find(item => item.requestId === requestId);
+    const request = invite ? { origins: [origin] } : requests.find(item => item.requestId === requestId);
     if (!request || !allListed(request.origins, listed) || !listed.includes(origin)) {
       throw new Error('Testing mode needs every requested origin listed under Testing environments.');
     }
@@ -3376,7 +3396,8 @@ async function startSession(message, given = null) {
   const request = requests.find(item => item.requestId === requestId);
   const askedSites = (Array.isArray(request?.origins) ? request.origins : []).filter(entry => siteRoot(entry));
   const askedPatterns = askedSites.map(entry => sitePattern(siteRoot(entry)));
-  const requestedTabs = cleanTabMode(message.tabMode);
+  // An invite is always one task tab: the tab the user is on.
+  const requestedTabs = invite ? 'single' : cleanTabMode(message.tabMode);
   const liveSettings = await chrome.storage.local.get(['tabMode']);
   const taskPattern = taskOriginPattern(origin);
   const approvedTabMode = requestedTabs === 'multiple' && liveSettings.tabMode === 'multiple'
@@ -3401,7 +3422,12 @@ async function startSession(message, given = null) {
     }
     const asked = askedSites.length ? { scope } : {};
     if (given?.approvalGuard) await given.approvalGuard();
-    data = await send('lease', { requestId, tabId: tab.id, origin, title: reportedText(String(tab.title ?? '').slice(0, 300)), level, tabMode: approvedTabMode, ...asked });
+    const title = reportedText(String(tab.title ?? '').slice(0, 300));
+    data = invite
+      ? await send('invite', { tabId: tab.id, origin, title, level, tabMode: 'single',
+        sessionId: typeof invite.sessionId === 'string' ? invite.sessionId : null,
+        text: typeof invite.text === 'string' ? invite.text.slice(0, 500) : '' })
+      : await send('lease', { requestId, tabId: tab.id, origin, title, level, tabMode: approvedTabMode, ...asked });
   } catch (error) {
     settlePending();
     // A failed start (refused lease, daemon unreachable) never leaves the permission it just obtained behind.
@@ -3445,6 +3471,8 @@ async function startSession(message, given = null) {
     scope: leaseScope,
     sites,
     patterns,
+    // The invite this session came from (the popup's Invite click), until an agent joins it.
+    ...(invite && typeof data.invite?.inviteId === 'string' ? { inviteId: data.invite.inviteId } : {}),
   };
   if (session.scope !== 'domain') {
     session.sites = [];
@@ -3835,6 +3863,24 @@ async function approveOnSessionTab(message) {
 }
 const ARM_ON_SESSION_TAB = 'Click the FAI Browser icon on the FAI tab to approve.';
 
+// The toolbar popup itself (popup.html, not the approval window popup.html?window=1, never a page or content script).
+function fromToolbarPopup(sender) {
+  return typeof sender?.url === 'string' && sender.url.split('?')[0] === chrome.runtime.getURL('popup.html')
+    && !sender.url.includes('window=1') && !sender.tab;
+}
+
+// The popup's Invite click: the active tab of the popup's window, under the activeTab grant the toolbar click gave.
+async function inviteAgent(message) {
+  const level = cleanLevel(message.level);
+  if (!level) throw new Error('Pick a level for the invite.');
+  if (!connected) await waitForAttempt(CONNECT_WAIT_MS);
+  if (!connected) throw new Error('Connect to the FAI service first.');
+  const sessionId = typeof message.sessionId === 'string' && message.sessionId ? message.sessionId.slice(0, 64) : null;
+  const text = typeof message.text === 'string' ? message.text.slice(0, 500) : '';
+  await startSession({ type: 'start', level, invite: { sessionId, text } });
+  return { inviteId: session?.inviteId ?? null, requestId: session?.requestId ?? null };
+}
+
 function popupState() {
   return {
     status: session?.status ?? null,
@@ -3936,6 +3982,26 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       if (connected && driverControl) await readDriver().catch(() => {});
       // The daily check may have found a release since the hello (a service that knows updates said so in it).
       if (connected && updateInfo) await readUpdate().catch(() => {});
+    } else if (message.type === 'invite') {
+      // "Invite agent": only the toolbar popup's click creates an invite (never a page, a content script or the
+      // approval window); the daemon accepts it only over this paired channel.
+      if (!fromToolbarPopup(sender)) throw new Error('Invite an agent from the FAI Browser popup.');
+      const invited = await inviteAgent(message);
+      return { ...popupState(), invited };
+    } else if (message.type === 'invite_cancel') {
+      if (!fromToolbarPopup(sender)) throw new Error('Cancel an invite from the FAI Browser popup.');
+      if (typeof message.inviteId !== 'string' && typeof message.requestId !== 'string') throw new Error('No invite to cancel');
+      if (!connected) throw new Error('Connect to the FAI service first.');
+      await send('invite_cancel', { inviteId: message.inviteId, requestId: message.requestId });
+      if (session?.inviteId && (session.inviteId === message.inviteId || session.requestId === message.requestId)) {
+        await setStatus('stopped');
+      }
+    } else if (message.type === 'agents') {
+      // The popup's Invite list: the live agent sessions (host, repo name, last activity, whether FAI can wake it).
+      if (!fromToolbarPopup(sender)) throw new Error('Unsupported control');
+      if (!connected) return { ...popupState(), agents: { sessions: [], invites: [] } };
+      const data = await send('agents').catch(() => ({ sessions: [], invites: [] }));
+      return { ...popupState(), agents: cleanAgents(data) };
     } else if (message.type === 'update_install' || message.type === 'update_check') {
       // The popup's update card only: Update (the user's click installs the release) or Check now.
       const popupUrl = chrome.runtime.getURL('popup.html');
@@ -4036,6 +4102,10 @@ chrome.action?.onClicked?.addListener(tab => {
 });
 
 chrome.tabs.onRemoved?.addListener(tabId => {
+  // An invited tab closed before an agent joined: the invite is revoked (the daemon ignores this once joined).
+  if (session?.inviteId && tabId === session.homeTabId && connected) {
+    ignore(send('invite_cancel', { inviteId: session.inviteId, reason: 'tab_closed' }));
+  }
   if (session?.status !== 'active' || !leaseTab(tabId)) return;
   if (!leaseTabClosed(tabId)) endSession('paused', 'tab_changed');
 });

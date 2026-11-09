@@ -201,6 +201,15 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       return { ok: true, data: { leaseId: LEASE_ID, requestId: message.requestId, grant: { tabMode: message.tabMode ?? 'single' }, ...(origins ? { origins } : {}) } };
     }
     if (message.type === 'validate') return { ok: true, data: { valid: true } };
+    if (message.type === 'invite') {
+      return { ok: true, data: { leaseId: LEASE_ID, requestId: 'req_inv', grant: { level: message.level, tabMode: 'single' },
+        origins: [message.origin], invite: { inviteId: 'inv-abcd2345', state: 'open', wake: { state: 'queued' } } } };
+    }
+    if (message.type === 'agents') {
+      return { ok: true, data: { sessions: [{ sessionId: 'ses_1', host: 'claude', repo: 'fai-browser', lastActiveAt: new Date().toISOString(),
+        wake: 'claude-socket', ready: true, key: 'NEVER-SHOWN', pid: 4242 }, { sessionId: 'ses_2', host: 'evil<host>', repo: 'r\u0007x' }] } };
+    }
+    if (message.type === 'invite_cancel') return { ok: true, data: { invite: { inviteId: message.inviteId, state: 'cancelled' } } };
     return { ok: true, data: { ok: true } };
   }
 
@@ -3674,3 +3683,85 @@ test('frames review: a frame whose size no longer matches its box is boxed whole
   assert.ok(hasBox(second.rects, 10, 20, 80, 70), JSON.stringify(second.rects));
   assert.equal(second.withheld, true);
 });
+// --- invites (docs/REFERENCE.md "Invites and wakes") ---------------------------------------------------------------
+
+const POPUP = { id: 'ext', url: 'chrome-extension://ext/popup.html' };
+
+test('invite: only the toolbar popup can invite; a page, a content script or the approval window cannot', async () => {
+  const h = harness();
+  await h.waitFor(m => m.type === 'hello');
+  for (const sender of [
+    { id: 'ext', url: ORIGIN },
+    { id: 'ext', url: `${ORIGIN}/popup.html`, tab: { id: 7 } },
+    { id: 'ext', url: 'chrome-extension://ext/popup.html', tab: { id: 7 } },
+    { id: 'ext', url: 'chrome-extension://ext/popup.html?window=1' },
+    { id: 'ext', url: 'chrome-extension://ext/arm.html?tab=7' },
+  ]) {
+    const reply = await h.send({ type: 'invite', level: 'full', sessionId: 'ses_1' }, sender);
+    assert.match(reply?.error ?? '', /popup/, JSON.stringify(sender));
+  }
+  // Another extension's message is not answered at all.
+  h.chrome.runtime.onMessage.emit({ type: 'invite', level: 'full' }, { id: 'other-extension', url: 'chrome-extension://other-extension/popup.html' }, () => {});
+  const cancel = await h.send({ type: 'invite_cancel', inviteId: 'inv-abcd2345' }, { id: 'ext', url: ORIGIN });
+  assert.match(cancel.error, /popup/);
+  await sleep(20);
+  assert.ok(!h.sent.some(message => ['invite', 'invite_cancel'].includes(message.type)), 'nothing reached the service');
+});
+
+test('invite: the popup click binds the current tab at the chosen level, for the chosen session, and marks it', async () => {
+  const h = harness();
+  await h.waitFor(m => m.type === 'hello');
+  await h.until(() => h.session.connection?.connected);
+  const agents = await h.send({ type: 'agents' }, POPUP);
+  assert.deepEqual(agents.agents.sessions.map(item => [item.sessionId, item.host, item.repo, item.wake]),
+    [['ses_1', 'claude', 'fai-browser', 'claude-socket'], ['ses_2', 'unknown', 'rx', 'none']]);
+  assert.ok(!JSON.stringify(agents).includes('NEVER-SHOWN') && !JSON.stringify(agents).includes('4242'), 'no key or pid reaches the popup');
+  const reply = await h.send({ type: 'invite', level: 'reversible', sessionId: 'ses_1', text: 'Look at the plans' }, POPUP);
+  assert.equal(reply.error, undefined, JSON.stringify(reply));
+  assert.equal(reply.status, 'active');
+  assert.deepEqual(reply.invited, { inviteId: 'inv-abcd2345', requestId: 'req_inv' });
+  const sent = h.sent.find(message => message.type === 'invite');
+  assert.deepEqual([sent.tabId, sent.origin, sent.level, sent.tabMode, sent.sessionId, sent.text],
+    [7, ORIGIN, 'reversible', 'single', 'ses_1', 'Look at the plans']);
+  assert.ok(!h.sent.some(message => message.type === 'lease'), 'one message: the invite is the approval');
+  assert.equal(reply.session.inviteId, 'inv-abcd2345');
+  assert.equal(reply.session.level, 'reversible');
+  await h.until(() => h.groupOf.get(7) !== undefined);
+  assert.equal(h.groups.get(h.groupOf.get(7)).title, 'FAI', 'the invited tab gets the task-tab mark');
+  // Commands for the lease run on that tab at the invited level.
+  const id = h.command('observe', {}, { lease: { id: LEASE_ID, tabId: 7, requestId: 'req_inv' } });
+  const result = await h.waitFor(m => m.type === 'result' && m.id === id);
+  assert.equal(result.error, undefined, JSON.stringify(result.error));
+});
+
+test('invite: Test site only on a listed test site; closing the invited tab revokes the invite', async () => {
+  const h = harness();
+  await h.waitFor(m => m.type === 'hello');
+  const refused = await h.send({ type: 'invite', level: 'testing', sessionId: null }, POPUP);
+  assert.match(refused.error, /Testing mode needs/);
+  assert.ok(!h.sent.some(message => message.type === 'invite'));
+  const reply = await h.send({ type: 'invite', level: 'read-only', sessionId: null }, POPUP);
+  assert.equal(reply.status, 'active', JSON.stringify(reply));
+  h.chrome.tabs.onRemoved.emit(7);
+  const cancel = await h.waitFor(m => m.type === 'invite_cancel');
+  assert.deepEqual([cancel.inviteId, cancel.reason], ['inv-abcd2345', 'tab_closed']);
+});
+
+test('invite: Test site works on an origin listed under Test sites', async () => {
+  const h = harness({ permissions: { defaultLevel: 'full', testingOrigins: [ORIGIN] } });
+  await h.waitFor(m => m.type === 'hello');
+  const reply = await h.send({ type: 'invite', level: 'testing', sessionId: 'ses_1' }, POPUP);
+  assert.equal(reply.status, 'active', JSON.stringify(reply));
+  assert.equal(h.sent.find(message => message.type === 'invite').level, 'testing');
+});
+
+test('invite: the popup cancels its invite and the session stops', async () => {
+  const h = harness();
+  await h.waitFor(m => m.type === 'hello');
+  await h.send({ type: 'invite', level: 'reversible', sessionId: 'ses_1' }, POPUP);
+  const reply = await h.send({ type: 'invite_cancel', inviteId: 'inv-abcd2345', requestId: 'req_inv' }, POPUP);
+  assert.equal(reply.error, undefined, JSON.stringify(reply));
+  assert.equal(reply.status, 'stopped');
+  assert.ok(h.sent.some(message => message.type === 'invite_cancel' && message.inviteId === 'inv-abcd2345'));
+});
+
