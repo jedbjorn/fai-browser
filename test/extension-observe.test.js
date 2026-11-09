@@ -484,7 +484,10 @@ test('expectText stays cheap on a Wikipedia-sized page whose expected text is on
     return { plain: measure({}), expected: measure({ expectText: ['booking confirmed', 'payment received'] }) };
   });
   t.diagnostic(JSON.stringify(stats));
-  assert.ok(stats.expected - stats.plain < 100, `findTexts adds ${(stats.expected - stats.plain).toFixed(1)} ms`);
+  // The bound scales with the machine: a loaded CI runner slows the plain observe too (145 ms seen on Node 24), and a
+  // fixed 100 ms then flakes. A real regression (findTexts several times the cost of a whole observe) still fails.
+  const bound = Math.max(100, stats.plain);
+  assert.ok(stats.expected - stats.plain < bound, `findTexts adds ${(stats.expected - stats.plain).toFixed(1)} ms (bound ${bound.toFixed(1)} ms)`);
   assert.deepEqual((await observe(page, { expectText: ['booking confirmed'] })).textFound, []);
 });
 
