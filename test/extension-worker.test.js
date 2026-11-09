@@ -207,7 +207,8 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     }
     if (message.type === 'agents') {
       return { ok: true, data: { sessions: [{ sessionId: 'ses_1', host: 'claude', repo: 'fai-browser', lastActiveAt: new Date().toISOString(),
-        wake: 'claude-socket', ready: true, key: 'NEVER-SHOWN', pid: 4242 }, { sessionId: 'ses_2', host: 'evil<host>', repo: 'r\u0007x' }] } };
+        wake: 'claude-socket', ready: true, key: 'NEVER-SHOWN', pid: 4242 }, { sessionId: 'ses_2', host: 'evil<host>', repo: 'r\u0007x' },
+        { sessionId: 'ses_3', host: 'pi', repo: 'app', wake: 'pi-socket' }, { sessionId: 'ses_4', host: 'pi', repo: 'b', wake: 'pi-evil' }] } };
     }
     if (message.type === 'invite_cancel') return { ok: true, data: { invite: { inviteId: message.inviteId, state: 'cancelled' } } };
     return { ok: true, data: { ok: true } };
@@ -3950,7 +3951,8 @@ test('invite: the popup click binds the current tab at the chosen level, for the
   await h.until(() => h.session.connection?.connected);
   const agents = await h.send({ type: 'agents' }, POPUP);
   assert.deepEqual(agents.agents.sessions.map(item => [item.sessionId, item.host, item.repo, item.wake]),
-    [['ses_1', 'claude', 'fai-browser', 'claude-socket'], ['ses_2', 'unknown', 'rx', 'none']]);
+    [['ses_1', 'claude', 'fai-browser', 'claude-socket'], ['ses_2', 'unknown', 'rx', 'none'], ['ses_3', 'pi', 'app', 'pi-socket'],
+      ['ses_4', 'pi', 'b', 'none']]);
   assert.ok(!JSON.stringify(agents).includes('NEVER-SHOWN') && !JSON.stringify(agents).includes('4242'), 'no key or pid reaches the popup');
   const reply = await h.send({ type: 'invite', tabId: 7, origin: ORIGIN, level: 'reversible', sessionId: 'ses_1', text: 'Look at the plans' }, POPUP);
   assert.equal(reply.error, undefined, JSON.stringify(reply));

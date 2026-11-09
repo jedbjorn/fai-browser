@@ -14,6 +14,7 @@ const CODEX = { sessionId: 'ses_2', host: 'codex', repo: 'shop', lastActiveAt: n
 
 test('invite card helpers: labels, the copy line and what each wake state says', () => {
   assert.equal(agentLabel(CLAUDE), 'Claude Code · fai-browser');
+  assert.equal(agentLabel({ host: 'pi', repo: 'app' }), 'pi · app');
   assert.equal(joinLine('inv-abcd2345'), 'join FAI invite inv-abcd2345');
   const session = { host: 'claude', repo: 'fai-browser' };
   assert.deepEqual(wakeLine({ state: 'open', session, wake: { state: 'queued' } }), { text: 'Waking Claude Code · fai-browser…', fallback: false });
