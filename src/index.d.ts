@@ -1863,6 +1863,8 @@ export interface RequestView {
   grant: Grant | null;
   activeRunId: string | null;
   lastRunId: string | null;
+  /** The live agent session that owns the request (made it through MCP, or joined its invite). */
+  owner?: { sessionId: string; host: string; repo: string } | null;
   /** A tab the user invited an agent to from the popup: the invite and its wake. */
   invite?: InviteView;
   /**

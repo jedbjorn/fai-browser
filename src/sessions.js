@@ -87,7 +87,8 @@ export function createSessionRegistry(options = {}) {
 
   function wakeView(wake) {
     return { wakeId: wake.wakeId, sessionId: wake.sessionId, kind: wake.kind, requestId: wake.requestId ?? null,
-      inviteId: wake.inviteId ?? null, state: wake.state, error: wake.error ?? null, createdAt: iso(wake.createdAt),
+      inviteId: wake.inviteId ?? null, state: wake.state, error: wake.error ?? null, detail: wake.detail ?? null,
+      createdAt: iso(wake.createdAt),
       settledAt: iso(wake.settledAt ?? null) };
   }
 
@@ -239,6 +240,8 @@ export function createSessionRegistry(options = {}) {
     const outcome = ['delivered', 'failed', 'skipped'].includes(body.outcome) ? body.outcome : 'failed';
     wake.state = outcome;
     wake.settledAt = now();
+    // What the host's channel answered on a delivered wake, if anything (a Claude Code socket reply line).
+    wake.detail = outcome === 'delivered' && typeof body.message === 'string' ? body.message.replace(/\s+/g, ' ').slice(0, 200) : null;
     wake.error = outcome === 'failed'
       ? { code: typeof body.code === 'string' ? body.code.slice(0, 40) : 'wake_failed',
         message: typeof body.message === 'string' ? body.message.replace(/\s+/g, ' ').slice(0, 200) : 'The wake failed.' }

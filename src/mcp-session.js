@@ -169,7 +169,7 @@ export class AgentSession {
         const text = wakeText({ kind: wake.kind, inviteId: wake.inviteId, requestId: wake.requestId, level: wake.level,
           userText: wake.userText, driver: this.driver() });
         const delivered = await this.deliver({ capability: this.capability, text, env: this.env, threadId: this.threadId });
-        outcome = delivered.ok ? { outcome: 'delivered' }
+        outcome = delivered.ok ? { outcome: 'delivered', ...(delivered.reply ? { message: delivered.reply } : {}) }
           : { outcome: 'failed', code: delivered.code ?? 'wake_failed', message: delivered.message ?? 'The wake failed.' };
         this.log(`wake ${wake.kind} ${outcome.outcome}${delivered.ok ? '' : ` (${outcome.code})`}`);
       }
