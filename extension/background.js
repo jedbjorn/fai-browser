@@ -1827,12 +1827,24 @@ function clearVault() {
   secretVault = newVault();
 }
 
+// One typing-rhythm seed per lease (input.js RHYTHM), random and unrelated to the lease id, so every document of a
+// task types at the same pace and the next task at another.
+let typingRhythm = { leaseId: null, seed: 0 };
+function rhythmSeed() {
+  const leaseId = session?.leaseId ?? null;
+  if (!typingRhythm.seed || typingRhythm.leaseId !== leaseId) {
+    const seed = globalThis.crypto?.getRandomValues?.(new Uint32Array(1))[0] ?? Math.floor(Math.random() * 2 ** 32);
+    typingRhythm = { leaseId, seed: seed || 1 };
+  }
+  return typingRhythm.seed;
+}
+
 function secretOptions() {
-  // `input`: input.js's settings for the call (trusted input on or off, trusted-input.js).
+  // `input`: input.js's settings for the call (trusted input on or off, trusted-input.js; the lease's rhythm seed).
   const trusted = typeof trustedInputOn === 'function' && trustedInputOn();
   // `context`: what the tab's approved frames add to the page's restrictions (frames.js); none without frames.
   const context = globalThis.faiFrames?.topContext(session?.tabId) ?? null;
-  return { ...secretRedaction, salt: secretNumbering().salt, gates: approvalSettings, vault: true, input: { trusted }, context };
+  return { ...secretRedaction, salt: secretNumbering().salt, gates: approvalSettings, vault: true, input: { trusted, rhythmSeed: rhythmSeed() }, context };
 }
 
 // The values page.js redacted (VAULT_KEY of a page result: [{ tag, value, kind, pre, origin }]), kept under their
