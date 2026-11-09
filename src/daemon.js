@@ -2028,10 +2028,6 @@ export function createDaemon(options = {}) {
     const instruction = optionalString(body, 'instruction', 300) ?? null;
     const url = startUrl(body.url, origins);
     const ttlMs = optionalInt(body, 'ttlMs', 60_000, 3_600_000) ?? config.requestTtlMs ?? DEFAULT_REQUEST_TTL_MS;
-    const pending = [...requests.values()].filter(record => record.state === 'pending').length;
-    if (pending >= MAX_PENDING_REQUESTS) {
-      throw new HttpError(429, 'too_many_requests', 'Too many pending tab requests; cancel one first', { retryable: true });
-    }
     // The browser the request waits in: the one the agent named (it must be connected), else the one the user used
     // FAI in last (assigned again when it goes away, or when none is connected yet).
     let wanted;
@@ -2042,6 +2038,23 @@ export function createDaemon(options = {}) {
       const picked = pickBrowser(browserCandidates(), body.browser);
       if (picked.error) throw new HttpError(409, picked.error.code, picked.error.message);
       wanted = picked.browser;
+    }
+    // The same client asking again, with the same arguments, while its request still waits for the user (a retried
+    // call, a CLI request-tab run twice, a restarted MCP session): that pending request is the answer. A second one
+    // would open a second task tab and request window, and the user's click would approve only one of them.
+    const unique = [...new Set(origins)];
+    const repeat = [...requests.values()].find(record => record.state === 'pending' && record.client === client
+      && record.mode === mode && record.reason === reason && record.instruction === instruction && record.url === url
+      && record.ttlMs === ttlMs && record.origins.length === unique.length
+      && unique.every(origin => record.origins.includes(origin))
+      && (wanted ? record.browserPinned && record.browser?.id === wanted.id : !record.browserPinned));
+    if (repeat) {
+      log('request_repeat', { requestId: repeat.requestId });
+      return { status: 200, body: { ...requestCreated(repeat), repeated: true } };
+    }
+    const pending = [...requests.values()].filter(record => record.state === 'pending').length;
+    if (pending >= MAX_PENDING_REQUESTS) {
+      throw new HttpError(429, 'too_many_requests', 'Too many pending tab requests; cancel one first', { retryable: true });
     }
     const record = {
       requestId: newRequestId(),
@@ -2072,16 +2085,17 @@ export function createDaemon(options = {}) {
     requests.set(record.requestId, record);
     log('request_state', { requestId: record.requestId, state: 'pending' });
     changed();
+    return { status: 201, body: requestCreated(record) };
+  }
+
+  function requestCreated(record) {
     return {
-      status: 201,
-      body: {
-        requestId: record.requestId,
-        state: 'pending',
-        extensionConnected: Boolean(hub.extension().connected),
-        expiresAt: iso(expiresAt(record)),
-        message: `Ask the user to approve this request in ${record.browser?.name ?? 'their browser'}: ${approvalSteps(approvalOf(record))}.`,
-        request: view(record),
-      },
+      requestId: record.requestId,
+      state: 'pending',
+      extensionConnected: Boolean(hub.extension().connected),
+      expiresAt: iso(expiresAt(record)),
+      message: `Ask the user to approve this request in ${record.browser?.name ?? 'their browser'}: ${approvalSteps(approvalOf(record))}.`,
+      request: view(record),
     };
   }
 

@@ -1904,6 +1904,11 @@ export interface TabRequestResponse {
   expiresAt: string;
   message: string;
   request: RequestView;
+  /**
+   * True when the same client repeated an identical request while its earlier one still waited for the user: that
+   * pending request is returned (HTTP 200) instead of a second one.
+   */
+  repeated?: boolean;
 }
 
 export interface RunProgress {

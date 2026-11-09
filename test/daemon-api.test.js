@@ -159,7 +159,7 @@ test('request validation and the pending limit', async t => {
   assert.ok(Date.parse(created.body.expiresAt) > Date.now());
   assert.deepEqual(ctx.hub.published.at(-1).map(view => view.requestId), [created.body.requestId]);
 
-  for (let i = 0; i < 4; i++) await requestTab(ctx);
+  for (let i = 0; i < 4; i++) await requestTab(ctx, { reason: `Check the page ${i}` });
   const limited = await ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'one too many' });
   assert.equal(limited.status, 429);
   assert.equal(limited.body.error.code, 'too_many_requests');
@@ -172,6 +172,37 @@ test('request validation and the pending limit', async t => {
   assert.equal(unknown.status, 404);
   assert.equal(unknown.body.error.code, 'unknown_request');
   assert.match(unknown.body.error.message, /Request a tab again/);
+});
+
+test('an identical repeat while the request waits returns that pending request; any difference is a new request', async t => {
+  const ctx = await setup(t);
+  const body = { origins: [ORIGIN, 'https://other.example'], reason: 'Check members', instruction: 'Open Members', mode: 'reversible' };
+  const headers = { headers: { 'X-Fai-Client': 'claude-code/1234' } };
+  const first = await ctx.api('POST', '/v1/requests', body, headers);
+  assert.equal(first.status, 201);
+  const published = ctx.hub.published.length;
+  // The agent calls again (a retry, a second CLI run, a restarted MCP session).
+  const again = await ctx.api('POST', '/v1/requests', { ...body, origins: [ORIGIN, 'https://other.example', ORIGIN] }, headers);
+  assert.equal(again.status, 200);
+  assert.equal(again.body.requestId, first.body.requestId);
+  assert.equal(again.body.repeated, true);
+  assert.equal(again.body.state, 'pending');
+  assert.equal(again.body.expiresAt, first.body.expiresAt, 'a repeat does not extend the wait');
+  assert.equal(ctx.hub.published.length, published, 'the extension sees no new request');
+  assert.equal((await ctx.api('GET', '/v1/requests')).body.requests.length, 1);
+  // Anything else asks for something else: a new request. So does another client.
+  for (const [variant, extra] of [[{ mode: 'interactive' }], [{ reason: 'Check members again' }], [{ instruction: 'Open Settings' }],
+    [{ origins: [ORIGIN] }], [{}, { headers: { 'X-Fai-Client': 'codex' } }]]) {
+    const created = await ctx.api('POST', '/v1/requests', { ...body, ...variant }, extra ?? headers);
+    assert.equal(created.status, 201, JSON.stringify(variant));
+    assert.notEqual(created.body.requestId, first.body.requestId);
+    await ctx.api('DELETE', `/v1/requests/${created.body.requestId}`);
+  }
+  // Once the request no longer waits (approved, denied, cancelled), the same call is a new request.
+  await ctx.api('DELETE', `/v1/requests/${first.body.requestId}`);
+  const after = await ctx.api('POST', '/v1/requests', body, headers);
+  assert.equal(after.status, 201);
+  assert.notEqual(after.body.requestId, first.body.requestId);
 });
 
 test('request url: the start page on the origins, else a default; on the view and the pushed list', async t => {
