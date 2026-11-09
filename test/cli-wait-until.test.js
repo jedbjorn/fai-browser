@@ -54,11 +54,11 @@ function oneLine(stdout) {
 }
 
 async function stubbed(t, behavior = {}) {
-  // Short daemon wait rounds (the live daemon blocks up to 30 s per round) so the loop runs several rounds.
-  const stub = await startStubDaemon({ requestWaitCapMs: 150, ...behavior });
+  // Short daemon wait rounds (the live daemon blocks up to 30 s per round) so the loop runs several rounds. The default
+  // driver (agent) unless a test asks for Jev. wait --until never starts a daemon, so none is spawned here.
+  const stub = await startStubDaemon({ requestWaitCapMs: 150, driver: 'agent', ...behavior });
   t.after(() => stub.close());
-  // --no-auto-start everywhere: a test never spawns a daemon of its own.
-  const cli = (args, options) => runCli([...args, '--no-auto-start'], stub.env(), options);
+  const cli = (args, options = {}) => runCli(args, stub.env(options.env), options);
   return { stub, cli };
 }
 
@@ -73,6 +73,15 @@ function addRequest(stub, state, stateReason = null) {
 }
 
 const waitCalls = (stub, requestId) => stub.callsTo('POST', '/v1/wait').filter(entry => entry.body.requestId === requestId);
+
+/** Resolve once the stub has recorded the CLI's first wait round for `requestId` (the CLI is waiting). */
+async function firstWait(stub, requestId, timeoutMs = 10_000) {
+  const until = Date.now() + timeoutMs;
+  while (!waitCalls(stub, requestId).length) {
+    if (Date.now() > until) throw new Error(`no wait round for ${requestId} within ${timeoutMs} ms`);
+    await delay(20);
+  }
+}
 
 test('wait --until active exits 0 at once when the lease is already active', async t => {
   const { stub, cli } = await stubbed(t);
@@ -92,12 +101,15 @@ test('wait --until active exits 0 at once when the lease is already active', asy
 test('wait --until active blocks over several daemon long polls and exits 0 when the user resumes', async t => {
   const { stub, cli } = await stubbed(t);
   const requestId = addRequest(stub, 'paused', 'tab_changed');
-  setTimeout(() => stub.setRequestState(requestId, 'active'), 700);
-  const run = await cli(['wait', requestId, '--until', 'active', '--timeout', '30s']);
+  const running = cli(['wait', requestId, '--until', 'active', '--timeout', '30s']);
+  await firstWait(stub, requestId);
+  await delay(450);
+  stub.setRequestState(requestId, 'active');
+  const run = await running;
   assert.equal(run.code, 0, run.stderr);
   const result = oneLine(run.stdout);
   assert.equal(result.state, 'active');
-  assert.ok(result.waitedMs >= 600, `waited ${result.waitedMs} ms`);
+  assert.equal(result.reconnects, 0);
   const rounds = waitCalls(stub, requestId);
   // Every round is a long poll the daemon holds (150 ms here): no tight polling between them.
   assert.ok(rounds.length >= 2 && rounds.length <= 8, `${rounds.length} wait rounds`);
@@ -158,12 +170,31 @@ test('the timeout exits 2 with the last state and a relay next', async t => {
   assert.match(result.next.text, /still paused after 500ms.*click Resume/);
   assert.ok(result.waitedMs >= 450 && result.waitedMs < 3000, `waited ${result.waitedMs} ms`);
 
+  assert.match(result.next.text, /then call fai_browser_observe with requestId/);
+
   const pending = addRequest(stub, 'pending');
   run = await cli(['wait', pending, '--until', 'active', '--timeout', '200ms']);
   assert.equal(run.code, 2);
   result = oneLine(run.stdout);
   assert.equal(result.lastState, 'pending');
   assert.match(result.next.text, /approve it in the FAI Browser extension/);
+});
+
+test('on the Jev driver the wait\'s next continues with fai_browser_run (kind rerun)', async t => {
+  const { stub, cli } = await stubbed(t, { driver: 'jev' });
+  const requestId = addRequest(stub, 'active');
+  let run = await cli(['wait', requestId, '--until', 'active']);
+  assert.equal(run.code, 0, run.stderr);
+  let result = oneLine(run.stdout);
+  assert.equal(result.next.kind, 'rerun');
+  assert.match(result.next.text, new RegExp(`call fai_browser_run again with requestId ${requestId}`));
+  assert.doesNotMatch(result.next.text, /fai_browser_observe/);
+  const paused = addRequest(stub, 'paused', 'paused');
+  run = await cli(['wait', paused, '--until', 'active', '--timeout', '200ms']);
+  assert.equal(run.code, 2);
+  result = oneLine(run.stdout);
+  assert.equal(result.next.kind, 'relay');
+  assert.match(result.next.text, /then call fai_browser_run again with requestId/);
 });
 
 test('a daemon outage mid-wait is retried with backoff; the wait still ends when the user resumes', async t => {
@@ -179,8 +210,29 @@ test('a daemon outage mid-wait is retried with backoff; the wait still ends when
   assert.equal(run.code, 0, run.stderr);
   const result = oneLine(run.stdout);
   assert.equal(result.state, 'active');
-  assert.ok(result.reconnects >= 1, `reconnects ${result.reconnects}`);
+  // One outage counts once, however many connection attempts the backoff made.
+  assert.equal(result.reconnects, 1);
   assert.match(run.stderr, /daemon not answering/);
+});
+
+test('a daemon gone for the outage window ends the wait as unknown (daemon_gone, exit 3); none is started', async t => {
+  const { stub, cli } = await stubbed(t);
+  const requestId = addRequest(stub, 'paused', 'paused');
+  const running = cli(['wait', requestId, '--until', 'active', '--timeout', '30s'],
+    { env: { FAI_WAIT_DAEMON_GONE_MS: '800' } });
+  await firstWait(stub, requestId);
+  await stub.down();
+  const run = await running;
+  assert.equal(run.code, 3, run.stderr);
+  const result = oneLine(run.stdout);
+  assert.equal(result.state, 'unknown');
+  assert.equal(result.reason, 'daemon_gone');
+  assert.equal(result.next.kind, 'stop');
+  assert.match(result.next.text, /do not survive a daemon restart/);
+  assert.ok(run.ms < 8000, `exited after ${run.ms} ms`);
+  // Nothing auto-started a daemon on the stub's port or in its home.
+  const { readdir } = await import('node:fs/promises');
+  assert.ok(!(await readdir(stub.home)).includes('daemon.lock'), 'no daemon was started');
 });
 
 test('a daemon that comes back without the request (a restart) ends the wait with state unknown', async t => {
@@ -214,7 +266,7 @@ test('SIGTERM ends the wait with one line, state interrupted and exit 130', asyn
   const requestId = addRequest(stub, 'paused', 'paused');
   let child;
   const running = cli(['wait', requestId, '--until', 'active'], { onSpawn: spawned => { child = spawned; } });
-  await delay(500);
+  await firstWait(stub, requestId);
   child.kill('SIGTERM');
   const run = await running;
   assert.equal(run.code, 130, run.stderr);
@@ -231,13 +283,31 @@ test('bad --until/--timeout combinations are command-line errors with exit 1', a
     ['wait', requestId, '--until', 'active', '--timeout', '25h'],
     ['wait', requestId, '--until', 'active', '--max-ms', '100'],
     ['wait', '--run', 'run_1', '--until', 'active'],
-    ['wait', requestId, '--timeout', '30m'],
   ]) {
     const run = await cli(args);
     assert.equal(run.code, 1, `${args.join(' ')}: ${run.stdout}`);
-    assert.equal(typeof JSON.parse(run.stdout.trim()).error.message, 'string');
+    // A failed wait --until still prints its one line with a next the agent can follow.
+    const result = oneLine(run.stdout);
+    assert.equal(result.state, 'error');
+    assert.equal(typeof result.error.message, 'string');
+    assert.equal(result.next.kind, 'relay');
+    assert.match(result.next.text, /^The background wait failed .*ask the user|Ask the user to tell you when they have resumed/);
+    assert.match(result.next.text, /fai_browser_observe/);
+  }
+  // --until and --timeout belong to wait --until alone: elsewhere they are refused, never ignored.
+  for (const args of [
+    ['wait', requestId, '--timeout', '30m'],
+    ['status', '--until', 'active'],
+    ['run', 'Open About', '--origin', 'https://example.com', '--timeout', '1m'],
+    ['daemon', 'status', '--timeout', '1m'],
+    ['install', '--host', 'claude', '--dry-run', '--until', 'active'],
+  ]) {
+    const run = await cli(args);
+    assert.equal(run.code, 1, `${args.join(' ')}: ${run.stdout}`);
+    assert.match(run.stdout, /--(until|timeout) belongs to wait <requestId> --until active/);
   }
   assert.equal(waitCalls(stub, requestId).length, 0);
+  assert.equal(stub.callsTo('POST', '/v1/runs').length, 0);
 });
 
 test('against the real daemon: a paused lease, then Resume (a new lease for the request), wakes the wait', async t => {
@@ -262,7 +332,7 @@ test('against the real daemon: a paused lease, then Resume (a new lease for the 
   assert.equal(daemon.request(requestId).state, 'paused');
 
   const cliEnv = { PATH: process.env.PATH, HOME: home, FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port) };
-  const running = runCli(['wait', requestId, '--until', 'active', '--timeout', '1m', '--no-auto-start'], cliEnv);
+  const running = runCli(['wait', requestId, '--until', 'active', '--timeout', '1m'], cliEnv);
   await delay(600);
   const resumed = await hub.approve(requestId);
   assert.notEqual(resumed.leaseId, leaseId);
@@ -271,10 +341,11 @@ test('against the real daemon: a paused lease, then Resume (a new lease for the 
   const result = oneLine(run.stdout);
   assert.equal(result.state, 'active');
   assert.equal(result.request.lease.leaseId, resumed.leaseId);
+  assert.equal(result.next.kind, 'observe');
 
   // Released while waiting: exit 3.
   await hub.emit({ type: 'status', leaseId: resumed.leaseId, status: 'paused', reason: 'tab_changed' });
-  const ending = runCli(['wait', requestId, '--until', 'active', '--no-auto-start'], cliEnv);
+  const ending = runCli(['wait', requestId, '--until', 'active'], cliEnv);
   await delay(400);
   await api('DELETE', `/v1/requests/${requestId}`, {});
   const ended = await ending;
@@ -293,7 +364,7 @@ test('resumeWaitCommand: absolute node and CLI paths, daemon location variables 
     env: { FAI_HOME: '/tmp/my home', FAI_DAEMON_PORT: '4400', FAI_CLIENT_TOKEN: 'never-in-a-command', OTHER: 'x' },
     execPath: '/opt/node 24/bin/node',
   });
-  assert.equal(carried, `env FAI_HOME='/tmp/my home' FAI_DAEMON_PORT=4400 '/opt/node 24/bin/node' ${CLI_PATH} wait `
+  assert.equal(carried, `FAI_HOME='/tmp/my home' FAI_DAEMON_PORT=4400 '/opt/node 24/bin/node' ${CLI_PATH} wait `
     + 'req_abc --until active --timeout 30m');
   assert.doesNotMatch(carried, /never-in-a-command|CLIENT_TOKEN|OTHER/);
   // Only a daemon-issued id goes into a command.
@@ -309,14 +380,16 @@ test('a paused lease: next tells the agent to relay Resume and start the wait in
     assert.equal(next.kind, 'relay', code);
     assert.match(next.text, /click Resume in the FAI Browser extension/);
     assert.match(next.text, /call fai_browser_observe with requestId req_9\./);
-    assert.ok(next.text.includes(`start \`${command}\` that way now and end your turn`), next.text);
+    assert.ok(next.text.includes(`start \`${command}\` that way now, if one is not already running for this request, `
+      + 'and end your turn'), next.text);
     assert.match(next.text, /run_in_background/);
     assert.match(next.text, /Otherwise ask the user to tell you when they have done it\./);
   }
-  // A pending approval names the same wait, then fai_browser_open.
+  // A pending approval names the same wait, then observe too (the request keeps the opening task for the digest).
   const pending = directNext({ status: 'needs_user', code: 'select_tab' }, { requestId: 'req_9', approval: 'page' });
   assert.equal(pending.kind, 'relay');
-  assert.match(pending.text, /Then call fai_browser_open again with requestId req_9\. If you can run a background/);
+  assert.match(pending.text, /Then call fai_browser_observe with requestId req_9\. If you can run a background/);
+  assert.doesNotMatch(pending.text, /fai_browser_open/);
   assert.ok(pending.text.includes(command));
   // Things the user does in the tab while the lease stays active name no wait (it would return at once).
   for (const code of ['consent_banner', 'login', 'blocked', 'js_dialog']) {
@@ -359,5 +432,37 @@ test('MCP: fai_browser_wait on a paused request names the wait command (observe 
     // The MCP server's own node, CLI path and daemon location, so the host's shell reaches the same daemon.
     assert.ok(data.next.text.includes(resumeWaitCommand(requestId, { env, execPath: process.execPath })), data.next.text);
     assert.ok(!data.next.text.includes(stub.token), 'the client token never goes into a command');
+    // A pending request names the same wait; Agent direct continues with observe.
+    const pending = addRequest(stub, 'pending');
+    const waiting = mcpData(await mcp.callTool('fai_browser_wait', { requestId: pending, maxMs: 100 }));
+    assert.equal(waiting.next.kind, 'relay');
+    assert.ok(waiting.next.text.includes(resumeWaitCommand(pending, { env, execPath: process.execPath })));
+    assert.match(waiting.next.text, driver === 'jev' ? /Then call fai_browser_run again with requestId/
+      : /Then call fai_browser_observe with requestId/);
+  }
+});
+
+test('the command runs as written in a POSIX shell: prefix assignments reach the CLI, a node path with = works', async t => {
+  const { mkdir, symlink, writeFile } = await import('node:fs/promises');
+  const { execFile } = await import('node:child_process');
+  const dir = await mkdtemp(join(tmpdir(), 'fai-wait-cmd-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const odd = join(dir, 'a=b dir');
+  await mkdir(odd);
+  const node = join(odd, 'node');
+  await symlink(process.execPath, node);
+  // A stand-in CLI that prints what it was given.
+  const script = join(dir, 'cli.js');
+  await writeFile(script, 'console.log(JSON.stringify({ home: process.env.FAI_HOME, port: process.env.FAI_DAEMON_PORT, '
+    + 'argv: process.argv.slice(2) }));\n');
+  const command = resumeWaitCommand('req_x1', { env: { FAI_HOME: join(dir, "it's home"), FAI_DAEMON_PORT: '4411' },
+    execPath: node, cliPath: script });
+  for (const shell of ['/bin/sh', '/bin/bash', '/bin/zsh']) {
+    const { existsSync } = await import('node:fs');
+    if (!existsSync(shell)) continue;
+    const stdout = await new Promise((resolveRun, reject) => execFile(shell, ['-c', command], { env: { PATH: '/usr/bin:/bin' } },
+      (error, out) => (error ? reject(error) : resolveRun(out))));
+    assert.deepEqual(JSON.parse(stdout), { home: join(dir, "it's home"), port: '4411',
+      argv: ['wait', 'req_x1', '--until', 'active', '--timeout', '30m'] }, shell);
   }
 });

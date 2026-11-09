@@ -30,7 +30,7 @@ const USAGE = `Usage (your agent chooses each action; the default driver):
   fai-browser wait (<requestId> | --run <runId>) [--max-ms N]
   fai-browser wait <requestId> --until active [--timeout 30m]
                            block until the user resumes or approves the tab (run it in the background: it exits 0
-                           active, 3 ended, 2 timeout)
+                           active, 3 ended, 2 timeout); it never starts a daemon
   fai-browser observe --request ID [--mode M] [--capture last]   (--capture last: also a screenshot)
   fai-browser act --request ID --action a3 --revision R [--expect-* ...]
   fai-browser act --request ID --point X,Y --revision R      (pixels of the observe screenshot; a guarded click)
@@ -89,7 +89,8 @@ Stdout is one JSON line. Exit codes for step/run/act: 0 completed|unverified|che
 2 needs_user|needs_host|budget_exhausted|stopped, 1 failed. wait --until active: 0 active, 3 the request ended
 (released, expired, denied, cancelled or unknown), 2 timeout (still pending or paused), 130 interrupted, 1 error.
 Other commands: 0 success, 1 error.
-First run: npm run setup. Every command except install and install-native starts the daemon if it is not running.`;
+First run: npm run setup. Every command except install, install-native and wait --until starts the daemon if it is
+not running.`;
 
 class ConfigError extends Error {
   constructor(message, { code = 'config', who = 'host', hint, extra } = {}) {
@@ -810,15 +811,15 @@ async function commandWait(flags, positionals) {
 
 // wait --until active: the background command a host runs so the user's Resume (or approval) in the extension wakes
 // it (src/resume.js). Each round is one daemon long poll (POST /v1/wait, which blocks while the request is pending or
-// paused), so nothing spins; a daemon that stops answering is retried with a short backoff until the timeout.
-const UNTIL_EXIT = Object.freeze({ active: 0, timeout: 2, ended: 3, interrupted: 130 });
+// paused), so nothing spins. It never starts a daemon: tab requests live in the daemon's memory, so a new daemon could
+// not know the request. A daemon that stops answering is retried with a short backoff; after UNTIL_GONE_MS without one
+// (FAI_WAIT_DAEMON_GONE_MS) the request is taken as gone.
+const UNTIL_EXIT = Object.freeze({ active: 0, timeout: 2, ended: 3, interrupted: 130, error: 1 });
 const UNTIL_MAX_MS = 24 * 3_600_000;
 // A round that comes back early (a daemon shutting down answers at once) is not repeated sooner than this.
 const UNTIL_MIN_ROUND_MS = 250;
 const UNTIL_BACKOFF_MS = [250, 500, 1000, 2000, 5000];
-// After this long without a daemon, a reconnect may start one again (unless --no-auto-start): a new daemon answers
-// unknown_request at once instead of the wait hanging until its timeout.
-const UNTIL_RESTART_AFTER_MS = 30_000;
+const UNTIL_GONE_MS = 30_000;
 
 /** A duration flag: an integer with a unit, ms, s, m or h (`30m`, `90s`, `1500ms`). */
 function durationFlag(name, value, { max = UNTIL_MAX_MS } = {}) {
@@ -830,22 +831,32 @@ function durationFlag(name, value, { max = UNTIL_MAX_MS } = {}) {
   return ms;
 }
 
-function untilNext(outcome, requestId, timeoutText) {
-  const ref = `requestId ${requestId}`;
+/** How the host continues on the request once the tab is ready, by the daemon's driver (jev: a run; else observe). */
+function continueOn(requestId, driver) {
+  return driver === 'jev'
+    ? `call fai_browser_run again with requestId ${requestId}, an instruction and an expectation`
+    : `call fai_browser_observe with requestId ${requestId} (CLI: observe --request ${requestId}), then choose`;
+}
+
+function untilNext(outcome, requestId, timeoutText, driver, goneMs) {
   switch (outcome.state) {
     case 'active':
-      return { kind: 'observe', text: `The tab is ready (request ${requestId} is active). Continue the task: call `
-        + `fai_browser_observe with ${ref} (Jev driver: fai_browser_run with ${ref}; CLI: observe --request `
-        + `${requestId}).` };
+      return { kind: driver === 'jev' ? 'rerun' : 'observe',
+        text: `The tab is ready (request ${requestId} is active). Continue the task: ${continueOn(requestId, driver)}.` };
     case 'timeout':
       return { kind: 'relay', text: `Request ${requestId} is still ${outcome.lastState ?? 'waiting'} after `
         + `${timeoutText}. Ask the user to ${outcome.lastState === 'pending' ? 'approve it' : 'click Resume'} in the `
-        + `FAI Browser extension and to tell you when they have; then call fai_browser_observe with ${ref}, or run this `
+        + `FAI Browser extension and to tell you when they have; then ${continueOn(requestId, driver)}. Or run this `
         + 'wait again.' };
     case 'interrupted':
       return { kind: 'stop', text: `The wait was interrupted before request ${requestId} became active. Run it again, `
         + 'or ask the user to tell you when they have resumed.' };
     case 'unknown':
+      if (outcome.reason === 'daemon_gone') {
+        return { kind: 'stop', text: `The FAI Browser daemon has not answered for ${Math.round(goneMs / 1000)} s, and `
+          + `tab requests do not survive a daemon restart: request ${requestId} is gone. Tell the user (they can check `
+          + '`fai-browser daemon status`); request a tab again only if they still want this.' };
+      }
       return { kind: 'stop', text: `The daemon no longer knows request ${requestId} (it may have restarted). Tell the `
         + 'user; request a tab again only if they still want this.' };
     default:
@@ -857,6 +868,24 @@ function untilNext(outcome, requestId, timeoutText) {
         + `${outcome.reason && outcome.reason !== outcome.state ? `: ${outcome.reason}` : ''}). Tell the user; request a `
         + 'tab again only if they still want this.' };
   }
+}
+
+/** The one line a failed wait --until prints (a bad flag, a refused token, an unexpected daemon answer): exit 1. */
+function untilErrorLine(error, requestId) {
+  const failure = failureJson(error).error;
+  const ref = typeof requestId === 'string' && requestId ? requestId : null;
+  return {
+    state: 'error',
+    requestId: ref,
+    until: 'active',
+    error: failure,
+    next: {
+      kind: 'relay',
+      text: `The background wait failed (${failure.code}: ${String(failure.message).slice(0, 200)}). Ask the user to `
+        + 'tell you when they have resumed or approved the tab in the FAI Browser extension, then call '
+        + `fai_browser_observe${ref ? ` with requestId ${ref}` : ''} (Jev driver: fai_browser_run again).`,
+    },
+  };
 }
 
 // Daemon trouble the wait outlives: no answer (stopped, restarting, a reset socket or an HTTP timeout), shutting down,
@@ -890,6 +919,7 @@ async function commandWaitUntil(flags, positionals) {
   const requestId = positional(positionals, 1, 'A requestId');
   const timeoutText = flags.timeout ?? RESUME_WAIT_TIMEOUT;
   const timeoutMs = durationFlag('timeout', timeoutText);
+  const goneMs = envInteger('FAI_WAIT_DAEMON_GONE_MS', 1) ?? UNTIL_GONE_MS;
   const started = Date.now();
   const deadline = started + timeoutMs;
   const controller = new AbortController();
@@ -899,10 +929,12 @@ async function commandWaitUntil(flags, positionals) {
   process.on('SIGTERM', onSignal);
   const { FaiBrowserClient } = await import('./client.js');
   let client = null;
+  let driver = null;
   let fresh = false;
   let last = null;
   let reconnects = 0;
   let failures = 0;
+  // When the current outage began; null while the daemon answers.
   let downSince = null;
   const finish = (state, extra = {}) => {
     const outcome = {
@@ -915,11 +947,8 @@ async function commandWaitUntil(flags, positionals) {
       reconnects,
       request: last,
     };
-    outcome.next = untilNext(outcome, requestId, timeoutText);
-    const exitCode = state === 'active' ? UNTIL_EXIT.active
-      : state === 'timeout' ? UNTIL_EXIT.timeout
-        : state === 'interrupted' ? UNTIL_EXIT.interrupted : UNTIL_EXIT.ended;
-    return { value: outcome, exitCode };
+    outcome.next = untilNext(outcome, requestId, timeoutText, driver, goneMs);
+    return { value: outcome, exitCode: UNTIL_EXIT[state] ?? UNTIL_EXIT.ended };
   };
   const timedOut = () => finish('timeout', { lastState: last?.state ?? null });
   try {
@@ -927,19 +956,18 @@ async function commandWaitUntil(flags, positionals) {
       if (signal.aborted) return finish('interrupted');
       try {
         if (!client) {
-          // The first connection follows the usual auto-start; a reconnect waits for the daemon to come back first.
-          const autoStart = autoStartDefault && (downSince === null ? reconnects === 0
-            : Date.now() - downSince >= UNTIL_RESTART_AFTER_MS);
           fresh = true;
-          client = await FaiBrowserClient.connect({ home: FAI_HOME, autoStart, clientName: 'cli' });
-          if (downSince !== null) {
-            reconnects += 1;
-            log(`daemon answering again; still waiting for request ${requestId}`);
-          }
+          client = await FaiBrowserClient.connect({ home: FAI_HOME, autoStart: false, clientName: 'cli' });
         }
         const roundStarted = Date.now();
         const maxMs = Math.max(0, Math.min(WAIT_SLICE_MS, deadline - roundStarted));
         const response = await client.wait({ requestId, maxMs }, { signal });
+        driver = client.driver ?? driver;
+        if (downSince !== null) {
+          // One outage counts once, however many connection attempts it took.
+          reconnects += 1;
+          log(`daemon answering again; still waiting for request ${requestId}`);
+        }
         fresh = false;
         downSince = null;
         failures = 0;
@@ -957,9 +985,10 @@ async function commandWaitUntil(flags, positionals) {
         downSince ??= Date.now();
         const backoff = UNTIL_BACKOFF_MS[Math.min(failures, UNTIL_BACKOFF_MS.length - 1)];
         failures += 1;
-        if (failures === 1) log(`daemon not answering (${error.message}); retrying until the timeout`);
+        if (failures === 1) log(`daemon not answering (${error.message}); retrying for up to ${Math.round(goneMs / 1000)} s`);
         if (deadline - Date.now() <= 0) return timedOut();
-        await pause(Math.min(backoff, deadline - Date.now()), signal);
+        if (Date.now() - downSince >= goneMs) return finish('unknown', { reason: 'daemon_gone' });
+        await pause(Math.min(backoff, deadline - Date.now(), downSince + goneMs - Date.now()), signal);
       }
     }
   } finally {
@@ -1243,6 +1272,15 @@ async function main() {
     return 0;
   }
   const command = positionals[0];
+  const waitUntil = command === 'wait' && flags.until !== undefined;
+  if (command !== 'wait' && (flags.until !== undefined || flags.timeout !== undefined)) {
+    // Flags of wait --until only: no other command may take them and silently ignore them.
+    const result = baseResult({ status: 'failed', code: 'config', who: 'host',
+      reason: `--${flags.until !== undefined ? 'until' : 'timeout'} belongs to wait <requestId> --until active, not ${command}`,
+      message: 'Fix the command line and rerun.' });
+    await emitLine(result, pretty);
+    return 1;
+  }
   if (RUN_COMMANDS.has(command)) {
     try {
       applyDaemonPortFlag(flags);
@@ -1277,7 +1315,7 @@ async function main() {
       }
       return exitCode;
     }
-    if (command === 'wait' && flags.until !== undefined) {
+    if (waitUntil) {
       const { value, exitCode } = await commandWaitUntil(flags, positionals);
       await emitLine(value, pretty);
       return exitCode;
@@ -1296,7 +1334,8 @@ async function main() {
     if (!(error instanceof ConfigError) && !Number.isInteger(error?.status) && !error?.code) {
       log(error?.stack || String(error));
     }
-    await emitLine(failureJson(error), pretty);
+    // wait --until prints its own shape, with a next, even when it fails.
+    await emitLine(waitUntil ? untilErrorLine(error, positionals[1]) : failureJson(error), pretty);
     return 1;
   }
 }

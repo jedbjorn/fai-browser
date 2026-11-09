@@ -9,12 +9,13 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 
 ### Added
 
-- Clicking Resume (or approving) in the extension can wake the agent. `fai-browser wait <requestId> --until active [--timeout 30m]` blocks on the daemon's long poll until the tab is usable again and prints one JSON line: exit 0 active, 3 the request ended (released, expired, denied, cancelled or unknown to the daemon), 2 timeout, 130 interrupted. It rides out a daemon restart or dropped connection with a short backoff.
-- Paused and pending relays (Agent direct and Jev) name that command in `next.text` with the absolute node and CLI paths, so a host that is notified when a background command exits (Claude Code's `run_in_background`) starts it and ends its turn instead of waiting for the user to type "resumed"; other hosts ask the user to say when they are done.
+- Clicking Resume (or approving) in the extension can wake the agent. `fai-browser wait <requestId> --until active [--timeout 30m]` blocks on the daemon's long poll until the tab is usable again and prints one JSON line: exit 0 active, 3 the request ended (released, expired, denied, cancelled or unknown to the daemon), 2 timeout, 130 interrupted. It never starts a daemon: it rides out a dropped connection or a restart with a short backoff, and after 30 s without a daemon ends as `unknown` (`daemon_gone`), since tab requests do not survive a restart. A failure still prints one line with a `next`; `next` follows the driver (`observe`, or `rerun` with `fai_browser_run` for Jev).
+- Paused and pending relays (Agent direct and Jev) name that command in `next.text` with the absolute node and CLI paths, so a host that is notified when a background command exits (Claude Code's `run_in_background`) starts it (unless one is already running) and ends its turn instead of waiting for the user to type "resumed"; other hosts ask the user to say when they are done.
 
 ### Changed
 
-- The paused lease messages ask the user to click Resume in the FAI Browser extension and leave how to continue to `next`; after Resume the agent observes the page (Agent direct) instead of calling `fai_browser_open` again.
+- The paused lease messages ask the user to click Resume in the FAI Browser extension and leave how to continue to `next`; after Resume or approval the agent observes the page (Agent direct) instead of calling `fai_browser_open` again: the request keeps the opening `task`, which observe ranks the digest by.
+- `--until` and `--timeout` are refused by every command but `wait`.
 
 ## 0.4.0 (2026-11-07)
 
