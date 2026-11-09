@@ -37,7 +37,13 @@ async function setup(t, { clientInfo = { name: 'opencode', version: '1.19.5' }, 
   const daemon = createDaemon({ home, env: {}, port: 0, hub, providerFactory: () => { throw new Error('no provider'); } });
   await daemon.listen();
   const prompts = [];
-  const client = { session: { promptAsync: async request => { prompts.push(request); return { response: { status: 204 } }; } } };
+  const client = {
+    session: {
+      promptAsync: async request => { prompts.push(request); return { response: { status: 204 } }; },
+      messages: async () => ({ data: [{ info: { role: 'user', agent: 'plan', model: { providerID: 'opencode', modelID: 'm1' } } }] }),
+      get: async ({ path }) => ({ data: { id: path.id } }),
+    },
+  };
   const savedRuntime = process.env.XDG_RUNTIME_DIR;
   let hooks = {};
   if (plugin) {
@@ -95,6 +101,7 @@ test('MCP (OpenCode): not ready until a tagged FAI call; the tag never reaches t
     text: 'Read it' });
   await until(() => ctx.prompts.length === 1, 'the plugin prompt');
   assert.deepEqual(ctx.prompts[0].path, { id: SES_A });
+  assert.equal(ctx.prompts[0].body.agent, 'plan', 'the session\'s own agent');
   assert.equal(ctx.prompts[0].body.parts.length, 1);
   assert.match(ctx.prompts[0].body.parts[0].text, new RegExp(`^\\[FAI Browser\\] The user invited you .*${reply.invite.inviteId}`));
   await until(async () => inviteOf(ctx, reply.requestId)?.wake.state === 'delivered', 'the delivered report');

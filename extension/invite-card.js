@@ -48,8 +48,6 @@ export function wakeLine(invite) {
   if (wake === 'queued' || wake === 'sent') return { text: `Waking ${who}…`, fallback: false };
   // "Sent", not "received": Claude Code's socket answers nothing, not even to a refused or held message (checked on
   // 2.1.319), so a delivered wake only means the message was written. The copy line stays one tap away.
-  // OpenCode's FAI plugin answers once the turn is queued: a real acknowledgement.
-  if (wake === 'delivered' && invite?.session?.host === 'opencode') return { text: `Woke ${who}. It is starting now.`, fallback: false };
   if (wake === 'delivered' || wake === 'skipped') return { text: `Sent to ${who}. It should start in a moment.`, fallback: 'soft' };
   if (wake === 'failed') {
     const why = invite.wake.error?.message ? ` (${String(invite.wake.error.message).slice(0, 120)})` : '';
