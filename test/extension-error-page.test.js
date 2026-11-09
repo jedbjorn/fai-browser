@@ -51,7 +51,12 @@ function startSite(state) {
 // `origin` and leases the active tab at `level` (startSession with the tab, as the toolbar click does).
 async function launch(t, { hostPermissions, origin, startUrl, toolbar = false }) {
   const scratch = await mkdtemp(join(tmpdir(), 'fai-error-page-'));
-  t.after(() => rm(scratch, { recursive: true, force: true }));
+  // One cleanup, in order: the companion, then the browser, then its profile (after hooks run in registration order).
+  const cleanup = [];
+  t.after(async () => {
+    for (const step of cleanup.reverse()) await step().catch(() => {});
+    await rm(scratch, { recursive: true, force: true });
+  });
   const extension = join(scratch, 'extension');
   await cp(join(ROOT, 'extension'), extension, { recursive: true });
   const manifest = JSON.parse(await readFile(join(extension, 'manifest.json'), 'utf8'));
@@ -65,12 +70,12 @@ async function launch(t, { hostPermissions, origin, startUrl, toolbar = false })
     args: ['--no-sandbox', ...(toolbar ? ['--enable-unsafe-extension-debugging'] : []),
       `--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
   });
-  t.after(() => context.close());
+  cleanup.push(() => context.close());
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
   const extensionId = await worker.evaluate(() => chrome.runtime.id);
   const companion = createCompanion({ port: 0, extensionId, secret: SECRET, allowedOrigins: [origin] });
   const { port } = await companion.listen();
-  t.after(() => companion.close());
+  cleanup.push(() => companion.close());
   const page = context.pages()[0];
   await page.goto(startUrl);
   if (toolbar) {
