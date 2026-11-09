@@ -1263,6 +1263,140 @@ test('the consent redirect is followed once: no second hop, even to another appr
   assert.equal(status.reason, 'origin_changed');
 });
 
+// --- the browser's own error page (an HTTP error sent without a page body, a network failure) ---------------------
+// Chrome commits chrome-error://chromewebdata/ while tab.url keeps the URL it tried, so the tab is still on the approved
+// origin, but no extension script runs there. Chromium 156 rejects executeScript with "Frame with ID 0 is showing
+// error page"; other versions name the error page's URL ("Cannot access contents of url "chrome-error://..."), which
+// the /Cannot access/ rule used to read as an origin change and pause the session.
+const BROWSER_ERROR_MESSAGES = [
+  'Frame with ID 0 is showing error page',
+  'Cannot access contents of url "chrome-error://chromewebdata/". Extension manifest must request permission to access this host.',
+];
+const throwing = message => () => { throw new Error(message); };
+
+async function onBrowserErrorPage(message) {
+  const h = await started();
+  h.tab.url = ORIGIN + '/broken';
+  h.scriptOverride = () => throwing(message);
+  return h;
+}
+
+const paused = h => h.sent.some(m => m.type === 'status' && m.status === 'paused');
+
+for (const message of BROWSER_ERROR_MESSAGES) {
+  test(`the browser's own error page on the approved origin is an error page observation, not a pause (${message.slice(0, 24)})`, async () => {
+    const h = await onBrowserErrorPage(message);
+    const id = h.command('observe');
+    const reply = await h.waitFor(m => m.type === 'result' && m.id === id);
+    assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+    const observation = reply.result;
+    assert.equal(observation.url, ORIGIN + '/broken');
+    assert.equal(observation.browserErrorPage, true);
+    assert.equal(observation.httpStatus, undefined, 'the status is unknown: the page script never ran');
+    assert.deepEqual(observation.controls, []);
+    assert.ok(observation.warnings.includes('browser_error_page'));
+    assert.match(observation.text, /error page/);
+    assert.match(observation.revision, /^browser-error:/);
+    // The same error page twice has the same revision.
+    const again = h.command('observe');
+    const second = await h.waitFor(m => m.type === 'result' && m.id === again);
+    assert.equal(second.result.revision, observation.revision);
+    await sleep(20);
+    assert.equal(paused(h), false, 'the session stays active');
+
+    // A page action on it fails that command only (recoverable: the runtime observes the error page again).
+    const click = h.command('execute', { action: { type: 'click', target: '1' }, expectedRevision: observation.revision });
+    const refused = await h.waitFor(m => m.type === 'result' && m.id === click);
+    assert.equal(refused.error.code, 'target_unavailable');
+    assert.equal(refused.error.recoverable, true);
+    assert.match(refused.error.message, /error page/);
+    await sleep(20);
+    assert.equal(paused(h), false);
+
+    // A reload once the site is back reads the page again, in the same session.
+    let reloads = 0;
+    h.chrome.tabs.reload = async () => {
+      reloads++;
+      h.scriptOverride = null;
+      h.navigate(ORIGIN + '/broken', { start: 0, commit: 5, complete: 30 });
+    };
+    const reload = h.command('execute', { action: { type: 'history', move: 'reload' }, expectedRevision: observation.revision });
+    const reloaded = await h.waitFor(m => m.type === 'result' && m.id === reload, 6000);
+    assert.equal(reloaded.error, undefined, JSON.stringify(reloaded.error));
+    assert.equal(reloads, 1);
+    assert.equal(reloaded.result.observation.browserErrorPage, undefined);
+    assert.equal(reloaded.result.observation.title, 'Fixture');
+    assert.equal(paused(h), false);
+  });
+}
+
+test('a page that commits as the browser error page after a click is observed as one; another approved URL still opens', async () => {
+  const h = await started();
+  h.pageExecute = action => {
+    h.navigate(ORIGIN + '/down', { start: 20, commit: 40, complete: 80 });
+    // The next document is Chrome's error page: every page call fails from now on.
+    setTimeout(() => { h.scriptOverride = () => throwing(BROWSER_ERROR_MESSAGES[0]); }, 40);
+    return linkClick(h)(action);
+  };
+  const { reply } = await runExecute(h);
+  assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+  assert.equal(reply.result.navigated, true);
+  assert.equal(reply.result.observation.url, ORIGIN + '/down');
+  assert.equal(reply.result.observation.browserErrorPage, true);
+  assert.equal(paused(h), false);
+
+  // navigate_allowed_url from the error page (page.js cannot run there): the worker opens it itself.
+  const updates = [];
+  const update = h.chrome.tabs.update.bind(h.chrome.tabs);
+  h.chrome.tabs.update = async (id, info) => {
+    if (info.url) {
+      updates.push(info.url);
+      h.scriptOverride = null;
+      h.navigate(info.url, { start: 0, commit: 5, complete: 30 });
+    }
+    return update(id, info);
+  };
+  const open = h.command('execute', { action: { type: 'navigate_allowed_url', url: ORIGIN + '/home' },
+    expectedRevision: reply.result.observation.revision });
+  const opened = await h.waitFor(m => m.type === 'result' && m.id === open, 6000);
+  assert.equal(opened.error, undefined, JSON.stringify(opened.error));
+  assert.deepEqual(updates, [ORIGIN + '/home']);
+  assert.equal(opened.result.observation.url, ORIGIN + '/home');
+  assert.equal(opened.result.navigated, true);
+  // Off the approved site it is refused as before, without touching the tab.
+  const outside = h.command('execute', { action: { type: 'navigate_allowed_url', url: 'https://evil.test/' }, expectedRevision: 'doc:1' });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === outside)).error.code, 'cross_origin');
+  assert.deepEqual(updates, [ORIGIN + '/home']);
+});
+
+test('a browser error page off the approved origin, or a tab whose URL Chrome withholds, still pauses as origin_changed', async () => {
+  // The tab tried another origin and Chrome shows its error page there.
+  const h = await started();
+  h.tab.url = 'https://elsewhere.test/broken';
+  h.scriptOverride = () => throwing(BROWSER_ERROR_MESSAGES[1]);
+  const id = h.command('observe');
+  const reply = await h.waitFor(m => m.type === 'result' && m.id === id);
+  assert.equal(reply.error.code, 'origin_changed');
+  const status = await h.waitFor(m => m.type === 'status' && m.status === 'paused');
+  assert.equal(status.reason, 'origin_changed');
+
+  // Chrome withdrew access (an activeTab grant ends at a cross-origin commit, its own error page included): tab.url is
+  // gone and scripting fails without naming the page.
+  const withheld = await started();
+  withheld.tab.url = undefined;
+  withheld.scriptOverride = () => throwing('Cannot access contents of the page. Extension manifest must request permission to access the respective host.');
+  const observe = withheld.command('observe');
+  assert.equal((await withheld.waitFor(m => m.type === 'result' && m.id === observe)).error.code, 'origin_changed');
+  assert.equal((await withheld.waitFor(m => m.type === 'status' && m.status === 'paused')).reason, 'origin_changed');
+
+  // A script error that names a host permission on the approved URL is still an origin change (not an error page).
+  const denied = await started();
+  denied.scriptOverride = () => throwing('Missing host permission for the tab');
+  const call = denied.command('observe');
+  assert.equal((await denied.waitFor(m => m.type === 'result' && m.id === call)).error.code, 'origin_changed');
+  assert.equal((await denied.waitFor(m => m.type === 'status' && m.status === 'paused')).reason, 'origin_changed');
+});
+
 // --- permission levels (configurable-guardrails.md §3.4, extension side) -------------------------------------------
 
 const TEST_ORIGIN = ORIGIN; // the leased tab's origin, listed as a testing environment in the tests below
