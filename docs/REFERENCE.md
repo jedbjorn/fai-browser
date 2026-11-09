@@ -358,7 +358,7 @@ State lives outside the checkout, in per-user directories. **Settings** (`.env.l
 
 A tab request (`POST /v1/requests`) may carry `url`, the page the extension opens when the user approves: an http(s) URL on one of its `origins` (at most 2048 characters; off the origins is `422 origin_not_granted`). Without it the daemon uses the first exact origin's root, else `https://<root>/` for a request with only domain roots (the site may redirect that apex to www). Every request view (`GET /v1/requests`, `/v1/wait`, the extension's request list) has `url`. The same client instance (the whole `X-Fai-Client` header, `<name>/<instance id>`: one MCP server, SDK client or CLI run) repeating an identical request (same origins, `mode`, `reason`, `instruction`, `url`, `ttlMs` and `browser`, pinned or not) while its earlier one still waits for the user and has not expired gets that pending request back (`200`, `repeated: true`) instead of a second request, task tab and request window. Another instance (another agent session, a second CLI `request-tab` run, a client without an instance id), or the same instance under another `X-Fai-Session` owner session, always gets a request of its own. The MCP server fills it from the first `allowedUrls` entry on the origins, else the first URL the instruction (or first step) names after a navigation verb ("Open https://...") on the origins, never one a `{{answer:N}}` writes in; the CLI does the same from `--origin` and the instruction (it has no `--url` flag).
 
-A paused request nobody is expected to continue is `stale` in its view (status, `wait`, the extension's list): `newer_request` when the agent that made it (the same `X-Fai-Session` owner session, else the same client instance) has asked for another tab since, or `idle` when no live agent session owns it and nothing used it for 5 minutes since it paused (`STALE_IDLE_MS`; a CLI `wait` counts as use). A paused view also has `pausedAt`. Stale requests stay resumable and releasable, but the popup folds them away and does not count them in its `Ⅱ` badge, and `fai_browser_status` lists them (`stale (newer_request)`) and its `next.text` names this session's own for release (`fai_browser_release`, or `fai_browser_stop` with the `requestId` under Jev). Approving the newer request in the same browser releases a stale one anyway (one lease per browser).
+A paused request nobody is expected to continue is `stale` in its view (status, `wait`, the extension's list): `newer_request` when the agent that made it (the same `X-Fai-Session` owner session, else the same client instance) has asked for another tab since (a newer request that ended without ever being approved, denied, cancelled or expired, does not count), or `idle` when no live agent session owns it and nothing used it for 5 minutes since it paused (`STALE_IDLE_MS`; a CLI `wait` counts as use). A paused view also has `pausedAt`. Stale requests stay resumable and releasable, but the popup folds them under **Older paused tasks** and does not count them in its `Ⅱ` badge, and `fai_browser_status` lists them (`stale (newer_request)`) and its `next.text` names this session's own for release (a paused relay for a stale request tells the user to unfold Older paused tasks); a paused invited tab is never stale while its invite is open (`fai_browser_release`, or `fai_browser_stop` with the `requestId` under Jev). Approving the newer request in the same browser releases a stale one anyway (one lease per browser).
 
 | Variable | Meaning |
 |---|---|
@@ -835,15 +835,18 @@ access; a modal's per-host permission alone is insufficient. No all-sites permis
 
 **Which request a click approves.** Every Approve, Resume, Open and icon click names its request: the card's, the
 armed tab's or the request modal's (`requestId` in the `start`, `open` and lease messages). The popup lists new requests
-first, newest first, under "Waiting for your approval", then the task in use, then **Paused tasks**, each with its own
-label (`NEW TAB REQUEST`, `PAUSED TASK`), why it paused, and a secondary **Resume on this tab** (or **Resume in a new
-<host> tab**), never the primary Approve or Open look; a stale paused task (see [The daemon](#the-daemon)) is folded
-under **Older paused tasks (n)** and offered for Resume only once unfolded. The approval window lists new requests
-only and closes when none is left. A start that names no request (an older popup's "Select tab and start") takes the
-newest pending request for the tab's origin, else a paused one only when this tab is its own; otherwise nothing is
-leased ("Choose the request in the FAI Browser popup"). The daemon applies the same rule to a lease message without a
-`requestId`. A paused request is never resumed on another tab, nor while a request for its origin waits, without a
-click on its own card.
+first, newest first, under "Waiting for your approval", then the task in use, then **Paused tasks** (the 5 most
+recently paused), each with its own label (`NEW TAB REQUEST`, `PAUSED TASK`), why it paused, and a secondary **Resume
+on this tab** (or **Resume in a new <host> tab**), never the primary Approve or Open look. Stale paused tasks (see
+[The daemon](#the-daemon)) and paused tasks beyond those 5 are folded under **Older paused tasks (n)**, newest paused
+first, at most 5 shown before **Show n more**; they are offered for Resume or Release only once unfolded. The approval
+window lists new requests only and closes when none is left. A start that names no request (an older popup's "Select
+tab and start") takes the newest pending request for the tab's origin, else a paused one only when this tab is its
+own; never an invited tab (it is bound only through its invite). When the worker knows requests for the site but none
+qualifies, nothing is leased ("Choose the request in the FAI Browser popup"); when it knows none, the service decides.
+The daemon applies the same rule to a lease message without a `requestId`, and also skips a pending request pinned to
+another browser and a paused request another browser holds (tab ids are per browser). A paused request is never
+resumed on another tab, nor while a request for its origin waits, without a click on its own card.
 
 When the current tab is not on a requested origin (or is not an http page), the card's primary button reads **Open <host>** and the mismatch line says the host opens in a new tab and is approved there with its modal or toolbar icon; level and site choices work as on a matching tab. When the tab does match, **Approve this tab** stays the primary path (`#approve`) and **Open in a new tab** is a secondary link. With **Open requested pages right away** off, nothing opens before that click.
 

@@ -745,6 +745,43 @@ test('popup: a new request comes first, apart from paused tasks, with distinct l
   assert.equal(await win.evaluate(() => __closed), 1);
 });
 
+// The list stays controlled: newest first by last activity in every section (pending by when it was asked, paused by
+// when it paused), at most 5 paused tasks in their section, the rest folded with the stale ones, and the fold shows at
+// most 5 before "Show n more". A folded card's Release sends its own request, and focus on it survives a re-render.
+test('popup: newest first by activity, at most 5 paused tasks shown, the rest folded with the stale ones behind Show more', async t => {
+  const minutes = n => new Date(Date.now() - n * 60_000).toISOString();
+  // Created in this order (oldest first, as the daemon lists them), paused in another order.
+  const paused = Array.from({ length: 8 }, (_, i) => ({ ...SHOP_REQUEST, requestId: `req_p${i}`, state: 'paused',
+    stateReason: 'paused', reason: `Paused ${i}`, createdAt: minutes(100 - i), pausedAt: minutes([9, 3, 12, 1, 7, 2, 15, 5][i]) }));
+  const stale = Array.from({ length: 3 }, (_, i) => ({ ...SHOP_REQUEST, requestId: `req_s${i}`, state: 'paused',
+    stateReason: 'tab_changed', stale: 'newer_request', reason: `Stale ${i}`, createdAt: minutes(200 - i), pausedAt: minutes([4, 30, 20][i]) }));
+  const pending = Array.from({ length: 2 }, (_, i) => ({ ...SHOP_REQUEST, requestId: `req_n${i}`, reason: `New ${i}`,
+    createdAt: minutes(2 - i) }));
+  const page = await popup(t, { local: { ...PAIRED }, requests: [...stale, ...paused, ...pending], tabUrl: 'https://shop.example.com/cart' });
+  const top = await page.$$eval('#request-list > .request-card', nodes => nodes.map(node => node.dataset.requestId));
+  // Pending newest first, then the 5 most recently paused tasks.
+  assert.deepEqual(top, ['req_n1', 'req_n0', 'req_p3', 'req_p5', 'req_p1', 'req_p7', 'req_p4']);
+  assert.equal(await page.$eval('.stale-requests summary', node => node.textContent), 'Older paused tasks (6)');
+  await page.click('.stale-requests summary');
+  const folded = () => page.$$eval('.stale-requests .request-card', nodes => nodes.map(node => node.dataset.requestId));
+  // The other 3 paused tasks and the 3 stale ones, by when they paused: s0 (4), p0 (9), p2 (12), p6 (15), s2 (20).
+  assert.deepEqual(await folded(), ['req_s0', 'req_p0', 'req_p2', 'req_p6', 'req_s2']);
+  assert.equal(await page.$eval('.stale-requests .show-more', node => node.textContent), 'Show 1 more');
+  // Keyboard focus on a folded card survives a re-render (a requests update).
+  await page.focus('[data-request-id="req_p2"] .deny-request');
+  await page.evaluate(list => { for (const listener of __listeners) listener({ requests: { newValue: list } }, 'session'); },
+    [...stale, ...paused, ...pending]);
+  assert.equal(await page.evaluate(() => document.activeElement?.closest('.request-card')?.dataset.requestId), 'req_p2');
+  await page.click('.stale-requests .show-more');
+  assert.deepEqual(await folded(), ['req_s0', 'req_p0', 'req_p2', 'req_p6', 'req_s2', 'req_s1']);
+  assert.equal(await count(page, '.stale-requests .show-more'), 0);
+  // Release on a folded card releases that request.
+  assert.equal(await page.$eval('[data-request-id="req_s1"] .deny-request', node => node.textContent), 'Release');
+  await page.click('[data-request-id="req_s1"] .deny-request');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'deny'));
+  assert.equal(await page.evaluate(() => __sent.find(message => message.type === 'deny').requestId), 'req_s1');
+});
+
 test('approval window: it closes itself when no pending or paused request is left', async t => {
   const page = await popup(t, { local: { ...PAIRED }, requests: [SHOP_REQUEST], query: '?window=1' });
   assert.equal(await page.evaluate(() => __closed), 0);

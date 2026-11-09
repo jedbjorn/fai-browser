@@ -170,7 +170,8 @@ function renderBrowsers() {
 // Why a request paused, in the user's words (the daemon's stateReason).
 const PAUSE_TEXT = {
   paused: 'You paused it',
-  tab_changed: 'You switched tabs',
+  // tab_changed covers a switch to another tab and a closed task tab alike.
+  tab_changed: 'The task tab was left or closed',
   origin_changed: 'The tab left the site',
   child_tab: 'The page opened a new tab or window',
   session_inactive: 'The browser extension restarted',
@@ -605,11 +606,21 @@ function renderSetup() {
   pairButton.textContent = paired && native !== 'missing' ? 'Reconnect' : 'Pair with the FAI service';
 }
 
-// Newest first: the request the agent made last is the one the user was just told about.
-const newestFirst = (a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''));
+// Newest first by last activity: a new request by when the agent asked, a paused task by when it paused (else when it
+// was asked for). The daemon lists requests in creation order, so a tie keeps the later one first.
+const activity = request => String((request.state === 'paused' ? request.pausedAt : null) ?? request.createdAt ?? '');
+function newestFirst(list) {
+  return list.map((request, index) => ({ request, index }))
+    .sort((a, b) => activity(b.request).localeCompare(activity(a.request)) || b.index - a.index)
+    .map(({ request }) => request);
+}
 
-// "Older paused tasks" (stale ones) stays open or closed across re-renders once the user toggled it.
+// At most this many paused tasks show in their section, and at most this many in the "Older paused tasks" fold before
+// its "Show n more"; the rest of the paused tasks join the fold (one fold, never a fold inside a fold).
+const PAUSED_SHOWN = 5;
+// The fold stays open or closed, and shows all or only the first few, across re-renders once the user chose.
 let staleOpen = false;
+let staleAll = false;
 
 function sectionLabel(text, className) {
   return element('p', `request-section ${className}`, text);
@@ -638,20 +649,34 @@ function render() {
   // New requests first and apart, then the task in use, then paused tasks to resume, then stale ones folded away: the
   // first button is always the newest request's, never an older task's (issue #13).
   const serving = visible.filter(request => request.requestId === servingId);
-  const pending = visible.filter(request => request.requestId !== servingId && request.state === 'pending').sort(newestFirst);
-  const paused = visible.filter(request => request.requestId !== servingId && request.state === 'paused').sort(newestFirst);
+  const pending = newestFirst(visible.filter(request => request.requestId !== servingId && request.state === 'pending'));
+  const paused = newestFirst(visible.filter(request => request.requestId !== servingId && request.state === 'paused'));
   const resumable = paused.filter(request => !request.stale);
-  const stale = paused.filter(request => request.stale);
+  // The fold: stale tasks, and the paused tasks beyond the first PAUSED_SHOWN, newest first.
+  const shownPaused = resumable.slice(0, PAUSED_SHOWN);
+  const folded = paused.filter(request => !shownPaused.includes(request));
   const card = request => requestCard(request, { serving: request.requestId === servingId });
   const cards = [];
   if (pending.length && (serving.length || paused.length)) cards.push(sectionLabel('WAITING FOR YOUR APPROVAL', 'pending-section'));
   cards.push(...pending.map(card), ...serving.map(card));
-  if (resumable.length) cards.push(sectionLabel('PAUSED TASKS', 'paused-section'), ...resumable.map(card));
-  if (stale.length) {
+  if (shownPaused.length) cards.push(sectionLabel('PAUSED TASKS', 'paused-section'), ...shownPaused.map(card));
+  if (folded.length) {
     const fold = element('details', 'stale-requests');
+    // The fold on screen says whether the user opened it (a toggle event can come after a re-render replaced it).
+    const shown = requestList.querySelector('.stale-requests');
+    if (shown) staleOpen = shown.open;
     fold.open = staleOpen;
-    fold.addEventListener('toggle', () => { staleOpen = fold.open; });
-    fold.append(element('summary', 'request-section stale-section', `Older paused tasks (${stale.length})`), ...stale.map(card));
+    const inFold = staleAll ? folded : folded.slice(0, PAUSED_SHOWN);
+    fold.append(element('summary', 'request-section stale-section', `Older paused tasks (${folded.length})`), ...inFold.map(card));
+    if (inFold.length < folded.length) {
+      const more = element('button', 'link-button show-more', `Show ${folded.length - inFold.length} more`);
+      more.type = 'button';
+      more.addEventListener('click', () => {
+        staleAll = true;
+        render();
+      });
+      fold.append(more);
+    }
     cards.push(fold);
   }
   checkHeld(visible);
