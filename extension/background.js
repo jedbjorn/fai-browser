@@ -1177,7 +1177,7 @@ function reconcileSites() {
 }
 
 // The daemon's agent list as the popup may show it: names, repo folder names and states only.
-const AGENT_HOSTS = ['claude', 'codex', 'opencode', 'unknown'];
+const AGENT_HOSTS = ['claude', 'codex', 'opencode', 'pi', 'unknown'];
 function cleanAgents(data) {
   const text = (value, max) => (typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, max) : '');
   const sessions = (Array.isArray(data?.sessions) ? data.sessions : []).slice(0, 32)
@@ -1185,7 +1185,7 @@ function cleanAgents(data) {
     .map(item => ({ sessionId: text(item.sessionId, 64), host: AGENT_HOSTS.includes(item.host) ? item.host : 'unknown',
       repo: text(item.repo, 60) || 'unknown', lastActiveAt: text(item.lastActiveAt, 40) || null,
       startedAt: text(item.startedAt, 40) || null,
-      wake: ['claude-socket', 'codex-queue'].includes(item.wake) ? item.wake : 'none', ready: item.ready !== false }));
+      wake: ['claude-socket', 'codex-queue', 'pi-socket'].includes(item.wake) ? item.wake : 'none', ready: item.ready !== false }));
   return { sessions };
 }
 

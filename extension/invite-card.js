@@ -6,7 +6,7 @@
 // Everything the daemon reports (host, repo name, ids, errors) is rendered with textContent only.
 import { askSiteAccess, element } from './ui.js';
 
-export const HOST_NAMES = Object.freeze({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', unknown: 'Agent' });
+export const HOST_NAMES = Object.freeze({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', pi: 'pi', unknown: 'Agent' });
 export const INVITE_LEVELS = Object.freeze([
   { level: 'read-only', name: 'Read' },
   { level: 'interactive', name: 'Use' },

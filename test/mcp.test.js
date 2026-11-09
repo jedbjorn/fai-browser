@@ -8,7 +8,9 @@ import { join } from 'node:path';
 import { startStubDaemon } from './helpers/stub-daemon.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
 import { mcpData, mcpError } from './helpers/mcp-result.js';
-import { JEV_INSTRUCTIONS, JEV_TOOLS, JEV_TOOL_NAMES, summaryText, validateSchema } from '../src/mcp.js';
+import {
+  JEV_INSTRUCTIONS, JEV_TOOLS, JEV_TOOL_NAMES, PI_INSTRUCTIONS, instructionsFor, summaryText, validateSchema,
+} from '../src/mcp.js';
 
 const EXPECTED_TOOLS = [
   'fai_browser_status', 'fai_browser_run', 'fai_browser_wait', 'fai_browser_observe', 'fai_browser_act',
@@ -73,6 +75,16 @@ test('initialize negotiates the protocol version, sends short instructions, neve
   assert.match(JEV_INSTRUCTIONS, /fai_browser_run/);
   assert.match(JEV_INSTRUCTIONS, /Every run needs expectation/);
   assert.equal(stub.calls.length, 0, 'initialize, ping and EOF without tool calls never reach the daemon');
+});
+
+test('pi gets one extra instructions line mapping FAI\'s tool names to pi\'s; other hosts do not', () => {
+  for (const driver of ['agent', 'jev']) {
+    const base = instructionsFor(driver);
+    assert.equal(instructionsFor(driver, 'claude'), base);
+    assert.equal(instructionsFor(driver, 'pi'), `${base}\n${PI_INSTRUCTIONS}`);
+  }
+  assert.match(PI_INSTRUCTIONS, /mcp__fai_browser__fai_browser_open/);
+  assert.ok(PI_INSTRUCTIONS.length < 240, 'one short line');
 });
 
 // The instructions are paid on every host request (about chars/4 tokens). They were 595 chars (~149 tokens) before

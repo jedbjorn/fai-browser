@@ -91,3 +91,63 @@ process.exit(0);
   };
   return { bin, env, calls, dir };
 }
+
+/**
+ * A fake FAI pi extension socket (src/pi-wake.js protocol), `<pid>.sock` in a short temp dir under /tmp (unix socket
+ * paths are limited to about 104 bytes). `mode`: accept (answers ok, delivery turn or `delivery`), refuse (an error
+ * line, code `code`), silent (reads, never answers), no-ack (reads both lines, closes without a line), echo-token (an
+ * error line that repeats the token, which FAI must scrub).
+ */
+export async function startFakePiSocket(t, { mode = 'accept', token = TOKEN, pid = process.pid, delivery = 'turn',
+  code = 'busy_limit' } = {}) {
+  const dir = await mkdtemp(join('/tmp', 'fai-fpi-'));
+  const path = join(dir, `${pid}.sock`);
+  const received = [];
+  const connections = [];
+  const server = net.createServer(socket => {
+    connections.push(socket);
+    let buffer = '';
+    let authed = false;
+    socket.setEncoding('utf8');
+    socket.on('error', () => {});
+    socket.on('data', chunk => {
+      buffer += chunk;
+      let index;
+      while ((index = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, index);
+        buffer = buffer.slice(index + 1);
+        const message = JSON.parse(line);
+        if (!authed) {
+          if (mode === 'echo-token') {
+            socket.end(`${JSON.stringify({ type: 'error', code: `unauthorized ${message.token}` })}\n`);
+            return;
+          }
+          authed = message.type === 'auth' && message.v === 1 && message.token === token;
+          if (!authed) {
+            socket.end(`${JSON.stringify({ type: 'error', code: 'unauthorized' })}\n`);
+            return;
+          }
+          continue;
+        }
+        received.push(message);
+        if (mode === 'silent') return;
+        if (mode === 'no-ack') {
+          socket.end();
+          return;
+        }
+        if (mode === 'refuse') {
+          socket.end(`${JSON.stringify({ type: 'error', code })}\n`);
+          return;
+        }
+        socket.end(`${JSON.stringify({ type: 'ok', delivery })}\n`);
+      }
+    });
+  });
+  await new Promise(resolve => server.listen(path, resolve));
+  t.after(async () => {
+    for (const socket of connections) socket.destroy();
+    await new Promise(resolve => server.close(resolve));
+    await rm(dir, { recursive: true, force: true });
+  });
+  return { path, token, received, dir };
+}

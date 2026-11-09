@@ -48,7 +48,7 @@ Both:
   fai-browser status              fai-browser pair
   fai-browser daemon [start|stop|restart|status|logs [--lines N]]
   fai-browser update [--check]    install the latest GitHub release into this checkout (--check: only look)
-  fai-browser install --host claude|codex|opencode [--scope project|user] [--link] [--dry-run] [--force]
+  fai-browser install --host claude|codex|opencode|pi [--scope project|user] [--link] [--dry-run] [--force]
                       [--command-name] [--always-load]
   fai-browser install-native [--browser chrome,brave,...] [--all] [--dry-run]
                       native messaging host for every detected browser (the extension pairs by itself)

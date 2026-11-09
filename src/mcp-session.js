@@ -11,7 +11,8 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { httpJson } from './client.js';
 import {
-  claudeSocket, codexSupportsQueue, codexThreadId, deliverWake, hostSessionId, repoName, wakeCapability, wakeText,
+  claudeSocket, codexSupportsQueue, codexThreadId, deliverWake, hostSessionId, piSocket, repoName, wakeCapability,
+  wakeText,
 } from './wake.js';
 
 const POLL_MS = 25_000;
@@ -26,7 +27,7 @@ const WAKES_PER_MINUTE = 12;
 export class AgentSession {
   /**
    * `connect(options)`: FaiBrowserClient.connect (called with autoStart and takeover false). `host`: claude, codex,
-   * opencode or unknown (src/wake.js detectHost). `driver()`: the driver in effect (the wake text names its tools).
+   * opencode, pi or unknown (src/wake.js detectHost). `driver()`: the driver in effect (the wake text names its tools).
    * `waiting(wake)`: true when this server already showed the agent what the wake is about (a call waiting on that
    * request, or one that saw it become active). `deliver`: the delivery function (tests); `onOutcome(wake, outcome)`: told how each wake went (the server stops
    * promising wakes after a failure); `pollMs`, `backoffMs`, `ppid`: test overrides.
@@ -80,7 +81,7 @@ export class AgentSession {
     return this.ppidOverride ?? process.ppid;
   }
 
-  /** claude-socket, codex-queue or none, from the host, its environment and what is known so far. */
+  /** claude-socket, codex-queue, pi-socket or none, from the host, its environment and what is known so far. */
   get capability() {
     return wakeCapability({ host: this.host, env: this.env, threadId: this.threadId, codexReady: this.codexReady,
       ppid: this.ppid });
@@ -94,7 +95,9 @@ export class AgentSession {
   view() {
     const note = this.host === 'claude' && !claudeSocket(this.env, { ppid: this.ppid })
       ? 'no messaging socket of its own (Claude Code 2.1.224+, not --bare, the MCP server started by Claude Code itself)'
-      : this.held ? 'waiting: the daemon runs another version' : null;
+      : this.host === 'pi' && !piSocket(this.env, { ppid: this.ppid })
+        ? 'no wake channel (the FAI pi extension registers the server; an mcp.json fai-browser entry overrides it)'
+        : this.held ? 'waiting: the daemon runs another version' : null;
     return { sessionId: this.sessionId, host: this.host, repo: this.repo, wake: this.capability, ...(note ? { note } : {}) };
   }
 
@@ -309,7 +312,7 @@ export class AgentSession {
         outcome = { outcome: 'skipped' };
       } else {
         const text = wakeText({ kind: wake.kind, inviteId: wake.inviteId, requestId: wake.requestId, level: wake.level,
-          userText: wake.userText, driver: this.driver() });
+          userText: wake.userText, driver: this.driver(), host: this.host });
         const delivered = await this.deliver({ capability: this.capability, text, env: this.env, threadId: this.threadId,
           ppid: this.ppid });
         outcome = delivered.ok ? { outcome: 'delivered', ...(delivered.reply ? { message: delivered.reply } : {}) }

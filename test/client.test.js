@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDaemon } from '../src/daemon.js';
-import { FaiBrowserClient, FaiClientError, ensureDaemon } from '../src/client.js';
+import { FaiBrowserClient, FaiClientError, daemonEnv, ensureDaemon } from '../src/client.js';
 import { ORIGIN, clickProvider } from './runtime-fixtures.js';
 import { createFakeHub } from './helpers/fake-hub.js';
 
@@ -110,6 +110,25 @@ test('SDK: aborting a run stops it; HTTP errors throw FaiClientError with the co
     error => error.status === 400 && error.code === 'invalid_options');
   const stranger = new FaiBrowserClient({ port: client.port, token: '0'.repeat(64) });
   await assert.rejects(stranger.status(), error => error.status === 401 && error.code === 'unauthorized');
+});
+
+test('a daemon the client starts never inherits an agent session\'s wake credentials', async t => {
+  const home = await mkdtemp(join(tmpdir(), 'fai-client-env-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const out = join(home, 'env.json');
+  // A stand-in daemon: records the names of its environment variables and exits (so the start fails fast).
+  const script = `require('fs').writeFileSync(${JSON.stringify(out)}, JSON.stringify(Object.keys(process.env)))`;
+  const env = { PATH: process.env.PATH, FAI_DAEMON_PORT: '0', FAI_PI_WAKE_TOKEN: 'secret-a', FAI_PI_WAKE_SOCKET: '/x/1.sock',
+    FAI_PI_SESSION_ID: 'ses', CLAUDE_CODE_MESSAGING_TOKEN: 'secret-b', CLAUDE_CODE_MESSAGING_SOCKET: '/y/2.sock',
+    KEEP_ME: '1' };
+  await assert.rejects(ensureDaemon({ home, env, command: [process.execPath, '-e', script], startTimeoutMs: 3000 }));
+  const keys = JSON.parse(await readFile(out, 'utf8'));
+  assert.ok(keys.includes('KEEP_ME') && keys.includes('FAI_DAEMON_PORT'));
+  for (const key of ['FAI_PI_WAKE_TOKEN', 'FAI_PI_WAKE_SOCKET', 'FAI_PI_SESSION_ID', 'CLAUDE_CODE_MESSAGING_TOKEN',
+    'CLAUDE_CODE_MESSAGING_SOCKET']) {
+    assert.ok(!keys.includes(key), key);
+  }
+  assert.deepEqual(daemonEnv({ A: '1', FAI_PI_WAKE_TOKEN: 't' }), { A: '1' });
 });
 
 test('ensureDaemon without autoStart reports an unreachable daemon', async t => {

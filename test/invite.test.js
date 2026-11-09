@@ -71,10 +71,20 @@ test('registry: register, poll as heartbeat, update, unregister; no key in any v
   const updated = await ctx.api('POST', `/v1/sessions/${session.sessionId}/update`, { hostSessionId: 'thread-9', wake: 'codex-queue' },
     { headers: session.headers });
   assert.equal(updated.body.session.wake, 'codex-queue');
+  const piUpdate = await ctx.api('POST', `/v1/sessions/${session.sessionId}/update`, { wake: 'pi-socket' },
+    { headers: session.headers });
+  assert.equal(piUpdate.body.session.wake, 'pi-socket', 'the daemon accepts the pi capability');
   const gone = await ctx.api('DELETE', `/v1/sessions/${session.sessionId}`, {}, { headers: session.headers });
   assert.equal(gone.body.removed, true);
   assert.equal((await statusOf(ctx)).sessions.length, 0);
   assert.equal((await poll(ctx, session)).status, 404, 'an unknown session re-registers');
+});
+
+test('registry: pi sessions register with their host and the pi-socket capability', async t => {
+  const ctx = await setup(t);
+  await register(ctx, { host: 'pi', wake: 'pi-socket', hostSessionId: '01a1c20b-3ac0-7271-9837-9f9f0bd19838' });
+  const [session] = (await statusOf(ctx)).sessions;
+  assert.deepEqual([session.host, session.wake, session.ready], ['pi', 'pi-socket', true]);
 });
 
 test('registry: a session only receives and settles its own wakes; a wrong key or another id is refused', async t => {

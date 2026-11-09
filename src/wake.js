@@ -8,15 +8,20 @@
 //   crossSessionInbound (accept, hold, refuse) can hold or drop the message on the host's side.
 // - Codex (0.149+) queues a message for a thread: `codex queue --thread <id> --message <text>`. The thread id arrives on
 //   every tools/call as _meta["x-codex-turn-metadata"].thread_id (also _meta.threadId).
+// - pi (1.2.0+, with the FAI pi extension, integrations/pi/fai-browser.js): the extension registers this server with
+//   FAI_PI_WAKE_SOCKET (its own unix socket, <pi pid>.sock), FAI_PI_WAKE_TOKEN and FAI_PI_SESSION_ID in this server's env
+//   only. An auth line and a wake line (src/pi-wake.js) make pi take a new turn (idle) or queue a follow-up (busy), and
+//   pi answers ok: delivered means acknowledged.
 // - Anything else (OpenCode for now, an unknown host, a session without the env) cannot be woken: the popup shows the
 //   copy-text fallback ("Tell your agent: join FAI invite <id>").
 import { execFile } from 'node:child_process';
 import { connect } from 'node:net';
 import { accessSync, constants as fsConstants } from 'node:fs';
 import { basename, delimiter, isAbsolute, join } from 'node:path';
+import { ENV as PI_ENV, checkWakeText, encodeWake, piToolName, socketPathOk } from './pi-wake.js';
 
-export const WAKE_CAPABILITIES = Object.freeze(['claude-socket', 'codex-queue', 'none']);
-export const HOSTS = Object.freeze(['claude', 'codex', 'opencode', 'unknown']);
+export const WAKE_CAPABILITIES = Object.freeze(['claude-socket', 'codex-queue', 'pi-socket', 'none']);
+export const HOSTS = Object.freeze(['claude', 'codex', 'opencode', 'pi', 'unknown']);
 export const SOCKET_TIMEOUT_MS = 3_000;
 export const CODEX_TIMEOUT_MS = 15_000;
 // The longest user text an invite carries (the popup's "What should it do?").
@@ -35,8 +40,12 @@ export function detectHost(clientInfo, env = process.env) {
   if (name === 'claude-code' || name.startsWith('claude-code')) return 'claude';
   if (name === 'codex-mcp-client' || name.startsWith('codex')) return 'codex';
   if (name === 'opencode' || name.startsWith('opencode')) return 'opencode';
+  if (name === 'pi' || name.startsWith('pi-')) return 'pi';
   if (name) return 'unknown';
   if (env.OPENCODE || env.OPENCODE_PID) return 'opencode';
+  // AI_AGENT=pi alone proves nothing: every bash-tool command pi runs inherits it. The socket variable is set only in the
+  // env of the server the FAI pi extension registered.
+  if (env.PI_CODING_AGENT === 'true' && env[PI_ENV.socket]) return 'pi';
   if (env.CLAUDECODE === '1' && env.CLAUDE_CODE_SESSION_ID) return 'claude';
   return 'unknown';
 }
@@ -63,9 +72,26 @@ export function claudeSocket(env = process.env, { ppid = process.ppid } = {}) {
   return { path, token };
 }
 
-/** The host's own session id when it states one (Claude Code's CLAUDE_CODE_SESSION_ID); a Codex thread id comes later. */
+/**
+ * The FAI pi extension's wake socket for this session, or null. Same rule as claudeSocket: the socket is
+ * `<dir>/<pi pid>.sock` and counts only when that pid is this process's parent (pi started this server itself), so a
+ * wrapper in between or a server reparented after pi died fails closed.
+ */
+export function piSocket(env = process.env, { ppid = process.ppid } = {}) {
+  const path = env[PI_ENV.socket];
+  const token = env[PI_ENV.token];
+  if (typeof path !== 'string' || !path || typeof token !== 'string' || !token) return null;
+  if (!Number.isInteger(ppid) || ppid <= 1 || basename(path) !== `${ppid}.sock` || !socketPathOk(path)) return null;
+  return { path, token };
+}
+
+/**
+ * The host's own session id when it states one (Claude Code's CLAUDE_CODE_SESSION_ID, pi's FAI_PI_SESSION_ID from the
+ * FAI extension); a Codex thread id comes later.
+ */
 export function hostSessionId(host, env = process.env) {
   if (host === 'claude' && ID.test(String(env.CLAUDE_CODE_SESSION_ID ?? ''))) return env.CLAUDE_CODE_SESSION_ID;
+  if (host === 'pi' && ID.test(String(env[PI_ENV.session] ?? ''))) return env[PI_ENV.session];
   return null;
 }
 
@@ -225,6 +251,61 @@ export function deliverClaudeSocket({ path, token, text, timeoutMs = SOCKET_TIME
   });
 }
 
+/**
+ * One wake to the FAI pi extension's socket (src/pi-wake.js): resolves {ok: true, reply: 'turn'|'followUp'} only on
+ * pi's {"type":"ok"} line, else {ok: false, code, message}: `bad_text` (checked before connecting), `no_socket`,
+ * `connect_failed`, `refused` (an error line: unauthorized, busy_limit, bad_text, closed, failed), `no_ack` (closed
+ * without ok), `timeout`. The token is never echoed in a result.
+ */
+export function deliverPiSocket({ path, token, text, timeoutMs = SOCKET_TIMEOUT_MS }) {
+  if (!checkWakeText(text)) return Promise.resolve({ ok: false, code: 'bad_text', message: 'Not a FAI wake text.' });
+  if (!path || !token) return Promise.resolve({ ok: false, code: 'no_socket', message: 'This session has no wake socket.' });
+  return new Promise(resolveDelivery => {
+    let settled = false;
+    let answer = '';
+    const socket = connect({ path });
+    const scrub = value => String(value).split(token).join('[token]').replace(/\s+/g, ' ').trim().slice(0, 200);
+    const finish = outcome => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolveDelivery(outcome);
+    };
+    const judge = () => {
+      const line = answer.split('\n').find(item => item.trim());
+      let parsed = null;
+      try {
+        parsed = line ? JSON.parse(line) : null;
+      } catch {
+        // Not pi's answer.
+      }
+      if (parsed?.type === 'ok') {
+        return finish({ ok: true, reply: parsed.delivery === 'followUp' ? 'followUp' : 'turn' });
+      }
+      if (parsed?.type === 'error' || (line && !parsed)) {
+        return finish({ ok: false, code: 'refused', message: scrub(parsed?.code ?? parsed?.message ?? line) });
+      }
+      return finish({ ok: false, code: 'no_ack', message: 'The pi session closed the socket without taking the wake.' });
+    };
+    const timer = setTimeout(() => finish({ ok: false, code: 'timeout',
+      message: `The pi session did not answer within ${timeoutMs} ms.` }), timeoutMs);
+    timer.unref?.();
+    socket.setEncoding('utf8');
+    socket.on('data', chunk => {
+      answer = (answer + chunk).slice(0, 8192);
+      if (answer.includes('\n')) judge();
+    });
+    socket.on('error', error => {
+      if (answer) return judge();
+      const code = ['ENOENT', 'ECONNREFUSED', 'ENOTSOCK'].includes(error?.code) ? 'no_socket' : 'connect_failed';
+      finish({ ok: false, code, message: `Could not reach the pi session's wake socket (${error?.code ?? 'error'}).` });
+    });
+    socket.on('close', () => judge());
+    socket.on('connect', () => socket.write(encodeWake(token, text)));
+  });
+}
+
 // A line the session wrote back that says it did not take the message ({"type":"error",…}, "refused", "unauthorized").
 function refusalIn(text) {
   for (const line of String(text).split('\n')) {
@@ -267,18 +348,20 @@ export function cleanInviteText(text) {
  * (the user resumed a paused tab it holds), approved (the user approved its pending request). `driver` names the tool
  * (agent: fai_browser_open / observe; jev: fai_browser_run).
  */
-export function wakeText({ kind, inviteId, requestId, level, userText, driver = 'agent' }) {
+export function wakeText({ kind, inviteId, requestId, level, userText, driver = 'agent', host = 'unknown' }) {
   const prefix = '[FAI Browser] ';
+  // pi names MCP tools mcp__<server>__<tool>: the text names the tool the way this host shows it.
+  const named = tool => (host === 'pi' ? piToolName(tool) : tool);
   if (kind === 'invite') {
     const words = cleanInviteText(userText);
-    const tool = driver === 'jev' ? 'fai_browser_run' : 'fai_browser_open';
+    const tool = named(driver === 'jev' ? 'fai_browser_run' : 'fai_browser_open');
     return `${prefix}The user invited you to work in a browser tab they have open (invite ${safeId(inviteId)}, level `
       + `${levelName(level)}). Call ${tool} with {"inviteId": "${safeId(inviteId)}"}${driver === 'jev'
         ? ', an instruction and an expectation' : ''} to get the page, then follow its next.`
       + (words ? `\nWhat the user typed in the FAI popup (the user's own words): ${JSON.stringify(words)}`
         : '\nThe user typed no task: read the page, then ask them what to do.');
   }
-  const tool = driver === 'jev' ? 'fai_browser_run' : 'fai_browser_observe';
+  const tool = named(driver === 'jev' ? 'fai_browser_run' : 'fai_browser_observe');
   if (kind === 'resume') {
     return `${prefix}The user resumed tab request ${safeId(requestId)}: the tab is active again. Call ${tool} with `
       + `requestId ${safeId(requestId)} and continue the task.`;
@@ -289,12 +372,13 @@ export function wakeText({ kind, inviteId, requestId, level, userText, driver = 
 
 /**
  * The wake capability of a session: claude-socket (Claude Code with its socket), codex-queue (Codex with a known
- * thread and a `codex queue`), else none. `codexReady` is the cached `codex queue --help` answer.
+ * thread and a `codex queue`), pi-socket (pi with the FAI extension's socket), else none. `codexReady` is the cached `codex queue --help` answer.
  */
 export function wakeCapability({ host, env = process.env, threadId = null, codexReady = false, ppid = process.ppid }) {
   if (env.FAI_WAKE === '0') return 'none';
   if (host === 'claude' && claudeSocket(env, { ppid })) return 'claude-socket';
   if (host === 'codex' && threadId && codexReady) return 'codex-queue';
+  if (host === 'pi' && piSocket(env, { ppid })) return 'pi-socket';
   return 'none';
 }
 
@@ -308,6 +392,11 @@ export async function deliverWake({ capability, text, env = process.env, threadI
       return await deliverClaudeSocket({ ...socket, text });
     }
     if (capability === 'codex-queue') return await deliverCodexQueue({ threadId, text, env });
+    if (capability === 'pi-socket') {
+      const socket = piSocket(env, { ppid });
+      if (!socket) return { ok: false, code: 'no_socket', message: 'This session has no wake socket.' };
+      return await deliverPiSocket({ ...socket, text });
+    }
     return { ok: false, code: 'no_wake', message: 'This session cannot be woken.' };
   } catch (error) {
     return { ok: false, code: 'wake_failed', message: String(error?.message ?? error).slice(0, 200) };

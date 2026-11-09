@@ -5,10 +5,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import {
-  claudeSocket, cleanInviteText, codexSupportsQueue, codexThreadId, deliverClaudeSocket, deliverCodexQueue, deliverWake,
-  detectHost, hostSessionId, repoName, resetCodexSupport, wakeCapability, wakeText,
+  claudeSocket, cleanInviteText, codexSupportsQueue, codexThreadId, deliverClaudeSocket, deliverCodexQueue, deliverPiSocket,
+  deliverWake, detectHost, hostSessionId, piSocket, repoName, resetCodexSupport, wakeCapability, wakeText,
 } from '../src/wake.js';
-import { fakeCodex, startFakeClaudeSocket } from './helpers/fake-agents.js';
+import { checkWakeText, encodeWake, safeConfigValue, socketPathOk } from '../src/pi-wake.js';
+import { fakeCodex, startFakeClaudeSocket, startFakePiSocket } from './helpers/fake-agents.js';
 
 test('host detection: the MCP client name first, then the environment', () => {
   assert.equal(detectHost({ name: 'claude-code' }, {}), 'claude');
@@ -169,5 +170,115 @@ test('Claude socket: whatever the session writes back is kept without the token'
   const refused = await deliverClaudeSocket({ path: refusing.path, token: refusing.token, text: 'hi' });
   assert.equal(refused.code, 'refused');
   assert.ok(!refused.message.includes(refusing.token), 'nor in a refusal');
+});
+
+// --- pi (the FAI pi extension's socket, src/pi-wake.js) -------------------------------------------------------------
+
+const PI_SESSION = '01a1c20b-3ac0-7271-9837-9f9f0bd19838';
+
+test('pi: host from clientInfo "pi"; the environment alone needs the extension\'s socket variable', () => {
+  assert.equal(detectHost({ name: 'pi' }, {}), 'pi');
+  assert.equal(detectHost({ name: 'pi-coding-agent' }, {}), 'pi');
+  assert.equal(detectHost({ name: 'pipeline' }, {}), 'unknown', 'only pi or pi-*');
+  assert.equal(detectHost(null, { PI_CODING_AGENT: 'true', AI_AGENT: 'pi' }), 'unknown',
+    'a bash-tool child inherits these: not enough');
+  assert.equal(detectHost(null, { PI_CODING_AGENT: 'true', FAI_PI_WAKE_SOCKET: '/run/user/1000/fai-pi-x/7.sock' }), 'pi');
+  assert.equal(hostSessionId('pi', { FAI_PI_SESSION_ID: PI_SESSION }), PI_SESSION);
+  assert.equal(hostSessionId('pi', { FAI_PI_SESSION_ID: 'bad id; x' }), null);
+  assert.equal(hostSessionId('claude', { FAI_PI_SESSION_ID: PI_SESSION }), null);
+});
+
+test('pi: the socket counts only when named after the parent pid, with a token, on a short absolute path', () => {
+  const env = { FAI_PI_WAKE_SOCKET: '/run/user/1000/fai-pi-abc/4242.sock', FAI_PI_WAKE_TOKEN: 't' };
+  assert.deepEqual(piSocket(env, { ppid: 4242 }), { path: env.FAI_PI_WAKE_SOCKET, token: 't' });
+  assert.equal(piSocket(env, { ppid: 5151 }), null, 'a wrapper or a reparented server fails closed');
+  assert.equal(piSocket(env, { ppid: 1 }), null);
+  assert.equal(piSocket({ FAI_PI_WAKE_SOCKET: env.FAI_PI_WAKE_SOCKET }, { ppid: 4242 }), null, 'no token');
+  assert.equal(piSocket({ ...env, FAI_PI_WAKE_SOCKET: `/${'d'.repeat(120)}/4242.sock` }, { ppid: 4242 }), null, 'too long');
+  assert.equal(piSocket({ ...env, FAI_PI_WAKE_SOCKET: 'rel/4242.sock' }, { ppid: 4242 }), null, 'relative');
+  assert.equal(wakeCapability({ host: 'pi', env, ppid: 4242 }), 'pi-socket');
+  assert.equal(wakeCapability({ host: 'pi', env: { ...env, FAI_WAKE: '0' }, ppid: 4242 }), 'none');
+  assert.equal(wakeCapability({ host: 'claude', env, ppid: 4242 }), 'none', 'another host never uses pi\'s socket');
+  assert.equal(wakeCapability({ host: 'pi', env: {}, ppid: 4242 }), 'none');
+});
+
+test('pi: wake texts name the tools the way pi shows them', () => {
+  assert.match(wakeText({ kind: 'invite', inviteId: 'inv-abc12345', level: 'interactive', host: 'pi' }),
+    /Call mcp__fai_browser__fai_browser_open with \{"inviteId": "inv-abc12345"\}/);
+  assert.match(wakeText({ kind: 'resume', requestId: 'req_9', host: 'pi' }),
+    /mcp__fai_browser__fai_browser_observe with requestId req_9/);
+  assert.match(wakeText({ kind: 'approved', requestId: 'req_9', driver: 'jev', host: 'pi' }), /mcp__fai_browser__fai_browser_run/);
+  assert.doesNotMatch(wakeText({ kind: 'resume', requestId: 'req_9', host: 'claude' }), /mcp__/);
+  for (const kind of ['invite', 'resume', 'approved']) {
+    const text = wakeText({ kind, inviteId: 'inv-abc12345', requestId: 'req_1', userText: 'x\ny', host: 'pi' });
+    assert.equal(checkWakeText(text), true, `${kind} passes the extension's check`);
+  }
+});
+
+test('pi protocol helpers: wake lines, text check, config values, path length', () => {
+  assert.deepEqual(encodeWake('tok', '[FAI Browser] hi').trim().split('\n').map(line => JSON.parse(line)),
+    [{ type: 'auth', v: 1, token: 'tok' }, { type: 'wake', text: '[FAI Browser] hi' }]);
+  assert.equal(checkWakeText('[FAI Browser] a\nb'), true);
+  assert.equal(checkWakeText('hello'), false);
+  assert.equal(checkWakeText('[FAI Browser] a\u0000'), false);
+  assert.equal(checkWakeText('[FAI Browser] a\rb'), false);
+  assert.equal(checkWakeText('[FAI Browser] a\u001b[2J'), false);
+  assert.equal(checkWakeText(`[FAI Browser] ${'x'.repeat(4000)}`), false);
+  assert.equal(safeConfigValue('/usr/bin/node'), true);
+  for (const bad of ['', '!rm -rf ~', '${HOME}', '/a/$b', '~/x', 'a\nb', 42]) {
+    assert.equal(safeConfigValue(bad), false, String(bad));
+  }
+  assert.equal(socketPathOk('/run/user/1000/fai-pi-abc/1.sock'), true);
+  assert.equal(socketPathOk(`/${'x'.repeat(100)}`), false);
+  assert.equal(socketPathOk('x.sock'), false);
+});
+
+test('pi socket: ok with its delivery; refused, no ack, timeout and no socket each fail with a code', async t => {
+  const fake = await startFakePiSocket(t);
+  assert.deepEqual(await deliverPiSocket({ path: fake.path, token: fake.token, text: '[FAI Browser] one' }),
+    { ok: true, reply: 'turn' });
+  assert.deepEqual(fake.received, [{ type: 'wake', text: '[FAI Browser] one' }]);
+  const busy = await startFakePiSocket(t, { delivery: 'followUp' });
+  assert.deepEqual(await deliverPiSocket({ path: busy.path, token: busy.token, text: '[FAI Browser] two' }),
+    { ok: true, reply: 'followUp' });
+
+  const wrong = await deliverPiSocket({ path: fake.path, token: 'wrong', text: '[FAI Browser] x' });
+  assert.deepEqual([wrong.ok, wrong.code, wrong.message], [false, 'refused', 'unauthorized']);
+  const limited = await startFakePiSocket(t, { mode: 'refuse' });
+  assert.deepEqual(await deliverPiSocket({ path: limited.path, token: limited.token, text: '[FAI Browser] x' }),
+    { ok: false, code: 'refused', message: 'busy_limit' });
+  const noAck = await startFakePiSocket(t, { mode: 'no-ack' });
+  assert.equal((await deliverPiSocket({ path: noAck.path, token: noAck.token, text: '[FAI Browser] x' })).code, 'no_ack');
+  const silent = await startFakePiSocket(t, { mode: 'silent' });
+  const started = Date.now();
+  const timedOut = await deliverPiSocket({ path: silent.path, token: silent.token, text: '[FAI Browser] x', timeoutMs: 300 });
+  assert.equal(timedOut.code, 'timeout');
+  assert.ok(Date.now() - started < 3000);
+  const missing = await deliverPiSocket({ path: join(fake.dir, 'nope.sock'), token: 't', text: '[FAI Browser] x' });
+  assert.equal(missing.code, 'no_socket');
+
+  const before = fake.received.length;
+  const bad = await deliverPiSocket({ path: fake.path, token: fake.token, text: 'not a FAI text' });
+  assert.deepEqual([bad.ok, bad.code], [false, 'bad_text']);
+  assert.equal(fake.received.length, before, 'refused before connecting');
+});
+
+test('pi socket: the token never appears in a result', async t => {
+  const echo = await startFakePiSocket(t, { mode: 'echo-token' });
+  const refused = await deliverPiSocket({ path: echo.path, token: echo.token, text: '[FAI Browser] x' });
+  assert.equal(refused.code, 'refused');
+  assert.ok(!JSON.stringify(refused).includes(echo.token));
+  assert.match(refused.message, /\[token\]/);
+});
+
+test('deliverWake routes pi-socket to the parent\'s socket only', async t => {
+  const fake = await startFakePiSocket(t, { pid: 4242 });
+  const env = { FAI_PI_WAKE_SOCKET: fake.path, FAI_PI_WAKE_TOKEN: fake.token };
+  assert.deepEqual(await deliverWake({ capability: 'pi-socket', text: '[FAI Browser] one', env, ppid: 4242 }),
+    { ok: true, reply: 'turn' });
+  assert.equal((await deliverWake({ capability: 'pi-socket', text: '[FAI Browser] x', env, ppid: 5151 })).code, 'no_socket');
+  const off = await deliverWake({ capability: 'pi-socket', text: '[FAI Browser] x', env: { ...env, FAI_WAKE: '0' }, ppid: 4242 });
+  assert.equal(off.code, 'disabled');
+  assert.equal(fake.received.length, 1);
 });
 
