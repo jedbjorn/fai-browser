@@ -556,6 +556,21 @@ for (const path of PATHS) {
     }
   });
 
+  test(`value matrix (${path}): ZWJ sequences, flags, combining marks, ligatures, mixed case, one character, empty; over old values; as secrets`, async t => {
+    const { page, run } = await openRhythm(t, path);
+    const values = ['👨‍👩‍👧‍👦 fam', '🇳🇴🇸🇪 flags', 'é café ñ', 'é combining', 'Ǆ ÀÉÎ ﬁ ß ẞ', 'aAaA;:1!', 'x', ''];
+    for (const secret of [false, true]) {
+      for (const value of values) {
+        for (const selector of ['#t', '#i']) {
+          await page.evaluate(sel => { document.querySelector(sel).value = 'old value'; }, selector);
+          const typed = await typeInto(run, selector, value, { secret });
+          assert.equal(typed.value, value, `${selector} ${JSON.stringify(value)} secret ${secret}`);
+          assert.equal(typed.fallback, false);
+        }
+      }
+    }
+  });
+
   test(`newlines (${path}): a single-line input never gets Enter from a fill; page.js refuses it, a textarea takes it`, async t => {
     const { page, run } = await openRhythm(t, path);
     await pageLog(page);
