@@ -166,6 +166,11 @@ node examples/fake-demo.js   # deterministic provider and in-memory bridge; prin
 To try the experimental Jev autopilot, run `npm run setup -- --driver jev` instead: it asks for the Jev key at
 a hidden prompt. To register an agent later: `node src/cli.js install --host claude|codex|opencode`.
 
+**Updating.** About once a day FAI checks GitHub for a newer tagged release and the popup then shows **Update
+available vX.Y.Z**. One click on **Update** (or `node src/cli.js update`) moves this clone to the release tag, refreshes
+pairing and the installed skill, restarts the FAI service and reloads the extension; nothing installs without it.
+It refuses while an agent holds a tab and never touches local changes. See [Updates](docs/REFERENCE.md#updates).
+
 With your agent driving, `fai_browser_open` requests approval and returns the first page: digest,
 offered actions and a single-use revision. Your agent answers from the digest or calls
 `fai_browser_act` with an action id and that revision; each act returns the next page and actions.
@@ -251,7 +256,9 @@ and exit code.
 - **Local service and traces.** Agent direct makes no FAI provider calls. The optional Jev
   autopilot sends observations to its provider and uses your locally stored Jev key to authenticate
   those requests. Supplied values are redacted before provider requests; traces are pruned
-  (50 runs, 500 MB, 7 days).
+  (50 runs, 500 MB, 7 days). The only other outbound request is the daily update check, an
+  anonymous GET to GitHub's releases API, or `git ls-remote` with your own git credentials while
+  the repository is private (`FAI_UPDATE_CHECK=0` turns it off).
 
 Details: [Policies and providers](docs/REFERENCE.md#policies-and-providers),
 [Guardrails](docs/REFERENCE.md#guardrails) and [Traces and

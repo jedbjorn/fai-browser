@@ -45,6 +45,7 @@ Both:
   fai-browser runs [--limit N]    fai-browser evidence <runId> [--step N] [--kind screenshot|trace]
   fai-browser status              fai-browser pair
   fai-browser daemon [start|stop|restart|status|logs [--lines N]]
+  fai-browser update [--check]    install the latest GitHub release into this checkout (--check: only look)
   fai-browser install --host claude|codex|opencode [--scope project|user] [--link] [--dry-run] [--force]
                       [--command-name] [--always-load]
   fai-browser install-native [--browser chrome,brave,...] [--all] [--dry-run]
@@ -195,6 +196,9 @@ function parseCli(argv) {
         force: { type: 'boolean' },
         'command-name': { type: 'boolean' },
         'always-load': { type: 'boolean' },
+        check: { type: 'boolean' },
+        finish: { type: 'boolean' },
+        tag: { type: 'string' },
       },
     });
   } catch (error) {
@@ -1304,6 +1308,13 @@ async function main() {
       return 0;
     }
     applyDaemonPortFlag(flags);
+    if (command === 'update') {
+      // Self-update from tagged GitHub releases (src/update-cli.js); one JSON line, exit 1 when refused or failed.
+      const { updateCommand } = await import('./update-cli.js');
+      const { value, exitCode } = await updateCommand(flags, { home: FAI_HOME });
+      await emitLine(value, pretty);
+      return exitCode;
+    }
     if (command === 'daemon' || command === 'serve') {
       if (command === 'serve') {
         log('"serve" is deprecated; running "fai-browser daemon" (the options file is ignored).');

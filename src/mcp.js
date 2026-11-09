@@ -693,6 +693,12 @@ export function controlText(structured) {
       + `${result.extension.version ? `, version ${result.extension.version}` : ''}`);
   }
   if (result.provider) lines.push(`provider: ${result.provider.default ?? 'none'}, key configured: ${result.provider.keyConfigured === true}`);
+  // A newer release (daemon status `update`, src/update.js): the agent tells the user and never installs it itself.
+  const plainVersion = value => typeof value === 'string' && /^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(value);
+  if (result.update?.available && plainVersion(result.update.latest) && plainVersion(result.update.current)) {
+    lines.push(`update: FAI Browser ${result.update.latest} is available (running ${result.update.current}). Tell the `
+      + 'user; they install it with Update in the FAI Browser popup or node src/cli.js update. Never update it yourself.');
+  }
   if (result.session) {
     lines.push(`session: last request ${result.session.lastRequestId ?? '-'}; owned requests: ${(result.session.ownedRequests ?? []).join(', ') || '-'}`);
   }
