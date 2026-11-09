@@ -18,6 +18,9 @@ Or ask your agent to call `fai_browser_status`. Reference: [REFERENCE.md: The da
 | Pairing fails after loading the extension on a new browser | Setup installs the host for browsers it finds. Install the browser first, then rerun `npm run setup`, or `node src/cli.js install-native --all` |
 | Extension ID mismatch (a re-keyed manifest) | `npm run setup -- --extension-id <id>` |
 | `daemon_unreachable` / `connection refused` on port 4318 | `node src/cli.js daemon restart`. Another process on the port? Set `FAI_DAEMON_PORT` |
+| Windows flicker, the agent cannot hold a tab, `daemon status` shows `extension_flapping` | Two installs keep taking the FAI connection from each other. Before 0.6, any two paired browsers did this (issue #9): update both the service and the extensions (Firefox gets the signed add-on update; reload the unpacked one). Since 0.6 several browsers stay connected side by side (`daemon status` lists them under `extension.browsers`); a loop now means two connections share one browser identity, such as a copied browser profile. Remove the extension from one copy, or reinstall it there for a new identity |
+| The popup says "Connected from another window of this browser" | A newer connection of this same browser took over. Open the popup again to connect here; nothing reconnects by itself for five minutes |
+| A request shows as **In another browser** | Several browsers are paired and the request waits in the one you used FAI in last (or the one the agent named). Click **Open here** to move it to this browser |
 | Agent does not see the tools | Restart the agent after setup. `node src/cli.js install --host claude|codex|opencode` registers it; `--dry-run` shows what it would write. In Claude Code run `/mcp` |
 
 ## Approvals

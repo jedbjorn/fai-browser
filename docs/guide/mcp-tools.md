@@ -51,6 +51,7 @@ Request the user's tab for origins at a mode, wait for approval, and return the 
 | `allowedUrls` | string[] (<= 10) | no | URLs on the granted origins to open directly; the first opens on approval (fastest for search results) |
 | `policy` | `{forbid?: string[<=20], note?: string}` | no | Extra control labels to refuse; only adds restrictions |
 | `requestId` | string | no | Reuse an existing request |
+| `browser` | string (1-64) | no | Which paired browser a new request opens in: `firefox`, `chrome`, `chromium`, `edge`, `brave`, a name or an id from status. Default: the one the user used FAI in last. Not connected: `browser_not_connected`, naming the connected ones |
 | `returnImages` | `none` / `final` | no | Screenshot of the first page |
 
 Waits for the user's approval within the call (up to `FAI_MCP_APPROVAL_WAIT_MS`, default 60 s), plus the call deadline
@@ -129,7 +130,7 @@ Wait for a pending tab request (`requestId`) or a still-running act (`runId`). R
 
 ### `fai_browser_status`
 
-Daemon, extension connection, driver (`agent`: you choose each action) and tab requests. No arguments. Also carries `next`.
+Daemon, extension connection, the connected browsers (one `browser:` line each: name, product, id, transport, last use, tabs), driver (`agent`: you choose each action) and tab requests (each names the browser it is in). No arguments. Also carries `next`.
 
 ### `fai_browser_release`
 
