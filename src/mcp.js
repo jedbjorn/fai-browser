@@ -1398,8 +1398,10 @@ function nextForRequest(state, view, requestId, driver = 'agent', resume = undef
     case 'pending':
       return nextStep('relay', approveHint(view?.origins?.[0], requestId, view?.approval, driver, resume, browserHint(view)));
     case 'paused':
+      // A stale request (the daemon's staleOf) is folded away in the popup: say where the user finds its Resume.
       return nextStep('relay', withResumeWait(`The tab lease is paused${view?.stateReason ? ` (${view.stateReason})` : ''}. `
-        + 'Ask the user to return to the tab and click Resume in the FAI Browser extension, then call '
+        + (view?.stale ? 'Ask the user to open the FAI Browser popup, unfold Older paused tasks and click Resume on this '
+          + 'task, then call ' : 'Ask the user to return to the tab and click Resume in the FAI Browser extension, then call ')
         + `${driver === 'jev' ? 'fai_browser_run again' : 'fai_browser_observe'} with requestId ${requestId}.`, requestId, resume));
     default:
       if (TERMINAL_REQUEST_STATES.has(state)) {
@@ -2174,8 +2176,8 @@ class McpServer {
     if (!stale.length || !next) return next;
     const ids = stale.map(view => view.requestId).join(', ');
     const release = this.driver === 'jev' ? 'fai_browser_stop with its requestId' : 'fai_browser_release';
-    return { ...next, text: `${next.text} Stale (paused, not offered to the user for Resume): ${ids}; release each one `
-      + `you no longer need with ${release}.` };
+    return { ...next, text: `${next.text} Stale (paused, folded under Older paused tasks in the user's popup): ${ids}; `
+      + `release each one you no longer need with ${release}.` };
   }
 
   /** nextForStatus for the session's own live requests that are not stale. */

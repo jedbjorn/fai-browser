@@ -146,9 +146,12 @@ test('MCP: status names this session\'s stale requests for release and points ne
   const status = text(await ctx.mcp.callTool('fai_browser_status', {}));
   const next = status.split('\n')[0];
   assert.match(next, new RegExp(`^next \\(relay\\): .*${newer.requestId}`), next);
-  assert.match(next, new RegExp(`Stale \\(paused, not offered to the user for Resume\\): ${first.requestId}; release each one you no `
+  assert.match(next, new RegExp(`Stale \\(paused, folded under Older paused tasks in the user's popup\\): ${first.requestId}; release each one you no `
     + 'longer need with fai_browser_release\\.$'));
   assert.match(status, new RegExp(`^request: ${first.requestId} paused read-only.*, stale \\(newer_request\\)$`, 'm'));
+  // Asked about the stale request itself, the relay says where the user finds its Resume.
+  const waited = text(await ctx.mcp.callTool('fai_browser_wait', { requestId: first.requestId, maxMs: 0 }));
+  assert.match(waited, /open the FAI Browser popup, unfold Older paused tasks and click Resume on this task/);
 });
 
 test('MCP: a session that cannot be woken keeps the wait command and the copy fallback', async t => {
