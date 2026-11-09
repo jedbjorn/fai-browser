@@ -502,11 +502,16 @@ test('containedOnce: a formatter\'s output holds the value; the value twice or w
   for (const [value, text] of [
     ['$1,500.00', '1500'], ['1,500', '1500'], ['$0.00', '0'], ['+1 5551234567', '5551234567'], ['(555) 123-4567', '555 123 4567'],
     ['ABC123', 'abc123'], ['NO9386011117947', 'NO93 8601 1117 947'], ['https://example.com', 'example.com'],
-    ['#abc', 'abc'], ['12 kg', '12'], ['@ada', 'ada'], ['Oslo', 'oslo'], ['', ''],
+    ['#abc', 'abc'], ['12 kg', '12'], ['@ada', 'ada'], ['Oslo', 'oslo'], ['', ''], ['$15.00', '15'], ['1500 kr', '1500'],
+    ['1500.0', '1500'], ['+1 555 123 4567', '555 123 4567'], ['+1 (555) 123-4567', '5551234567'], ['€ 1.500,00', '1500'],
+    ['abc!', 'abc'], ['Ada Lovelace', 'ada lovelace'], ['$0.15', '0.15'],
   ]) assert.equal(once(value, text), true, `${JSON.stringify(value)} holds ${JSON.stringify(text)}`);
   for (const [value, text] of [
     ['abcabc', 'abc'], ['15001500', '1500'], ['$1,500.00$1,500.00', '1500'], ['resxervations', 'reservations'],
     ['rservations', 'reservations'], ['old valuenew', 'new value'], ['x', ''], ['', 'abc'],
+    // Residue against the value's own letters or digits.
+    ['abcc', 'abc'], ['aabc', 'abc'], ['155', '15'], ['$150.00', '15'], ['115', '15'], ['rreservations', 'reservations'],
+    ['abc abc', 'abc'], ['$0.15', '15'], ['15.5', '15'],
   ]) assert.equal(once(value, text), false, `${JSON.stringify(value)} does not hold ${JSON.stringify(text)}`);
 });
 

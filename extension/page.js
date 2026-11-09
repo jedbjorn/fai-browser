@@ -5845,20 +5845,50 @@
     return fit;
   }
 
-  // Whether `value` shows `text` once: with whitespace and case ignored, the text occurs exactly once (a formatter's
-  // prefix or suffix, a country code, a currency sign, upper case pass; the text twice, or residue inside it, does
-  // not); for a number-like text, its digits occur exactly once in the value's digits, after the value drops a
-  // decimal part of zeros the text did not have ("1500" in "$1,500.00"). Same rule as input.js containedOnce.
+  /**
+   * Whether `value` shows `text` once, with case and runs of whitespace ignored: the same text with spaces aside
+   * ("NO9386011117947" for "NO93 8601 1117 947"); or the text exactly once with anything around it set off by a
+   * character that is not a letter or digit ("#abc", "https://example.com", "1500 kr"; not "abcc" for "abc"); or, for
+   * a number-like text, its digits as whole digit groups exactly once in the value, with only a country code (one
+   * group of up to three digits) before
+   * them (set off by a space, a bracket or a dash, not a decimal point) and only a zero decimal part after them
+   * ("$1,500.00" and "1500.0" for "1500", "+1 555 1234567" for "5551234567"; not "$150.00" or "155" for "15", not
+   * "$0.15" for "15"). Same rule as input.js containedOnce (the read-back after typing).
+   */
   function containedOnce(value, text) {
-    const squash = s => String(s ?? '').replace(/\s+/g, '').toLowerCase();
-    const want = squash(text);
-    const have = squash(value);
+    const collapse = s => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const want = collapse(text);
+    const have = collapse(value);
     if (!want) return !have;
-    if (have.split(want).length === 2) return true;
-    if (!/\d/.test(want) || !/^[\d()+.,\-$€£¥%]+$/.test(want)) return false;
-    const wantDigits = want.replace(/\D/g, '');
-    const haveDigits = (/[.,]/.test(want) ? have : have.replace(/[.,]0{1,2}(?!\d)/g, '')).replace(/\D/g, '');
-    return haveDigits.split(wantDigits).length === 2;
+    if (have.replace(/ /g, '') === want.replace(/ /g, '')) return true;
+    const parts = have.split(want);
+    // Set off: by a character that is not a letter or digit, and not a decimal point or comma inside a number.
+    const openStart = !parts[0] || (/[^\p{L}\p{N}]$/u.test(parts[0]) && !/\p{N}[.,]$/u.test(parts[0]));
+    const openEnd = !parts[1] || (/^[^\p{L}\p{N}]/u.test(parts[1]) && !/^[.,]\p{N}/u.test(parts[1]));
+    if (parts.length === 2 && openStart && openEnd) return true;
+    if (!/\d/.test(want) || !/^[\d\s()+.,\-$€£¥%]+$/.test(want)) return false;
+    const digits = want.replace(/\D/g, '');
+    const groups = [];
+    const before = [];
+    let end = 0;
+    for (const match of have.matchAll(/\d+/g)) {
+      before.push(have.slice(end, match.index));
+      groups.push(match[0]);
+      end = match.index + match[0].length;
+    }
+    let found = 0;
+    for (let i = 0; i < groups.length; i++) {
+      let joined = '';
+      for (let j = i; j < groups.length && joined.length < digits.length; j++) {
+        joined += groups[j];
+        if (joined !== digits) continue;
+        const lead = i === 0 || (i === 1 && groups[0].length <= 3 && !/[.,]/.test(before[i]));
+        const tail = groups.slice(j + 1);
+        const rest = !tail.length || (tail.length === 1 && /^0{1,2}$/.test(tail[0]) && /^[.,]$/.test(before[j + 1]));
+        if (lead && rest) found++;
+      }
+    }
+    return found === 1;
   }
 
   // Whether a text field holds the supplied text after a fill, read from the field itself (never from page text):
