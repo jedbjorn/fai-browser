@@ -12,10 +12,21 @@ const select = document.getElementById('level');
 const help = document.getElementById('level-help');
 const warning = document.getElementById('level-warning');
 const approve = document.getElementById('approve');
+// The approval the worker prepared for this arm (arm_prepare: {token, pattern, requestId, at}), and the arm_prepare in
+// flight ({arm, job}). Both belong to one arm: a different request or a new arm on the tab needs its own.
 let approval = null;
-let preparing = false;
+let preparing = null;
 let approving = false;
 let restoreApprovalFocus = false;
+// Which host patterns the browser already held before any click here (chrome.permissions.contains, per pattern): after
+// a grant, the ones that were not held are reported to the worker (arm_track), which tracks and later removes them.
+// Approve waits for this local check only. Any change to the browser's host permissions starts it over (a pattern held
+// at first and removed before the click is reported again when the click grants it).
+const heldBefore = new Map();
+const recheckHeld = () => {
+  heldBefore.clear();
+  if (!approving) render();
+};
 const deny = document.getElementById('deny');
 const status = document.getElementById('status');
 const pinHint = document.getElementById('pin-hint');
@@ -25,6 +36,13 @@ const shortcut = await actionShortcut();
 let arms = [];
 let requests = [];
 let closing = false;
+
+// The status line is below the buttons: with a long request text or the pin hint it is out of the small window's view,
+// so what the click is waiting for is scrolled into view.
+function say(text) {
+  status.textContent = text;
+  status.scrollIntoView?.({ block: 'nearest' });
+}
 
 function close() {
   if (closing) return;
@@ -58,58 +76,147 @@ function render() {
   warning.hidden = current !== 'testing';
   select.setAttribute('aria-describedby', current === 'testing' ? 'level-help level-warning' : 'level-help');
   document.body.dataset.level = current;
-  approve.textContent = `Approve ${chosen?.name ?? 'request'}`;
-  approve.disabled = approving || !approval || !request;
-  if (!approval && !preparing && !approving && request) prepare(arm);
+  approve.textContent = approving ? 'Approving…' : `Approve ${chosen?.name ?? 'request'}`;
+  // Enabled as soon as the request is known and the held check is in: a click before arm_prepare answers is kept.
+  const pattern = request ? (sameArm(approval, arm) ? approval.pattern : sitePattern(arm, request)) : null;
+  const asked = pattern ? askedPatterns(sameArm(approval, arm) ? approval : null, pattern, request) : [];
+  approve.disabled = approving || !pattern || !checkHeld(asked);
+  if (!sameArm(approval, arm) && !sameArm(preparing?.arm, arm) && !approving && request) prepare(arm).catch(() => {});
 }
 
-async function prepare(arm) {
-  preparing = true;
+// True once every pattern's held state is known; starts the checks that are missing (render runs again when they end).
+function checkHeld(patterns) {
+  const missing = patterns.filter(pattern => !heldBefore.has(pattern));
+  for (const pattern of missing) {
+    heldBefore.set(pattern, null);
+    holds(pattern).then(held => { heldBefore.set(pattern, held); if (!approving) render(); });
+  }
+  return patterns.every(pattern => typeof heldBefore.get(pattern) === 'boolean');
+}
+
+const sameArm = (a, b) => Boolean(a && b && a.requestId === b.requestId && a.at === b.at);
+const currentArm = () => arms.find(item => item.tabId === tabId) ?? null;
+
+// The browser site access the click asks for before the worker has prepared the approval: the exact host of the page
+// the arm opened (its recorded origin, else the request's start page), as the worker derives it when it cannot read
+// the tab yet. The worker's prepared pattern wins once known, and the worker checks the permission itself.
+function sitePattern(arm, request) {
+  const origin = typeof arm?.origin === 'string' ? arm.origin : startTarget(request)?.origin;
   try {
-    const reply = await chrome.runtime.sendMessage({ type: 'arm_prepare', tabId, requestId: arm.requestId, at: arm.at });
-    if (reply?.error) throw new Error(reply.error);
-    if (!reply?.approval?.pattern || !reply.approval.token) throw new Error('Use the toolbar icon to approve this request.');
-    if (!arms.some(item => item.tabId === tabId && item.requestId === arm.requestId && item.at === arm.at)) return;
-    approval = { ...reply.approval, requestId: arm.requestId, at: arm.at };
-    approve.disabled = false;
-    if (restoreApprovalFocus) { approve.focus(); restoreApprovalFocus = false; }
-  } catch (error) {
-    status.textContent = error.message;
-  } finally {
-    preparing = false;
+    const url = new URL(origin);
+    return /^https?:$/.test(url.protocol) ? `${url.protocol}//${url.hostname}/*` : null;
+  } catch {
+    return null;
   }
 }
 
-approve.addEventListener('click', async () => {
-  if (!approval || approving) return;
-  const intent = approval;
+// What the click asks Chrome for: the task origin, plus the request's other exact origins (approved frames, sign-in
+// hops) in the same prompt. With a prepared approval that is the worker's list; before it, the same list derived from
+// the request (the worker tracks and checks them itself). The list is checked here, before the one request this gesture
+// allows (Chrome rejects a bad pattern asynchronously, and a second request in that rejection would no longer count as
+// the user's click): anything but plain host patterns led by the task's own asks for the task origin alone, so the task
+// site can still be approved.
+const PATTERN = /^https?:\/\/[^/*\s]+\/\*$/;
+function askedPatterns(ready, pattern, request) {
+  let patterns = ready?.patterns;
+  if (!ready) {
+    patterns = [pattern];
+    for (const entry of Array.isArray(request?.origins) ? request.origins : []) {
+      const extra = typeof entry === 'string' && !entry.includes('*') ? sitePattern({ origin: entry }) : null;
+      if (extra && !patterns.includes(extra) && patterns.length < 11) patterns.push(extra);
+    }
+  }
+  return Array.isArray(patterns) && patterns.length <= 11 && patterns[0] === pattern
+    && patterns.every(item => typeof item === 'string' && PATTERN.test(item)) ? patterns : [pattern];
+}
+
+// Asks the worker to prepare the approval of this arm (arm_prepare). Resolves to the approval, or null when the arm
+// changed meanwhile.
+function prepare(arm) {
+  const entry = { arm, job: null };
+  entry.job = (async () => {
+    try {
+      const reply = await chrome.runtime.sendMessage({ type: 'arm_prepare', tabId, requestId: arm.requestId, at: arm.at });
+      if (reply?.error) throw new Error(reply.error);
+      if (!reply?.approval?.pattern || !reply.approval.token) throw new Error('Use the toolbar icon to approve this request.');
+      if (!sameArm(currentArm(), arm)) return null;
+      approval = { ...reply.approval, requestId: arm.requestId, at: arm.at };
+      if (restoreApprovalFocus && !approving) { approve.focus(); restoreApprovalFocus = false; }
+      return approval;
+    } catch (error) {
+      if (!approving) status.textContent = error.message;
+      throw error;
+    } finally {
+      if (preparing === entry) preparing = null;
+    }
+  })();
+  preparing = entry;
+  return entry.job;
+}
+
+approve.addEventListener('click', () => {
+  const arm = currentArm();
+  const request = arm ? requests.find(item => item.requestId === arm.requestId) : null;
+  if (approving || !arm || !request) return;
+  const ready = sameArm(approval, arm) ? approval : null;
+  const pattern = ready?.pattern ?? sitePattern(arm, request);
+  if (!pattern) return;
+  const asked = askedPatterns(ready, pattern, request);
+  if (!asked.every(item => typeof heldBefore.get(item) === 'boolean')) return;
+  // This click's own snapshot: its grant changes the browser's permissions (and so heldBefore) before it is reported.
+  const before = new Map(asked.map(item => [item, heldBefore.get(item)]));
   const level = select.value;
   approving = true;
   approve.disabled = true;
+  approve.textContent = 'Approving…';
   select.disabled = true;
   // Native user gesture: no await, messaging or storage read before permissions.request.
   let access;
-  // The task origin, plus the request's other exact origins (approved frames, sign-in hops) in the same prompt. The
-  // list is checked here, before the one request this gesture allows (Chrome rejects a bad pattern asynchronously, and
-  // a second request in that rejection would no longer count as the user's click): anything but plain host patterns
-  // led by the task's own asks for the task origin alone, so the task site can still be approved.
-  const PATTERN = /^https?:\/\/[^/*\s]+\/\*$/;
-  const origins = Array.isArray(intent.patterns) && intent.patterns.length <= 11 && intent.patterns[0] === intent.pattern
-    && intent.patterns.every(pattern => typeof pattern === 'string' && PATTERN.test(pattern)) ? intent.patterns : [intent.pattern];
-  try { access = chrome.permissions.request({ origins }); }
+  try { access = chrome.permissions.request({ origins: asked }); }
   catch { access = Promise.resolve(false); }
-  chrome.runtime.sendMessage({ type: 'arm_begin', tabId, token: intent.token }).catch(() => {});
-  status.textContent = 'Waiting for browser site access…';
+  // Clicked before arm_prepare answered: the click is kept, and approves as soon as the approval is ready.
+  const prepared = ready ? Promise.resolve(ready) : sameArm(preparing?.arm, arm) ? preparing.job : prepare(arm);
+  prepared.then(intent => {
+    if (intent) chrome.runtime.sendMessage({ type: 'arm_begin', tabId, token: intent.token }).catch(() => {});
+  }, () => {});
+  say('Waiting for browser site access…');
+  complete(arm, prepared, pattern, asked, before, access, level);
+});
+
+const holds = pattern => Promise.resolve(chrome.permissions?.contains?.({ origins: [pattern] })).then(held => held === true, () => false);
+
+async function complete(arm, prepared, pattern, asked, before, access, level) {
   try {
-    const granted = await Promise.resolve(access).catch(() => false);
-    const reply = await chrome.runtime.sendMessage({ type: 'arm_approve', tabId, ...intent, level, granted });
+    let granted = await Promise.resolve(access).catch(() => false);
+    // What this click newly obtained goes to the worker first, whatever happens to the approval below, so it is
+    // removed again once no session needs it.
+    const obtained = granted === true ? asked.filter(item => before.get(item) === false) : [];
+    if (obtained.length) {
+      await chrome.runtime.sendMessage({ type: 'arm_track', tabId, requestId: arm.requestId, at: arm.at, patterns: obtained })
+        .catch(() => {});
+    }
+    let intent = await prepared;
+    if (!intent) throw new Error('This request changed. Check it and approve again.');
+    // The worker read the tab's own URL: the access it needs is the one asked for, or one the browser already holds.
+    if (intent.pattern !== pattern) granted = await holds(intent.pattern);
+    if (granted === true) say('Approving…');
+    let reply = await chrome.runtime.sendMessage({ type: 'arm_approve', tabId, ...intent, level, granted });
+    if (reply?.code === 'stale_approval') {
+      // The worker restarted after preparing: prepare again once and retry with the access the browser now holds (the
+      // worker checks it, the request, the tab and its origin again).
+      approval = null;
+      intent = await prepare(arm);
+      if (!intent) throw new Error('This request changed. Check it and approve again.');
+      chrome.runtime.sendMessage({ type: 'arm_begin', tabId, token: intent.token }).catch(() => {});
+      reply = await chrome.runtime.sendMessage({ type: 'arm_approve', tabId, ...intent, level, granted: await holds(intent.pattern) });
+    }
     if (reply?.error) throw new Error(reply.error);
     if (reply?.status !== 'active' || reply?.session?.requestId !== intent.requestId || reply?.session?.tabId !== tabId) {
       throw new Error('Approval was not confirmed. Use the toolbar icon to check this request.');
     }
     close();
   } catch (error) {
-    status.textContent = error.message;
+    say(error.message);
     approval = null;
     restoreApprovalFocus = true;
   } finally {
@@ -117,7 +224,7 @@ approve.addEventListener('click', async () => {
     render();
     if (!closing) approve.focus();
   }
-});
+}
 
 select.addEventListener('change', async () => {
   const level = select.value;
@@ -155,7 +262,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'session') return;
   if (changes.armedTabs) arms = Array.isArray(changes.armedTabs.newValue) ? changes.armedTabs.newValue : [];
   if (changes.requests) requests = Array.isArray(changes.requests.newValue) ? changes.requests.newValue : [];
-  if (approval && !arms.some(item => item.tabId === tabId && item.requestId === approval.requestId && item.at === approval.at)) approval = null;
+  // Only a different arm on the tab (another request, or the tab armed again) drops the prepared approval; a re-armed
+  // look, a recorded tab group or another request in the list keeps it.
+  if (approval && !sameArm(approval, currentArm())) approval = null;
   if (changes.armedTabs || changes.requests) render();
 });
 
@@ -172,4 +281,7 @@ try {
 } catch {
   // storage.session is unavailable: nothing to show.
 }
+// Registered once the page's state exists (recheckHeld renders).
+chrome.permissions?.onAdded?.addListener?.(recheckHeld);
+chrome.permissions?.onRemoved?.addListener?.(recheckHeld);
 render();

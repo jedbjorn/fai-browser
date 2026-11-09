@@ -349,6 +349,7 @@ test('popup: replacing a request card preserves its selected level and keyboard 
   const original = request(['http://localhost:3000'], 'full');
   const page = await popup(t, { local: { ...PAIRED }, requests: [original] });
   await page.focus('.request-card .level-select');
+  assert.equal(await page.evaluate(() => document.activeElement.classList.contains('level-select')), true);
   await page.keyboard.press('ArrowUp');
   assert.equal(await page.$eval('.request-card .level-select', node => node.value), 'interactive');
   await page.evaluate(updated => {
@@ -764,16 +765,18 @@ test('popup: tab access defaults to single, multiple is visible at approval and 
 
 // Loads arm.html?tab=<tabId> with a fake chrome API: `arms` is chrome.storage.session.armedTabs, `requests` the
 // worker's request list, `permissions` chrome.storage.local.permissions.
-async function armPage(t, { arms, requests = [], permissions = null, tabId = 9, pinned = true } = {}) {
-  const page = await browser.newPage({ viewport: { width: 400, height: 250 } });
+async function armPage(t, { arms, requests = [], permissions = null, tabId = 9, pinned = true, holdPrepare = false,
+  viewport = { width: 400, height: 250 }, held = [], holdContains = false } = {}) {
+  const page = await browser.newPage({ viewport });
   t.after(() => page.close());
   await page.route('https://popup.test/**', async route => {
     const file = new URL(route.request().url()).pathname.slice(1);
     const type = file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : 'text/html';
     route.fulfill({ contentType: type, body: await readFile(new URL(file, EXTENSION), 'utf8') });
   });
-  await page.addInitScript(([arms, requests, permissions, pinned]) => {
+  await page.addInitScript(([arms, requests, permissions, pinned, holdPrepare, held, holdContains]) => {
     const listeners = [];
+    globalThis.__holdPrepare = holdPrepare;
     globalThis.__listeners = listeners;
     globalThis.__sent = [];
     globalThis.__closed = 0;
@@ -791,21 +794,51 @@ async function armPage(t, { arms, requests = [], permissions = null, tabId = 9, 
         async sendMessage(message) {
           __sent.push(message);
           if (__reply) return __reply;
-          if (message.type === 'arm_prepare') return { approval: { token: 'prepared', pattern: 'https://shop.example.com/*' } };
+          if (message.type === 'arm_prepare') {
+            // `__holdPrepare`: the worker's answer waits until the test calls __releasePrepare(). `__prepareError`:
+            // the worker refuses. Each answer for the same arm has a fresh token (`__prepares` counts them).
+            if (globalThis.__holdPrepare) await new Promise(done => { globalThis.__releasePrepare = done; });
+            if (globalThis.__prepareError) return { error: __prepareError };
+            const key = `${message.requestId}-${message.at}`;
+            globalThis.__prepares ??= {};
+            __prepares[key] = (__prepares[key] ?? 0) + 1;
+            const again = __prepares[key] > 1 ? `-${__prepares[key]}` : '';
+            return { approval: { token: `prepared-${message.requestId}-${message.at}${again}`, pattern: 'https://shop.example.com/*' } };
+          }
+          // `__staleOnce`: the first arm_approve finds a restarted worker that no longer knows the token.
+          if (message.type === 'arm_approve' && globalThis.__staleOnce) {
+            globalThis.__staleOnce = false;
+            return { error: 'This approval was prepared by an earlier run of the extension. Nothing was approved.', code: 'stale_approval' };
+          }
           if (message.type === 'arm_approve') return message.granted
             ? { status: 'active', session: { tabId: 9, requestId: message.requestId } }
             : { error: 'Browser site access was not granted.' };
           return { status: null };
         },
       },
-      permissions: { request(permission) {
-        __permissionCalls.push({ permission, active: navigator.userActivation.isActive });
-        return Promise.resolve(__access);
-      } },
+      permissions: {
+        request(permission) {
+          __permissionCalls.push({ permission, active: navigator.userActivation.isActive });
+          if (__access) for (const origin of permission.origins) __held.add(origin);
+          return Promise.resolve(__access);
+        },
+        // `__held`: the host patterns the browser holds; `__holdContains`: the answer waits until released.
+        // `__permissionsChanged()`: fires onAdded/onRemoved.
+        async contains({ origins }) {
+          if (globalThis.__holdContains) await new Promise(done => { (globalThis.__containsWaiting ??= []).push(done); });
+          return origins.every(origin => __held.has(origin));
+        },
+      },
       commands: { async getAll() { return [{ name: '_execute_action', shortcut: 'Ctrl+Shift+Y' }]; } },
       action: { async getUserSettings() { return { isOnToolbar: pinned }; } },
     };
-  }, [arms, requests, permissions, pinned]);
+    const permissionListeners = [];
+    chrome.permissions.onAdded = { addListener(listener) { permissionListeners.push(listener); } };
+    chrome.permissions.onRemoved = { addListener(listener) { permissionListeners.push(listener); } };
+    globalThis.__permissionsChanged = origins => { for (const listener of permissionListeners) listener({ origins }); };
+    globalThis.__held = new Set(held);
+    globalThis.__holdContains = holdContains;
+  }, [arms, requests, permissions, pinned, holdPrepare, held, holdContains]);
   await page.goto(`https://popup.test/arm.html?tab=${tabId}`);
   await page.waitForFunction(() => document.querySelector('#level option') !== null || globalThis.__closed > 0);
   return page;
@@ -1050,4 +1083,194 @@ test('arm.html denied browser access leaves the modal open and announces the fai
   assert.equal(await page.evaluate(() => __closed), 0);
   assert.equal(await page.locator('#status').getAttribute('role'), 'status');
   await page.waitForFunction(() => !document.querySelector('#approve').disabled);
+});
+
+// --- one click approves (the owner's "Approve sometimes takes several clicks") -----------------------------------
+
+// The approval the worker prepared for the request modal (arm_prepare), as armPage's fake answers it.
+const preparedToken = arm => `prepared-${arm.requestId}-${arm.at}`;
+const emit = (page, changes) => page.evaluate(changes => { for (const listener of __listeners) listener(changes, 'session'); }, changes);
+
+test('arm.html: a click before the worker has prepared the approval is kept and approves once it is ready', async t => {
+  const page = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST], holdPrepare: true });
+  await page.waitForFunction(() => __sent.some(message => message.type === 'arm_prepare'));
+  // A real pointer click while arm_prepare is still in flight.
+  await page.click('#approve', { force: true });
+  await page.evaluate(() => globalThis.__releasePrepare?.());
+  await page.waitForFunction(() => __closed > 0 || __sent.some(message => message.type === 'arm_approve'), null, { timeout: 3000 })
+    .catch(() => {});
+  const approved = await page.evaluate(() => __sent.filter(message => message.type === 'arm_approve'));
+  assert.equal(approved.length, 1, `one click, one approval: ${await page.textContent('#status')}`);
+  assert.equal(approved[0].token, preparedToken(ARM));
+  assert.equal(approved[0].requestId, ARM.requestId);
+  assert.deepEqual(await page.evaluate(() => __permissionCalls), [{ permission: { origins: ['https://shop.example.com/*'] }, active: true }],
+    'site access is still requested inside the click');
+  await page.waitForFunction(() => __closed > 0);
+});
+
+test('arm.html: an early click asks for the request\'s other exact origins in the same prompt, as the prepared approval would', async t => {
+  const twoSites = { ...ARM_REQUEST, origins: ['https://shop.example.com', 'https://login.example.com', 'https://*.example.org'] };
+  const page = await armPage(t, { arms: [ARM], requests: [twoSites], holdPrepare: true });
+  await page.waitForFunction(() => __sent.some(message => message.type === 'arm_prepare'));
+  await page.click('#approve', { force: true });
+  await page.evaluate(() => globalThis.__releasePrepare?.());
+  await page.waitForFunction(() => __closed > 0);
+  assert.deepEqual(await page.evaluate(() => __permissionCalls.map(call => call.permission.origins)),
+    [['https://shop.example.com/*', 'https://login.example.com/*']], 'exact origins only, the task origin first');
+});
+
+test('arm.html: a re-arm of the same request or a requests update between prepare and click keeps the prepared approval', async t => {
+  for (const change of ['rearm', 'requests', 'both']) {
+    const page = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST] });
+    await page.waitForFunction(() => !document.querySelector('#approve').disabled);
+    // showArm on a page load, a tab group the worker recorded, or another request arriving in the list.
+    if (change !== 'requests') await emit(page, { armedTabs: { newValue: [{ ...ARM, groupId: 4, patterns: ['https://shop.example.com/*'] }] } });
+    if (change !== 'rearm') await emit(page, { requests: { newValue: [ARM_REQUEST, { ...ARM_REQUEST, requestId: 'req_other' }] } });
+    assert.equal(await page.$eval('#approve', node => node.disabled), false, change);
+    await page.click('#approve');
+    await page.waitForFunction(() => __closed > 0);
+    const sent = await page.evaluate(() => __sent);
+    assert.equal(sent.filter(message => message.type === 'arm_prepare').length, 1, `${change}: prepared once`);
+    assert.equal(sent.filter(message => message.type === 'arm_approve').length, 1, change);
+  }
+});
+
+test('arm.html: a different request on the tab needs its own approval: the click approves that one, never the old one', async t => {
+  const page = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST] });
+  await page.waitForFunction(() => !document.querySelector('#approve').disabled);
+  const next = { ...ARM, requestId: 'req_2', at: ARM.at + 1 };
+  await emit(page, { armedTabs: { newValue: [next] }, requests: { newValue: [{ ...ARM_REQUEST, requestId: 'req_2' }] } });
+  await page.click('#approve');
+  await page.waitForFunction(() => __closed > 0 || /./.test(document.querySelector('#status').textContent));
+  const approved = await page.evaluate(() => __sent.filter(message => message.type === 'arm_approve'));
+  assert.equal(approved.length, 1);
+  assert.equal(approved[0].requestId, 'req_2');
+  assert.equal(approved[0].at, next.at);
+  assert.equal(approved[0].token, preparedToken(next), 'a token prepared for the new request');
+});
+
+test('popup: a press on Approve that spans a re-render still approves (the card is not replaced under the pointer)', async t => {
+  const page = await popup(t, { local: { ...PAIRED }, requests: [request(['http://localhost:3000'], 'reversible')] });
+  // Focus elsewhere first (the level just chosen): the press moves focus to Approve, which must not end the hold.
+  await page.focus('.request-card .level-select');
+  const box = await page.locator('.approve-request').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  // Another request arrives (or the connection or the arms change) while the button is held.
+  await emit(page, { requests: { newValue: [request(['http://localhost:3000'], 'reversible'), { ...request(['https://other.test'], 'read-only'), requestId: 'req_9' }] } });
+  await page.mouse.up();
+  await page.waitForFunction(() => __sent.some(message => message.type === 'start'), null, { timeout: 2000 }).catch(() => {});
+  assert.equal((await page.evaluate(() => __sent)).filter(message => message.type === 'start').length, 1, 'one press, one approval');
+  // A press that clicks nothing: the update waits for its end, then renders.
+  const other = await popup(t, { local: { ...PAIRED }, requests: [request(['http://localhost:3000'], 'read-only')] });
+  const text = await other.locator('.request-reason').boundingBox();
+  await other.mouse.move(text.x + 2, text.y + 2);
+  await other.mouse.down();
+  await emit(other, { requests: { newValue: [request(['http://localhost:3000'], 'read-only'), { ...request(['https://other.test'], 'read-only'), requestId: 'req_9' }] } });
+  assert.equal(await count(other, '[data-request-id="req_9"]'), 0, 'held while pressed');
+  await other.mouse.up();
+  await other.waitForFunction(() => document.querySelector('[data-request-id="req_9"]') !== null);
+});
+
+test('popup: a press on Approve once that spans an approvals update still approves', async t => {
+  const approval = { id: 'approval-1', kind: 'click', cls: 'purchase', origin: 'http://localhost:3000', title: 'Checkout', label: 'Pay now' };
+  const page = await popup(t, { local: { ...PAIRED }, state: { approvals: [approval] } });
+  const box = await page.locator('.approval-card .primary-button').boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await emit(page, { approvals: { newValue: [approval, { ...approval, id: 'approval-2', label: 'Pay again' }] } });
+  await page.mouse.up();
+  await page.waitForFunction(() => __sent.some(message => message.type === 'approval_decision'), null, { timeout: 2000 }).catch(() => {});
+  assert.deepEqual((await page.evaluate(() => __sent)).filter(message => message.type === 'approval_decision'),
+    [{ type: 'approval_decision', id: 'approval-1', decision: 'approve' }]);
+  await page.waitForFunction(() => document.querySelector('[data-approval-id="approval-2"]') !== null);
+});
+
+test('arm.html: while Chrome asks for site access the window says so in view, and another click changes nothing', async t => {
+  // The prompt window's own size (background.js PROMPT_SIZE, 440 x 430) less the window's title bar.
+  const page = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST], viewport: { width: 440, height: 400 }, pinned: false });
+  await page.waitForFunction(() => !document.querySelector('#approve').disabled && !document.querySelector('#pin-hint').hidden);
+  await page.evaluate(() => {
+    chrome.permissions.request = permission => {
+      __permissionCalls.push({ permission, active: navigator.userActivation.isActive });
+      return new Promise(done => { globalThis.__answerAccess = done; });
+    };
+  });
+  await page.click('#approve');
+  await page.waitForFunction(() => /Waiting for browser site access/.test(document.querySelector('#status').textContent));
+  assert.equal(await page.$eval('#approve', node => node.textContent), 'Approving…');
+  const visible = await page.$eval('#status', node => {
+    const box = node.getBoundingClientRect();
+    return box.top >= 0 && box.bottom <= innerHeight + 1 ? true : JSON.stringify({ top: box.top, bottom: box.bottom, innerHeight });
+  });
+  assert.equal(visible, true, 'the status line is in view (the small window scrolls to it)');
+  // The user clicks again while the browser prompt is open: nothing more is asked or sent.
+  await page.click('#approve', { force: true });
+  assert.equal(await page.evaluate(() => __permissionCalls.length), 1);
+  await page.evaluate(() => __answerAccess(true));
+  await page.waitForFunction(() => __closed > 0);
+  assert.equal(await page.evaluate(() => __sent.filter(message => message.type === 'arm_approve').length), 1);
+});
+
+test('arm.html: Approve waits for the local held check; a grant reports only the patterns the browser did not hold (arm_track)', async t => {
+  const twoSites = { ...ARM_REQUEST, origins: ['https://shop.example.com', 'https://login.example.com'] };
+  const page = await armPage(t, { arms: [ARM], requests: [twoSites], held: ['https://login.example.com/*'], holdContains: true });
+  assert.equal(await page.$eval('#approve', node => node.disabled), true, 'disabled until the held check is in');
+  await page.evaluate(() => { globalThis.__holdContains = false; for (const done of globalThis.__containsWaiting ?? []) done(); });
+  await page.waitForFunction(() => !document.querySelector('#approve').disabled);
+  await page.click('#approve');
+  await page.waitForFunction(() => __closed > 0);
+  const sent = await page.evaluate(() => __sent.filter(message => ['arm_track', 'arm_approve'].includes(message.type)));
+  assert.deepEqual(sent.map(message => message.type), ['arm_track', 'arm_approve'], 'tracked before the approval');
+  assert.deepEqual(sent[0], { type: 'arm_track', tabId: 9, requestId: ARM.requestId, at: ARM.at, patterns: ['https://shop.example.com/*'] });
+  // Nothing newly granted (already held, or the user said no): nothing to report.
+  for (const options of [{ held: ['https://shop.example.com/*'] }, {}]) {
+    const other = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST], ...options });
+    if (!options.held) await other.evaluate(() => { __access = false; });
+    await other.waitForFunction(() => !document.querySelector('#approve').disabled);
+    await other.click('#approve');
+    await other.waitForFunction(() => __sent.some(message => message.type === 'arm_approve'));
+    assert.equal(await other.evaluate(() => __sent.some(message => message.type === 'arm_track')), false, JSON.stringify(options));
+  }
+});
+
+test('arm.html: an early click whose prepare is refused reports the grant, approves nothing and can be tried again', async t => {
+  const page = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST], holdPrepare: true });
+  await page.waitForFunction(() => __sent.some(message => message.type === 'arm_prepare') && !document.querySelector('#approve').disabled);
+  await page.evaluate(() => { __prepareError = 'The request was no longer waiting or this tab left its site: nothing was approved.'; });
+  await page.click('#approve');
+  await page.evaluate(() => globalThis.__releasePrepare?.());
+  await page.waitForFunction(() => /no longer waiting/.test(document.querySelector('#status').textContent));
+  const sent = await page.evaluate(() => __sent);
+  assert.deepEqual(sent.filter(message => message.type === 'arm_track').map(message => message.patterns), [['https://shop.example.com/*']],
+    'the grant is reported even though nothing was approved');
+  assert.equal(sent.some(message => message.type === 'arm_approve'), false);
+  assert.equal(await page.evaluate(() => __closed), 0);
+  await page.waitForFunction(() => !document.querySelector('#approve').disabled);
+});
+
+test('arm.html: a worker that restarted after preparing is prepared again once and the same click approves', async t => {
+  const page = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST] });
+  await page.evaluate(() => { __staleOnce = true; });
+  await page.waitForFunction(() => !document.querySelector('#approve').disabled);
+  await page.click('#approve');
+  await page.waitForFunction(() => __closed > 0);
+  const approves = await page.evaluate(() => __sent.filter(message => message.type === 'arm_approve'));
+  assert.equal(approves.length, 2);
+  assert.equal(approves[0].token, preparedToken(ARM));
+  assert.equal(approves[1].token, `${preparedToken(ARM)}-2`, 'a freshly prepared token');
+  assert.equal(approves[1].granted, true, 'the access the click obtained, read from the browser');
+  assert.equal(await page.evaluate(() => __permissionCalls.length), 1, 'one prompt, one click');
+});
+
+test('arm.html: site access removed after the window checked it is reported again when the click grants it back', async t => {
+  const page = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST], held: ['https://shop.example.com/*'] });
+  await page.waitForFunction(() => !document.querySelector('#approve').disabled);
+  // The user removes the site's access (chrome://extensions) before clicking.
+  await page.evaluate(() => { __held.delete('https://shop.example.com/*'); __permissionsChanged(['https://shop.example.com/*']); });
+  await page.waitForFunction(() => !document.querySelector('#approve').disabled);
+  await page.click('#approve');
+  await page.waitForFunction(() => __closed > 0);
+  assert.deepEqual(await page.evaluate(() => __sent.filter(message => message.type === 'arm_track').map(message => message.patterns)),
+    [['https://shop.example.com/*']]);
 });
