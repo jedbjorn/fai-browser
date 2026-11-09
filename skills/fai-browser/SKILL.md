@@ -7,7 +7,7 @@ description: Operate user-approved browser tabs for live tasks, never research o
 
 Tool search: `mcp__fai-browser__fai_browser_open` or `mcp__fai_browser__fai_browser_open`, not MCP resources.
 Your agent drives by default. For `fai_browser_status` driver `jev`, use [jev.md](jev.md); the same hard rules apply.
-Flights or hotels: read `tasks/flights/SKILL.md` or `tasks/hotels/SKILL.md` beside this file first.
+Flights or hotels: read `tasks/<name>/SKILL.md` beside this file first (`tasks/flights/SKILL.md`, `tasks/hotels/SKILL.md`).
 
 ## A. Open the task
 `fai_browser_open` with `origins` (only those needed), `reason` (one line the user sees), `task` (ranks digest and actions) and the lowest `mode`. It waits for approval and returns the page.
@@ -33,7 +33,7 @@ Each result is one text block: `next`, status, `revision`, `page.digest` (`page.
 | `choose` | Answer from `page.digest` if it answers the task; else act. |
 | `observe` | The page changed or the action could not land: `fai_browser_observe`, then choose. |
 | `answer` | Verified. Report the outcome; no tool call needed. |
-| `relay` | Tell the user `needs.message`. With `needs.level`: "approve the new FAI Browser request; its level is preselected", then `fai_browser_open` with the `requestId` and `mode` = `needs.level`. Paused or pending: if a background command's exit can wake you, run `next.text`'s `wait` command that way. Else follow `next.text` once they have. |
+| `relay` | Tell the user `needs.message`. With `needs.level`: "approve the new FAI Browser request; its level is preselected", then `fai_browser_open` with the `requestId` and `mode` = `needs.level`. Paused/pending: if a background command's exit can wake you, run `next.text`'s `wait` command that way. Else follow `next.text` once they have. |
 | `approve` | A `needsApproval` action waits for the user's Approve once: relay `next.text`, then repeat the act unchanged. |
 | `wait` | `fai_browser_wait` with the `requestId` (or `runId`). |
 | `stop` | Report `next.text` (`refused_action`, `error_page`); no retry. |
