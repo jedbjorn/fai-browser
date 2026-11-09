@@ -1843,6 +1843,12 @@ export interface RequestView {
   stateReason: string | null;
   /** origin_changed: the origin the tab went to, when the extension could see it (origin only). */
   leftOrigin?: string;
+  /** child_tab: the origin of the tab or window the page opened, when the extension could see it (origin only). */
+  childOrigin?: string;
+  /** paused only: when it paused. */
+  pausedAt?: string;
+  /** A paused request nobody is expected to continue: its agent asked for a newer tab, or no live agent owns it and it sat idle 5 minutes. The popup offers no Resume for it by default. */
+  stale?: 'newer_request' | 'idle';
   origins: string[];
   mode: AccessMode;
   /** Agent-written; shown to the user as "Agent says". */

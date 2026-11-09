@@ -694,6 +694,94 @@ test('approval window: no current tab; the card opens the request\'s page and th
   assert.equal((await openMessage(page)).requestId, 'req_1');
 });
 
+// Issue #13: with an older task paused (or done) and a new request waiting, the user's click went to the older one.
+// The new request comes first and apart; a paused task has its own label and a secondary Resume; a stale one (its
+// agent asked for another tab since) is folded away; the approval window lists new requests only.
+test('popup: a new request comes first, apart from paused tasks, with distinct labels; stale ones are folded away', async t => {
+  const minutes = n => new Date(Date.now() - n * 60_000).toISOString();
+  const stale = { ...SHOP_REQUEST, requestId: 'req_stale', state: 'paused', stateReason: 'tab_changed', stale: 'newer_request',
+    reason: 'Entra task', createdAt: minutes(40), pausedAt: minutes(20), lease: { leaseId: 'l0', tabId: 3 } };
+  const paused = { ...SHOP_REQUEST, requestId: 'req_paused', state: 'paused', stateReason: 'child_tab', reason: 'Cloudflare task',
+    createdAt: minutes(30), pausedAt: minutes(2), lease: { leaseId: 'l1', tabId: 7 } };
+  const fresh = { ...request(['https://partner.example.net'], 'read-only'), requestId: 'req_new', url: 'https://partner.example.net/home',
+    reason: 'Partner Center task', createdAt: minutes(1) };
+  // The daemon lists requests oldest first.
+  const requests = [stale, paused, fresh];
+  const page = await popup(t, { local: { ...PAIRED }, requests, tabUrl: 'https://shop.example.com/cart' });
+  const cards = await page.$$eval('#request-list > .request-card', nodes => nodes.map(node => ({ id: node.dataset.requestId,
+    label: node.querySelector('.card-label').textContent, buttons: [...node.querySelectorAll('.request-actions button')]
+      .map(button => ({ text: button.textContent, primary: button.classList.contains('primary-button') })) })));
+  assert.deepEqual(cards.map(card => card.id), ['req_new', 'req_paused'], 'the new request first; the stale one is not a top-level card');
+  assert.deepEqual(cards.map(card => card.label), ['NEW TAB REQUEST', 'PAUSED TASK']);
+  assert.deepEqual(cards[0].buttons[0], { text: 'Open partner.example.net', primary: true });
+  assert.deepEqual(cards[1].buttons[0], { text: 'Resume on this tab', primary: false }, 'Resume is secondary, never the primary look');
+  assert.deepEqual(await page.$$eval('#request-list > .request-section', nodes => nodes.map(node => node.textContent)),
+    ['WAITING FOR YOUR APPROVAL', 'PAUSED TASKS']);
+  assert.match(await page.$eval('[data-request-id="req_paused"] .pause-reason', node => node.textContent), /opened a new tab or window/);
+  // The first primary button in the list is the new request's.
+  assert.equal(await page.$eval('#request-list .primary-button', node => node.closest('.request-card').dataset.requestId), 'req_new');
+  // The stale task is listed folded, with why, and can still be released or resumed once unfolded.
+  assert.equal(await page.$eval('.stale-requests', node => node.open), false);
+  assert.equal(await page.$eval('.stale-requests summary', node => node.textContent), 'Older paused tasks (1)');
+  assert.equal(await page.locator('[data-request-id="req_stale"] .resume-request').isVisible(), false);
+  await page.click('.stale-requests summary');
+  assert.match(await page.$eval('[data-request-id="req_stale"] .pause-reason', node => node.textContent), /asked for another tab since/);
+  assert.equal(await page.locator('[data-request-id="req_stale"] .resume-request').isVisible(), true);
+  // Each button sends its own card's request.
+  await page.click('[data-request-id="req_new"] .open-request');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'open'));
+  assert.equal((await openMessage(page)).requestId, 'req_new');
+  await page.click('[data-request-id="req_paused"] .resume-request');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'start'));
+  assert.equal((await startMessage(page)).requestId, 'req_paused');
+
+  // The approval window lists only the new request: no Open button for a paused task there.
+  const win = await popup(t, { local: { ...PAIRED }, requests, query: '?window=1' });
+  assert.deepEqual(await win.$$eval('.request-card', nodes => nodes.map(node => node.dataset.requestId)), ['req_new']);
+  assert.equal(await count(win, '.resume-request'), 0);
+  assert.equal(await count(win, '.stale-requests'), 0);
+  // Only paused tasks left: nothing for the window to approve, so it closes.
+  await win.evaluate(list => { for (const listener of __listeners) listener({ requests: { newValue: list } }, 'session'); }, [stale, paused]);
+  assert.equal(await win.evaluate(() => __closed), 1);
+});
+
+// The list stays controlled: newest first by last activity in every section (pending by when it was asked, paused by
+// when it paused), at most 5 paused tasks in their section, the rest folded with the stale ones, and the fold shows at
+// most 5 before "Show n more". A folded card's Release sends its own request, and focus on it survives a re-render.
+test('popup: newest first by activity, at most 5 paused tasks shown, the rest folded with the stale ones behind Show more', async t => {
+  const minutes = n => new Date(Date.now() - n * 60_000).toISOString();
+  // Created in this order (oldest first, as the daemon lists them), paused in another order.
+  const paused = Array.from({ length: 8 }, (_, i) => ({ ...SHOP_REQUEST, requestId: `req_p${i}`, state: 'paused',
+    stateReason: 'paused', reason: `Paused ${i}`, createdAt: minutes(100 - i), pausedAt: minutes([9, 3, 12, 1, 7, 2, 15, 5][i]) }));
+  const stale = Array.from({ length: 3 }, (_, i) => ({ ...SHOP_REQUEST, requestId: `req_s${i}`, state: 'paused',
+    stateReason: 'tab_changed', stale: 'newer_request', reason: `Stale ${i}`, createdAt: minutes(200 - i), pausedAt: minutes([4, 30, 20][i]) }));
+  const pending = Array.from({ length: 2 }, (_, i) => ({ ...SHOP_REQUEST, requestId: `req_n${i}`, reason: `New ${i}`,
+    createdAt: minutes(2 - i) }));
+  const page = await popup(t, { local: { ...PAIRED }, requests: [...stale, ...paused, ...pending], tabUrl: 'https://shop.example.com/cart' });
+  const top = await page.$$eval('#request-list > .request-card', nodes => nodes.map(node => node.dataset.requestId));
+  // Pending newest first, then the 5 most recently paused tasks.
+  assert.deepEqual(top, ['req_n1', 'req_n0', 'req_p3', 'req_p5', 'req_p1', 'req_p7', 'req_p4']);
+  assert.equal(await page.$eval('.stale-requests summary', node => node.textContent), 'Older paused tasks (6)');
+  await page.click('.stale-requests summary');
+  const folded = () => page.$$eval('.stale-requests .request-card', nodes => nodes.map(node => node.dataset.requestId));
+  // The other 3 paused tasks and the 3 stale ones, by when they paused: s0 (4), p0 (9), p2 (12), p6 (15), s2 (20).
+  assert.deepEqual(await folded(), ['req_s0', 'req_p0', 'req_p2', 'req_p6', 'req_s2']);
+  assert.equal(await page.$eval('.stale-requests .show-more', node => node.textContent), 'Show 1 more');
+  // Keyboard focus on a folded card survives a re-render (a requests update).
+  await page.focus('[data-request-id="req_p2"] .deny-request');
+  await page.evaluate(list => { for (const listener of __listeners) listener({ requests: { newValue: list } }, 'session'); },
+    [...stale, ...paused, ...pending]);
+  assert.equal(await page.evaluate(() => document.activeElement?.closest('.request-card')?.dataset.requestId), 'req_p2');
+  await page.click('.stale-requests .show-more');
+  assert.deepEqual(await folded(), ['req_s0', 'req_p0', 'req_p2', 'req_p6', 'req_s2', 'req_s1']);
+  assert.equal(await count(page, '.stale-requests .show-more'), 0);
+  // Release on a folded card releases that request.
+  assert.equal(await page.$eval('[data-request-id="req_s1"] .deny-request', node => node.textContent), 'Release');
+  await page.click('[data-request-id="req_s1"] .deny-request');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'deny'));
+  assert.equal(await page.evaluate(() => __sent.find(message => message.type === 'deny').requestId), 'req_s1');
+});
+
 test('approval window: it closes itself when no pending or paused request is left', async t => {
   const page = await popup(t, { local: { ...PAIRED }, requests: [SHOP_REQUEST], query: '?window=1' });
   assert.equal(await page.evaluate(() => __closed), 0);

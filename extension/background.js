@@ -949,7 +949,7 @@ function updateBadge() {
   } else if (pendingCount) {
     text = '?';
     title = `FAI Browser: ${pendingCount} tab request${pendingCount === 1 ? '' : 's'} waiting`;
-  } else if (requests.some(item => item.state === 'paused' && here(item) && item.requestId !== live?.requestId)) {
+  } else if (requests.some(item => item.state === 'paused' && !item.stale && here(item) && item.requestId !== live?.requestId)) {
     text = 'Ⅱ';
   } else if (!pairing) {
     title = 'FAI Browser: not paired';
@@ -2258,6 +2258,7 @@ async function armDialog(tabId, answer, text, approval = null) {
 // the commands back to the tab that opened it.
 const MAX_LEASE_TABS = 8;
 const CHILD_URL_WAIT_MS = 10_000;
+const CHILD_POLL_MS = 250;
 
 function leaseTab(tabId) {
   return session?.tabs?.find(entry => entry.tabId === tabId) ?? null;
@@ -2276,13 +2277,41 @@ function leaseTabsView(observation) {
   });
 }
 
+// The origin of a tab or window the page opened, for its child_tab pause (issue #13: the agent can then request it up
+// front): { origin } with the origin only, redacted like leftOrigin; {} while it shows no page yet or the browser
+// withholds its URL (it shows it only with site access to that origin).
+function childOrigin(url) {
+  return url && url !== 'about:blank' ? leftOrigin(url) : {};
+}
+
+// A child that paused the lease before its address was readable (a popup window opens on about:blank first): its
+// origin is reported once for the same lease when it shows up within CHILD_URL_WAIT_MS, while the pause lasts.
+async function reportChildOrigin(current, tabId) {
+  const deadline = Date.now() + CHILD_URL_WAIT_MS;
+  while (Date.now() < deadline && session === current && current.status === 'paused') {
+    await delay(CHILD_POLL_MS);
+    const fresh = await chrome.tabs.get(tabId).catch(() => null);
+    if (!fresh) return;
+    const found = childOrigin(fresh.pendingUrl || fresh.url || '');
+    if (found.origin) {
+      if (session === current && current.status === 'paused') {
+        await send('status', { leaseId: current.leaseId, status: 'paused', reason: 'child_tab', ...found }).catch(() => {});
+      }
+      return;
+    }
+  }
+}
+
 // A child of a lease tab: followed once its URL is known (an about:blank start waits for its first navigation).
 async function followChild(tab) {
   const current = session;
   const opener = leaseTab(tab.openerTabId);
   if (!opener || current?.status !== 'active' || leaseTab(tab.id)) return;
   if (current.tabMode !== 'multiple' || tabMode !== 'multiple') {
-    await endSession('paused', 'child_tab');
+    // One task tab: the child pauses the lease at once, naming its origin when the browser shows it.
+    const found = childOrigin(tab.pendingUrl || tab.url || '');
+    await endSession('paused', 'child_tab', found);
+    if (!found.origin) ignore(reportChildOrigin(current, tab.id));
     return;
   }
   let url = tab.pendingUrl || tab.url || '';
@@ -2295,13 +2324,13 @@ async function followChild(tab) {
   }
   if (session !== current || current.status !== 'active') return;
   if (!url || url === 'about:blank' || !sessionCovers(url) || current.tabs.length >= MAX_LEASE_TABS) {
-    await endSession('paused', 'child_tab');
+    await endSession('paused', 'child_tab', childOrigin(url));
     return;
   }
   const permitted = await hasSitePermission([taskOriginPattern(new URL(url).origin)]);
   if (session !== current || current.status !== 'active' || tabMode !== 'multiple') return;
   if (!permitted || current.tabs.length >= MAX_LEASE_TABS) {
-    await endSession('paused', 'child_tab');
+    await endSession('paused', 'child_tab', childOrigin(url));
     return;
   }
   if (session !== current || current.status !== 'active' || tabMode !== 'multiple') return;
@@ -3328,13 +3357,23 @@ async function handleCommand(command) {
   if (endReason && session === current && current?.status === 'active') await endSession('paused', endReason, endExtra);
 }
 
-// Without an explicit request (the legacy "Select tab and start" button), a daemon gets the oldest pending
-// request that asked for this tab's origin, else a paused one to resume.
-function pickRequest(origin) {
+// Without an explicit request (the legacy "Select tab and start" button): the newest pending request that asked for
+// this tab's origin; with none pending, a paused request only on its own tab. Never the oldest request, never a paused
+// one on another tab, never a paused one while a request for the origin waits (issue #13: an old request must not take
+// the click meant for a new one). Never an invited tab: it is bound only through its invite. Null: the user chooses on a
+// request card.
+function legacyCandidate(item, origin) {
+  return !item.invite && here(item) && Array.isArray(item.origins) && originCovered(origin, item.origins);
+}
+function pickRequest(origin, tabId) {
+  // Newest first; the service lists requests in creation order, so a same-millisecond tie goes to the later one.
   const matching = state => requests
-    .filter(item => item.state === state && Array.isArray(item.origins) && originCovered(origin, item.origins))
-    .sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')));
-  return matching('pending')[0]?.requestId ?? matching('paused')[0]?.requestId ?? null;
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.state === state && legacyCandidate(item, origin))
+    .sort((a, b) => String(b.item.createdAt ?? '').localeCompare(String(a.item.createdAt ?? '')) || b.index - a.index)
+    .map(({ item }) => item);
+  return matching('pending')[0]?.requestId
+    ?? matching('paused').find(item => Number.isInteger(tabId) && item.lease?.tabId === tabId)?.requestId ?? null;
 }
 
 // Open a fresh task tab in the most recently focused normal, non-private window. Approval popups must never
@@ -3383,7 +3422,13 @@ async function startSession(message, given = null) {
   if (invite && (invite.tabId !== tab.id || invite.origin !== origin)) {
     throw new Error('This tab changed since the popup opened. Nothing was shared: open the popup again.');
   }
-  if (!requestId && !invite) requestId = pickRequest(origin);
+  if (!requestId && !invite) {
+    requestId = pickRequest(origin, tab.id);
+    // Requests for this site that the rule refuses (a paused one on another tab): the user picks one on its card. With
+    // none known, the service decides (the in-process companion has no requests; the daemon applies the same rule).
+    const known = requests.some(item => ['pending', 'paused'].includes(item.state) && legacyCandidate(item, origin));
+    if (!requestId && known) throw new Error('Choose the request in the FAI Browser popup: none waits for this tab.');
+  }
   // The level the user picked on the request card. Anything unknown or missing is read-only.
   const level = cleanLevel(message.level) ?? 'read-only';
   if (level === 'testing') {
