@@ -130,6 +130,27 @@ test('MCP: Resume wakes the owner when it is idle; a call already waiting on the
   assert.ok(!message.message.content.includes(SECRET_TITLE));
 });
 
+// Issue #13: a paused request the agent moved on from is stale; status names it so the agent can release it, and its
+// next is about the new request, never "ask the user to resume" the old one.
+test('MCP: status names this session\'s stale requests for release and points next at the newer one', async t => {
+  const ctx = await setup(t);
+  const opening = ctx.mcp.callTool('fai_browser_open', { origins: [ORIGIN], reason: 'Old task', task: 'read' });
+  const first = await until(() => ctx.hub.published.at(-1)?.find(item => item.state === 'pending'), 'the first request');
+  const lease = await ctx.hub.approve(first.requestId, { level: 'read-only' });
+  assert.ok(!(await opening).isError);
+  await ctx.hub.emit({ type: 'status', leaseId: lease.leaseId, status: 'paused', reason: 'tab_changed' });
+  const second = await ctx.mcp.callTool('fai_browser_open', { origins: ['https://example.org'], reason: 'New task', task: 'read' });
+  assert.ok(!second.isError, text(second));
+  const newer = ctx.hub.published.at(-1).find(item => item.state === 'pending');
+  assert.equal(ctx.hub.published.at(-1).find(item => item.requestId === first.requestId).stale, 'newer_request');
+  const status = text(await ctx.mcp.callTool('fai_browser_status', {}));
+  const next = status.split('\n')[0];
+  assert.match(next, new RegExp(`^next \\(relay\\): .*${newer.requestId}`), next);
+  assert.match(next, new RegExp(`Stale \\(paused, not offered to the user for Resume\\): ${first.requestId}; release each one you no `
+    + 'longer need with fai_browser_release\\.$'));
+  assert.match(status, new RegExp(`^request: ${first.requestId} paused read-only.*, stale \\(newer_request\\)$`, 'm'));
+});
+
 test('MCP: a session that cannot be woken keeps the wait command and the copy fallback', async t => {
   const ctx = await setup(t, { clientName: 'test-host' });
   assert.equal(ctx.session.host, 'unknown');

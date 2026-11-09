@@ -5,6 +5,14 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## Unreleased
+
+### Fixed
+
+- An older request no longer takes the Approve or Resume click meant for a new one (#13). Every click names its request, and nothing falls back to the oldest one: a start or lease message that names none (an older popup) gets the newest pending request for the tab's origin, else a paused one only on its own tab, and never resumes a paused request on another tab or while a request for its origin waits. The popup lists new requests first (newest first, "Waiting for your approval"), then the task in use, then **Paused tasks** with their own label (`PAUSED TASK`), why each paused and a secondary **Resume on this tab** / **Resume in a new <host> tab**, never the primary Approve or Open look. The approval window lists new requests only (its **Open <host>** for a paused task looked exactly like the new request's) and closes when none is left.
+- A paused request nobody is expected to continue is marked `stale` in its view: `newer_request` once the agent that made it (same owner session, else same client instance) asked for another tab, `idle` after 5 minutes paused with no live agent session owning it. The popup folds stale tasks under **Older paused tasks (n)** (still resumable and releasable there) and leaves them out of its `Ⅱ` badge; `fai_browser_status` marks them and its `next` names this session's own for release, so an agent no longer has to release finished requests to unblock the user. A paused view also carries `pausedAt`.
+- A `child_tab` pause names the origin of the tab or window the page opened (origin only, never the path or query, redacted like `leftOrigin`) when the browser shows its address: `childOrigin` in the request view and the paused result, as untrusted page text (`page opened: …`), never in `needs.message`. A window that opens on `about:blank` first is reported once its page shows. The agent can then request that origin up front.
+
 ## 0.6.0 (2026-11-09)
 
 ### Added
