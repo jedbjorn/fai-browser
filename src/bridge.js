@@ -61,6 +61,7 @@ const HTTP_ROUTES = {
   '/lease-level': 'lease_level',
   '/settings': 'settings',
   '/driver': 'driver',
+  '/update': 'update',
   '/deny': 'deny',
   '/status': 'status',
   '/validate': 'validate',
@@ -645,6 +646,18 @@ export function createHub({
         }
         if (!emit({ type: 'driver', driver: message.driver, reply })) {
           reply({ error: { code: 'unsupported', message: 'Update the local service to switch browser control.' } });
+        }
+        return;
+      }
+      case 'update': {
+        // The popup's update card: status, check, or install (the user's Update click). The daemon decides.
+        const action = message.action ?? 'status';
+        if (!['status', 'check', 'install'].includes(action)) {
+          reply({ error: { code: 'invalid_action', message: 'Unknown update action.' } });
+          return;
+        }
+        if (!emit({ type: 'update', action, reply })) {
+          reply({ error: { code: 'unsupported', message: 'This FAI service cannot update itself.' } });
         }
         return;
       }

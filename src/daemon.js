@@ -37,6 +37,8 @@ import { probeHealth } from './client.js';
 import { createDomainStore, domainStatsDir, resolveProfiles } from './domains.js';
 import { checkOriginEntry, isSiteEntry, leaseOrigins, originCovered, siteRoots, urlCovered } from './origins.js';
 import { scrubSecrets } from './secrets.js';
+import { spawn } from 'node:child_process';
+import { automaticCheck, createUpdateChecker, runningUpdate } from './update.js';
 
 export const DAEMON_VERSION = readPackageVersion();
 export const SERVICE_NAME = 'fai-browser';
@@ -476,6 +478,12 @@ async function readJsonBody(req) {
 }
 
 /** Lean agent result of an unwritten runtime result (the trace could not be written): trace null. */
+/** Start the updater in its own process group: it outlives this daemon, which it restarts. argv only, no shell. */
+function defaultSpawnUpdater(args, env) {
+  const child = spawn(process.execPath, args, { cwd: PACKAGE_ROOT, env, detached: true, stdio: 'ignore', windowsHide: true });
+  child.unref();
+}
+
 function unwrittenResult(raw) {
   return { ...agentResult(JSON.parse(JSON.stringify(raw))), trace: null };
 }
@@ -536,6 +544,11 @@ export function createDaemon(options = {}) {
   let warming = null; // the provider warm-up in flight (warmProvider)
   let warmAbort = new AbortController();
   const warnings = [];
+  // Update check (src/update.js): about once a day, off with FAI_UPDATE_CHECK=0, config.json updateCheck: false, or
+  // under node --test unless options.updateCheck is true. Installing needs the user's click (onUpdateEvent) or command.
+  const updates = createUpdateChecker({ paths, currentVersion: version, fetch: options.updateFetch, log,
+    enabled: () => automaticCheck({ env, config, override: options.updateCheck }).enabled,
+    ...(options.updateStartupDelayMs !== undefined ? { startupDelayMs: options.updateStartupDelayMs } : {}) });
 
   // --- change notification ----------------------------------------------------------------------------------
 
@@ -919,6 +932,37 @@ export function createDaemon(options = {}) {
     return driverChanges;
   }
 
+  // The popup's update card (extension channel only, authenticated by the pairing secret): `status`, `check` (the
+  // user asked; a result younger than a minute is reused) or `install` (the user's Update click). Install starts
+  // `fai-browser update --tag <tag>` (src/update-cli.js) detached, since it restarts this daemon; the tag is the
+  // validated cached release. There is no client-API route for it, so an agent's MCP call cannot start an update.
+  function onUpdateEvent(event) {
+    const action = event.action ?? 'status';
+    if (action === 'status') return replyTo(event, { update: updates.view() });
+    if (action === 'check') return updates.check({ force: true }).then(() => replyTo(event, { update: updates.view() }));
+    if (action !== 'install') return replyTo(event, { error: { code: 'invalid_action', message: 'Unknown update action.' } });
+    const view = updates.view();
+    const refuse = (code, message) => replyTo(event, { error: { code, message } });
+    if (!view.available || !view.tag) return refuse('no_update', 'FAI Browser is up to date.');
+    if (runningUpdate(paths)) return refuse('update_running', 'An update is already running.');
+    if ([...requests.values()].some(record => LEASED.has(record.state))) {
+      return refuse('lease_active', 'An agent holds a browser tab. Let the task finish or press Stop, then update.');
+    }
+    const childEnv = { ...env, FAI_DAEMON_PORT: String(port), ...(paths.custom ? { FAI_HOME: paths.home } : {}) };
+    const args = [join(PACKAGE_ROOT, 'src', 'cli.js'), 'update', '--tag', view.tag];
+    // A test never runs the real updater against the checkout it runs from.
+    if (!options.spawnUpdater && env.NODE_TEST_CONTEXT) return refuse('update_failed', 'No updates under node --test.');
+    try {
+      (options.spawnUpdater ?? defaultSpawnUpdater)(args, childEnv);
+    } catch (error) {
+      log('update_spawn_error', { message: String(error?.message ?? error).slice(0, 200) });
+      return refuse('update_failed', 'Could not start the update. Run node src/cli.js update in the fai-browser folder.');
+    }
+    log('update_install_started', { from: view.current, to: view.latest });
+    return replyTo(event, { update: { ...view, install: { state: 'running', from: view.current, to: view.latest,
+      at: iso(now()), step: 'start', error: null, message: `Installing ${view.latest}.` } } });
+  }
+
   function onHelloEvent(event) {
     if (event.settings !== undefined) applySettings(event.settings);
     const reply = endSession => replyTo(event, {
@@ -928,6 +972,7 @@ export function createDaemon(options = {}) {
       requests: liveViews(),
       budget: effectiveBudget(),
       control: driverView(),
+      update: updates.view(),
     });
     const session = event.session;
     if (!session) {
@@ -992,6 +1037,8 @@ export function createDaemon(options = {}) {
           return onSettingsEvent(event);
         case 'driver':
           return onDriverEvent(event);
+        case 'update':
+          return onUpdateEvent(event);
         case 'disconnected':
           return onDisconnected();
         case 'connected':
@@ -1367,6 +1414,8 @@ export function createDaemon(options = {}) {
         keyConfigured: Boolean(env.TYPESAFE_API_KEY) },
       // The per-request call budget in effect (the MCP server's ceiling) and where it comes from.
       budget: effectiveBudget(),
+      // Newer release (src/update.js): tell the user; only their popup click or `fai-browser update` installs it.
+      update: updates.view(),
       requests: liveViews(),
       runs: {
         active: all.filter(run => run.state === 'running').map(runSummary),
@@ -2275,6 +2324,7 @@ export function createDaemon(options = {}) {
     log('listening', { port, hub: hub.kind ?? 'hub' });
     // In the background: readiness never waits on the network or on a configured key.
     warmProvider('start');
+    updates.start();
     return { port };
   }
 
@@ -2284,6 +2334,7 @@ export function createDaemon(options = {}) {
     closing = (async () => {
       shuttingDown = true;
       warmAbort.abort();
+      updates.stop();
       clearInterval(sweepTimer);
       const running = [...runs.values()].filter(run => run.state === 'running');
       for (const run of running) requests.get(run.requestId)?.runtime?.interrupt('interrupted');

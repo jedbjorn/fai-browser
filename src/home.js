@@ -205,7 +205,7 @@ export function readClientToken(paths, env = process.env) {
 // can only be lowered. Unknown keys (a "level", "mode" or "testing" key included) are rejected.
 const CONFIG_KEYS = new Set([
   'retention', 'provider', 'providerOptions', 'requestTtlMs', 'leaseIdleMs', 'idleShutdownMs', 'outputDir',
-  'thresholds', 'budget', 'guardrails', 'retry', 'slim', 'profiles', 'driver',
+  'thresholds', 'budget', 'guardrails', 'retry', 'slim', 'profiles', 'driver', 'updateCheck',
 ]);
 /** Read FAI_HOME/config.json (only the driver when absent; `defaultDriver` when it names none). Throws on invalid JSON or unknown keys. */
 /** Read FAI_HOME/config.json ({} when absent). Throws on invalid JSON or unknown keys. */
@@ -230,6 +230,10 @@ export function loadConfig(paths, { defaultDriver = DEFAULT_DRIVER } = {}) {
   if (unknown.length) throw new Error(`Unknown config.json key: ${unknown.join(', ')}`);
   if (config.driver !== undefined && !DRIVERS.includes(config.driver)) {
     throw new Error('config.json driver must be agent or jev');
+  }
+  // The daily check for a newer release (src/update.js); false turns it off. It never installs anything.
+  if (config.updateCheck !== undefined && typeof config.updateCheck !== 'boolean') {
+    throw new Error('config.json updateCheck must be true or false');
   }
   for (const key of ['requestTtlMs', 'leaseIdleMs', 'idleShutdownMs']) {
     if (config[key] !== undefined && (!Number.isSafeInteger(config[key]) || config[key] < 0)) {
