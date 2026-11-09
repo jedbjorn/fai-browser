@@ -3625,3 +3625,52 @@ test('frames review: an extra origin the user already allowed survives the sessi
   assert.notEqual(refused.status, 'active');
   assert.equal(declined.grants.size, 0);
 });
+
+test('frames review: screenshot boxes follow each read frame by its frame id, not by a window index another frame shifted', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  const slot = (path, y) => ({ path: [path], box: { x: 10, y, width: 80, height: 20 }, clip: { left: 10, top: y, right: 90, bottom: y + 20 },
+    declared: PORTAL });
+  // Read: A at index 1 (no secret), B at index 2 (a password field); index 0 is an unread ad.
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [{ ...slot(0, 0), declared: ELSEWHERE }, slot(1, 30), slot(2, 60)],
+    pageFacts: NO_FACTS };
+  const a = { frameId: 5, documentId: 'D5', path: [1], width: 80, height: 20, page: framePage({ rects: [] }) };
+  const b = { frameId: 6, documentId: 'D6', path: [2], width: 80, height: 20, page: framePage({ doc: 'bdoc' }) };
+  const ad = { frameId: 4, documentId: 'D4', path: [0], width: 80, height: 20, page: framePage({ origin: ELSEWHERE, doc: 'addoc' }) };
+  frameWorld(h, [ad, a, b]);
+  await observed(h);
+  // The ad is removed: A is index 0 now, B index 1; an unread frame takes index 2.
+  a.path = [0];
+  b.path = [1];
+  ad.path = [9];
+  const boxes = [{ path: [0], box: { x: 10, y: 30, width: 80, height: 20 }, clip: { left: 10, top: 30, right: 90, bottom: 50 } },
+    { path: [1], box: { x: 10, y: 60, width: 80, height: 20 }, clip: { left: 10, top: 60, right: 90, bottom: 80 } },
+    { path: [2], box: { x: 10, y: 85, width: 80, height: 10 }, clip: { left: 10, top: 85, right: 90, bottom: 95 } }];
+  h.redaction = ({ arm }) => topBoxes(arm, boxes);
+  const { redact } = await captured(h);
+  assert.ok(hasBox(redact.rects, 11, 62, 20, 8), `B's field where B is now: ${JSON.stringify(redact.rects)}`);
+  assert.ok(hasBox(redact.rects, 10, 85, 80, 10), 'the new unread frame is boxed whole');
+  assert.ok(!redact.rects.some(rect => rect.y === 87), 'never B\'s boxes on the unread frame');
+});
+
+test('frames review: a frame whose size no longer matches its box is boxed whole, never placed', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const frame = { frameId: 5, documentId: 'D5', path: [0], page: framePage() };
+  frameWorld(h, [frame]);
+  await observed(h);
+  frame.width = 300;
+  h.redaction = ({ arm }) => topBoxes(arm, [at(10, 20)]);
+  const { redact } = await captured(h);
+  // The capture's own fresh observation no longer reads it (unavailable): it is boxed whole like any unread frame.
+  assert.ok(hasBox(redact.rects, 10, 20, 80, 70), JSON.stringify(redact.rects));
+  assert.ok(!hasBox(redact.rects, 11, 22, 20, 8), 'its own boxes are never placed by a box of another size');
+  // Resized between that observation and the queries: boxed whole, and the capture is not trusted.
+  frame.width = 80;
+  h.redaction = ({ arm }) => {
+    if (arm) frame.width = 300;
+    return topBoxes(arm, [at(10, 20)]);
+  };
+  const second = (await captured(h)).redact;
+  assert.ok(hasBox(second.rects, 10, 20, 80, 70), JSON.stringify(second.rects));
+  assert.equal(second.withheld, true);
+});

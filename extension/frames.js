@@ -511,8 +511,9 @@
     return typeof action?.target === 'string' && FRAME_TARGET.test(action.target);
   }
 
-  // Top acts that may submit, pay or sign in look at the frames' facts again first (refreshFrames).
-  const REFRESHING = new Set(['click', 'submit_field', 'press']);
+  // Top acts on a control that may submit, pay or sign in (a click, Enter, a key, a select or fill a page submits on
+  // change, an upload) look at the frames' facts again first (refreshFrames). A hover never does.
+  const REFRESHING = new Set(['click', 'submit_field', 'press', 'select', 'fill_supplied_text', 'fill_secret', 'upload']);
 
   // A page action (execute) in the top document or a frame. `rest` are execute()'s arguments after the revision
   // (settle, terms, forbid, allow, sites, expectText, approval). Returns execute()'s outcome, its observation merged; an
@@ -567,14 +568,18 @@
     return { ...kept, fromUrl, target, observation };
   }
 
-  // Screenshot redaction for the tab's cross-origin frames, placed where they are now: the top document's query
-  // (`value`, page.js redactionRects) names each cross-origin frame's current box by path (frameBoxes), and so does
-  // each approved frame's own query for the frames inside it. A frame read last is asked for its own boxes (secrets,
-  // password, payment and secret fields, and in Strict mode its canvases, code and unread frames), moved into the top
-  // viewport by its current box and clipped to it; a frame that does not answer in time is boxed whole. Every frame
-  // that was not read is boxed whole. A frame read last that is no longer where a query can place it is boxed where
-  // it was and the capture is marked dirty; so is one that moved more than MOVE_TOLERANCE_PX between the query
-  // before the capture and the one after it (the worker then takes the capture again or withholds it).
+  // Screenshot redaction for the tab's cross-origin frames, placed where they are now. The top document's query
+  // (`value`, page.js redactionRects) names each cross-origin frame's current box by its current path (frameBoxes),
+  // and so does each approved frame's own query for the frames inside it. A path is only a position (removing an earlier
+  // frame shifts every later one), so the frames read last are found again by their frame id: a probe gives each one's
+  // current path, origin and size, and a box is matched to a read frame only when that frame is at that path now, on
+  // the same origin and document, with the box's size. A matched frame is asked for its own boxes (secrets, password,
+  // payment and secret fields, and in Strict mode its canvases, code and unread frames), moved into the top viewport by
+  // its current box and clipped to it; one that does not answer within the shared FRAME_REDACT_MS is boxed whole. Every
+  // other box is boxed whole: a frame that was not read, and a read frame's box that does not match (the capture is then
+  // marked dirty too). A read frame no query places is boxed where it was and marks the capture dirty; so does one that
+  // moved more than MOVE_TOLERANCE_PX between the query before the capture and the one after it (the worker then takes
+  // the capture again or withholds it).
   async function redaction(tabId, value, arm) {
     if (!value || !Array.isArray(value.rects)) return value;
     const { frameBoxes = [], ...rest } = value;
@@ -583,31 +588,51 @@
     if (!frames.length && !(Array.isArray(frameBoxes) && frameBoxes.length)) return rest;
     const rects = [...rest.rects];
     let incomplete = rest.incomplete === true;
+    let mismatch = false;
     let dirty = rest.dirty;
+    const deadline = Date.now() + FRAME_REDACT_MS;
     const box = (clip, kind) => ({ x: Math.floor(clip.left), y: Math.floor(clip.top), width: Math.ceil(clip.right - clip.left),
       height: Math.ceil(clip.bottom - clip.top), kind });
     const visible = clip => clip.right > clip.left && clip.bottom > clip.top;
-    const readByPath = new Map(frames.map(frame => [pathKey(frame.path), frame]));
+    // Where each frame read last is now (each probed alone: one that is gone does not hide the others).
+    const probes = await Promise.all(frames.map(frame => probeFrames(tabId, [frame.frameId]).then(([probe]) => [frame, probe])));
+    const byPath = new Map();
+    for (const [frame, probe] of probes) {
+      const same = probe && probe.result.origin === frame.origin && !probe.result.opaque && frameApproved(probe.result.origin)
+        && !(frame.documentId && probe.documentId && probe.documentId !== frame.documentId);
+      if (same) byPath.set(pathKey(probe.result.path), { frame, probe });
+    }
+    const placed = new Set();
     const now = new Map();
     let level = (Array.isArray(frameBoxes) ? frameBoxes : []).map(slot => placeSlot(slot, { dx: 0, dy: 0, clip: null })).filter(Boolean);
     while (level.length) {
-      const next = [];
+      const asking = [];
       for (const slot of level) {
         const key = pathKey(slot.path);
         if (now.has(key)) continue;
         now.set(key, slot);
-        const frame = readByPath.get(key);
-        if (!frame) {
-          // Not read: nothing of it is known, so none of it is shown.
+        const match = byPath.get(key);
+        if (!match) {
+          // Not read (or not the frame read there): nothing of it is known, so none of it is shown.
           if (visible(slot.clip)) rects.push(box(slot.clip, 'frame'));
+          // A read frame sits at this path now but is not the document or origin it was: the capture is not trusted.
+          if (probes.some(([, probe]) => probe && pathKey(probe.result.path) === key)) mismatch = true;
           continue;
         }
-        let answer = null;
-        try {
-          answer = await Promise.race([callFrame(tabId, frame, 'redactionRects', [{ arm }]), delay(FRAME_REDACT_MS).then(() => null)]);
-        } catch {
-          answer = null;
+        if (!sameSize(match.probe, slot)) {
+          if (visible(slot.clip)) rects.push(box(slot.clip, 'frame'));
+          mismatch = true;
+          continue;
         }
+        placed.add(match.frame);
+        asking.push({ slot, frame: match.frame });
+      }
+      const answers = await Promise.all(asking.map(({ slot, frame }) => Promise.race([
+        callFrame(tabId, frame, 'redactionRects', [{ arm }]).catch(() => null),
+        delay(Math.max(0, deadline - Date.now())).then(() => null),
+      ]).then(answer => ({ slot, answer }))));
+      const next = [];
+      for (const { slot, answer } of answers) {
         if (!answer || !Array.isArray(answer.rects)) {
           if (visible(slot.clip)) rects.push(box(slot.clip, 'frame'));
           continue;
@@ -626,27 +651,27 @@
           rects.push({ ...box(clip, rect.kind ?? 'secret'), ...(clean.label ? { label: clean.label } : {}) });
         }
         for (const inner of Array.isArray(answer.frameBoxes) ? answer.frameBoxes : []) {
-          const placed = placeSlot(inner, { dx: slot.dx, dy: slot.dy, clip: slot.clip });
-          if (placed && startsWith(placed.path, slot.path)) next.push(placed);
+          const nested = placeSlot(inner, { dx: slot.dx, dy: slot.dy, clip: slot.clip });
+          if (nested && startsWith(nested.path, slot.path)) next.push(nested);
         }
       }
       level = next;
     }
-    // A frame read last that no query placed: box it where it was, and the capture cannot be trusted as is.
+    // A frame read last that no box matched: box it where it was, and the capture cannot be trusted as is.
     for (const frame of frames) {
-      if (now.has(pathKey(frame.path))) continue;
+      if (placed.has(frame)) continue;
       if (visible(frame.clip)) rects.push(box(frame.clip, 'frame'));
-      if (arm) state.redactMissing = true;
-      else dirty = true;
+      mismatch = true;
     }
     if (arm) {
       state.redactBoxes = now;
+      state.redactMissing = mismatch;
     } else {
       const before = state.redactBoxes ?? new Map();
       const moved = (a, b) => !a || !b || Math.abs(a.dx - b.dx) > MOVE_TOLERANCE_PX || Math.abs(a.dy - b.dy) > MOVE_TOLERANCE_PX
         || Math.abs(a.width - b.width) > MOVE_TOLERANCE_PX || Math.abs(a.height - b.height) > MOVE_TOLERANCE_PX;
       for (const key of new Set([...before.keys(), ...now.keys()])) if (moved(before.get(key), now.get(key))) dirty = true;
-      if (state.redactMissing) dirty = true;
+      if (state.redactMissing || mismatch) dirty = true;
       state.redactBoxes = null;
       state.redactMissing = false;
     }
