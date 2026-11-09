@@ -969,9 +969,10 @@ test('popup: connected collapses setup to one line; the saved secret never reach
 
 test('popup: with two browsers paired, a request waiting in the other one is listed with Open here, which moves it', async t => {
   // Several browsers (issue #9): this popup is Chromium's; the request waits in Firefox, the browser used last.
-  const browsers = [{ id: 'b-chromium-self', product: 'chromium', name: 'Chromium' }, { id: 'b-firefox-other', product: 'firefox', name: 'Firefox' }];
-  const elsewhere = { ...request(['https://example.com'], 'read-only'), browser: { id: 'b-firefox-other', product: 'firefox', name: 'Firefox' } };
-  const mine = { ...request(['https://example.org'], 'read-only'), requestId: 'req_2', browser: { id: 'b-chromium-self', product: 'chromium', name: 'Chromium' } };
+  // As the service sends them: names and `self`/`mine` only, never another browser's id.
+  const browsers = [{ product: 'chromium', name: 'Chromium', self: true }, { product: 'firefox', name: 'Firefox', self: false }];
+  const elsewhere = { ...request(['https://example.com'], 'read-only'), browser: { product: 'firefox', name: 'Firefox', mine: false } };
+  const mine = { ...request(['https://example.org'], 'read-only'), requestId: 'req_2', browser: { product: 'chromium', name: 'Chromium', mine: true } };
   const page = await popup(t, { local: { ...PAIRED }, requests: [elsewhere, mine],
     state: { connection: { browserId: 'b-chromium-self', browsers } } });
   await page.waitForSelector('.elsewhere-request');

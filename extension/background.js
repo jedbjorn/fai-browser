@@ -52,7 +52,8 @@ const CLOSE_SUPERSEDED = 4003;
 const SUPERSEDED_RETRY_MS = 5 * 60_000;
 // A connection that lasted at least this long resets the reconnect backoff.
 const STABLE_MS = 10_000;
-const BROWSER_ID = /^[A-Za-z0-9_-]{8,64}$/;
+// The ids this worker creates (src/bridge.js BROWSER_ID); a saved value of any other shape is replaced.
+const BROWSER_ID = /^b-[A-Za-z0-9]{8,40}$/;
 // The native messaging host (src/native.js NATIVE_HOST_NAME) and how often an unreachable service re-asks it.
 const NATIVE_HOST = 'fai_browser';
 const NATIVE_RETRY_MS = 30_000;
@@ -743,7 +744,10 @@ async function browserIdentity() {
 }
 
 // Whether a request is meant for this browser: one that names no browser (an older service), or names this one.
+// The service marks each request `browser.mine` for this connection and never sends another browser's id; a
+// service from before that sends ids, compared with this install's own.
 function here(request) {
+  if (typeof request?.browser?.mine === 'boolean') return request.browser.mine;
   return !request?.browser?.id || !identity || request.browser.id === identity.id;
 }
 
@@ -814,8 +818,10 @@ function publishConnection() {
 function setRequests(list, browsers) {
   requests = Array.isArray(list) ? list.filter(item => item && typeof item.requestId === 'string') : [];
   if (Array.isArray(browsers)) {
-    connectedBrowsers = browsers.filter(item => item && typeof item.id === 'string')
-      .map(item => ({ id: item.id, product: String(item.product ?? ''), name: String(item.name ?? '') }));
+    // {product, name, self}: names only (no ids), `self` for this browser.
+    connectedBrowsers = browsers.filter(item => item && typeof item === 'object')
+      .map(item => ({ product: String(item.product ?? '').slice(0, 24), name: String(item.name ?? '').slice(0, 48),
+        self: item.self === true || (typeof item.id === 'string' && item.id === identity?.id) }));
     publishConnection();
   }
   storeSession({ requests });
@@ -935,7 +941,7 @@ function updateBadge() {
   } else if (!pairing) {
     title = 'FAI Browser: not paired';
   } else if (conflict === 'superseded') {
-    title = 'FAI Browser: connected from another window of this browser';
+    title = 'FAI Browser: another copy of this browser profile took the FAI connection';
   } else if (conflict === 'replaced') {
     title = 'FAI Browser: another browser keeps taking the FAI connection';
   } else if (!connected) {
@@ -1305,6 +1311,8 @@ function requestHeaders(current) {
 
 async function http(type, body, current = pairing) {
   if (!current) throw new ExtensionError('session_inactive', 'Pair the extension first');
+  // Every call names this browser: a call without the id would count as another (older) browser at the service.
+  await browserIdentity();
   const response = await fetch(current.endpoint + HTTP_PATHS[type], {
     method: 'POST',
     headers: requestHeaders(current),
@@ -1377,7 +1385,7 @@ function markDisconnected() {
   connected = false;
   transportName = 'none';
   if (!session) {
-    const text = conflict === 'superseded' ? 'Connected from another window of this browser. Open this popup again to use it here.'
+    const text = conflict === 'superseded' ? 'Another copy of this browser profile took the FAI connection. Open this popup again to use it here.'
       : conflict === 'replaced' ? 'Another browser keeps taking the FAI service connection (an older FAI service). Retrying slowly; update FAI Browser to use both.'
         : 'Not connected to the FAI service. Retrying.';
     ignore(chrome.storage.local.set({ status: text }));
