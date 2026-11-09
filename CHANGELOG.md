@@ -5,6 +5,17 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## Unreleased
+
+### Added
+
+- Clicking Resume (or approving) in the extension can wake the agent. `fai-browser wait <requestId> --until active [--timeout 30m]` blocks on the daemon's long poll until the tab is usable again and prints one JSON line: exit 0 active, 3 the request ended (released, expired, denied, cancelled or unknown to the daemon), 2 timeout, 130 interrupted. It rides out a daemon restart or dropped connection with a short backoff.
+- Paused and pending relays (Agent direct and Jev) name that command in `next.text` with the absolute node and CLI paths, so a host that is notified when a background command exits (Claude Code's `run_in_background`) starts it and ends its turn instead of waiting for the user to type "resumed"; other hosts ask the user to say when they are done.
+
+### Changed
+
+- The paused lease messages ask the user to click Resume in the FAI Browser extension and leave how to continue to `next`; after Resume the agent observes the page (Agent direct) instead of calling `fai_browser_open` again.
+
 ## 0.4.0 (2026-11-07)
 
 ### Added
