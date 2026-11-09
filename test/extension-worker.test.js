@@ -2071,6 +2071,21 @@ test('"Open requested pages right away" is on by default: the page opens armed a
   }
 });
 
+test('"Open requested pages right away": a prompt placement Chrome refuses (window partly off screen) falls back to its own', async () => {
+  const h = harness({ hostGrants: [], leaseOrigins: [SHOP], permissions: { defaultLevel: 'read-only' } });
+  await h.waitFor(m => m.type === 'hello');
+  const create = h.chrome.windows.create;
+  const asked = [];
+  h.chrome.windows.create = async options => {
+    asked.push(options.left === undefined ? 'browser' : 'placed');
+    if (options.left !== undefined) throw new Error('Invalid value for bounds. Bounds must be at least 50% within visible screen space.');
+    return create(options);
+  };
+  h.push({ type: 'requests', requests: [pendingRequest('req_1', { mode: 'reversible' })] });
+  await h.until(() => h.session.armedTabs?.[0]?.promptWindowId != null);
+  assert.deepEqual(asked, ['placed', 'browser']);
+});
+
 test('"Open requested pages right away": Full and Testing requests get the approval window, nothing opens by itself', async () => {
   for (const mode of ['full', 'testing']) {
     const h = harness({ hostGrants: [], leaseOrigins: [SHOP], permissions: { defaultLevel: 'full' } });
@@ -2969,6 +2984,19 @@ test('modal approval clicked before the opened page committed waits for it on th
   assert.equal(answer.status, 'active', JSON.stringify(answer));
   assert.equal(answer.session.tabId, 9);
   assert.equal(h.sent.filter(m => m.type === 'lease').length, 1);
+});
+
+test('modal approval prepared before page loads, a re-arm and a requests update still approves with one click', async () => {
+  const { h, message } = await modalPrepared();
+  h.grant(message.pattern);
+  // The page finishes loading (several times on some sites): showArm re-applies the arm's look.
+  for (let i = 0; i < 3; i++) h.chrome.tabs.onUpdated.emit(9, { status: 'complete' });
+  // Another agent's request arrives; this one is unchanged.
+  h.push({ type: 'requests', requests: [pendingRequest('req_1', { mode: 'reversible', client: 'Codex' }), pendingRequest('req_other')] });
+  await sleep(30);
+  assert.equal(h.session.armedTabs.find(arm => arm.tabId === 9).at, message.at, 'the arm keeps its time');
+  const reply = await h.send(message, MODAL_SENDER);
+  assert.equal(reply.status, 'active', JSON.stringify(reply));
 });
 
 test('modal approval during a redirect that lands off the approved origin still refuses', async () => {

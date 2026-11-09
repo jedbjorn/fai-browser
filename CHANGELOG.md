@@ -43,6 +43,13 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 - `maxlength` no longer leaves half an emoji (a lone surrogate) on the synthetic path.
 - A fill with an empty value now clears the field, and is reported kept only when the field is empty.
 
+### Fixed
+
+- Approve takes one click. The request modal (the window next to a page that opened by itself) refused a click that came before the page had committed (a slow site, or a redirect on the way) with "The page changed. Nothing was approved.", so the next click approved; the worker now waits up to 15 s for the tab to commit on the approved origin and then checks it as before. A click before the worker had prepared the approval was lost on a disabled button; Approve is now enabled once the request is known, asks for site access inside the click and approves as soon as the approval is ready. While the browser asks for site access the button reads "Approving…" and the status line is scrolled into view, and another click changes nothing.
+- A press on a popup card's Approve (a tab request or an Approve once card) no longer loses its click when the list re-renders under the pointer (another request arriving, a connection change); the re-render waits until the press ends.
+- An identical tab request repeated by the same client while its earlier one still waits for the user (a retried call, `request-tab` run twice, a restarted MCP session) returns that pending request (`200`, `repeated: true`) instead of opening a second task tab and request window, of which a click approved only one.
+- The request modal opens even when the page's window is partly off screen (Chrome refused the placement; it now falls back to the browser's own).
+
 ### Known limits
 
 - A toolbar-icon approval (`activeTab`) reaches only the tab's own origin: approved frames on other origins come back as `no_access`. Approve from the request modal, or allow all sites.
