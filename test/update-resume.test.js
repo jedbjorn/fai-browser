@@ -88,8 +88,10 @@ function fakeSteps() {
   };
 }
 
-const releases = commit => async url => (String(url) === RELEASES_API
-  ? new Response(JSON.stringify({ tag_name: 'v0.5.0', draft: false, prerelease: false, target_commitish: 'main' }), { status: 200 })
+// The tag defaults to the fixture checkout's next release; the daemon test (which compares with the real package.json
+// version) passes one no real release will reach.
+const releases = (commit, tag = 'v0.5.0') => async url => (String(url) === RELEASES_API
+  ? new Response(JSON.stringify({ tag_name: tag, draft: false, prerelease: false, target_commitish: 'main' }), { status: 200 })
   : new Response(commit, { status: 200 }));
 
 const options = (s, extra = {}) => ({ home: s.home, env: s.faiEnv, root: s.checkout, git: s.run, remoteOk: s.remoteOk,
@@ -229,7 +231,7 @@ test('item 2: the daemon stops an updater that lost the lock to another update',
   const hub = createFakeHub();
   const children = [];
   const daemon = createDaemon({ home, env: { FAI_BRIDGE_SECRET: SECRET }, port: 0, hub, sweepIntervalMs: 60_000,
-    updateStartupDelayMs: 0, updateInstallable: true, updateCheck: true, updateFetch: releases('c'.repeat(40)),
+    updateStartupDelayMs: 0, updateInstallable: true, updateCheck: true, updateFetch: releases('c'.repeat(40), 'v999.0.0'),
     spawnUpdater: () => {
       // A CLI `update` took the lock between the daemon's check and its claim.
       claimUpdateLock(paths, process.ppid);
