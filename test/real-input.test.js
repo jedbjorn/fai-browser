@@ -609,9 +609,10 @@ for (const path of PATHS) {
 
   test(`limits (${path}): maxlength cuts by code point; slow key handlers stop the keys and the rest goes in; a formatter's output stands`, async t => {
     const { page, run } = await openRhythm(t, path);
-    // As a keyboard: the emoji does not fit the one unit left, the next letter does; never half an emoji.
+    // The emoji does not fit the one unit left and the next letter would ("abcdx", residue after the cut value): the
+    // read-back sets the value cut at maxlength by whole characters; never half an emoji.
     const cut = await typeInto(run, '#m', 'abcd🎉xy');
-    assert.equal(cut.value, 'abcdx');
+    assert.equal(cut.value, 'abcd');
     assert.ok(!/[\uD800-\uDFFF]/.test(cut.value), 'no lone surrogate');
     const slow = await typeInto(run, '#slow', 'the quick brown fox');
     t.diagnostic(`${path} slow page: ${slow.ms} ms, ${slow.typed} keys planned`);
@@ -648,6 +649,34 @@ for (const path of PATHS) {
     const doubled = await actOnField(run, 'Doubled', { type: 'fill_supplied_text', text: 'abc' });
     assert.equal(await page.inputValue('#dbl'), 'abc abc');
     assert.deepEqual(doubled.fill, { kept: false, empty: false, corrected: true }, 'the value twice: residue, corrected once, still not kept');
+  });
+
+  test(`a correction goes into the typed field only (${path}): focus taken back, or the synthetic route when it cannot be`, async t => {
+    const { page, run, cdp } = await open(t, `<!doctype html><title>Focus</title>
+      <input id="jump" aria-label="Jump"><input id="other" aria-label="Other">
+      <input id="stuck" aria-label="Stuck"><input id="other2" aria-label="Other two">
+      <script>
+        // Once the text is in, each field shows it twice (residue to correct) and moves focus to its neighbour; the
+        // second one refuses focus from then on.
+        const moved = new Set();
+        for (const [id, next] of [['jump', 'other'], ['stuck', 'other2']]) {
+          const field = document.getElementById(id);
+          field.addEventListener('input', () => {
+            if (moved.has(id) || field.value !== 'abc') return;
+            moved.add(id);
+            field.value = 'abcabc';
+            document.getElementById(next).focus();
+          });
+          if (id === 'stuck') field.addEventListener('focus', () => { if (moved.has(id)) document.getElementById(next).focus(); });
+        }
+      </script>`);
+    if (path === 'trusted') await wireTrusted(run, cdp);
+    for (const [selector, neighbour] of [['#jump', '#other'], ['#stuck', '#other2']]) {
+      const typed = await typeInto(run, selector, 'abc');
+      assert.equal(typed.value, 'abc', selector);
+      assert.equal(typed.corrected, true, selector);
+      assert.equal(await page.inputValue(neighbour), '', `nothing went into ${neighbour}`);
+    }
   });
 
   test(`formatted and completing fields (${path}): kept as the page shows them, a combobox never corrected, Ctrl+A blocked still replaces`, async t => {
