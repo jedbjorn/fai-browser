@@ -1072,12 +1072,10 @@ export function createDaemon(options = {}) {
       invite: inviteId,
       ownerSession: null,
     };
-    requests.set(record.requestId, record);
+    // Listed only once bound: no view ever shows it pending (an approval window would open for it).
     const bound = bindRecord(record, { ...event, scope: 'origin', tabMode: event.tabMode ?? 'single' });
-    if (bound.error) {
-      requests.delete(record.requestId);
-      return replyTo(event, bound);
-    }
+    if (bound.error) return replyTo(event, bound);
+    requests.set(record.requestId, record);
     const invite = { inviteId, requestId: record.requestId, sessionId: target?.sessionId ?? null, target, browserId,
       tabId: event.tabId, origin: event.origin, level: record.grant.level, text, createdAt: t,
       expiresAt: t + INVITE_TTL_MS, state: 'open', endReason: null, wakeId: null, joinedBy: null };
