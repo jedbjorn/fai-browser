@@ -8,7 +8,7 @@
 //
 // git never prompts: GIT_TERMINAL_PROMPT=0, no askpass, and ssh in batch mode unless the user configured ssh for git
 // (GIT_SSH_COMMAND, GIT_SSH or core.sshCommand), which is then left as it is. Every call is execFile with argv.
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -19,14 +19,18 @@ const TAG = /^v((?:0|[1-9]\d{0,5})\.(?:0|[1-9]\d{0,5})\.(?:0|[1-9]\d{0,5}))$/;
 const SHA = /^[0-9a-f]{40}$/;
 
 const SECRET_NAMES = new Set(['TYPESAFE_API_KEY', 'FAI_BRIDGE_SECRET', 'FAI_CLIENT_TOKEN']);
-const SECRET_LIKE = /(?:^|_)(?:API_?KEY|ACCESS_?KEY|AUTH_?TOKEN|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)$/i;
+// Anything ending in KEY (OPENAI_KEY, JEV_KEY, AWS_SECRET_KEY, SSH_PRIVATE_KEY, an APIKEY), TOKEN, SECRET, a password
+// or credentials.
+const SECRET_LIKE = /(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIALS?)$/i;
 // Git's own location variables would point git at another repository.
 const GIT_LOCATION = /^GIT_(?:DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|CEILING_DIRECTORIES|PREFIX)$/;
 const TOOL_NAMES = new Set(['PATH', 'Path', 'PATHEXT', 'HOME', 'USERPROFILE', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TMP', 'TEMP',
   'SystemRoot', 'APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS',
   'SSH_AUTH_SOCK', 'SSH_AGENT_PID', 'GIT_SSH', 'GIT_SSH_COMMAND', 'GIT_SSH_VARIANT', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM',
   'GIT_CONFIG_SYSTEM', 'GIT_SSL_CAINFO', 'GIT_SSL_CAPATH', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
-  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy']);
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy', 'GH_CONFIG_DIR']);
+// Git Credential Manager's settings (GCM_CREDENTIAL_STORE, GCM_INTERACTIVE, ...); a secret-like name is still dropped.
+const TOOL_PREFIXES = ['GCM_'];
 
 function secretName(name) {
   return SECRET_NAMES.has(name) || SECRET_LIKE.test(name);
@@ -41,7 +45,7 @@ export function scrubbedEnv(env = process.env) {
 /** The minimal environment git and npm need (allowlist), without prompts; no secret can be in it. */
 export function toolEnv(env = process.env) {
   const out = Object.fromEntries(Object.entries(env).filter(([name, value]) => typeof value === 'string'
-    && TOOL_NAMES.has(name) && !secretName(name)));
+    && (TOOL_NAMES.has(name) || TOOL_PREFIXES.some(prefix => name.startsWith(prefix))) && !secretName(name)));
   return { ...out, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', LC_ALL: 'C', LANG: 'C' };
 }
 
@@ -80,12 +84,68 @@ export function gitRunner({ cwd, env = process.env, timeoutMs = GIT_TIMEOUT_MS }
     return ready;
   };
   const git = async (args, options = {}) => {
-    const { stdout } = await execFileAsync('git', args, { cwd, env: await resolveEnv(), timeout: options.timeoutMs ?? timeoutMs,
-      maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+    const stdout = await runGrouped('git', args, { cwd, env: await resolveEnv(), timeoutMs: options.timeoutMs ?? timeoutMs });
     return stdout.trim();
   };
   git.env = resolveEnv;
   return git;
+}
+
+const MAX_OUTPUT = 4 * 1024 * 1024;
+
+/**
+ * Run `file args` in a process group of its own (POSIX) and resolve its stdout; on the timeout the whole group is
+ * killed, so the ssh or credential helper git started is not left behind. Rejects with `stderr`, `code` (the exit
+ * code or 'timeout'). Windows: execFile with its timeout.
+ */
+export function runGrouped(file, args, { cwd, env, timeoutMs = GIT_TIMEOUT_MS } = {}) {
+  if (process.platform === 'win32') {
+    return execFileAsync(file, args, { cwd, env, timeout: timeoutMs, maxBuffer: MAX_OUTPUT, windowsHide: true })
+      .then(({ stdout }) => stdout);
+  }
+  return new Promise((resolveRun, rejectRun) => {
+    let child;
+    try {
+      child = spawn(file, args, { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) {
+      rejectRun(error);
+      return;
+    }
+    const out = [];
+    const err = [];
+    let size = 0;
+    let timedOut = false;
+    const killGroup = () => {
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        // Already gone.
+      }
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killGroup();
+    }, timeoutMs);
+    const collect = list => chunk => {
+      size += chunk.length;
+      if (size > MAX_OUTPUT) killGroup();
+      else list.push(chunk);
+    };
+    child.stdout.on('data', collect(out));
+    child.stderr.on('data', collect(err));
+    child.on('error', error => {
+      clearTimeout(timer);
+      rejectRun(error);
+    });
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      const stdout = Buffer.concat(out).toString('utf8');
+      const stderr = Buffer.concat(err).toString('utf8');
+      if (code === 0 && !timedOut) return resolveRun(stdout);
+      const reason = timedOut ? `timed out after ${timeoutMs} ms` : `exited with ${code ?? signal}`;
+      rejectRun(Object.assign(new Error(`${file} ${args[0] ?? ''} ${reason}`), { code: timedOut ? 'timeout' : code, stderr, stdout }));
+    });
+  });
 }
 
 async function gitOrNull(git, args) {

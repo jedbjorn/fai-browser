@@ -20,7 +20,7 @@
 // Nothing here installs anything: src/update-install.js does, only after the user's click in the popup or their
 // `fai-browser update` command. Release data from the network is never trusted as text: the tag must match TAG (a
 // plain vX.Y.Z), the commit SHA, and the release notes link is built here from the validated tag.
-import { readFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ensureDir, isAlive, writePrivate } from './home.js';
 import { UPDATE_REPO_PATH } from './update-git.js';
@@ -180,35 +180,97 @@ export function readInstallState(paths) {
     step: typeof raw.step === 'string' && ERROR_CODE.test(raw.step) ? raw.step : null,
     error: typeof raw.error === 'string' && ERROR_CODE.test(raw.error) ? raw.error : null,
     message: typeof raw.message === 'string' ? raw.message.slice(0, 500) : null,
+    // The release commit the checkout moved to and the commit before it (written at the move): an unfinished update is
+    // resumed only on that very commit (src/update-cli.js).
+    commit: isCommitSha(raw.commit) ? raw.commit : null,
+    previous: isCommitSha(raw.previous) ? raw.previous : null,
+    // A resume that was refused (a tab held) keeps this marker, so the next run resumes again.
+    resume: raw.resume === true,
   };
-  if (record.state === 'running' && !liveHolder(raw.pid, raw.at)) {
+  if (record.state === 'running' && !liveHolder(raw.pid, raw.at, raw.pidStart)) {
     return { ...record, state: 'failed', error: 'interrupted',
       message: 'The update stopped before it finished. Run node src/cli.js update to finish it or see where the checkout is.' };
   }
   return record;
 }
 
-/** A pid that is alive and wrote its record or lock less than UPDATE_MAX_MS ago (a reused pid ages out). */
-function liveHolder(pid, at, now = Date.now()) {
+/**
+ * When a process started, as the kernel counts it (Linux: field 22 of /proc/<pid>/stat), or null where that cannot be
+ * read. A pid with another start time is another process (a reused pid).
+ */
+export function processStart(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    // "pid (comm) state ..." where comm may hold spaces and parentheses: the fields follow the last ")".
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    const start = fields[19];
+    return /^\d+$/.test(start ?? '') ? start : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A pid that is alive and is the process that wrote the record or lock: the same start time where the platform tells
+ * it (Linux), else written less than UPDATE_MAX_MS ago (a reused pid ages out).
+ */
+function liveHolder(pid, at, pidStart, now = Date.now()) {
+  if (!Number.isInteger(pid) || !isAlive(pid)) return false;
+  const current = typeof pidStart === 'string' ? processStart(pid) : null;
+  if (current !== null) return current === pidStart;
   const time = msOf(at);
-  return Number.isInteger(pid) && isAlive(pid) && time !== null && now - time < UPDATE_MAX_MS;
+  return time !== null && now - time < UPDATE_MAX_MS;
 }
 
 export function writeInstallState(paths, record) {
   ensureDir(paths.stateDir);
-  writePrivate(updatePaths(paths).install, `${JSON.stringify({ ...record, at: new Date().toISOString() }, null, 2)}\n`);
+  const pidStart = Number.isInteger(record.pid) ? processStart(record.pid) : null;
+  writePrivate(updatePaths(paths).install, `${JSON.stringify({ ...record, ...(pidStart ? { pidStart } : {}),
+    at: new Date().toISOString() }, null, 2)}\n`);
 }
 
-/** Write update.lock for `pid` (the daemon, for the updater it just started; the updater adopts it). */
-export function writeUpdateLock(paths, pid) {
+function lockBody(pid) {
+  const pidStart = processStart(pid);
+  return JSON.stringify({ pid, ...(pidStart ? { pidStart } : {}), startedAt: new Date().toISOString() });
+}
+
+/**
+ * Create update.lock for `pid` exclusively (`wx`): true when this call created it or it already names `pid`; a stale
+ * lock is cleared once and the create retried; false when another live process holds it.
+ */
+export function claimUpdateLock(paths, pid) {
   ensureDir(paths.stateDir);
-  writePrivate(updatePaths(paths).lock, JSON.stringify({ pid, startedAt: new Date().toISOString() }));
+  const { lock } = updatePaths(paths);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      writeFileSync(lock, lockBody(pid), { flag: 'wx', mode: 0o600 });
+      return true;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+    if (runningUpdate(paths) === pid) return true;
+    if (!clearStaleLock(paths)) return false;
+  }
+  return false;
 }
 
-/** Remove a stale lock file (tests, a crashed updater): only when its holder is gone or too old. */
+/** Remove update.lock only while it still names `pid` (never another updater's lock). */
+export function releaseUpdateLock(paths, pid) {
+  const current = readJson(updatePaths(paths).lock);
+  if (current?.pid !== pid) return false;
+  try {
+    unlinkSync(updatePaths(paths).lock);
+  } catch {
+    // Already gone.
+  }
+  return true;
+}
+
+/** Remove a stale lock file (tests, a crashed updater): only when its holder is gone or not the same process. */
 export function clearStaleLock(paths) {
   const lock = readJson(updatePaths(paths).lock);
-  if (lock && liveHolder(lock.pid, lock.startedAt)) return false;
+  if (lock && liveHolder(lock.pid, lock.startedAt, lock.pidStart)) return false;
   try {
     unlinkSync(updatePaths(paths).lock);
   } catch {
@@ -220,7 +282,7 @@ export function clearStaleLock(paths) {
 /** The pid of a live update in progress, or null. */
 export function runningUpdate(paths) {
   const lock = readJson(updatePaths(paths).lock);
-  return lock && liveHolder(lock.pid, lock.startedAt) ? lock.pid : null;
+  return lock && liveHolder(lock.pid, lock.startedAt, lock.pidStart) ? lock.pid : null;
 }
 
 function header(response, name) {
@@ -359,7 +421,11 @@ export async function runCheck({ paths, currentVersion, fetch: fetchImpl, now = 
       Object.assign(next, release ? { status: 'ok', checkedAt: attemptAt, latest: release, etag: null, source: 'git' }
         : { status: 'not_found', checkedAt: attemptAt, latest: null, etag: null, source: 'git' });
     } catch (error) {
-      Object.assign(next, { status: 'error', error: error?.code === 'git_remote' ? 'git_remote' : 'git_failed' });
+      // A fork or another remote (no github.com/<repo> remote to ask) has no release here: not_found, as the API said.
+      // Only a real git failure (network, credentials, timeout) is an error.
+      Object.assign(next, error?.code === 'git_remote'
+        ? { status: 'not_found', checkedAt: attemptAt, latest: null, etag: null, source: 'git' }
+        : { status: 'error', error: 'git_failed' });
     }
   } else if (result.status === 'not_found') {
     Object.assign(next, { status: 'not_found', checkedAt: attemptAt, latest: null, etag: null, source: 'api' });

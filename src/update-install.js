@@ -26,12 +26,12 @@
 // 40-hex commit.
 import { execFile } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
-import { appendFile, mkdir, unlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { PACKAGE_ROOT } from './paths.js';
 import { scrubSecrets } from './secrets.js';
-import { UPDATE_REPO, clearStaleLock, isCommitSha, parseTag, parseVersion, runningUpdate, updatePaths, writeInstallState } from './update.js';
+import { UPDATE_REPO, claimUpdateLock, isCommitSha, parseTag, parseVersion, releaseUpdateLock, updatePaths, writeInstallState } from './update.js';
 import { findVerifiedRemote, gitRunner, remoteMatches, scrubbedEnv, toolEnv } from './update-git.js';
 
 export { gitRunner, remoteMatches } from './update-git.js';
@@ -53,11 +53,13 @@ export class UpdateRefused extends Error {
 
 export class UpdateFailed extends Error {
   /** `moved`: the checkout had moved to the release (then `rolledBack` says whether it is back). */
-  constructor(step, message, { moved = false, rolledBack = false, rollbackError = null } = {}) {
+  constructor(step, message, { moved = false, rolledBack = false, rollbackError = null, commit = null, previous = null } = {}) {
     super(message);
     this.code = 'update_failed';
     this.step = step;
     this.moved = moved;
+    this.commit = commit;
+    this.previous = previous;
     this.rolledBack = rolledBack;
     this.rollbackError = rollbackError;
   }
@@ -238,26 +240,34 @@ export async function restartDaemon({ home, env = process.env, version, timeoutM
   } catch {
     // Not running.
   }
-  if (client) {
-    const status = await client.status();
-    const leased = (status?.requests ?? []).filter(view => LEASED.has(view?.state));
-    if (leased.length) throw new LeaseHeld(leased);
-    await client.shutdown().catch(() => {});
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      try {
-        await client.health();
-      } catch {
-        break;
+  // `daemonStopped` on any error says whether a shutdown was sent: a rollback restarts the old daemon only then.
+  let stopped = false;
+  try {
+    if (client) {
+      const status = await client.status();
+      const leased = (status?.requests ?? []).filter(view => LEASED.has(view?.state));
+      if (leased.length) throw new LeaseHeld(leased);
+      stopped = true;
+      await client.shutdown().catch(() => {});
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        try {
+          await client.health();
+        } catch {
+          break;
+        }
+        await new Promise(resolveDelay => setTimeout(resolveDelay, 100));
       }
-      await new Promise(resolveDelay => setTimeout(resolveDelay, 100));
     }
+    const daemon = await ensureDaemon({ home, env, autoStart: true, version: version ?? undefined, startTimeoutMs: timeoutMs });
+    if (version && daemon.health?.version !== version) {
+      throw new Error(`the FAI service came back as version ${daemon.health?.version ?? 'unknown'}, not ${version}`);
+    }
+    return daemon.health;
+  } catch (error) {
+    if (error && typeof error === 'object') error.daemonStopped = stopped;
+    throw error;
   }
-  const daemon = await ensureDaemon({ home, env, autoStart: true, version: version ?? undefined, startTimeoutMs: timeoutMs });
-  if (version && daemon.health?.version !== version) {
-    throw new Error(`the FAI service came back as version ${daemon.health?.version ?? 'unknown'}, not ${version}`);
-  }
-  return daemon.health;
 }
 
 /** Append one JSON line to logs/update.log (steps, versions, codes; never output of git or npm beyond a first line). */
@@ -278,19 +288,8 @@ export function updateLogger(paths) {
  * Throws UpdateRefused `update_running` when another live process holds it.
  */
 export async function takeUpdateLock(paths, pid = process.pid) {
-  const { lock } = updatePaths(paths);
-  await mkdir(dirname(lock), { recursive: true, mode: 0o700 });
-  const release = async () => unlink(lock).catch(() => {});
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      await writeFile(lock, JSON.stringify({ pid, startedAt: new Date().toISOString() }), { flag: 'wx', mode: 0o600 });
-      return release;
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      if (runningUpdate(paths) === pid) return release;
-      if (!clearStaleLock(paths)) break;
-    }
-  }
+  // release() removes the lock only while it still names this pid (never another updater's).
+  if (claimUpdateLock(paths, pid)) return async () => releaseUpdateLock(paths, pid);
   throw new UpdateRefused('update_running', 'Another update is already running.', 'Wait for it to finish (node src/cli.js status shows it).');
 }
 
@@ -304,8 +303,11 @@ export async function installUpdate({ root = PACKAGE_ROOT, target, currentVersio
   remoteOk, requests = [], log = async () => {}, paths = null, env = process.env }) {
   git ??= gitRunner({ cwd: root, env });
   steps ??= defaultSteps({ root, env });
+  // From the move on, every record names the verified release commit and the commit before it: an interrupted update
+  // is resumed only when HEAD is that very commit (src/update-cli.js).
+  let moveInfo = {};
   const record = fields => {
-    if (paths) writeInstallState(paths, { pid: process.pid, from: currentVersion, to: target?.version ?? null, ...fields });
+    if (paths) writeInstallState(paths, { pid: process.pid, from: currentVersion, to: target?.version ?? null, ...moveInfo, ...fields });
   };
   refuseLeases(requests);
   if (!parseVersion(currentVersion)) throw new UpdateRefused('bad_version', 'This checkout has no valid version.', 'Run git status.');
@@ -334,6 +336,7 @@ export async function installUpdate({ root = PACKAGE_ROOT, target, currentVersio
   const lockChanged = !(await gitOk(git, ['diff', '--quiet', previous, commit, '--', 'package-lock.json']));
   const runNpm = lockChanged && existsSync(join(root, 'node_modules'));
   const moved = where.branch ? 'fast_forward' : 'checkout';
+  moveInfo = { commit, previous };
   record({ state: 'running', step: 'move', message: `Installing ${target.version}.` });
   await log('update_move', { moved, previous, commit });
   try {
@@ -365,9 +368,12 @@ export async function installUpdate({ root = PACKAGE_ROOT, target, currentVersio
     outcome.daemon = await steps.restart(target.version);
   } catch (error) {
     await log('update_step_failed', { step, message: firstLine(error) });
-    const restartOld = !error?.daemonUntouched;
+    // The old daemon is started again only when this update stopped it: after a refresh failure, or a restart that
+    // refused before its shutdown (a tab held), the old daemon still runs.
+    const restartOld = step === 'restart' && error?.daemonStopped !== false && !error?.daemonUntouched;
     const rollbackError = await rollback({ git, branch: where.branch, previous, commit, steps, currentVersion, log, restartOld });
-    throw new UpdateFailed(step, `${step} failed: ${firstLine(error)}`, { moved: true, rolledBack: !rollbackError, rollbackError });
+    throw new UpdateFailed(step, `${step} failed: ${firstLine(error)}`, { moved: true, rolledBack: !rollbackError, rollbackError,
+      commit, previous });
   }
   await log('update_done', { from: currentVersion, to: target.version, commit, npm: outcome.npm });
   return { state: 'succeeded', moved, ...outcome, ...base };

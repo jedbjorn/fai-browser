@@ -156,8 +156,9 @@ Chrome, Chromium, Brave, Edge and Vivaldi 116+ load the extension unpacked; ther
 
 FAI Browser follows **tagged GitHub releases** only, never `main`. About once a day the local service asks GitHub's
 releases API whether a newer release is out (an anonymous request; while the repository is private it asks your clone's
-remote with `git ls-remote` and your own git credentials instead; `FAI_UPDATE_CHECK=0` or `"updateCheck": false` in
-`config.json` turns it off). When one is, the popup shows **Update available vX.Y.Z** with the release notes and an
+remote with `git ls-remote` and your own git credentials instead, so an ssh agent or credential helper that confirms
+each use (1Password, `ssh-add -c`, a FIDO key) may ask about once a day; `FAI_UPDATE_CHECK=0` or `"updateCheck": false`
+in `config.json` turns the automatic check off). When one is, the popup shows **Update available vX.Y.Z** with the release notes and an
 **Update** button, and `node src/cli.js status` says so. Nothing installs until you click or run:
 
 ```sh

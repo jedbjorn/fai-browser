@@ -38,7 +38,7 @@ import { createDomainStore, domainStatsDir, resolveProfiles } from './domains.js
 import { checkOriginEntry, isSiteEntry, leaseOrigins, originCovered, siteRoots, urlCovered } from './origins.js';
 import { scrubSecrets } from './secrets.js';
 import { spawn } from 'node:child_process';
-import { automaticCheck, createUpdateChecker, runningUpdate, underTest, writeInstallState, writeUpdateLock } from './update.js';
+import { automaticCheck, createUpdateChecker, runningUpdate, underTest, claimUpdateLock, writeInstallState } from './update.js';
 import { gitReleaseSource, scrubbedEnv } from './update-git.js';
 
 export const DAEMON_VERSION = readPackageVersion();
@@ -976,11 +976,26 @@ export function createDaemon(options = {}) {
       log('update_spawn_error', { message: String(error?.message ?? error).slice(0, 200) });
       return refuse('update_failed', 'Could not start the update. Run node src/cli.js update in the fai-browser folder.');
     }
-    // The lock and the running record are written now, for the updater's pid: a second click, a new tab request or an
-    // approval sees the update at once (the updater adopts the lock; its own records replace this one).
+    // The lock (created exclusively) and the running record are written now, for the updater's pid: a second click, a
+    // new tab request or an approval sees the update at once (the updater adopts the lock; its records replace this
+    // one). A lock another live updater took in the meantime (a CLI `update`) stops the child just started.
     if (Number.isInteger(pid) && pid > 0) {
+      let claimed;
       try {
-        writeUpdateLock(paths, pid);
+        claimed = claimUpdateLock(paths, pid);
+      } catch (error) {
+        log('update_record_error', { message: String(error?.message ?? error).slice(0, 200) });
+        claimed = true; // The updater takes the lock itself and refuses on its own when it cannot.
+      }
+      if (!claimed) {
+        try {
+          process.kill(pid, 'SIGTERM');
+        } catch {
+          // Already gone.
+        }
+        return refuse('update_running', 'An update is already running.');
+      }
+      try {
         writeInstallState(paths, { pid, state: 'running', from: view.current, to: view.latest, step: 'start',
           message: `Installing ${view.latest}.` });
       } catch (error) {

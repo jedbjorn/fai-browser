@@ -12,8 +12,8 @@ import { PACKAGE_ROOT } from './paths.js';
 import { homePaths, loadConfig } from './home.js';
 import { automaticCheck, isReleaseTag, readCheckState, readInstallState, runCheck, runningUpdate, underTest, updatePaths,
   updateView, writeInstallState } from './update.js';
-import { UpdateFailed, UpdateRefused, defaultSteps, firstLine, gitRunner, installUpdate, takeUpdateLock,
-  updateLogger } from './update-install.js';
+import { UpdateFailed, UpdateRefused, defaultSteps, firstLine, gitRunner, installUpdate, preflight, refuseLeases,
+  takeUpdateLock, updateLogger } from './update-install.js';
 import { gitReleaseSource, scrubbedEnv } from './update-git.js';
 
 function packageVersion(root = PACKAGE_ROOT) {
@@ -101,10 +101,14 @@ export async function updateCommand(flags, { home, env: rawEnv = process.env, ..
     return { value: { state: 'refused', code: 'update_running', message: `An update (pid ${running}) is running.` }, exitCode: 1 };
   }
   const last = readInstallState(paths);
-  // An update stopped after the move (the checkout is already the release): finish it.
-  // (`to` is this version, so the move happened; interrupted, or the refresh or restart failed with no rollback.)
-  const resume = !view.available && last?.state === 'failed' && last.to === current
-    && (last.error === 'interrupted' || ['finish', 'restart'].includes(last.step));
+  // An update stopped after the move (interrupted, a refresh or restart that failed with no rollback, or a resume a
+  // held tab refused) is finished, but only on the very commit it moved to, in a checkout that passes the same
+  // checks as an install (a git clone of the repository, no local changes, main or detached): never on a HEAD that
+  // merely carries the same version in package.json.
+  const git = options.git ?? gitRunner({ cwd: root, env });
+  const marked = !view.available && last?.state === 'failed' && last.to === current && Boolean(last.commit)
+    && (last.error === 'interrupted' || last.resume || ['finish', 'restart'].includes(last.step));
+  const resume = marked && await verifiedResume({ root, git, commit: last.commit, remoteOk: options.remoteOk });
   if (!view.available && !resume) {
     const failed = ['error', 'rate_limited', 'never'].includes(view.status);
     // not_found: no published release (none yet, or the repository is not visible to this check).
@@ -133,7 +137,7 @@ export async function updateCommand(flags, { home, env: rawEnv = process.env, ..
   const steps = options.steps ?? defaultSteps({ root, env, home });
   try {
     const requests = options.requests ?? await liveRequests({ home, env });
-    if (resume) return await resumeInstall({ paths, current, requests, steps, log });
+    if (resume) return await resumeInstall({ paths, current, requests, steps, log, commit: last.commit, previous: last.previous });
     if (!latest.commit) {
       throw new UpdateRefused('release_unverified', `Could not confirm which commit ${latest.tag} names.`,
         'Try again in a while (node src/cli.js update).');
@@ -142,7 +146,7 @@ export async function updateCommand(flags, { home, env: rawEnv = process.env, ..
       message: `Installing ${latest.version}.` });
     await log('update_start', { from: current, to: latest.version, source: view.source });
     const result = await installUpdate({ root, target: latest, currentVersion: current, requests, log, paths, steps, env,
-      git: options.git ?? gitRunner({ cwd: root, env }), ...(options.remoteOk ? { remoteOk: options.remoteOk } : {}) });
+      git, ...(options.remoteOk ? { remoteOk: options.remoteOk } : {}) });
     const warned = result.warnings.length ? ` Warning: ${result.warnings.join('; ')}.` : '';
     writeInstallState(paths, { state: 'succeeded', from: current, to: latest.version, step: 'done',
       message: `Updated to ${latest.version}. Restart your coding agent to load the new MCP server and skill.${warned}` });
@@ -158,7 +162,9 @@ export async function updateCommand(flags, { home, env: rawEnv = process.env, ..
     const message = !failed.moved ? `${failed.message}. Nothing was changed.`
       : failed.rolledBack ? `${failed.message}. Rolled back to ${current}.`
         : `${failed.message}. Rollback failed: ${failed.rollbackError}; see ${updatePaths(paths).log}.`;
-    writeInstallState(paths, { state, from: current, to: target, step: failed.step, error: 'update_failed', message });
+    // A failed rollback may have left the release checked out: the commits let the next run finish it there.
+    const where = failed.moved && !failed.rolledBack && failed.commit ? { commit: failed.commit, previous: failed.previous } : {};
+    writeInstallState(paths, { state, from: current, to: target, step: failed.step, error: 'update_failed', message, ...where });
     await log('update_failed', { state, step: failed.step, moved: failed.moved });
     return { value: { state, code: 'update_failed', step: failed.step, message, log: updatePaths(paths).log }, exitCode: 1 };
   } finally {
@@ -166,11 +172,33 @@ export async function updateCommand(flags, { home, env: rawEnv = process.env, ..
   }
 }
 
-/** Finish an update that stopped after the move: the new version's refresh and a restart (no lease may be held). */
-async function resumeInstall({ paths, current, requests, steps, log }) {
-  const { refuseLeases } = await import('./update-install.js');
-  refuseLeases(requests);
-  writeInstallState(paths, { pid: process.pid, state: 'running', from: current, to: current, step: 'finish',
+/** True when HEAD is `commit` and the checkout passes the install's checks (a refusal means: take the normal path). */
+async function verifiedResume({ root, git, commit, remoteOk }) {
+  try {
+    await preflight({ root, git, ...(remoteOk ? { remoteOk } : {}) });
+    return (await git(['rev-parse', 'HEAD'])) === commit;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Finish an update that stopped after the move: the new version's refresh and a restart. A held tab refuses it and
+ * keeps the resume marker, so the next `update` resumes instead of reporting up to date.
+ */
+async function resumeInstall({ paths, current, requests, steps, log, commit, previous }) {
+  const marker = { from: current, to: current, commit, previous, resume: true };
+  const held = error => {
+    const hint = error.hint ? ` ${error.hint}` : '';
+    writeInstallState(paths, { ...marker, state: 'failed', step: 'restart', error: error.code, message: `${error.message}${hint}` });
+    return { value: { state: 'refused', code: error.code, message: error.message, hint: error.hint ?? null }, exitCode: 1 };
+  };
+  try {
+    refuseLeases(requests);
+  } catch (error) {
+    return held(error);
+  }
+  writeInstallState(paths, { ...marker, pid: process.pid, state: 'running', step: 'finish',
     message: `Finishing the update to ${current}.` });
   await log('update_resume', { version: current });
   let step = 'finish';
@@ -179,9 +207,9 @@ async function resumeInstall({ paths, current, requests, steps, log }) {
     step = 'restart';
     await steps.restart(current);
   } catch (error) {
-    if (error instanceof UpdateRefused) throw error;
+    if (error instanceof UpdateRefused) return held(error);
     const message = `Finishing the update to ${current} failed at ${step}: ${firstLine(error)}. Run node src/cli.js update again.`;
-    writeInstallState(paths, { state: 'failed', from: current, to: current, step, error: 'update_failed', message });
+    writeInstallState(paths, { ...marker, state: 'failed', step, error: 'update_failed', message });
     await log('update_failed', { state: 'failed', step, resumed: true });
     return { value: { state: 'failed', code: 'update_failed', step, message, log: updatePaths(paths).log }, exitCode: 1 };
   }
