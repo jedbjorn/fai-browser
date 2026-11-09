@@ -102,6 +102,7 @@ test('approved cross-origin frames in real Chromium: read, act, refuse, nest, pr
         + '<button type="button" onclick="document.getElementById(\'s\').textContent=\'Review state: reviewed\'">Mark reviewed</button>'
         + '<p id="s">Review state: pending</p></body>';
     }
+    if (path === '/plain') return '<title>Plain</title><body style="margin:0"><p>Plain approved frame</p></body>';
     if (path === '/settings') {
       return '<title>Settings</title><body style="margin:0"><p>Settings</p><input id="pw" type="password" value="hunter2-hunter2" '
         + 'style="position:absolute;left:10px;top:40px;width:200px;height:20px;border:0;padding:0"></body>';
@@ -125,6 +126,15 @@ test('approved cross-origin frames in real Chromium: read, act, refuse, nest, pr
       return '<title>Portal</title><body style="margin:0"><h1>Portal</h1><a href="/">Home</a>'
         + `<iframe id="blade" src="${origins.blade}/blade" width="600" height="320" style="border:0;display:block"></iframe>`
         + `<iframe id="ad" src="${origins.other}/ad" width="300" height="120" style="border:0;display:block"></iframe></body>`;
+    }
+    if (path === '/rotating') {
+      // An ad first, two approved frames, an unread tail: removing the ad shifts every later frame's window index down.
+      return '<title>Rotating</title><body style="margin:0">'
+        + `<iframe id="ad" src="${origins.other}/ad" width="600" height="50" style="border:0;display:block"></iframe>`
+        + '<h1 style="margin:0;height:40px">Portal</h1>'
+        + `<iframe id="plain" src="${origins.blade}/plain" width="600" height="120" style="border:0;display:block"></iframe>`
+        + `<iframe id="blade" src="${origins.blade}/settings" width="600" height="200" style="border:0;display:block"></iframe>`
+        + `<iframe id="tail" src="${origins.other}/ad" width="600" height="200" style="border:0;display:block"></iframe></body>`;
     }
     if (path === '/shifting') {
       return '<title>Shifting</title><body style="margin:0"><div id="pad"></div><h1 style="margin:0;height:40px">Portal</h1>'
@@ -248,6 +258,34 @@ test('approved cross-origin frames in real Chromium: read, act, refuse, nest, pr
         && rect.width >= real.ad.width - 1 && rect.height >= real.ad.height - 1), JSON.stringify({ rects, ad: real.ad }));
     }
     assert.equal(result.dirty, false, 'nothing moved between the two queries');
+  });
+
+  await t.test('review: removing an earlier frame (ad rotation) never moves a read frame\'s boxes onto another frame', async () => {
+    await page.goto(`${origins.top}/rotating`);
+    await page.waitForLoadState('load');
+    await sleep(300);
+    const result = await worker.evaluate(async () => {
+      const tabId = session.tabId;
+      await faiFrames.observeTab(tabId);
+      await chrome.scripting.executeScript({ target: { tabId }, func: () => { document.getElementById('ad').remove(); } });
+      await new Promise(done => setTimeout(done, 100));
+      const before = await redactionQuery(tabId, true).then(value => faiFrames.redaction(tabId, value, true));
+      const after = await redactionQuery(tabId, false).then(value => faiFrames.redaction(tabId, value, false));
+      return { before: before.rects, after: after.rects, dirty: after.dirty ?? null };
+    });
+    const real = await page.evaluate(() => {
+      const blade = document.getElementById('blade').getBoundingClientRect();
+      const tail = document.getElementById('tail').getBoundingClientRect();
+      return { field: { x: blade.x + 10, y: blade.y + 40 }, tail: { x: tail.x, y: tail.y, width: tail.width, height: tail.height } };
+    });
+    const covers = (rect, x, y, width, height) => rect.x <= x && rect.y <= y && rect.x + rect.width >= x + width
+      && rect.y + rect.height >= y + height;
+    for (const rects of [result.before, result.after]) {
+      // The password field of the approved frame is covered where it is now: by its own box, or by the whole frame.
+      assert.ok(rects.some(rect => covers(rect, real.field.x, real.field.y, 200, 20)), JSON.stringify({ rects, real }));
+      // The unread tail frame is boxed whole.
+      assert.ok(rects.some(rect => covers(rect, real.tail.x, real.tail.y, real.tail.width, real.tail.height)), JSON.stringify(rects));
+    }
   });
 
   await t.test('a frame that moved to an unapproved origin after the observation refuses the act', async () => {

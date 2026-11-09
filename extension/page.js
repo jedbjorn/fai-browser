@@ -662,10 +662,14 @@
     }
   }
 
+  // The frame elements the last crossOriginSlots call listed (redactionRects boxes every other unread one itself).
+  let slotted = new WeakSet();
+
   // The cross-origin frame slots of this observation: [{ path, box: {x, y, width, height}, clip, declared }] in this
   // document's viewport (the worker shifts a nested frame's slots by its own box). `path` is relative to the top window:
   // this document's own path plus the frame's index (through a readable same-origin frame for one nested in it).
   function crossOriginSlots(elements) {
+    slotted = new WeakSet();
     const own = framePath();
     if (!own) return [];
     const slots = [];
@@ -697,6 +701,7 @@
           right: Math.min(clip.right, frame.clip.right), bottom: Math.min(clip.bottom, frame.clip.bottom) };
       }
       slots.push({ path, box: { x: left, y: top, width, height }, clip, declared: declaredOrigin(el) });
+      slotted.add(el);
     }
     return slots;
   }
@@ -4810,11 +4815,15 @@
       }
     }
     const readable = new Set(Array.from(frames.values(), frame => frame.el));
+    // The cross-origin frames listed as slots (frameBoxes below) are the worker's to box or place; every other frame,
+    // embed or object this script does not read (past the slot or frame caps, deeper than MAX_FRAME_DEPTH, not found in
+    // window.frames, an <object> or <embed>) is boxed here, whatever the mode.
+    const frameBoxes = crossOrigin.length ? crossOriginSlots(crossOrigin).map(({ path, box, clip }) => ({ path, box, clip })) : [];
     for (const tree of trees) {
       for (const el of tree.querySelectorAll('iframe,frame,embed,object')) {
         if (readable.has(el)) continue;
         const widget = REDACT_WIDGET_HOST.test(redactHost(el));
-        if (widget || strict) add(boxOf(el), widget ? 'widget' : 'frame');
+        if (widget || strict || !slotted.has(el)) add(boxOf(el), widget ? 'widget' : 'frame');
       }
       if (strict) {
         for (const el of tree.querySelectorAll(`canvas,${SECRET_CODE}`)) add(boxOf(el), el.tagName === 'CANVAS' ? 'canvas' : 'code');
@@ -4825,7 +4834,6 @@
     else dirty = redactDisarm()?.dirty ?? true;
     // The cross-origin frames as they sit now ({path, box, clip}): the worker places an approved frame's own boxes by
     // them and boxes every frame it did not read (numbers and paths only).
-    const frameBoxes = crossOrigin.length ? crossOriginSlots(crossOrigin).map(({ path, box, clip }) => ({ path, box, clip })) : [];
     return {
       rects,
       ...(frameBoxes.length ? { frameBoxes } : {}),
