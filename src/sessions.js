@@ -18,8 +18,8 @@ export const MAX_SESSIONS_PER_PID = 2;
 // A dropped session's key is remembered this long, so the same MCP server can come back as itself (`previous`).
 const TOMBSTONE_MS = 60 * 60_000;
 const WAKE_KEEP_MS = 10 * 60_000;
-const HOSTS = new Set(['claude', 'codex', 'opencode', 'unknown']);
-const CAPABILITIES = new Set(['claude-socket', 'codex-queue', 'none']);
+const HOSTS = new Set(['claude', 'codex', 'opencode', 'pi', 'unknown']);
+const CAPABILITIES = new Set(['claude-socket', 'codex-queue', 'pi-socket', 'none']);
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export class SessionError extends Error {

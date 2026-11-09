@@ -116,6 +116,17 @@ export function resolveClientPort(paths, { port, env = process.env } = {}) {
   return fromFile ?? (explicitZero ? null : DAEMON_DEFAULT_PORT);
 }
 
+// A coding agent's wake credentials for one session: the daemon outlives that session and never holds them.
+const SESSION_ONLY_ENV = ['FAI_PI_WAKE_TOKEN', 'FAI_PI_WAKE_SOCKET', 'FAI_PI_SESSION_ID', 'CLAUDE_CODE_MESSAGING_TOKEN',
+  'CLAUDE_CODE_MESSAGING_SOCKET_TOKEN', 'CLAUDE_CODE_MESSAGING_SOCKET'];
+
+/** The environment a detached daemon starts with: the caller's, without any agent session's wake credentials. */
+export function daemonEnv(env) {
+  const out = { ...env };
+  for (const key of SESSION_ONLY_ENV) delete out[key];
+  return out;
+}
+
 function spawnDaemon(paths, env, command) {
   ensureDir(paths.logDir);
   const logFd = openSync(paths.logFile, 'a', 0o600);
@@ -125,7 +136,7 @@ function spawnDaemon(paths, env, command) {
       detached: true,
       stdio: ['ignore', logFd, logFd],
       // The default directories need no FAI_HOME: the daemon resolves the same ones (src/paths.js).
-      env: paths.custom ? { ...env, FAI_HOME: paths.home } : env,
+      env: paths.custom ? { ...daemonEnv(env), FAI_HOME: paths.home } : daemonEnv(env),
     });
     child.unref();
     return child;
