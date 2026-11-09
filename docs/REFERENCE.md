@@ -297,14 +297,25 @@ The extension may be paired in more than one browser at a time (say the signed F
 Chromium, or two Chrome profiles), all with the same daemon and pairing secret. Each install keeps a random browser
 id in its extension storage (`browserId`, created once) and sends it with every connection: the `browser` parameter
 of the WebSocket URL, the `X-Fai-Browser` header of every long-poll call, and `hello.browser {product, name,
-version}`. An extension older than 0.6 sends none and is known by its extension Origin (unique per Firefox install,
-shared by Chromium-family browsers that load the same unpacked extension). Origins and the secret are checked per
-connection exactly as before.
+version}`. Origins and the secret are checked per connection exactly as before, and an id is bound to the extension
+Origin it first came from (kept in `browsers.json` in the state directory with the browser's last use): a claim of a
+known id from another Origin is refused (WebSocket close `4004`, HTTP `403 identity_refused`). Extensions are never
+sent another browser's id: their request list marks each request `browser {product, name, mine}` and lists the
+connected browsers as `{product, name, self}` (two with one name read "Chrome" and "Chrome (2)"); agents see ids in
+status.
+
+**Legacy extensions.** The 0.5.0 Firefox add-on and older unpacked builds send no id and are known by their extension
+Origin (unique per Firefox install; shared by Chromium-family browsers that load the same unpacked extension). They
+connect side by side with other browsers without fighting, but see only the requests meant for them, with no **Open
+here**, until they update (the next release's signed add-on carries it). Two legacy Chromium-family builds of the same
+unpacked Origin still count as one browser and can replace each other; `extension_flapping` shows it.
 
 - **Connections.** The hub keeps one connection per browser, each with its own socket or long-polls, outbox and
   liveness. A newer connection of the same browser (a restarted service worker) closes the old socket with `4003`,
-  and the extension never reconnects on `4003` (until the popup opens, or after five minutes). A connection of another
-  browser never closes anyone. Before 0.6 every new connection closed the previous one with `4000`, whatever the
+  and the extension never reconnects on `4003` (until the popup opens, or after five minutes), so two copies of one
+  profile swap the connection at most on each popup open or every five minutes; a superseded socket that had said
+  hello and lived over 10 s adds the warning `extension_duplicate_identity`. A connection of another browser never
+  closes anyone. Before 0.6 every new connection closed the previous one with `4000`, whatever the
   browser, and two paired browsers replaced each other about twice a second (issue #9); the extension now backs off
   on repeated `4000`s from such an older service (at least 4 s, then 8 and 15 s) and its popup says another browser
   keeps taking the connection. A connection only resets its backoff after lasting 10 s.
@@ -314,25 +325,32 @@ connection exactly as before.
   `POST /v1/requests`, matched (case-insensitive) on the product the extension reports (`firefox`, `chrome`,
   `chromium`, `edge`, `brave`, `opera`, `vivaldi`), its name, or a browser id from status. A browser that is not
   connected is refused with `409 browser_not_connected`, whose message names the connected ones ("Connected: Chromium
-  (chromium), Firefox (firefox)"). A request nobody named follows the user: when its browser disconnects it moves to
-  the one used last; with no browser connected it waits for the first one.
+  (chromium), Firefox (firefox)"). When a request's browser has been gone longer than the grace period (3 s), it moves
+  to the one used last, named or not, and its view gets `browserNote` ("Firefox disconnected; the request now waits in
+  Chromium."), which the agent's approval hint repeats; with no browser connected it waits for the first one. The last
+  use survives a daemon restart or update (`browsers.json`).
 - **Every popup lists it.** Only the browser a request waits in opens its approval window or task tab and shows the
   `?` badge. Every other connected browser's popup lists it as **In another browser** with **Open here**, which moves
   it there (the `move` message; the request then stays in that browser). Deny works from any of them.
 - **Leases belong to a browser.** The approval binds the lease to the browser that approved it; every command, cancel
   and `lease_update` for it goes to that connection only, and a status or `lease_level` from another browser is
-  ignored. One active lease per browser: approving a second request in the same browser supersedes the first there,
+  ignored, as is a result or screenshot from a connection the command was not sent to; Release (Deny on a paused
+  request) works only in the browser that holds the tab. One active lease per browser: approving a second request in
+  the same browser supersedes the first there,
   while a tab in another browser keeps running. A browser that disconnects, or whose worker restarts (a hello without
   a session), pauses only its own leases (`disconnected`, `session_inactive`).
 - **Where it shows.** Request views carry `browser {id, product, name}` (the browser that holds the tab, else the
   one it waits in) and `lease.browserId`; receipts' `permissions.browser` and the direct result's `granted` line name
   it. `daemon status`, the CLI `status` and `fai_browser_status` list every connected browser under
-  `extension.browsers` (and every known one under `browsers`): `id`, `product`, `name`, `version`, `transport`,
+  `extension.browsers` (and every known one under `browsers`): `id`, `product`, `name`, `version` (the extension's),
+  `browserVersion`, `transport`,
   `connectedAt`, `lastSeen`, `lastUsedAt`, `closesLastMinute` and its `leases`. A browser whose connection closes more
   than 8 times in a minute adds the warning `extension_flapping: <name> (<id>) lost its connection N times in 60 s`
   (and logs `extension_flapping` once), so a reconnect loop is never silent again.
-- **Settings.** The per-request budget and "Open requested pages right away" are the ones the browser that reported
-  last sent; each browser keeps its own Permissions, test sites and secret redaction.
+- **Settings.** Each browser's popup settings stay its own: the per-request budget, "Open requested pages right away"
+  and the Approve gate's asks apply to the requests that browser holds or awaits (the browser used last when a request
+  has none yet), and so do its Permissions, test sites and secret redaction. Status shows the budget of the browser
+  used last.
 
 ### Updates
 

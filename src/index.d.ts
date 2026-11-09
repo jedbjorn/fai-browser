@@ -1729,7 +1729,10 @@ export interface BrowserInfo {
   id: string;
   product: string | null;
   name: string;
+  /** The extension's version. */
   version: string | null;
+  /** The browser's own version, as the extension reports it. */
+  browserVersion: string | null;
   transport: 'websocket' | 'longpoll' | 'none';
   connected: boolean;
   connectedAt: string | null;
@@ -1829,6 +1832,8 @@ export interface RequestView {
   lease: { leaseId: string; tabId: number; origin: string; origins: string[]; grantedAt: string; browserId?: string } | null;
   /** The browser that holds the tab once approved, else the one the request waits in; null while none is connected. */
   browser?: BrowserRef | null;
+  /** Set when the browser the request was meant for went away and it moved to another one. */
+  browserNote?: string;
   /** The level the user approved in the extension (null until approved). The ceiling for every run. */
   grant: Grant | null;
   activeRunId: string | null;
