@@ -5,6 +5,16 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## Unreleased
+
+### Added
+
+- **pi host.** `install --host pi` installs a small loader for the FAI pi extension (`integrations/pi/fai-browser.js`) in `.pi/extensions/` or `~/.pi/agent/extensions/` (`--scope user`) and the skill in `.agents/skills/`. The extension registers the MCP server for each pi session (`exposure: direct`), puts the server instructions in pi's system prompt (pi does not show them to the model) and lets FAI wake pi sessions: an invite, Approve or Resume starts a new turn when pi is idle and queues a follow-up when it is busy, and pi acknowledges each wake, so `delivered` means received. Needs pi 1.2.0 or newer (`@earendil-works/pi-coding-agent`). pi's tool names (`mcp__fai_browser__fai_browser_open`) are used in wake texts and named in the instructions. Setup offers pi only when `pi` is on `PATH` and `~/.pi/agent` exists (Debian's unrelated `pi` has the same name). New host `pi` and wake capability `pi-socket`; an opt-in test runs a real pi in RPC mode with its built-in faux model (`FAI_PI_CLI`).
+
+### Security
+
+- pi wake socket: a per-session 256-bit token held in memory and in the MCP child's env only (never in pi's own env, so bash-tool commands do not see it), a `0700` directory, a socket named after pi's pid and checked against the server's parent, constant-time token comparison, one wake per connection, size and rate caps, and only `[FAI Browser]` texts without control characters, passed as plain user messages. The daemon an agent starts no longer inherits agent wake credentials (`FAI_PI_WAKE_*`, `FAI_PI_SESSION_ID`, `CLAUDE_CODE_MESSAGING_*`).
+
 ## 0.6.1 (2026-11-09)
 
 ### Fixed

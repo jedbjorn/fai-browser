@@ -108,7 +108,7 @@ on the tab (`invite_not_joined`); after it every observe, act, run and release m
 would end another agent's task in the same browser, the popup says so and needs a second tap.
 
 To wake an idle agent, FAI's MCP server (the agent's own child process) writes one fixed FAI message to that agent's
-own channel: Claude Code's messaging socket, or `codex queue` for its own thread. The message names the invite or
+own channel: Claude Code's messaging socket, `codex queue` for its own thread, or the FAI pi extension's socket. The message names the invite or
 request id, the level and the tool to call, and never carries a page title, URL or page text. Each MCP server
 registers with the service under a random key only it holds, so it only receives the wakes addressed to it, and it
 never writes to another session's socket: the socket variables are inherited by everything Claude Code starts, so the
@@ -122,9 +122,23 @@ server acts on each wake once, at most 4 from one poll and 12 a minute, and neve
 version from its background loop. Runs and observes of an invited tab (their results, traces and screenshots) are the
 joining session's alone, also from disk after the request is gone.
 
+For pi, FAI ships the channel itself: the FAI pi extension (`install --host pi`) runs inside pi, opens a unix socket
+named after pi's pid in a `0700` directory under `$XDG_RUNTIME_DIR` (else the temp directory), makes a random 256-bit
+token per pi session, and hands the socket path, token and session id only to the MCP server it registers, in that
+server's environment: not in pi's own environment, so commands pi's bash tool runs never see them, and never on disk.
+The MCP server uses the socket only when it is named after its own parent process, as for Claude Code. The extension
+compares the token in constant time, takes one wake per connection with a 2 s timeout and a size cap, at most 12 a
+minute, and passes on only text that starts with `[FAI Browser] `, is at most 4000 characters and has no control
+character but a newline, as a plain user message (never a `/command`); so even a holder of the token cannot use the
+socket to type arbitrary input into pi. Any failure (no extension, an `mcp.json` entry overriding it, an old pi, a
+socket that cannot be made) fails closed to the copy line. The service started by an agent never inherits that
+agent's wake credentials (pi's or Claude Code's): it outlives the session.
+
 **Threat model.** Any process running as your user can already write to Claude Code's messaging socket (its path and
 token are in the session's environment and its child processes) or run `codex queue`, so FAI adds no new way in: it
-uses the same channel, from inside the session's own process tree, with text it authored. A local process with FAI's
+uses the same channel, from inside the session's own process tree, with text it authored. For pi, any such process
+could already drive pi through a planted extension or its RPC mode; the FAI socket is reachable only with a token held
+in memory by pi and its own MCP child. A local process with FAI's
 client token can register as an agent session and join an invite made for no session in particular (as it could
 already request tabs); you see which agent joined in the popup. Claude Code's own `crossSessionInbound` setting
 (accept, hold, refuse) still decides what happens to an inbound message; its socket answers nothing either way, so
