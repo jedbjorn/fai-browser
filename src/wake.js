@@ -8,22 +8,31 @@
 //   crossSessionInbound (accept, hold, refuse) can hold or drop the message on the host's side.
 // - Codex (0.149+) queues a message for a thread: `codex queue --thread <id> --message <text>`. The thread id arrives on
 //   every tools/call as _meta["x-codex-turn-metadata"].thread_id (also _meta.threadId).
-// - Anything else (OpenCode for now, an unknown host, a session without the env) cannot be woken: the popup shows the
-//   copy-text fallback ("Tell your agent: join FAI invite <id>").
+// - OpenCode (1.19+, below 2) runs FAI's own plugin (src/opencode-plugin.js, installed by `install --host opencode`).
+//   It listens on a private unix socket named after OpenCode's pid and tags each FAI tool call with the calling session
+//   (`_faiHostSession`); the MCP server asks it, with the token it minted, to prompt that session
+//   (client.session.promptAsync, with the session's own agent and model). The plugin answers once OpenCode accepted the
+//   prompt and reported no error for 2 s: accepted, not yet answered.
+// - Anything else (an unknown host, a session without the env) cannot be woken: the popup shows the copy-text fallback
+//   ("Tell your agent: join FAI invite <id>").
 import { execFile } from 'node:child_process';
 import { connect } from 'node:net';
 import { accessSync, constants as fsConstants } from 'node:fs';
 import { basename, delimiter, isAbsolute, join } from 'node:path';
 
-export const WAKE_CAPABILITIES = Object.freeze(['claude-socket', 'codex-queue', 'none']);
+export const WAKE_CAPABILITIES = Object.freeze(['claude-socket', 'codex-queue', 'opencode-plugin', 'none']);
 export const HOSTS = Object.freeze(['claude', 'codex', 'opencode', 'unknown']);
 export const SOCKET_TIMEOUT_MS = 3_000;
 export const CODEX_TIMEOUT_MS = 15_000;
+// The plugin reads the session's last turn, prompts, then watches OpenCode's events for 2 s before it answers.
+export const OPENCODE_TIMEOUT_MS = 8_000;
 // The longest user text an invite carries (the popup's "What should it do?").
 export const MAX_INVITE_TEXT = 500;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 // Codex thread ids are UUIDs (v7 today: 01a1c03e-9e28-72a2-8cdb-bb6ca9545521).
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// OpenCode session ids (ses_ plus base62).
+export const OPENCODE_SESSION = /^ses_[A-Za-z0-9]{10,60}$/;
 const LEVEL_NAMES = { 'read-only': 'Read', reversible: 'Use', interactive: 'Use', full: 'Act', testing: 'Test site' };
 
 /**
@@ -61,6 +70,34 @@ export function claudeSocket(env = process.env, { ppid = process.ppid } = {}) {
   if (typeof path !== 'string' || !path || typeof token !== 'string' || !token) return null;
   if (!Number.isInteger(ppid) || ppid <= 1 || basename(path) !== `${ppid}.sock`) return null;
   return { path, token };
+}
+
+/**
+ * FAI's OpenCode plugin channel for this process, or null. The plugin puts FAI_OPENCODE_WAKE_SOCKET and
+ * FAI_OPENCODE_WAKE_TOKEN in OpenCode's environment, so everything OpenCode starts inherits them (a bash tool's children
+ * too): they count only when OpenCode itself is this process's parent, i.e. the socket is `oc-<ppid>.sock` and
+ * OPENCODE_PID (which OpenCode sets for itself) names the same pid. A wrapper in between fails closed.
+ */
+export function opencodeChannel(env = process.env, { ppid = process.ppid } = {}) {
+  const path = env.FAI_OPENCODE_WAKE_SOCKET;
+  const token = env.FAI_OPENCODE_WAKE_TOKEN;
+  if (typeof path !== 'string' || !path || typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) return null;
+  if (!Number.isInteger(ppid) || ppid <= 1 || basename(path) !== `oc-${ppid}.sock`) return null;
+  if (String(env.OPENCODE_PID ?? '') !== String(ppid)) return null;
+  return { path, token };
+}
+
+/** Whether the OpenCode that named itself in initialize is one the plugin was tested on: 1.19 or later, below 2. */
+export function opencodeVersionOk(clientInfo) {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(String(clientInfo?.version ?? ''));
+  if (!match) return false;
+  const [major, minor] = [Number(match[1]), Number(match[2])];
+  return major === 1 && minor >= 19;
+}
+
+/** The OpenCode session id FAI's plugin added to a call's arguments, or null. */
+export function opencodeSessionId(value) {
+  return typeof value === 'string' && OPENCODE_SESSION.test(value) ? value : null;
 }
 
 /** The host's own session id when it states one (Claude Code's CLAUDE_CODE_SESSION_ID); a Codex thread id comes later. */
@@ -245,6 +282,68 @@ function refusalIn(text) {
   return null;
 }
 
+const PLUGIN_CODES = new Set(['bad_token', 'not_fai_session', 'unknown_session', 'bad_text', 'prompt_failed']);
+
+/**
+ * Ask FAI's OpenCode plugin to prompt OpenCode session `sessionID` with `text`: one connection, the lines
+ * `{"type":"auth","token":…}` and `{"type":"wake","sessionID":…,"text":…}`, then one answer line. Resolves {ok: true}
+ * once the plugin says OpenCode accepted the prompt (and reported no error for 2 s), else {ok: false, code, message}: `no_socket`, `connect_failed`, `timeout`,
+ * `unknown_session` (no id, or OpenCode does not know it), `refused` (any other answer: a wrong token, a session that
+ * never used FAI, a text the plugin does not take), with the plugin's own code in `detail`.
+ */
+export function deliverOpencodePlugin({ path, token, sessionID, text, timeoutMs = OPENCODE_TIMEOUT_MS }) {
+  if (!path || !token) return Promise.resolve({ ok: false, code: 'no_socket', message: 'No FAI plugin channel in this OpenCode.' });
+  if (!OPENCODE_SESSION.test(String(sessionID ?? ''))) {
+    return Promise.resolve({ ok: false, code: 'unknown_session', message: 'No OpenCode session to wake for this.' });
+  }
+  return new Promise(resolveDelivery => {
+    let settled = false;
+    let answer = '';
+    const socket = connect({ path });
+    const scrub = value => String(value).split(token).join('[token]');
+    const finish = outcome => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolveDelivery(outcome);
+    };
+    const judge = () => {
+      const line = answer.split('\n')[0].trim();
+      if (!line) return finish({ ok: false, code: 'connect_failed', message: 'The FAI plugin closed the socket without an answer.' });
+      let parsed = null;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        // Judged below.
+      }
+      if (parsed?.ok === true) return finish({ ok: true });
+      const said = scrub(String(parsed?.message ?? line)).replace(/\s+/g, ' ').trim().slice(0, 200);
+      const detail = PLUGIN_CODES.has(parsed?.code) ? parsed.code : 'refused';
+      if (detail === 'unknown_session') return finish({ ok: false, code: 'unknown_session', message: said });
+      return finish({ ok: false, code: 'refused', detail, message: said || 'The FAI plugin refused the wake.' });
+    };
+    const timer = setTimeout(() => {
+      finish({ ok: false, code: 'timeout', message: `The FAI plugin did not answer within ${timeoutMs} ms.` });
+    }, timeoutMs);
+    timer.unref?.();
+    socket.setEncoding('utf8');
+    socket.on('data', chunk => {
+      answer = (answer + chunk).slice(0, 4000);
+      if (answer.includes('\n')) judge();
+    });
+    socket.on('error', error => {
+      if (answer) return judge();
+      const code = ['ENOENT', 'ECONNREFUSED', 'ENOTSOCK'].includes(error?.code) ? 'no_socket' : 'connect_failed';
+      finish({ ok: false, code, message: `Could not reach the FAI plugin's socket (${error?.code ?? 'error'}).` });
+    });
+    socket.on('close', () => judge());
+    socket.on('connect', () => {
+      socket.write(`${JSON.stringify({ type: 'auth', token })}\n${JSON.stringify({ type: 'wake', sessionID, text: String(text) })}\n`);
+    });
+  });
+}
+
 // --- wake texts (FAI-authored, fixed templates; never page text, a URL or a title) ----------------------------------
 
 const safeId = value => (ID.test(String(value ?? '')) ? String(value) : 'unknown');
@@ -289,17 +388,23 @@ export function wakeText({ kind, inviteId, requestId, level, userText, driver = 
 
 /**
  * The wake capability of a session: claude-socket (Claude Code with its socket), codex-queue (Codex with a known
- * thread and a `codex queue`), else none. `codexReady` is the cached `codex queue --help` answer.
+ * thread and a `codex queue`), opencode-plugin (OpenCode 1.19+ below 2 with FAI's plugin channel, once a session tagged
+ * a FAI call: `opencodeSession`), else none. `codexReady` is the cached `codex queue --help` answer.
  */
-export function wakeCapability({ host, env = process.env, threadId = null, codexReady = false, ppid = process.ppid }) {
+export function wakeCapability({ host, env = process.env, threadId = null, codexReady = false, ppid = process.ppid,
+  opencodeSession = null, opencodeVersion = false }) {
   if (env.FAI_WAKE === '0') return 'none';
   if (host === 'claude' && claudeSocket(env, { ppid })) return 'claude-socket';
   if (host === 'codex' && threadId && codexReady) return 'codex-queue';
+  if (host === 'opencode' && opencodeVersion && opencodeSessionId(opencodeSession) && opencodeChannel(env, { ppid })) {
+    return 'opencode-plugin';
+  }
   return 'none';
 }
 
 /** Deliver one wake through `capability`; resolves {ok} or {ok: false, code, message}, never throws. */
-export async function deliverWake({ capability, text, env = process.env, threadId = null, ppid = process.ppid }) {
+export async function deliverWake({ capability, text, env = process.env, threadId = null, opencodeSession = null,
+  ppid = process.ppid }) {
   try {
     if (env.FAI_WAKE === '0') return { ok: false, code: 'disabled', message: 'Waking is off (FAI_WAKE=0).' };
     if (capability === 'claude-socket') {
@@ -308,6 +413,11 @@ export async function deliverWake({ capability, text, env = process.env, threadI
       return await deliverClaudeSocket({ ...socket, text });
     }
     if (capability === 'codex-queue') return await deliverCodexQueue({ threadId, text, env });
+    if (capability === 'opencode-plugin') {
+      const channel = opencodeChannel(env, { ppid });
+      if (!channel) return { ok: false, code: 'no_socket', message: 'No FAI plugin channel in this OpenCode.' };
+      return await deliverOpencodePlugin({ ...channel, sessionID: opencodeSession, text });
+    }
     return { ok: false, code: 'no_wake', message: 'This session cannot be woken.' };
   } catch (error) {
     return { ok: false, code: 'wake_failed', message: String(error?.message ?? error).slice(0, 200) };

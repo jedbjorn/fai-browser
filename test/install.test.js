@@ -5,7 +5,7 @@ import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, realpat
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { MCP_ENTRY, SKILL_SOURCE, TASKS_SOURCE, taskGuides } from '../src/install.js';
+import { MCP_ENTRY, OPENCODE_PLUGIN_SOURCE, SKILL_SOURCE, TASKS_SOURCE, refreshUserSkills, taskGuides } from '../src/install.js';
 import { ALWAYS_LOAD_META, JEV_TOOLS, TOOLS } from '../src/mcp.js';
 
 const CLI = resolve(import.meta.dirname, '..', 'src', 'cli.js');
@@ -217,6 +217,59 @@ test('opencode project and user installs write the local MCP entry', async t => 
   await writeFile(join(project, 'opencode.jsonc'), '{}');
   const refused = install(['--host', 'opencode']);
   assert.equal(refused.code, 2);
+});
+
+test('opencode installs FAI\'s wake plugin beside its config (project and user), marker-guarded, idempotent', async t => {
+  const { home, project, install } = await sandbox(t);
+  const source = read(OPENCODE_PLUGIN_SOURCE);
+  assert.match(source, /^\/\/ fai-browser-opencode-plugin v1\n/);
+  const pluginAt = join(project, '.opencode', 'plugins', 'fai-browser.js');
+
+  const dry = install(['--host', 'opencode', '--dry-run']);
+  assert.equal(dry.code, 0, dry.stderr);
+  assert.ok(dry.json.writes.some(write => write.path === pluginAt && write.action === 'create'));
+  assert.equal(existsSync(pluginAt), false);
+
+  const first = install(['--host', 'opencode']);
+  assert.equal(first.code, 0, first.stderr);
+  assert.equal(read(pluginAt), source);
+  const again = install(['--host', 'opencode']);
+  assert.equal(again.code, 0, again.stderr);
+  assert.equal(again.json.writes.find(write => write.path === pluginAt).action, 'unchanged');
+
+  // An older FAI plugin is updated; a foreign file is refused without --force (and backed up with it).
+  await writeFile(pluginAt, '// fai-browser-opencode-plugin v0\nexport const Old = async () => ({});\n');
+  assert.equal(install(['--host', 'opencode']).json.writes.find(write => write.path === pluginAt).action, 'update');
+  assert.equal(read(pluginAt), source);
+  await writeFile(pluginAt, 'export const Mine = async () => ({});\n');
+  const refused = install(['--host', 'opencode']);
+  assert.equal(refused.code, 2);
+  assert.match(refused.json.error.message, /not FAI Browser's OpenCode plugin/);
+  assert.equal(read(pluginAt), 'export const Mine = async () => ({});\n');
+  const forced = install(['--host', 'opencode', '--force']);
+  assert.equal(forced.code, 0, forced.stderr);
+  assert.equal(read(pluginAt), source);
+  assert.equal(backups(join(project, '.opencode', 'plugins')).length, 1);
+
+  // --link: a relative symlink to the checkout's plugin.
+  const linked = install(['--host', 'opencode', '--link']);
+  assert.equal(linked.code, 0, linked.stderr);
+  assert.ok(lstatSync(pluginAt).isSymbolicLink());
+  assert.equal(realpathSync(pluginAt), realpathSync(OPENCODE_PLUGIN_SOURCE));
+  assert.equal(install(['--host', 'opencode', '--link']).json.writes.find(write => write.path === pluginAt).action, 'unchanged');
+
+  // User scope: ~/.config/opencode/plugins/, the directory of the opencode.json it registers in; the updater refreshes it.
+  const userPlugin = join(home, '.config', 'opencode', 'plugins', 'fai-browser.js');
+  const user = install(['--host', 'opencode', '--scope', 'user']);
+  assert.equal(user.code, 0, user.stderr);
+  assert.equal(read(userPlugin), source);
+  await writeFile(userPlugin, '// fai-browser-opencode-plugin v0\n');
+  const refreshed = await refreshUserSkills({ home });
+  assert.deepEqual(refreshed.find(item => item.path === userPlugin), { host: 'opencode', path: userPlugin, writes: 1 });
+  assert.equal(read(userPlugin), source);
+  await writeFile(userPlugin, '// mine\n');
+  await refreshUserSkills({ home });
+  assert.equal(read(userPlugin), '// mine\n', 'a foreign plugin file is never refreshed');
 });
 
 test('--dry-run lists writes without touching disk; --link symlinks the skill', async t => {

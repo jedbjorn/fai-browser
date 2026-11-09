@@ -5,6 +5,16 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## Unreleased
+
+### Added
+
+- **Wakes for OpenCode** (1.19 to 1.x). `install --host opencode` (and setup's OpenCode registration) also installs a small FAI plugin beside the config it writes (`.opencode/plugins/fai-browser.js`, or `~/.config/opencode/plugins/fai-browser.js` with `--scope user`; `--link` symlinks it, `--force` replaces a foreign file, the updater refreshes a user-level copy). The plugin tags each FAI tool call with the calling OpenCode conversation (the root session: a subagent's task session, also nested, counts for the conversation that started it; `_faiHostSession`, removed by the MCP server before validation) and, asked over a private socket, starts a turn in that session with `client.session.promptAsync`, with the agent and model of its last user message, also in the default TUI, which has no HTTP listener. New wake capability `opencode-plugin`: Approve and Resume wake the session that made or joined the request, an invite the only session that used FAI in the last 10 minutes (with several, the copy line). The plugin answers once OpenCode accepted the prompt and reported no error before the turn started, so the popup says "Sent to OpenCode · repo" with the copy line, as for Claude Code. OpenCode is "not ready" until its first FAI call and is asked to call `fai_browser_status` once early. OpenCode 2.x and versions below 1.19 keep the copy line.
+
+### Security
+
+- The OpenCode plugin listens on a 0700 directory it owns (`$XDG_RUNTIME_DIR/fai-browser/`, never a symlink) on a 0600 socket named after OpenCode's pid, takes requests only with the random token it minted, prompts only sessions it saw call a FAI tool, only with one text part matching one of FAI's three wake templates exactly, and with the session's own agent and model (never OpenCode's default agent; without a stored one it refuses). The MCP server uses the channel only when OpenCode is its direct parent (socket name and `OPENCODE_PID`). The service no longer inherits the host's wake variables (`FAI_OPENCODE_WAKE_*`, `CLAUDE_CODE_MESSAGING_TOKEN`) when an MCP server starts it. Documented risks: the plugin runs with OpenCode's rights, the session id is visible in FAI tool inputs, and the token is inherited by everything OpenCode starts (bash children, other MCP servers, language servers, formatters) ([safety model](docs/guide/safety-model.md#9-invites-and-wakes)).
+
 ## 0.6.1 (2026-11-09)
 
 ### Fixed
