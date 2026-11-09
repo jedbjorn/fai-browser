@@ -3360,11 +3360,18 @@ async function handleCommand(command) {
 // Without an explicit request (the legacy "Select tab and start" button): the newest pending request that asked for
 // this tab's origin; with none pending, a paused request only on its own tab. Never the oldest request, never a paused
 // one on another tab, never a paused one while a request for the origin waits (issue #13: an old request must not take
-// the click meant for a new one). Null: the user chooses on a request card.
+// the click meant for a new one). Never an invited tab: it is bound only through its invite. Null: the user chooses on a
+// request card.
+function legacyCandidate(item, origin) {
+  return !item.invite && here(item) && Array.isArray(item.origins) && originCovered(origin, item.origins);
+}
 function pickRequest(origin, tabId) {
+  // Newest first; the service lists requests in creation order, so a same-millisecond tie goes to the later one.
   const matching = state => requests
-    .filter(item => item.state === state && here(item) && Array.isArray(item.origins) && originCovered(origin, item.origins))
-    .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.state === state && legacyCandidate(item, origin))
+    .sort((a, b) => String(b.item.createdAt ?? '').localeCompare(String(a.item.createdAt ?? '')) || b.index - a.index)
+    .map(({ item }) => item);
   return matching('pending')[0]?.requestId
     ?? matching('paused').find(item => Number.isInteger(tabId) && item.lease?.tabId === tabId)?.requestId ?? null;
 }
@@ -3419,8 +3426,7 @@ async function startSession(message, given = null) {
     requestId = pickRequest(origin, tab.id);
     // Requests for this site that the rule refuses (a paused one on another tab): the user picks one on its card. With
     // none known, the service decides (the in-process companion has no requests; the daemon applies the same rule).
-    const known = requests.some(item => ['pending', 'paused'].includes(item.state) && here(item)
-      && Array.isArray(item.origins) && originCovered(origin, item.origins));
+    const known = requests.some(item => ['pending', 'paused'].includes(item.state) && legacyCandidate(item, origin));
     if (!requestId && known) throw new Error('Choose the request in the FAI Browser popup: none waits for this tab.');
   }
   // The level the user picked on the request card. Anything unknown or missing is read-only.

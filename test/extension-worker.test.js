@@ -786,6 +786,20 @@ test('legacy start: a paused request resumes only on its own tab; on another tab
   assert.equal(own.lease?.requestId, 'req_paused');
 });
 
+test('legacy start: an invited tab is never picked; a same-millisecond tie goes to the later request', async () => {
+  const invited = await legacyStart([
+    { requestId: 'req_invite', state: 'paused', origins: [ORIGIN], createdAt: '2026-01-02T00:00:00Z',
+      lease: { leaseId: 'inv', tabId: 7 }, invite: { inviteId: 'inv-abcdefgh', state: 'open' } },
+  ]);
+  // Nothing the worker may pick: the service decides (and refuses an invited tab too).
+  assert.equal(invited.lease?.requestId ?? null, null);
+  const tie = await legacyStart([
+    { requestId: 'req_first', state: 'pending', origins: [ORIGIN], createdAt: '2026-01-02T00:00:00.000Z' },
+    { requestId: 'req_second', state: 'pending', origins: [ORIGIN], createdAt: '2026-01-02T00:00:00.000Z' },
+  ]);
+  assert.equal(tie.lease?.requestId, 'req_second');
+});
+
 test('an unpaired worker pairs through the native host, saves the pairing and connects', async () => {
   const h = harness({ paired: false, native: async () => ({ ok: true, endpoint: ENDPOINT, secret: SECRET, version: '0.2.0' }) });
   await h.waitFor(m => m.type === 'hello');
