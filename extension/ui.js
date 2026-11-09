@@ -45,7 +45,9 @@ export function pressGuard(container) {
     clearTimeout(timer);
     timer = setTimeout(release, PRESS_HOLD_MS);
   }, true);
-  for (const type of ['pointerup', 'pointercancel', 'blur']) window.addEventListener(type, release, true);
+  for (const type of ['pointerup', 'pointercancel']) window.addEventListener(type, release, true);
+  // The window losing focus ends a press; an element's blur (focus moving to the pressed button) does not.
+  window.addEventListener('blur', event => { if (event.target === window) release(); });
   return run => {
     if (!pressed) return false;
     pending = run;
