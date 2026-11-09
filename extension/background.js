@@ -1530,9 +1530,13 @@ async function assertTab() {
   const [active] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
   if (active?.id !== tab.id) throw new ExtensionError('tab_changed', 'Selected tab is no longer active');
   if (session?.status !== 'active') throw inactiveError();
-  // Without a live grant Chrome omits tab.url; treat that as having left the leased origin.
+  // Without a live grant Chrome omits tab.url; treat that as having left the leased origin. A toolbar (activeTab) grant
+  // also ends when Chrome commits its own error page (an opaque origin), on the approved URL: nothing can be read
+  // there either, so the session pauses the same way, with a message that names both causes.
   if (!sessionCovers(tab.url)) {
-    throw new ExtensionError('origin_changed', 'Origin changed; select this tab again');
+    throw new ExtensionError('origin_changed', tab.url ? 'Origin changed; select this tab again'
+      : 'Chrome withdrew access to this tab: it left the approved site, or (toolbar approval) Chrome showed its own '
+        + 'error page; approve this tab again');
   }
   return tab;
 }
