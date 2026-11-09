@@ -55,7 +55,7 @@
     "docs/design/"
   ],
   "scripts": {
-    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "test": "node --test --test-concurrency=1 --test-timeout=600000 test/*.test.js",
     "test:browserless": "node scripts/test-browserless.mjs",
     "setup": "node scripts/setup.mjs",
     "launch": "node src/cli.js launch",

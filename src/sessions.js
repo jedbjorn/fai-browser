@@ -222,6 +222,8 @@ export function createSessionRegistry(options = {}) {
           if (session.waiter === waiter) release(session, { wakes: [] });
         }, Math.min(maxMs, SESSION_POLL_MAX_MS)),
       };
+      // A held poll never keeps the daemon's process alive by itself (close() answers it anyway).
+      waiter.timer.unref?.();
       const onAbort = () => {
         if (session.waiter === waiter) release(session, { wakes: [] });
       };

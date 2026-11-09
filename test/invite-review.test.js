@@ -346,3 +346,24 @@ test('final: a failed Approve wake shows in the request (the popup\'s "tell it t
   assert.ok(!/wakes this session/.test(text(paused)));
 });
 
+test('final: an MCP server exits promptly on stdin close, also while its session loop backs off (no daemon)', async t => {
+  const home = await mkdtemp(join(tmpdir(), 'fai-review-exit-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  // A port nothing listens on: the loop retries with its backoff; the end of stdin must still end the process at once.
+  const closed = http.createServer();
+  await new Promise(resolve => closed.listen(0, '127.0.0.1', resolve));
+  const port = closed.address().port;
+  await new Promise(resolve => closed.close(resolve));
+  const mcp = spawnMcp({ PATH: process.env.PATH, HOME: home, FAI_HOME: home, FAI_DAEMON_PORT: String(port),
+    FAI_CLIENT_TOKEN: TOKEN });
+  t.after(() => mcp.child.kill('SIGKILL'));
+  await mcp.request('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'claude-code', version: 'test' } });
+  mcp.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  await delay(600);
+  const started = Date.now();
+  mcp.child.stdin.end();
+  const code = await mcp.exited;
+  assert.equal(code, 0);
+  assert.ok(Date.now() - started < 3000, `exited in ${Date.now() - started} ms`);
+});
+
