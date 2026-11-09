@@ -182,7 +182,8 @@ export function createSessionRegistry(options = {}) {
       if (list.length) changed();
       // Fields only: the MCP server writes the wake text itself from its fixed template (src/wake.js wakeText).
       return { wakes: list.map(wake => ({ wakeId: wake.wakeId, kind: wake.kind, requestId: wake.requestId ?? null,
-        inviteId: wake.inviteId ?? null, level: wake.level ?? null, ...(wake.userText ? { userText: wake.userText } : {}) })) };
+        inviteId: wake.inviteId ?? null, level: wake.level ?? null, at: iso(wake.createdAt),
+        ...(wake.userText ? { userText: wake.userText } : {}) })) };
     };
     if (pendingFor(session).length || maxMs <= 0) return Promise.resolve(deliver());
     return new Promise(resolvePoll => {
