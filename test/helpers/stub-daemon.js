@@ -512,6 +512,12 @@ export async function startStubDaemon(behavior = {}) {
       ? { FAI_MCP_APPROVAL_WAIT_MS: String(Math.max(1, Number(extra.FAI_MCP_MAX_CALL_MS) - 2000)) } : {}),
     ...extra,
   });
+  // A daemon outage: down() stops answering (open connections reset), up() listens on the same port again.
+  stub.down = async () => {
+    server.closeAllConnections();
+    await new Promise(resolveClose => server.close(resolveClose));
+  };
+  stub.up = () => new Promise(resolveListen => server.listen(stub.port, '127.0.0.1', resolveListen));
   stub.close = async () => {
     for (const run of stub.runs.values()) {
       clearTimeout(run.timer);
@@ -520,7 +526,7 @@ export async function startStubDaemon(behavior = {}) {
       res.destroy();
     }
     server.closeAllConnections();
-    await new Promise(resolveClose => server.close(resolveClose));
+    if (server.listening) await new Promise(resolveClose => server.close(resolveClose));
     await rm(home, { recursive: true, force: true });
   };
   return stub;

@@ -25,6 +25,7 @@ import {
 } from './result.js';
 import { lintExpectation, validateExpectation } from './expectation.js';
 import { scrubSecrets } from './secrets.js';
+import { withResumeWait } from './resume.js';
 import { LEVELS, levelRank, normalizeAdditions } from './guardrails.js';
 import { BUDGET_LIMITS, DEFAULT_BUDGET, checkBudget, loadOversightConfig } from './settings.js';
 import {
@@ -1283,8 +1284,9 @@ function waitHint(runId) {
 function approveHint(origin, requestId, approval = null, driver = 'agent') {
   const root = siteRoot(origin);
   const site = root ?? (origin ? origin.replace(/^https:\/\//, '') : null);
-  return `Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: ${approvalSteps(approval)}. `
-    + `Then call ${openTool(driver)} again with requestId ${requestId}; no origins needed.`;
+  return withResumeWait(`Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: `
+    + `${approvalSteps(approval)}. Then call ${openTool(driver)} again with requestId ${requestId}; no origins needed.`,
+  requestId);
 }
 
 /**
@@ -1316,9 +1318,9 @@ function nextForRequest(state, view, requestId, driver = 'agent') {
     case 'pending':
       return nextStep('relay', approveHint(view?.origins?.[0], requestId, view?.approval, driver));
     case 'paused':
-      return nextStep('relay', `The tab lease is paused${view?.stateReason ? ` (${view.stateReason})` : ''}. Ask the `
-        + `user to return to the tab and press Resume in the extension, then call ${openTool(driver)} again with `
-        + `requestId ${requestId}.`);
+      return nextStep('relay', withResumeWait(`The tab lease is paused${view?.stateReason ? ` (${view.stateReason})` : ''}. `
+        + 'Ask the user to return to the tab and click Resume in the FAI Browser extension, then call '
+        + `${driver === 'jev' ? 'fai_browser_run again' : 'fai_browser_observe'} with requestId ${requestId}.`, requestId));
     default:
       if (TERMINAL_REQUEST_STATES.has(state)) {
         return nextStep('stop', `This tab request has ended (${state}). Ask the user before requesting a tab again.`);
