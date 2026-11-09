@@ -3,7 +3,7 @@
 // Jev key. See the Phase 2 design, sections 1 and 2.
 import http from 'node:http';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { BrowserRuntime, actionLabels, checkActChoice, redactionMeta, resolveRetry, resolveSlim } from './runtime.js';
@@ -38,7 +38,8 @@ import { createDomainStore, domainStatsDir, resolveProfiles } from './domains.js
 import { checkOriginEntry, isSiteEntry, leaseOrigins, originCovered, siteRoots, urlCovered } from './origins.js';
 import { scrubSecrets } from './secrets.js';
 import { spawn } from 'node:child_process';
-import { automaticCheck, createUpdateChecker, runningUpdate, underTest } from './update.js';
+import { automaticCheck, createUpdateChecker, runningUpdate, underTest, writeInstallState, writeUpdateLock } from './update.js';
+import { gitReleaseSource, scrubbedEnv } from './update-git.js';
 
 export const DAEMON_VERSION = readPackageVersion();
 export const SERVICE_NAME = 'fai-browser';
@@ -482,6 +483,7 @@ async function readJsonBody(req) {
 function defaultSpawnUpdater(args, env) {
   const child = spawn(process.execPath, args, { cwd: PACKAGE_ROOT, env, detached: true, stdio: 'ignore', windowsHide: true });
   child.unref();
+  return child.pid;
 }
 
 function unwrittenResult(raw) {
@@ -546,7 +548,16 @@ export function createDaemon(options = {}) {
   const warnings = [];
   // Update check (src/update.js): about once a day, off with FAI_UPDATE_CHECK=0, config.json updateCheck: false, or
   // under node --test unless options.updateCheck is true. Installing needs the user's click (onUpdateEvent) or command.
-  const updates = createUpdateChecker({ paths, currentVersion: version, fetch: options.updateFetch, log,
+  // The environment this daemon was started with, before loadDaemonSettings adds the Jev key to `env`, and without
+  // FAI's secrets: the updater and everything it starts (git, npm, the restarted daemon) get only this.
+  const launchEnv = scrubbedEnv(env);
+  // Only a git clone can update itself; anything else is told how to update by hand.
+  const installable = options.updateInstallable ?? existsSync(join(PACKAGE_ROOT, '.git'));
+  // A private repository is invisible to the anonymous API: then `git ls-remote` on the clone's verified remote, with
+  // the user's own git credentials (never under node --test unless a test supplies its own source).
+  const gitSource = options.updateGitSource
+    ?? (installable && !underTest(env) ? gitReleaseSource({ root: PACKAGE_ROOT, env: launchEnv }) : null);
+  const updates = createUpdateChecker({ paths, currentVersion: version, fetch: options.updateFetch, log, gitSource, installable,
     enabled: () => automaticCheck({ env, config, override: options.updateCheck }).enabled,
     ...(options.updateStartupDelayMs !== undefined ? { startupDelayMs: options.updateStartupDelayMs } : {}) });
 
@@ -716,6 +727,11 @@ export function createDaemon(options = {}) {
   }
 
   function onLeaseEvent(event) {
+    // An update that is installing restarts this daemon: a tab approved now would be cut off by it.
+    if (runningUpdate(paths)) {
+      return replyTo(event, { error: { code: 'update_running',
+        message: 'FAI Browser is installing an update and restarts in a moment. Approve again in a minute.' } });
+    }
     const record = event.requestId ? requests.get(event.requestId) : pickRequestFor(event.origin);
     if (!record) return replyTo(event, { error: { code: 'no_request', message: 'No such tab request' } });
     // Re-approval: the user changes the level of the active lease on the same tab (no new lease). A lower level
@@ -944,19 +960,32 @@ export function createDaemon(options = {}) {
     const view = updates.view();
     const refuse = (code, message) => replyTo(event, { error: { code, message } });
     if (!view.available || !view.tag) return refuse('no_update', 'FAI Browser is up to date.');
+    if (!view.installable) return refuse('not_git', 'This FAI Browser is not a git clone; update it the way you installed it.');
     if (runningUpdate(paths)) return refuse('update_running', 'An update is already running.');
     if ([...requests.values()].some(record => LEASED.has(record.state))) {
       return refuse('lease_active', 'An agent holds a browser tab. Let the task finish or press Stop, then update.');
     }
-    const childEnv = { ...env, FAI_DAEMON_PORT: String(port), ...(paths.custom ? { FAI_HOME: paths.home } : {}) };
+    const childEnv = { ...launchEnv, FAI_DAEMON_PORT: String(port), ...(paths.custom ? { FAI_HOME: paths.home } : {}) };
     const args = [join(PACKAGE_ROOT, 'src', 'cli.js'), 'update', '--tag', view.tag];
     // A test never runs the real updater against the checkout it runs from.
     if (!options.spawnUpdater && underTest(env)) return refuse('update_failed', 'No updates under node --test.');
+    let pid;
     try {
-      (options.spawnUpdater ?? defaultSpawnUpdater)(args, childEnv);
+      pid = (options.spawnUpdater ?? defaultSpawnUpdater)(args, childEnv);
     } catch (error) {
       log('update_spawn_error', { message: String(error?.message ?? error).slice(0, 200) });
       return refuse('update_failed', 'Could not start the update. Run node src/cli.js update in the fai-browser folder.');
+    }
+    // The lock and the running record are written now, for the updater's pid: a second click, a new tab request or an
+    // approval sees the update at once (the updater adopts the lock; its own records replace this one).
+    if (Number.isInteger(pid) && pid > 0) {
+      try {
+        writeUpdateLock(paths, pid);
+        writeInstallState(paths, { pid, state: 'running', from: view.current, to: view.latest, step: 'start',
+          message: `Installing ${view.latest}.` });
+      } catch (error) {
+        log('update_record_error', { message: String(error?.message ?? error).slice(0, 200) });
+      }
     }
     log('update_install_started', { from: view.current, to: view.latest });
     return replyTo(event, { update: { ...view, install: { state: 'running', from: view.current, to: view.latest,
@@ -1428,6 +1457,10 @@ export function createDaemon(options = {}) {
 
   function createRequest(body, client) {
     checkKeys(body, REQUEST_KEYS);
+    if (runningUpdate(paths)) {
+      throw new HttpError(503, 'update_running', 'An FAI Browser update is installing and restarts the service; '
+        + 'retry in a minute.', { retryable: true });
+    }
     const origins = body.origins;
     if (!Array.isArray(origins) || origins.length < 1 || origins.length > 10) {
       throw badOptions('origins must list 1-10 exact origins such as https://app.example.com or domain roots such as https://*.example.com');

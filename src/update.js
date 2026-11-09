@@ -7,6 +7,12 @@
 // the release is newer, one more GET asks which commit its tag names. Failures only set `status`. The result is cached
 // in the state directory (update-check.json), so a CLI check and the daemon share it and a restart does not re-ask.
 //
+// A private repository answers the anonymous API with 404. Then, when the caller gives a `gitSource` (the daemon and
+// the CLI do for a git clone), the check falls back to `git ls-remote --tags` on the clone's verified remote with the
+// user's own git credentials (src/update-git.js; FAI stores and reads no token): the highest plain vX.Y.Z tag, its
+// peeled commit. That path cannot see drafts or prereleases, so only final releases may get a vX.Y.Z tag. `source`
+// says which path found the release (api or git).
+//
 // Off switch: FAI_UPDATE_CHECK=0 (or false/off/no) or config.json "updateCheck": false stops the automatic checks;
 // `fai-browser update --check` and `fai-browser update` still check once when the user runs them. Under node --test
 // the daemon never checks unless a test turns it on (createDaemon option updateCheck).
@@ -17,8 +23,9 @@
 import { readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { ensureDir, isAlive, writePrivate } from './home.js';
+import { UPDATE_REPO_PATH } from './update-git.js';
 
-export const UPDATE_REPO = 'jedbjorn/fai-browser';
+export const UPDATE_REPO = UPDATE_REPO_PATH;
 export const RELEASES_API = `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`;
 export const RELEASES_PAGE = `https://github.com/${UPDATE_REPO}/releases`;
 export const USER_AGENT = 'fai-browser-update-check';
@@ -31,6 +38,10 @@ export const CHECK_TIMEOUT_MS = 10_000;
 export const STARTUP_DELAY_MS = 30_000;
 // How often the daemon looks whether a check is due (the check itself runs at most once per CHECK_INTERVAL_MS).
 export const POLL_MS = 60 * 60_000;
+// A rate limit's retry time is never trusted beyond this.
+export const MAX_RETRY_MS = 24 * 60 * 60_000;
+// An update lock or running record older than this is stale even when its pid is alive (a reused pid).
+export const UPDATE_MAX_MS = 45 * 60_000;
 
 // Stable releases only: v + three plain numbers, no prerelease or build part, no leading zeros, bounded length.
 const VERSION = /^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$/;
@@ -39,7 +50,9 @@ const SHA = /^[0-9a-f]{40}$/;
 const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z$/;
 const OFF = new Set(['0', 'false', 'off', 'no']);
 const CHECK_STATES = new Set(['ok', 'not_found', 'error', 'rate_limited']);
-const INSTALL_STATES = new Set(['running', 'succeeded', 'failed', 'rolled_back']);
+const SOURCES = new Set(['api', 'git']);
+// up_to_date: an updater that found nothing to install (the popup's click on a release that is already in).
+const INSTALL_STATES = new Set(['running', 'succeeded', 'failed', 'rolled_back', 'up_to_date']);
 const ERROR_CODE = /^[a-z0-9_]{1,40}$/;
 
 /** [major, minor, patch] of a plain "X.Y.Z" version, or null. */
@@ -144,6 +157,7 @@ export function readCheckState(paths) {
     error: typeof raw.error === 'string' && ERROR_CODE.test(raw.error) ? raw.error : null,
     retryAt: isoOrNull(raw.retryAt),
     etag: typeof raw.etag === 'string' && raw.etag.length <= 200 && /^[\x21-\x7e]+$/.test(raw.etag) ? raw.etag : null,
+    source: SOURCES.has(raw.source) ? raw.source : null,
     latest: cleanRelease(raw.latest),
   };
 }
@@ -167,11 +181,17 @@ export function readInstallState(paths) {
     error: typeof raw.error === 'string' && ERROR_CODE.test(raw.error) ? raw.error : null,
     message: typeof raw.message === 'string' ? raw.message.slice(0, 500) : null,
   };
-  if (record.state === 'running' && !(Number.isInteger(raw.pid) && isAlive(raw.pid))) {
+  if (record.state === 'running' && !liveHolder(raw.pid, raw.at)) {
     return { ...record, state: 'failed', error: 'interrupted',
-      message: 'The update stopped before it finished. Run node src/cli.js update to see where the checkout is.' };
+      message: 'The update stopped before it finished. Run node src/cli.js update to finish it or see where the checkout is.' };
   }
   return record;
+}
+
+/** A pid that is alive and wrote its record or lock less than UPDATE_MAX_MS ago (a reused pid ages out). */
+function liveHolder(pid, at, now = Date.now()) {
+  const time = msOf(at);
+  return Number.isInteger(pid) && isAlive(pid) && time !== null && now - time < UPDATE_MAX_MS;
 }
 
 export function writeInstallState(paths, record) {
@@ -179,10 +199,16 @@ export function writeInstallState(paths, record) {
   writePrivate(updatePaths(paths).install, `${JSON.stringify({ ...record, at: new Date().toISOString() }, null, 2)}\n`);
 }
 
-/** Remove a stale lock file (tests, a crashed updater): only when its holder is gone. */
+/** Write update.lock for `pid` (the daemon, for the updater it just started; the updater adopts it). */
+export function writeUpdateLock(paths, pid) {
+  ensureDir(paths.stateDir);
+  writePrivate(updatePaths(paths).lock, JSON.stringify({ pid, startedAt: new Date().toISOString() }));
+}
+
+/** Remove a stale lock file (tests, a crashed updater): only when its holder is gone or too old. */
 export function clearStaleLock(paths) {
   const lock = readJson(updatePaths(paths).lock);
-  if (lock && Number.isInteger(lock.pid) && isAlive(lock.pid)) return false;
+  if (lock && liveHolder(lock.pid, lock.startedAt)) return false;
   try {
     unlinkSync(updatePaths(paths).lock);
   } catch {
@@ -194,7 +220,7 @@ export function clearStaleLock(paths) {
 /** The pid of a live update in progress, or null. */
 export function runningUpdate(paths) {
   const lock = readJson(updatePaths(paths).lock);
-  return lock && Number.isInteger(lock.pid) && isAlive(lock.pid) ? lock.pid : null;
+  return lock && liveHolder(lock.pid, lock.startedAt) ? lock.pid : null;
 }
 
 function header(response, name) {
@@ -233,13 +259,18 @@ export async function fetchLatestRelease({ fetch: fetchImpl = globalThis.fetch, 
   if (response.status === 304) return { status: 'not_modified' };
   if (response.status === 404) return { status: 'not_found' };
   if (response.status === 403 || response.status === 429) {
-    const remaining = header(response, 'x-ratelimit-remaining');
-    const reset = Number(header(response, 'x-ratelimit-reset'));
-    const retryAfter = Number(header(response, 'retry-after'));
-    if (remaining === '0' || response.status === 429 || Number.isFinite(retryAfter)) {
-      const at = Number.isFinite(reset) && reset > 0 ? reset * 1000
-        : now() + (Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : RETRY_AFTER_ERROR_MS);
-      return { status: 'rate_limited', retryAt: new Date(Math.max(at, now() + FORCED_CHECK_GAP_MS)).toISOString() };
+    // A header that is absent stays absent (Number(null) would be 0).
+    const numeric = name => {
+      const value = header(response, name);
+      return typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value) : null;
+    };
+    const remaining = numeric('x-ratelimit-remaining');
+    const reset = numeric('x-ratelimit-reset');
+    const retryAfter = numeric('retry-after');
+    if (remaining === 0 || response.status === 429 || retryAfter !== null) {
+      const at = reset ? reset * 1000 : now() + (retryAfter ? retryAfter * 1000 : RETRY_AFTER_ERROR_MS);
+      const capped = Math.min(Math.max(at, now() + FORCED_CHECK_GAP_MS), now() + MAX_RETRY_MS);
+      return { status: 'rate_limited', retryAt: new Date(capped).toISOString() };
     }
     return { status: 'error', error: 'http_403' };
   }
@@ -255,8 +286,8 @@ export async function fetchLatestRelease({ fetch: fetchImpl = globalThis.fetch, 
   if (!parsed) return { status: 'not_found' };
   const release = { tag: parsed.tag, version: parsed.version, commit: null, publishedAt: isoOrNull(body.published_at) };
   const newEtag = header(response, 'etag');
-  if (isCommitSha(body.target_commitish)) release.commit = body.target_commitish;
-  if (!release.commit && (!currentVersion || isNewer(release.version, currentVersion))) {
+  // The commit always comes from the tag itself (target_commitish only names where the tag was made).
+  if (!currentVersion || isNewer(release.version, currentVersion)) {
     release.commit = await fetchTagCommit({ fetch: fetchImpl, tag: release.tag, timeoutMs, signal });
   }
   return { status: 'ok', release, etag: typeof newEtag === 'string' ? newEtag : null };
@@ -285,7 +316,8 @@ export function checkDue(state, { now = Date.now, intervalMs = CHECK_INTERVAL_MS
   // Rate limited: due again once GitHub's reset time has passed.
   if (state.status === 'rate_limited') return true;
   const attempt = msOf(state.attemptAt);
-  if (!attempt) return true;
+  // Never checked, or the last attempt lies in the future (the clock moved back): due.
+  if (!attempt || attempt > at) return true;
   const wait = state.status === 'error' ? Math.min(RETRY_AFTER_ERROR_MS, intervalMs) : intervalMs;
   return at - attempt >= wait;
 }
@@ -295,22 +327,24 @@ export function checkDue(state, { now = Date.now, intervalMs = CHECK_INTERVAL_MS
  * and honours a rate limit. Resolves the cached state after the check.
  */
 export async function runCheck({ paths, currentVersion, fetch: fetchImpl, now = Date.now, force = false,
-  intervalMs = CHECK_INTERVAL_MS, signal, timeoutMs } = {}) {
+  intervalMs = CHECK_INTERVAL_MS, signal, timeoutMs, gitSource = null } = {}) {
   const state = readCheckState(paths);
   const at = now();
   if (force) {
     const attempt = msOf(state.attemptAt);
     const retryAt = msOf(state.retryAt);
-    if ((attempt && at - attempt < FORCED_CHECK_GAP_MS) || (retryAt && at < retryAt)) return state;
+    if ((attempt && attempt <= at && at - attempt < FORCED_CHECK_GAP_MS) || (retryAt && at < retryAt)) return state;
   } else if (!checkDue(state, { now, intervalMs })) {
     return state;
   }
-  const result = await fetchLatestRelease({ fetch: fetchImpl, etag: state.latest ? state.etag : null, currentVersion,
-    signal, now, timeoutMs });
+  const result = await fetchLatestRelease({ fetch: fetchImpl, etag: state.source === 'api' && state.latest ? state.etag : null,
+    currentVersion, signal, now, timeoutMs });
+  // A check stopped half-way (daemon shutdown) is not an outcome: nothing is recorded.
+  if (signal?.aborted) return state;
   const attemptAt = new Date(now()).toISOString();
   const next = { ...state, attemptAt, retryAt: null, error: null };
   if (result.status === 'ok') {
-    Object.assign(next, { status: 'ok', checkedAt: attemptAt, latest: result.release, etag: result.etag });
+    Object.assign(next, { status: 'ok', checkedAt: attemptAt, latest: result.release, etag: result.etag, source: 'api' });
   } else if (result.status === 'not_modified') {
     next.status = 'ok';
     next.checkedAt = attemptAt;
@@ -318,13 +352,23 @@ export async function runCheck({ paths, currentVersion, fetch: fetchImpl, now = 
     if (next.latest && !next.latest.commit && isNewer(next.latest.version, currentVersion)) {
       next.latest = { ...next.latest, commit: await fetchTagCommit({ fetch: fetchImpl, tag: next.latest.tag, signal, timeoutMs }) };
     }
+  } else if (result.status === 'not_found' && gitSource) {
+    // A private repository (or none published): the clone's own remote, with the user's git credentials.
+    try {
+      const release = cleanRelease(await gitSource());
+      Object.assign(next, release ? { status: 'ok', checkedAt: attemptAt, latest: release, etag: null, source: 'git' }
+        : { status: 'not_found', checkedAt: attemptAt, latest: null, etag: null, source: 'git' });
+    } catch (error) {
+      Object.assign(next, { status: 'error', error: error?.code === 'git_remote' ? 'git_remote' : 'git_failed' });
+    }
   } else if (result.status === 'not_found') {
-    Object.assign(next, { status: 'not_found', checkedAt: attemptAt, latest: null, etag: null });
+    Object.assign(next, { status: 'not_found', checkedAt: attemptAt, latest: null, etag: null, source: 'api' });
   } else if (result.status === 'rate_limited') {
     Object.assign(next, { status: 'rate_limited', retryAt: result.retryAt });
   } else {
     Object.assign(next, { status: 'error', error: result.error });
   }
+  if (signal?.aborted) return state;
   writeCheckState(paths, next);
   return readCheckState(paths);
 }
@@ -334,12 +378,15 @@ export async function runCheck({ paths, currentVersion, fetch: fetchImpl, now = 
  * error, install }`. `status`: never (no check yet), ok, not_found, error, rate_limited. `install`: the last
  * install's record, or null.
  */
-export function updateView({ paths, currentVersion, enabled = true }) {
+export function updateView({ paths, currentVersion, enabled = true, installable = true }) {
   const state = readCheckState(paths);
   const latest = state.latest;
   const available = Boolean(latest && isNewer(latest.version, currentVersion));
   return {
     enabled,
+    // False when this package is not a git clone: the popup then says how to update by hand instead of a button.
+    installable,
+    source: state.source,
     current: currentVersion,
     latest: latest?.version ?? null,
     tag: latest?.tag ?? null,
@@ -357,7 +404,8 @@ export function updateView({ paths, currentVersion, enabled = true }) {
  * Timers are unref'd; `stop()` cancels them and any check in flight. `check({force})` runs one now.
  */
 export function createUpdateChecker({ paths, currentVersion, enabled = () => true, fetch: fetchImpl, now = Date.now,
-  log = () => {}, startupDelayMs = STARTUP_DELAY_MS, pollMs = POLL_MS, intervalMs = CHECK_INTERVAL_MS } = {}) {
+  log = () => {}, startupDelayMs = STARTUP_DELAY_MS, pollMs = POLL_MS, intervalMs = CHECK_INTERVAL_MS, gitSource = null,
+  installable = true } = {}) {
   let startTimer = null;
   let pollTimer = null;
   let pending = null;
@@ -366,11 +414,14 @@ export function createUpdateChecker({ paths, currentVersion, enabled = () => tru
   function check({ force = false } = {}) {
     if (pending) return pending;
     if (!force && !enabled()) return Promise.resolve(readCheckState(paths));
-    pending = runCheck({ paths, currentVersion, fetch: fetchImpl, now, force, intervalMs, signal: controller.signal })
+    const { signal } = controller;
+    pending = runCheck({ paths, currentVersion, fetch: fetchImpl, now, force, intervalMs, signal, gitSource })
       .then(state => {
-        // Codes and versions only: never a URL with data, a header or a body.
-        log('update_check', { status: state.status, error: state.error, latest: state.latest?.version ?? null,
-          available: Boolean(state.latest && isNewer(state.latest.version, currentVersion)) });
+        // Codes and versions only: never a URL with data, a header or a body. A stopped check logs nothing.
+        if (!signal.aborted) {
+          log('update_check', { status: state.status, error: state.error, source: state.source,
+            latest: state.latest?.version ?? null, available: Boolean(state.latest && isNewer(state.latest.version, currentVersion)) });
+        }
         return state;
       })
       .catch(error => {
@@ -403,7 +454,7 @@ export function createUpdateChecker({ paths, currentVersion, enabled = () => tru
       controller = new AbortController();
     },
     check,
-    view: () => updateView({ paths, currentVersion, enabled: enabled() }),
+    view: () => updateView({ paths, currentVersion, enabled: enabled(), installable }),
     get pending() {
       return pending;
     },

@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDaemon } from '../src/daemon.js';
@@ -32,11 +32,16 @@ function releaseFetch(tag = 'v9.0.0') {
 }
 
 async function setup(t, options = {}) {
-  const home = await mkdtemp(join(tmpdir(), 'fai-update-daemon-'));
+  const home = options.home ?? await mkdtemp(join(tmpdir(), 'fai-update-daemon-'));
   const hub = createFakeHub();
   const spawned = [];
-  const daemon = createDaemon({ home, env: { FAI_BRIDGE_SECRET: SECRET }, port: 0, hub, sweepIntervalMs: 60_000,
-    updateStartupDelayMs: 0, spawnUpdater: (args, env) => spawned.push({ args, env }), ...options });
+  const daemon = createDaemon({ home, env: options.env ?? { FAI_BRIDGE_SECRET: SECRET }, port: 0, hub, sweepIntervalMs: 60_000,
+    updateStartupDelayMs: 0, updateInstallable: true,
+    // The recorder answers with this test process's pid: alive, like a real updater that just started.
+    spawnUpdater: (args, env) => {
+      spawned.push({ args, env });
+      return process.pid;
+    }, ...options });
   await daemon.listen();
   t.after(async () => {
     await daemon.close();
@@ -103,6 +108,71 @@ test('daemon: Update from the popup refuses during a lease and otherwise starts 
   assert.equal(spawned[0].env.FAI_HOME, home);
   const unknown = await hub.emit({ type: 'update', action: 'rm -rf' });
   assert.equal(unknown.error.code, 'invalid_action');
+});
+
+test('M1: the updater starts from the launch environment without the Jev key, a pairing override or a client token', async t => {
+  const home = await mkdtemp(join(tmpdir(), 'fai-update-env-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  await writeFile(join(home, '.env.local'), `FAI_BRIDGE_SECRET=${SECRET}\nTYPESAFE_API_KEY=fake-review-key-not-real\n`, { mode: 0o600 });
+  const env = { FAI_BRIDGE_SECRET: SECRET, FAI_CLIENT_TOKEN: 'f'.repeat(64), PATH: process.env.PATH ?? '' };
+  const ctx = await setup(t, { home, env, updateFetch: releaseFetch('v9.0.0'), updateCheck: true });
+  await untilAvailable(ctx.api);
+  assert.equal(env.TYPESAFE_API_KEY, 'fake-review-key-not-real', 'the daemon itself loaded the key');
+  const started = await ctx.hub.emit({ type: 'update', action: 'install' });
+  assert.equal(started.update.install.state, 'running');
+  const childEnv = ctx.spawned[0].env;
+  for (const name of ['TYPESAFE_API_KEY', 'FAI_BRIDGE_SECRET', 'FAI_CLIENT_TOKEN']) assert.equal(childEnv[name], undefined, name);
+  assert.ok(!JSON.stringify(childEnv).includes('fake-review-key-not-real'));
+  assert.equal(childEnv.PATH, env.PATH);
+});
+
+test('M2/S4: while an update installs, a second click, new tab requests and approvals are refused', async t => {
+  const { api, hub, spawned, home } = await setup(t, { updateFetch: releaseFetch('v9.0.0'), updateCheck: true });
+  await untilAvailable(api);
+  const { body: pending } = await api('POST', '/v1/requests', { origins: ['https://example.com'], reason: 'Before the update' });
+  await hub.emit({ type: 'update', action: 'install' });
+  const { readInstallState, runningUpdate } = await import('../src/update.js');
+  const { homePaths } = await import('../src/home.js');
+  const paths = homePaths({ home, env: { FAI_HOME: home } });
+  assert.equal(runningUpdate(paths), process.pid, 'the daemon wrote the lock for the updater it started');
+  assert.equal(readInstallState(paths).state, 'running');
+  assert.equal((await hub.emit({ type: 'update', action: 'install' })).error.code, 'update_running');
+  assert.equal(spawned.length, 1, 'a second click starts nothing');
+  const blocked = await api('POST', '/v1/requests', { origins: ['https://example.com'], reason: 'During the update' });
+  assert.equal(blocked.status, 503);
+  assert.equal(blocked.body.error.code, 'update_running');
+  assert.match(blocked.body.error.message, /retry in a minute/);
+  const approval = await hub.approve(pending.requestId);
+  assert.equal(approval.error.code, 'update_running');
+  const { unlink } = await import('node:fs/promises');
+  const { updatePaths } = await import('../src/update.js');
+  await unlink(updatePaths(paths).lock);
+  assert.equal((await api('POST', '/v1/requests', { origins: ['https://example.com'], reason: 'After' })).status, 201);
+});
+
+test('M2: the restart looks at the leases again and stops nothing while a tab is held', async t => {
+  const { api, hub, daemon, home } = await setup(t);
+  const { body: created } = await api('POST', '/v1/requests', { origins: ['https://example.com'], reason: 'Hold a tab' });
+  await hub.approve(created.requestId);
+  const { LeaseHeld, restartDaemon } = await import('../src/update-install.js');
+  await assert.rejects(restartDaemon({ home, env: { FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port) }, version: '9.9.9' }),
+    error => error instanceof LeaseHeld && error.daemonUntouched === true);
+  assert.equal((await api('GET', '/v1/health')).status, 200, 'the daemon still runs');
+  assert.equal((await api('GET', `/v1/requests/${created.requestId}`)).body.state, 'active', 'the task keeps its tab');
+});
+
+test('daemon: a copy that is not a git clone shows the update but offers no install; a private repo is found by git', async t => {
+  const npm = await setup(t, { updateFetch: releaseFetch('v9.0.0'), updateCheck: true, updateInstallable: false });
+  const view = await untilAvailable(npm.api);
+  assert.equal(view.installable, false);
+  assert.equal((await npm.hub.emit({ type: 'update', action: 'install' })).error.code, 'not_git');
+  assert.equal(npm.spawned.length, 0);
+  const notFound = async () => new Response('{"message":"Not Found"}', { status: 404 });
+  const priv = await setup(t, { updateFetch: notFound, updateCheck: true,
+    updateGitSource: async () => ({ tag: 'v9.1.0', version: '9.1.0', commit: SHA }) });
+  const found = await untilAvailable(priv.api);
+  assert.equal(found.source, 'git');
+  assert.equal(found.latest, '9.1.0');
 });
 
 test('daemon: nothing to install when up to date, and no real updater under node --test', async t => {
