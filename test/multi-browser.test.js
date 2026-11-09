@@ -727,7 +727,8 @@ test('daemon: a stale binding in browsers.json refuses the id visibly; leftover 
     origin: 'moz-extension://11111111-2222-4333-8444-555555555555' }, junk: 5, 'b-x': { origin: 1 } }));
   await writeFile(join(home, 'browsers.json.4242.tmp'), '{"half":');
   const ctx = await daemonWithBrowsers(t, { home });
-  assert.deepEqual((await readdir(home)).filter(name => name.endsWith('.tmp')), []);
+  // The leftover from a crashed write is gone (a browsers.json save of this daemon may be writing its own temp file).
+  assert.ok(!(await readdir(home)).includes('browsers.json.4242.tmp'), 'the leftover temp file is removed at start');
   const ext = await FakeExtension.connect({ port: ctx.daemon.port, origin: FIREFOX.origin, path: `/ext/ws?browser=${FIREFOX.id}` });
   t.after(() => ext.close());
   assert.equal((await ext.client.next(event => event.type === 'close')).code, CLOSE_IDENTITY_REFUSED);
@@ -735,7 +736,13 @@ test('daemon: a stale binding in browsers.json refuses the id visibly; leftover 
     headers: { Origin: FIREFOX.origin, Authorization: `Bearer ${SECRET}`, 'Content-Type': 'application/json', 'X-Fai-Browser': FIREFOX.id } });
   assert.equal(http.status, 403);
   assert.equal((await http.json()).code, 'identity_refused');
-  const warnings = (await ctx.client.status()).warnings.filter(warning => warning.startsWith('extension_identity_refused'));
+  // Both refusals (the socket and the HTTP hello) are counted before the one warning is read.
+  let warnings = [];
+  for (let i = 0; i < 200; i++) {
+    warnings = (await ctx.client.status()).warnings.filter(warning => warning.startsWith('extension_identity_refused'));
+    if (warnings.length === 1 && /^extension_identity_refused: 2 /.test(warnings[0])) break;
+    await sleep(10);
+  }
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /^extension_identity_refused: 2 connections claimed a browser id bound to another extension Origin \(last \d{4}-/);
   // The extension then picks a new id (the worker does that by itself) and is served.
@@ -795,7 +802,11 @@ test('MCP: fai_browser_open with an unknown browser names the connected ones; wi
   await until(() => ctx.daemon.hub.candidates().some(browser => browser.id === CHROMIUM.id && browser.usedAt));
   const mcp = spawnMcp({ PATH: process.env.PATH, HOME: ctx.home, FAI_HOME: ctx.home,
     FAI_DAEMON_PORT: String(ctx.daemon.port), FAI_MCP_MAX_CALL_MS: '6000', FAI_MCP_APPROVAL_WAIT_MS: '4000' });
-  t.after(() => mcp.child.kill('SIGKILL'));
+  // Gone and reaped before the test ends (its agent-session poll must not outlive the daemon's close).
+  t.after(async () => {
+    mcp.child.kill('SIGKILL');
+    await mcp.exited;
+  });
   await mcp.initialize();
   const tools = (await mcp.request('tools/list', {})).result.tools;
   assert.equal(tools.find(tool => tool.name === 'fai_browser_open').inputSchema.properties.browser.type, 'string');

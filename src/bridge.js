@@ -109,6 +109,9 @@ const HTTP_ROUTES = {
   '/heartbeat': 'heartbeat',
   '/used': 'used',
   '/move': 'move',
+  '/invite': 'invite',
+  '/invite-cancel': 'invite_cancel',
+  '/agents': 'agents',
   '/commands': 'commands',
 };
 const REPLY_HTTP_STATUS = {
@@ -1077,6 +1080,56 @@ export function createHub({
         // An approval is the strongest sign of where the user works: new tab requests go here.
         noteUsage(browser, true);
         if (!emit(event)) reply({ error: { code: 'no_request', message: 'No tab request is pending' } });
+        return;
+      }
+      case 'invite': {
+        // The popup's Invite click (the worker sends it only for popup.html, docs/REFERENCE.md "Invites and wakes"):
+        // the tab the user is on, at the level they chose, for the agent session they picked (or none: copy text).
+        if (!Number.isInteger(message.tabId) || typeof message.origin !== 'string' || !isLevel(message.level)) {
+          reply({ error: { code: 'bad_request', message: 'tabId, origin and level are required' } });
+          return;
+        }
+        if (message.tabMode !== undefined && !['single', 'multiple'].includes(message.tabMode)) {
+          reply({ error: { code: 'bad_request', message: 'tabMode must be single or multiple' } });
+          return;
+        }
+        if (message.sessionId !== undefined && message.sessionId !== null && typeof message.sessionId !== 'string') {
+          reply({ error: { code: 'bad_request', message: 'sessionId must be a string' } });
+          return;
+        }
+        noteUsage(browser, true);
+        const event = {
+          type: 'invite',
+          tabId: message.tabId,
+          origin: message.origin,
+          title: typeof message.title === 'string' ? message.title.slice(0, 300) : '',
+          level: message.level,
+          tabMode: message.tabMode ?? 'single',
+          sessionId: typeof message.sessionId === 'string' ? message.sessionId.slice(0, 64) : null,
+          // The user's own words from the popup's "What should it do?" field.
+          text: typeof message.text === 'string' ? message.text.slice(0, 2000) : '',
+          browserId,
+          browser: browserRef(),
+          reply,
+        };
+        if (!emit(event)) reply({ error: { code: 'unsupported', message: 'Update the FAI service to invite agents.' } });
+        return;
+      }
+      case 'invite_cancel': {
+        const event = {
+          type: 'invite_cancel',
+          inviteId: typeof message.inviteId === 'string' ? message.inviteId.slice(0, 64) : null,
+          requestId: typeof message.requestId === 'string' ? message.requestId.slice(0, 128) : null,
+          reason: message.reason === 'tab_closed' ? 'tab_closed' : 'cancelled',
+          browserId,
+          reply,
+        };
+        if (!emit(event)) reply({ error: { code: 'unknown_invite', message: 'No such invite' } });
+        return;
+      }
+      case 'agents': {
+        // The popup's Invite list: the live agent sessions (host, repo name, last activity, whether it can be woken).
+        if (!emit({ type: 'agents', browserId, reply })) reply({ sessions: [], invites: [] });
         return;
       }
       case 'lease_level': {

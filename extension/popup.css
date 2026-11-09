@@ -142,3 +142,22 @@ body.arm-page[data-level="testing"] .level-select { border-color: var(--danger);
 .update-card[data-state="failed"] .card-label { color: var(--danger); }
 .update-card[data-state="succeeded"] .card-label { color: var(--green); }
 .approval-window .update-card { display: none; }
+/* Invite agent (extension/invite-card.js) */
+.invite-picker { margin-top: 10px; padding: 12px 13px; border: 1px solid var(--line); border-left: 3px solid var(--green); border-radius: 10px; background: var(--surface); }
+.invite-levels { display: flex; gap: 3px; margin: 8px 0; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-deep); }
+.invite-level { flex: 1; padding: 6px 4px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--ink); font-size: 12px; font-weight: 600; }
+.invite-level[aria-checked="true"] { border-color: var(--line); background: white; box-shadow: 0 1px 2px #6950251a; }
+.invite-level.level-testing[aria-checked="true"] { border-color: var(--danger); color: var(--danger); }
+.invite-text { display: block; width: 100%; height: 34px; margin-bottom: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: white; color: var(--ink); }
+.invite-agents { display: flex; flex-direction: column; gap: 6px; }
+.invite-row { display: flex; flex-direction: column; align-items: flex-start; width: 100%; padding: 8px 10px; border: 1px solid #cfc5b6; border-radius: 8px; background: white; color: var(--ink); text-align: left; }
+.invite-row:hover { border-color: var(--amber); background: #f8f0e4; }
+.invite-row-name { font-weight: 650; }
+.invite-row-meta { color: var(--muted); font-size: 11px; }
+.request-card.invite-status[data-state="invited"] { border-left-color: var(--green); }
+.invite-where { margin: 0; overflow: hidden; color: var(--muted); white-space: nowrap; text-overflow: ellipsis; font-size: 11px; }
+.invite-line { margin: 6px 0 0; }
+.invite-copy { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.invite-copy-text { flex: 1; min-width: 0; margin: 0; font-size: 12px; }
+.invite-join { user-select: all; overflow-wrap: anywhere; }
+.invite-copy-button { min-width: 72px; min-height: 32px; }

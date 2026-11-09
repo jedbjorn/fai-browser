@@ -2,7 +2,7 @@
 // else, handled by the hub). It owns tab requests and leases, runs, traces, retention, provider config and the
 // Jev key. See the Phase 2 design, sections 1 and 2.
 import http from 'node:http';
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -41,6 +41,8 @@ import { scrubSecrets } from './secrets.js';
 import { spawn } from 'node:child_process';
 import { automaticCheck, createUpdateChecker, runningUpdate, underTest, claimUpdateLock, writeInstallState } from './update.js';
 import { gitReleaseSource, scrubbedEnv } from './update-git.js';
+import { SessionError, SESSION_POLL_MAX_MS, createSessionRegistry } from './sessions.js';
+import { cleanInviteText } from './wake.js';
 
 export const DAEMON_VERSION = readPackageVersion();
 export const SERVICE_NAME = 'fai-browser';
@@ -98,6 +100,14 @@ const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 // The most page text one observe's digest may carry when the host asks for more (digestChars).
 export const OBSERVE_DIGEST_MAX_CHARS = 6000;
 const REQUEST_KEYS = new Set(['origins', 'mode', 'reason', 'instruction', 'url', 'ttlMs', 'browser']);
+// Invites (the popup's "Invite agent"): an invite id lives 10 minutes and is used once; a browser may make a few a minute.
+export const INVITE_TTL_MS = 10 * 60_000;
+export const INVITES_PER_MINUTE = 6;
+const INVITE_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
+const INVITE_KEEP_MS = 60 * 60_000;
+const SESSION_KEYS = new Set(['host', 'hostSessionId', 'repo', 'pid', 'startedAt', 'wake', 'client', 'previous']);
+const CHALLENGE = /^[A-Za-z0-9_-]{16,64}$/;
+const SESSION_UPDATE_KEYS = new Set(['lastToolCallAt', 'hostSessionId', 'wake', 'maxMs']);
 const WAIT_KEYS = new Set(['requestId', 'runId', 'maxMs', 'afterStep', 'while']);
 
 function readPackageVersion() {
@@ -438,6 +448,12 @@ function iso(ms) {
   return ms === null || ms === undefined ? null : new Date(ms).toISOString();
 }
 
+/** A short invite id the user can read out or paste: inv- and 8 characters (40 bits), single use, 10 minutes. */
+function newInviteId() {
+  const bytes = randomBytes(8);
+  return `inv-${[...bytes].map(byte => INVITE_ALPHABET[byte & 31]).join('')}`;
+}
+
 function newRequestId() {
   return `req_${randomBytes(9).toString('base64url')}`;
 }
@@ -521,6 +537,11 @@ export function createDaemon(options = {}) {
   const requestedPort = options.port ?? configuredPort(env);
 
   const requests = new Map();
+  // Invites by id ({inviteId, requestId, sessionId, state, ...}); see onInviteEvent.
+  const invites = new Map();
+  // The live coding-agent sessions (one per MCP server process) and their wakes (src/sessions.js).
+  const sessions = options.sessions ?? createSessionRegistry({ now, log, isAlive: options.isAlive,
+    onChange: () => changed() });
   // Values filled into password inputs (testing level) by any run of this daemon: redacted from later results.
   const filledSecrets = new Set();
   const runs = new Map();
@@ -701,6 +722,12 @@ export function createDaemon(options = {}) {
       // How a pending request is approved (`page`: its page opened by itself, the icon click on it approves; `window`:
       // Open in the FAI Browser window first); null once it is no longer pending.
       approval: record.state === 'pending' ? approvalOf(record) : null,
+      // The agent session that owns this request (it made it, or joined its invite), while it runs: host and repo
+      // folder only. The popup warns before an invite ends another agent's task in the same browser.
+      owner: ownerView(record),
+      ownerWake: ownerWakeView(record),
+      // A tab the user invited an agent to from the popup: the invite and its wake (see onInviteEvent).
+      ...(record.invite && invites.has(record.invite) ? { invite: inviteView(invites.get(record.invite)) } : {}),
     };
   }
 
@@ -717,7 +744,76 @@ export function createDaemon(options = {}) {
       record.runtime = null;
     }
     log('request_state', { requestId: record.requestId, state, reason });
+    syncInvite(record);
     changed();
+  }
+
+  /**
+   * Who may use a request (observe, act, run, release): every request a client made stays open to any holder of the
+   * client token, as before (the CLI's `wait --until active`, an SDK caller). A tab the user invited an agent to is
+   * personal: until an agent joins (`invite_not_joined`) nobody uses it, and after that only the joining session
+   * (`X-Fai-Session`, `not_owner`).
+   */
+  function checkUse(record, caller) {
+    const invite = record.invite ? invites.get(record.invite) : null;
+    if (!invite) return;
+    if (invite.state === 'open') {
+      throw new HttpError(409, 'invite_not_joined', 'This tab was offered by invite and nobody joined it yet: call '
+        + 'fai_browser_open with its inviteId (it is used once, by the agent it was meant for).');
+    }
+    if (!record.ownerSession || caller?.sessionId !== record.ownerSession) {
+      throw new HttpError(403, 'not_owner', 'This tab belongs to the agent session the user invited to it.');
+    }
+  }
+
+  /**
+   * A run or observe of `requestId` (`options`: its trace's options, for one whose request record is gone): only the
+   * owner of an invited tab may read, wait on, stop or fetch the evidence of it. Throws `not_owner` otherwise.
+   */
+  function checkRunUse(requestId, options, caller) {
+    const record = requestId ? requests.get(requestId) : null;
+    if (record) return checkUse(record, caller);
+    if (options?.invite && (!caller || !options.ownerSession || caller.sessionId !== options.ownerSession)) {
+      throw new HttpError(403, 'not_owner', 'This run belongs to the agent session the user invited to that tab.');
+    }
+    return undefined;
+  }
+
+  // Whether `caller` may see a run or observe in a list (the same rule, without throwing).
+  function seesRun(requestId, options, caller) {
+    try {
+      checkRunUse(requestId, options, caller);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Whether `caller` may see an invited tab in full: its addressee before the join, its owner after.
+  function seesInvite(record, caller) {
+    const invite = record.invite ? invites.get(record.invite) : null;
+    if (!invite) return true;
+    if (!caller) return false;
+    if (record.ownerSession) return caller.sessionId === record.ownerSession;
+    return invite.state === 'open' && invite.sessionId === caller.sessionId;
+  }
+
+  // A request as `caller` may see it: in full, or for an invited tab that is not theirs only its id and state (the CLI's
+  // resume wait still works; the personal tab's origin and invite id stay hidden).
+  function viewFor(record, caller) {
+    if (seesInvite(record, caller)) return view(record);
+    return { requestId: record.requestId, state: record.state, stateReason: record.stateReason, invited: true };
+  }
+
+  // The requests a client lists: an invited tab only for its addressee or owner.
+  function clientViews(caller) {
+    return [...requests.values()].filter(record => LIVE.has(record.state) && seesInvite(record, caller)).map(view);
+  }
+
+  // Open invites a client may see: those for no session in particular (the user's copy line names one) and its own.
+  function inviteViewsFor(caller) {
+    return [...invites.values()].filter(invite => invite.state === 'open'
+      && (!invite.sessionId || invite.sessionId === caller?.sessionId)).map(inviteView);
   }
 
   function getRecord(requestId) {
@@ -854,13 +950,25 @@ export function createDaemon(options = {}) {
         },
       });
     }
+    const resumed = record.state === 'paused';
+    const bound = bindRecord(record, event);
+    if (!bound.error) wakeOwner(record, resumed ? 'resume' : 'approved');
+    return replyTo(event, bound);
+  }
+
+  /**
+   * Bind `record` (pending or paused) to the tab the user approved in `event` ({tabId, origin, level, scope, tabMode,
+   * browserId, browser}): supersede this browser's other lease, create the lease and its runtime, and make the record
+   * active. Returns the lease reply, or {error} when the level is not one. The caller checked the origin.
+   */
+  function bindRecord(record, event) {
     // The level the user approved for this tab (validated again here: the hub is not the only caller).
     // The scope the user approved: `domain` (the request's domain roots, with Chrome's host permission granted in the
     // extension) or `origin` (the tab's exact origin in place of a root, as for any exact request).
     const scope = leaseScope(event, record);
     const grant = grantFor(event.level, record, iso(now()), scope, event.tabMode ?? 'single');
     if (!grant) {
-      return replyTo(event, { error: { code: 'bad_request', message: `level must be one of ${LEVELS.join(', ')}` } });
+      return { error: { code: 'bad_request', message: `level must be one of ${LEVELS.join(', ')}` } };
     }
     const origins = leaseOrigins(record.origins, event.origin, scope);
     // One active lease per browser (its extension holds one session): approving another request in the same browser
@@ -907,7 +1015,254 @@ export function createDaemon(options = {}) {
     warmProvider('approval');
     // origins: what the lease covers. The extension follows a consent wall's redirect only to one of these
     // (followConsentRedirect) and, with `domain` scope, keeps the session across the roots' subdomains.
-    replyTo(event, { leaseId, requestId: record.requestId, origins: [...origins], grant: { ...grant } });
+    return { leaseId, requestId: record.requestId, origins: [...origins], grant: { ...grant } };
+  }
+
+  // --- agent sessions, wakes and invites (docs/REFERENCE.md "Invites and wakes") --------------------------------
+
+  /**
+   * The user approved or resumed a request an agent session made through MCP: wake that session (its MCP server writes
+   * a fixed FAI text to the host's own channel), so it continues without a background wait command. A session that
+   * cannot be woken, or one gone, gets nothing: its next text told it to wait or to ask the user.
+   */
+  function wakeOwner(record, kind) {
+    if (!record.ownerSession) return null;
+    const wake = sessions.queueWake(record.ownerSession, { kind, requestId: record.requestId, level: record.grant?.level });
+    record.ownerWakeId = wake?.wakeId ?? null;
+    return wake;
+  }
+
+  // The last Approve or Resume wake of a request's owner, for the popup: a failed one shows "tell your agent".
+  function ownerWakeView(record) {
+    const wake = record.ownerWakeId ? sessions.wake(record.ownerWakeId) : null;
+    return wake ? { kind: wake.kind, state: wake.state, error: wake.error } : null;
+  }
+
+  function ownerView(record) {
+    const owner = record.ownerSession ? sessions.view(record.ownerSession) : null;
+    return owner ? { sessionId: owner.sessionId, host: owner.host, repo: owner.repo } : null;
+  }
+
+  // Re-registration after a drop: requests and invites of the old session id move to the new one.
+  function transferOwner(from, to) {
+    for (const record of requests.values()) if (record.ownerSession === from) record.ownerSession = to;
+    for (const run of runs.values()) if (run.ownerSession === from) run.ownerSession = to;
+    for (const invite of invites.values()) {
+      if (invite.sessionId === from) invite.sessionId = to;
+      if (invite.joinedBy === from) invite.joinedBy = to;
+    }
+    log('session_replaced', { from, to });
+    changed();
+  }
+
+  const inviteLog = new Map(); // browserId -> invite times (ms), for the rate limit
+  function inviteView(invite) {
+    const wake = invite.wakeId ? sessions.wake(invite.wakeId) : null;
+    const target = invite.sessionId ? sessions.view(invite.sessionId) ?? invite.target : null;
+    const joined = invite.joinedBy ? sessions.view(invite.joinedBy) ?? invite.joinedView : null;
+    return {
+      inviteId: invite.inviteId,
+      requestId: invite.requestId,
+      state: invite.state,
+      endReason: invite.endReason ?? null,
+      level: invite.level,
+      origin: invite.origin,
+      createdAt: iso(invite.createdAt),
+      expiresAt: iso(invite.expiresAt),
+      hasText: Boolean(invite.text),
+      session: target ? { sessionId: target.sessionId, host: target.host, repo: target.repo } : null,
+      // none: nobody to wake (no session chosen, or it cannot be woken): the popup shows the copy text.
+      wake: wake ? { state: wake.state, error: wake.error, ...(wake.detail ? { detail: wake.detail } : {}) } : { state: 'none', error: null },
+      joinedBy: joined ? { host: joined.host, repo: joined.repo } : invite.state === 'joined' ? { host: 'unknown', repo: 'unknown' } : null,
+    };
+  }
+
+  function endInvite(invite, state, reason) {
+    if (invite.state !== 'open') return;
+    invite.state = state;
+    invite.endReason = reason;
+    invite.endedAt = now();
+    log('invite_ended', { inviteId: invite.inviteId, state, reason });
+  }
+
+  /**
+   * Keep an invite and its request in step: a request that ends while its invite is open revokes the invite, and an
+   * invited tab that leaves its origin (or closes) before an agent joined ends the request (the invite named that tab
+   * on that origin only).
+   */
+  function syncInvite(record) {
+    const invite = record.invite ? invites.get(record.invite) : null;
+    if (!invite || invite.state !== 'open') return;
+    if (TERMINAL.has(record.state)) {
+      endInvite(invite, invite.cancelled ? 'cancelled' : 'revoked', record.stateReason ?? record.state);
+    } else if (record.state === 'paused' && record.stateReason === 'origin_changed') {
+      endInvite(invite, 'revoked', 'origin_changed');
+      endRequest(record, 'released', 'invite_revoked', { interrupt: 'request_closed' });
+    }
+  }
+
+  /**
+   * The popup's Invite click (extension channel only, authenticated by the pairing secret; the worker accepts it only
+   * from popup.html): a request bound at once to the tab the user is on, at the level they chose, on that tab's exact
+   * origin; a single-use invite id with a short life; and a wake for the chosen agent session.
+   */
+  function onInviteEvent(event) {
+    if (runningUpdate(paths)) {
+      return replyTo(event, { error: { code: 'update_running',
+        message: 'FAI Browser is installing an update and restarts in a moment. Invite again in a minute.' } });
+    }
+    const checked = typeof event.origin === 'string' ? checkOriginEntry(event.origin) : { error: 'no origin' };
+    if (checked.error || isSiteEntry(event.origin) || !/^https?:\/\//.test(event.origin)) {
+      return replyTo(event, { error: { code: 'bad_request', message: 'Invite works on an http(s) page only.' } });
+    }
+    if (!Number.isInteger(event.tabId) || !isLevel(event.level)) {
+      return replyTo(event, { error: { code: 'bad_request', message: 'tabId and a level are required' } });
+    }
+    const browserId = typeof event.browserId === 'string' ? event.browserId : '';
+    const t = now();
+    const recent = (inviteLog.get(browserId) ?? []).filter(at => t - at < 60_000);
+    if (recent.length >= INVITES_PER_MINUTE) {
+      return replyTo(event, { error: { code: 'rate_limited', message: 'Too many invites in a minute; wait a moment.' } });
+    }
+    let target = null;
+    if (event.sessionId !== undefined && event.sessionId !== null) {
+      target = typeof event.sessionId === 'string' ? sessions.view(event.sessionId) : null;
+      if (!target) {
+        return replyTo(event, { error: { code: 'unknown_session', message: 'That agent session has ended. Open the popup again to pick one.' } });
+      }
+    }
+    recent.push(t);
+    inviteLog.set(browserId, recent);
+    // One open invite per tab: a new one on the same tab replaces the earlier one (and its request).
+    for (const other of invites.values()) {
+      if (other.state === 'open' && other.tabId === event.tabId && other.browserId === browserId) {
+        other.cancelled = true;
+        const earlier = requests.get(other.requestId);
+        if (earlier && !TERMINAL.has(earlier.state)) endRequest(earlier, 'released', 'invite_replaced', { interrupt: 'request_closed' });
+        endInvite(other, 'cancelled', 'replaced');
+      }
+    }
+    const text = cleanInviteText(event.text);
+    const inviteId = newInviteId();
+    const record = {
+      requestId: newRequestId(),
+      state: 'pending',
+      stateReason: null,
+      origins: [event.origin],
+      mode: event.level,
+      grant: null,
+      reason: 'You invited an agent to this tab from the FAI popup.',
+      instruction: text ? text.slice(0, 300) : null,
+      url: null,
+      client: 'invite',
+      ttlMs: INVITE_TTL_MS,
+      createdAt: t,
+      lastCallAt: t,
+      pausedAt: null,
+      endedAt: null,
+      lease: null,
+      browser: browserId ? browserRef(event.browser ?? { id: browserId }) : null,
+      browserPinned: true,
+      activeRunId: null,
+      lastRunId: null,
+      runtime: null,
+      bridge: null,
+      invite: inviteId,
+      ownerSession: null,
+    };
+    // Listed only once bound: no view ever shows it pending (an approval window would open for it).
+    const bound = bindRecord(record, { ...event, scope: 'origin', tabMode: event.tabMode ?? 'single' });
+    if (bound.error) return replyTo(event, bound);
+    requests.set(record.requestId, record);
+    const invite = { inviteId, requestId: record.requestId, sessionId: target?.sessionId ?? null, target, browserId,
+      tabId: event.tabId, origin: event.origin, level: record.grant.level, text, createdAt: t,
+      expiresAt: t + INVITE_TTL_MS, state: 'open', endReason: null, wakeId: null, joinedBy: null };
+    invites.set(inviteId, invite);
+    if (target) {
+      const wake = sessions.queueWake(target.sessionId, { kind: 'invite', inviteId, requestId: record.requestId,
+        level: invite.level, userText: text });
+      invite.wakeId = wake?.wakeId ?? null;
+    }
+    log('invite_created', { inviteId, requestId: record.requestId, level: invite.level, wake: invite.wakeId ? 'queued' : 'none' });
+    changed();
+    return replyTo(event, { ...bound, invite: inviteView(invite) });
+  }
+
+  // The popup's "Cancel invite", or the worker when an invited tab closed before an agent joined.
+  function onInviteCancelEvent(event) {
+    const invite = [...invites.values()].find(item => item.inviteId === event.inviteId
+      || (event.requestId && item.requestId === event.requestId));
+    if (!invite) return replyTo(event, { error: { code: 'unknown_invite', message: 'No such invite' } });
+    if (invite.browserId && typeof event.browserId === 'string' && invite.browserId !== event.browserId) {
+      return replyTo(event, { error: { code: 'unknown_invite', message: 'Another browser made this invite' } });
+    }
+    if (invite.state === 'open') {
+      invite.cancelled = event.reason !== 'tab_closed';
+      const record = requests.get(invite.requestId);
+      endInvite(invite, invite.cancelled ? 'cancelled' : 'revoked', event.reason === 'tab_closed' ? 'tab_closed' : 'cancelled');
+      if (record && !TERMINAL.has(record.state)) {
+        endRequest(record, 'released', invite.cancelled ? 'invite_cancelled' : 'invite_revoked', { interrupt: 'request_closed' });
+      }
+      changed();
+    }
+    return replyTo(event, { invite: inviteView(invite) });
+  }
+
+  /** The live agent sessions, for the popup's Invite list: host, repo name, last activity and whether it can be woken. */
+  function onAgentsEvent(event) {
+    sessions.sweep();
+    replyTo(event, {
+      sessions: sessions.views().map(item => ({ sessionId: item.sessionId, host: item.host, repo: item.repo,
+        startedAt: item.startedAt, lastActiveAt: item.lastActiveAt, wake: item.wake, ready: item.ready })),
+      invites: [...invites.values()].filter(invite => invite.state === 'open' && (!event.browserId || invite.browserId === event.browserId))
+        .map(inviteView),
+    });
+  }
+
+  /**
+   * An agent joins an invite (POST /v1/invites/:id/join, the client token, from fai_browser_open {inviteId}): single
+   * use, within its life, while its tab is still held. The joining session (if it says which) owns the request from
+   * now on and is the one woken on Resume.
+   */
+  function joinInvite(inviteId, session) {
+    const invite = typeof inviteId === 'string' ? invites.get(inviteId.trim()) : null;
+    if (!invite) {
+      throw new HttpError(404, 'unknown_invite', 'No such invite; it may have expired. Ask the user to invite you again from the FAI popup.');
+    }
+    if (invite.state === 'open' && now() >= invite.expiresAt) expireInvite(invite);
+    if (invite.state !== 'open') {
+      const why = { joined: 'was already used', expired: 'expired', revoked: 'was revoked (the tab closed or left its site)',
+        cancelled: 'was cancelled by the user' }[invite.state] ?? invite.state;
+      throw new HttpError(409, `invite_${invite.state}`, `This invite ${why}. Ask the user to invite you again from the FAI popup.`);
+    }
+    if (!session) {
+      throw new HttpError(403, 'session_required', 'Joining an invite needs a registered agent session (the FAI MCP '
+        + 'server registers by itself; set no FAI_MCP_REGISTRY=0).');
+    }
+    if (invite.sessionId && invite.sessionId !== session.sessionId) {
+      throw new HttpError(403, 'invite_for_another_session', 'This invite is for another agent session.');
+    }
+    const record = requests.get(invite.requestId);
+    if (!record || !LIVE.has(record.state)) {
+      endInvite(invite, 'revoked', 'request_ended');
+      throw new HttpError(409, 'invite_revoked', 'The invited tab is no longer held. Ask the user to invite you again.');
+    }
+    invite.state = 'joined';
+    invite.joinedAt = now();
+    invite.joinedBy = session.sessionId;
+    invite.joinedView = sessions.view(session.sessionId);
+    record.ownerSession = session.sessionId;
+    record.lastCallAt = now();
+    log('invite_joined', { inviteId: invite.inviteId, requestId: record.requestId, sessionId: invite.joinedBy });
+    changed();
+    return { inviteId: invite.inviteId, requestId: record.requestId, state: record.state, level: invite.level,
+      origin: invite.origin, userText: invite.text || null, request: view(record) };
+  }
+
+  function expireInvite(invite) {
+    endInvite(invite, 'expired', 'ttl');
+    const record = requests.get(invite.requestId);
+    if (record && !TERMINAL.has(record.state)) endRequest(record, 'expired', 'invite_expired', { interrupt: 'request_closed' });
   }
 
   /**
@@ -1236,6 +1591,12 @@ export function createDaemon(options = {}) {
           return changed();
         case 'move':
           return onMoveEvent(event);
+        case 'invite':
+          return onInviteEvent(event);
+        case 'invite_cancel':
+          return onInviteCancelEvent(event);
+        case 'agents':
+          return onAgentsEvent(event);
         case 'usage':
           return saveKnownBrowsers(event.browsers);
         default:
@@ -1399,9 +1760,14 @@ export function createDaemon(options = {}) {
     return Object.keys(merged).length ? merged : undefined;
   }
 
+  // An invited tab's runs and observes carry its invite flag and owner session, so who may read them still holds once
+  // the request record is gone (traces stay on disk up to retention's 7 days).
+  const inviteStamp = record => (record.invite ? { invite: true, ownerSession: record.ownerSession ?? null } : {});
+
   function traceOptions(spec, record) {
     const options = {
       requestId: record.requestId,
+      ...inviteStamp(record),
       mode: spec.mode,
       level: effectiveLevel(spec.mode, record),
       grant: record.grant?.level ?? null,
@@ -1502,6 +1868,8 @@ export function createDaemon(options = {}) {
       lastStep: null,
       result: null,
       done: null,
+      // An invited tab's run keeps who may read it, for the time between the request record's removal and its own.
+      ...inviteStamp(record),
     };
     runs.set(runId, run);
     record.activeRunId = runId;
@@ -1589,12 +1957,20 @@ export function createDaemon(options = {}) {
 
   // --- route handlers ---------------------------------------------------------------------------------------
 
-  function health() {
-    return { ok: true, service: SERVICE_NAME, version, pid: process.pid };
+  /**
+   * The open health answer. With `?challenge=<nonce>` it also proves the daemon holds the client token (an HMAC of its
+   * own listening port and the nonce under it, so a proof cannot be relayed from a daemon on another port), so an MCP server checks it is talking to the real daemon before it registers (src/mcp-session.js):
+   * a process squatting on the port learns no token and cannot inject wakes.
+   */
+  function health(url) {
+    const challenge = url?.searchParams?.get('challenge');
+    const proof = typeof challenge === 'string' && CHALLENGE.test(challenge) && token
+      ? createHmac('sha256', token).update(`fai-health:${port}:${challenge}`).digest('hex') : undefined;
+    return { ok: true, service: SERVICE_NAME, version, pid: process.pid, ...(proof ? { proof } : {}) };
   }
 
-  function statusView() {
-    const all = [...runs.values()];
+  function statusView(caller = null) {
+    const all = [...runs.values()].filter(run => seesRun(run.requestId, run, caller));
     return {
       daemon: {
         version,
@@ -1614,7 +1990,11 @@ export function createDaemon(options = {}) {
       budget: effectiveBudget(),
       // Newer release (src/update.js): tell the user; only their popup click or `fai-browser update` installs it.
       update: updates.view(),
-      requests: liveViews(),
+      requests: clientViews(caller),
+      // The live coding-agent sessions (no keys) and the open invites this caller may join (docs/REFERENCE.md
+      // "Invites and wakes").
+      sessions: sessions.views(),
+      invites: inviteViewsFor(caller),
       runs: {
         active: all.filter(run => run.state === 'running').map(runSummary),
         recent: all.filter(run => run.state === 'done').sort((a, b) => b.finishedAt - a.finishedAt).slice(0, 10)
@@ -1624,7 +2004,7 @@ export function createDaemon(options = {}) {
     };
   }
 
-  function createRequest(body, client) {
+  function createRequest(body, client, session = null) {
     checkKeys(body, REQUEST_KEYS);
     if (runningUpdate(paths)) {
       throw new HttpError(503, 'update_running', 'An FAI Browser update is installing and restarts the service; '
@@ -1686,6 +2066,8 @@ export function createDaemon(options = {}) {
       lastRunId: null,
       runtime: null,
       bridge: null,
+      // The agent session (MCP server) that asked: woken when the user approves or resumes this request.
+      ownerSession: session?.sessionId ?? null,
     };
     requests.set(record.requestId, record);
     log('request_state', { requestId: record.requestId, state: 'pending' });
@@ -1717,19 +2099,20 @@ export function createDaemon(options = {}) {
     return { requestId: record.requestId, state: record.state };
   }
 
-  async function waitRoute(body, signal) {
+  async function waitRoute(body, signal, caller = null) {
     checkKeys(body, WAIT_KEYS);
     const maxMs = clampWait(body.maxMs, DEFAULT_WAIT_MS, maxWaitMs);
     const started = Date.now();
     if (body.runId !== undefined) {
       const run = runs.get(body.runId);
       if (!run) {
-        const stored = await storedRun(body.runId);
-        if (stored) return stored;
+        const found = await runFor(body.runId, caller);
+        if (found) return found.stored;
         throw new HttpError(404, 'unknown_run', `No run ${body.runId}`);
       }
       const afterStep = optionalInt(body, 'afterStep', 0, 10_000);
       const record = requests.get(run.requestId);
+      if (record) checkUse(record, caller);
       if (record) touch(record);
       await waitUntil(() => run.state === 'done' || (afterStep !== undefined && run.steps > afterStep), maxMs, signal);
       return runResponse(run);
@@ -1746,7 +2129,7 @@ export function createDaemon(options = {}) {
     await waitUntil(() => !watched.includes(record.state), maxMs, signal);
     touch(record);
     // `budget`: the call budget in effect for this request (the MCP server reads its ceiling from here).
-    return { state: record.state, request: view(record), waitedMs: Date.now() - started,
+    return { state: record.state, request: viewFor(record, caller), waitedMs: Date.now() - started,
       budget: effectiveBudget(browserOf(record)) };
   }
 
@@ -1792,9 +2175,10 @@ export function createDaemon(options = {}) {
     };
   }
 
-  async function runsRoute(body, signal) {
+  async function runsRoute(body, signal, caller = null) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'bad_request', 'Body must be a JSON object');
     const record = getRecord(body.requestId);
+    checkUse(record, caller);
     touch(record);
     const operation = body.operation ?? 'run';
     if (operation !== 'run' && operation !== 'step') throw badOptions('operation must be run or step');
@@ -1829,9 +2213,10 @@ export function createDaemon(options = {}) {
     return awaitRun(run, spec.waitMs, signal);
   }
 
-  async function actRoute(body, signal) {
+  async function actRoute(body, signal, caller = null) {
     checkKeys(body, ACT_KEYS);
     const record = getRecord(body.requestId);
+    checkUse(record, caller);
     touch(record);
     // An offered action (actionId), a point (pixels of the screenshot of `revision`, a guarded click on whatever
     // control is there), or a host-composed act (checkActChoice, against the offer below).
@@ -1947,6 +2332,7 @@ export function createDaemon(options = {}) {
       trace: tracePath,
       options: {
         requestId: record.requestId,
+        ...inviteStamp(record),
         mode: spec.mode,
         level: effectiveLevel(spec.mode, record),
         allowedUrls: spec.allowedUrls,
@@ -2022,9 +2408,10 @@ export function createDaemon(options = {}) {
     return terms;
   }
 
-  async function observeRoute(body) {
+  async function observeRoute(body, caller = null) {
     checkKeys(body, OBSERVE_KEYS);
     const record = getRecord(body.requestId);
+    checkUse(record, caller);
     touch(record);
     const spec = {
       mode: checkMode(body, record),
@@ -2173,17 +2560,35 @@ export function createDaemon(options = {}) {
       state: 'done',
       runId,
       requestId: stored.trace.options?.requestId ?? null,
+      options: stored.trace.options ?? null,
       result: stored.trace.operation === 'observe' ? stored.trace : toAgentResult(stored.trace),
     };
   }
 
-  async function listRuns(url) {
+  // A run by id as `caller` may read it: in memory or on disk, the owner check applied (src/daemon.js checkRunUse).
+  async function runFor(runId, caller) {
+    const run = runs.get(runId);
+    if (run) {
+      checkRunUse(run.requestId, run, caller);
+      return { run };
+    }
+    const stored = await storedRun(runId);
+    if (!stored) return null;
+    checkRunUse(stored.requestId, stored.options, caller);
+    const { options: _options, ...answer } = stored;
+    return { stored: answer };
+  }
+
+  async function listRuns(url, caller = null) {
     const limitText = url.searchParams.get('limit');
     const limit = limitText === null ? 20 : Number(limitText);
     if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw badOptions('limit must be an integer 1-200');
     const requestId = url.searchParams.get('requestId');
     const byId = new Map();
-    for (const run of runs.values()) byId.set(run.runId, runSummary(run));
+    for (const run of runs.values()) {
+      if (seesRun(run.requestId, run, caller)) byId.set(run.runId, runSummary(run));
+      else byId.set(run.runId, null);
+    }
     const dir = outputDir();
     let entries = [];
     try {
@@ -2196,6 +2601,7 @@ export function createDaemon(options = {}) {
       const stored = await readStoredTrace(entry.name);
       if (!stored) continue;
       const { trace } = stored;
+      if (!seesRun(trace.options?.requestId ?? null, trace.options, caller)) continue;
       byId.set(entry.name, {
         runId: entry.name,
         state: 'done',
@@ -2209,13 +2615,13 @@ export function createDaemon(options = {}) {
       });
     }
     const list = [...byId.values()]
-      .filter(run => !requestId || run.requestId === requestId)
+      .filter(run => run && (!requestId || run.requestId === requestId))
       .sort((a, b) => String(b.startedAt ?? '').localeCompare(String(a.startedAt ?? '')))
       .slice(0, limit);
     return { runs: list };
   }
 
-  async function evidenceRoute(runId, url) {
+  async function evidenceRoute(runId, url, caller = null) {
     const kind = url.searchParams.get('kind') ?? 'screenshot';
     if (kind !== 'screenshot' && kind !== 'trace') throw badOptions('kind must be screenshot or trace');
     const stepText = url.searchParams.get('step');
@@ -2226,12 +2632,14 @@ export function createDaemon(options = {}) {
     let tracePath = null;
     const run = runs.get(runId);
     if (run) {
+      checkRunUse(run.requestId, run, caller);
       if (run.state !== 'done') throw new HttpError(404, 'no_evidence', 'The run is still running; wait for it first');
       tracePath = run.result?.trace ?? null;
       if (!tracePath) throw new HttpError(404, 'no_evidence', 'This run has no trace on disk');
     } else {
       const stored = await readStoredTrace(runId);
       if (!stored) throw new HttpError(404, 'unknown_run', `No run ${runId}`);
+      checkRunUse(stored.trace.options?.requestId ?? null, stored.trace.options, caller);
       tracePath = stored.path;
     }
     let trace;
@@ -2274,13 +2682,11 @@ export function createDaemon(options = {}) {
     return response;
   }
 
-  async function stopRun(runId) {
-    const run = runs.get(runId);
-    if (!run) {
-      const stored = await storedRun(runId);
-      if (stored) return stored;
-      throw new HttpError(404, 'unknown_run', `No run ${runId}`);
-    }
+  async function stopRun(runId, caller = null) {
+    const found = await runFor(runId, caller);
+    if (!found) throw new HttpError(404, 'unknown_run', `No run ${runId}`);
+    if (found.stored) return found.stored;
+    const { run } = found;
     if (run.state === 'running') {
       requests.get(run.requestId)?.runtime?.interrupt('cancelled');
       await waitUntil(() => run.state === 'done', STOP_WAIT_MS);
@@ -2313,14 +2719,27 @@ export function createDaemon(options = {}) {
     ['GET', /^\/v1\/runs\/([^/]+)\/evidence$/, 'runs.evidence'],
     ['POST', /^\/v1\/observe$/, 'observe'],
     ['POST', /^\/v1\/act$/, 'act'],
+    // Agent sessions (one per MCP server process): register, long-poll for wakes (the heartbeat), report, leave. They
+    // are not client activity (`quiet`): a registered session alone never keeps an idle daemon up.
+    ['POST', /^\/v1\/sessions$/, 'sessions.register', false, true],
+    ['GET', /^\/v1\/sessions$/, 'sessions.list', false, true],
+    ['POST', /^\/v1\/sessions\/([^/]+)\/poll$/, 'sessions.poll', false, true],
+    ['POST', /^\/v1\/sessions\/([^/]+)\/update$/, 'sessions.update', false, true],
+    ['POST', /^\/v1\/sessions\/([^/]+)\/wakes\/([^/]+)$/, 'sessions.report', false, true],
+    ['DELETE', /^\/v1\/sessions\/([^/]+)$/, 'sessions.delete', false, true],
+    // An agent joins the invite the user made in the popup. There is no route that creates one.
+    ['POST', /^\/v1\/invites\/([^/]+)\/join$/, 'invites.join'],
     ['POST', /^\/v1\/daemon\/reload$/, 'daemon.reload'],
     ['POST', /^\/v1\/daemon\/shutdown$/, 'daemon.shutdown'],
   ];
 
   function matchRoute(method, pathname) {
-    for (const [routeMethod, pattern, name, open] of ROUTES) {
+    for (const [routeMethod, pattern, name, open, quiet] of ROUTES) {
       const match = pattern.exec(pathname);
-      if (match && routeMethod === method) return { name, open: Boolean(open), param: match[1] && decodeURIComponent(match[1]) };
+      if (match && routeMethod === method) {
+        return { name, open: Boolean(open), quiet: Boolean(quiet), param: match[1] && decodeURIComponent(match[1]),
+          param2: match[2] && decodeURIComponent(match[2]) };
+      }
     }
     return null;
   }
@@ -2334,55 +2753,121 @@ export function createDaemon(options = {}) {
     return timingSafeEqual(digest(header.slice(7)), tokenDigest);
   }
 
+  // A registry error as the HTTP error it maps to.
+  function sessionCall(fn) {
+    try {
+      return fn();
+    } catch (error) {
+      if (error instanceof SessionError) throw new HttpError(error.status, error.code, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * The agent session a call comes from: the X-Fai-Session header, `<sessionId>:<key>`. `id`: the session the route
+   * names (it must be the header's). `optional`: no header, or one that does not authenticate, is just no session.
+   */
+  function sessionFrom(req, { id = null, optional = false } = {}) {
+    const header = req.headers['x-fai-session'];
+    const text = typeof header === 'string' ? header : '';
+    const split = text.indexOf(':');
+    const sessionId = split > 0 ? text.slice(0, split) : '';
+    const key = split > 0 ? text.slice(split + 1) : '';
+    try {
+      if (id !== null && sessionId !== id) throw new SessionError(403, 'session_forbidden', 'The session header names another session');
+      return sessions.authenticate(sessionId, key);
+    } catch (error) {
+      if (optional) return null;
+      if (error instanceof SessionError) throw new HttpError(error.status, error.code, error.message);
+      throw error;
+    }
+  }
+
   async function dispatch(route, req, url, signal) {
     const body = req.method === 'POST' || req.method === 'DELETE' ? await readJsonBody(req) : {};
     const client = clientName(req.headers['x-fai-client']);
+    // The agent session the call comes from (X-Fai-Session), when it names one that authenticates.
+    const caller = route.open ? null : sessionFrom(req, { optional: true });
     switch (route.name) {
       case 'health':
-        return { body: health() };
+        return { body: health(url) };
       case 'status':
-        return { body: statusView() };
+        return { body: statusView(caller) };
       case 'requests.create':
-        return createRequest(body, client);
+        return createRequest(body, client, caller);
+      case 'sessions.register': {
+        checkKeys(body, SESSION_KEYS);
+        const registered = sessionCall(() => sessions.register(body));
+        // A session the daemon dropped (it stopped polling for a while) came back with its old key: its requests and
+        // the invites meant for it are its own again.
+        if (registered.replaced) transferOwner(registered.replaced, registered.sessionId);
+        const { replaced: _replaced, ...answer } = registered;
+        return { status: 201, body: answer };
+      }
+      case 'sessions.list':
+        sessions.sweep();
+        return { body: { sessions: sessions.views() } };
+      case 'sessions.poll': {
+        const session = sessionFrom(req, { id: route.param });
+        checkKeys(body, SESSION_UPDATE_KEYS);
+        sessions.update(session, body);
+        const maxMs = clampWait(body.maxMs, SESSION_POLL_MAX_MS, SESSION_POLL_MAX_MS);
+        return { body: await sessions.poll(session, shuttingDown ? 0 : maxMs, signal) };
+      }
+      case 'sessions.update': {
+        const session = sessionFrom(req, { id: route.param });
+        checkKeys(body, SESSION_UPDATE_KEYS);
+        return { body: { session: sessions.update(session, body) } };
+      }
+      case 'sessions.report': {
+        const session = sessionFrom(req, { id: route.param });
+        return { body: { wake: sessionCall(() => sessions.report(session, route.param2, body)) } };
+      }
+      case 'sessions.delete': {
+        const session = sessionFrom(req, { id: route.param });
+        return { body: { removed: sessions.unregister(session) } };
+      }
+      case 'invites.join':
+        return { body: joinInvite(route.param, caller) };
       case 'requests.list': {
         const cutoff = now() - TERMINAL_KEEP_MS;
         const list = [...requests.values()]
-          .filter(record => LIVE.has(record.state) || record.endedAt >= cutoff)
+          .filter(record => (LIVE.has(record.state) || record.endedAt >= cutoff) && seesInvite(record, caller))
           .sort((a, b) => b.createdAt - a.createdAt)
           .map(view);
         return { body: { requests: list } };
       }
       case 'requests.get': {
         const record = getRecord(route.param);
-        return { body: view(record) };
+        return { body: viewFor(record, caller) };
       }
       case 'requests.delete': {
         if (body.reason !== undefined && (typeof body.reason !== 'string' || body.reason.length > 200)) {
           throw badOptions('reason must be a short string');
         }
-        return { body: await deleteRequest(getRecord(route.param)) };
+        const record = getRecord(route.param);
+        checkUse(record, caller);
+        return { body: await deleteRequest(record) };
       }
       case 'wait':
-        return { body: await waitRoute(body, signal) };
+        return { body: await waitRoute(body, signal, caller) };
       case 'runs.create':
-        return { body: await runsRoute(body, signal) };
+        return { body: await runsRoute(body, signal, caller) };
       case 'runs.list':
-        return { body: await listRuns(url) };
+        return { body: await listRuns(url, caller) };
       case 'runs.get': {
-        const run = runs.get(route.param);
-        if (run) return { body: runResponse(run) };
-        const stored = await storedRun(route.param);
-        if (!stored) throw new HttpError(404, 'unknown_run', `No run ${route.param}`);
-        return { body: stored };
+        const found = await runFor(route.param, caller);
+        if (!found) throw new HttpError(404, 'unknown_run', `No run ${route.param}`);
+        return { body: found.run ? runResponse(found.run) : found.stored };
       }
       case 'runs.stop':
-        return { body: await stopRun(route.param) };
+        return { body: await stopRun(route.param, caller) };
       case 'runs.evidence':
-        return { body: await evidenceRoute(route.param, url) };
+        return { body: await evidenceRoute(route.param, url, caller) };
       case 'observe':
-        return { body: await observeRoute(body) };
+        return { body: await observeRoute(body, caller) };
       case 'act':
-        return { body: await actRoute(body, signal) };
+        return { body: await actRoute(body, signal, caller) };
       case 'daemon.reload':
         return { body: await reload() };
       case 'daemon.shutdown':
@@ -2420,7 +2905,7 @@ export function createDaemon(options = {}) {
       }
       authed = !route.open;
       if (shuttingDown && !route.open) throw new HttpError(503, 'shutting_down', 'The daemon is shutting down', { retryable: true });
-      if (!route.open) lastClientCallAt = now();
+      if (!route.open && !route.quiet) lastClientCallAt = now();
       const value = await dispatch(route, req, url, controller.signal);
       status = value.status ?? 200;
       sendJson(res, status, value.body, driverHeader(authed));
@@ -2527,6 +3012,14 @@ export function createDaemon(options = {}) {
     for (const run of [...runs.values()]) {
       if (run.state === 'done' && t - run.finishedAt >= TERMINAL_KEEP_MS) runs.delete(run.runId);
     }
+    for (const [browserId, times] of [...inviteLog]) {
+      if (!times.some(at => t - at < 60_000)) inviteLog.delete(browserId);
+    }
+    for (const invite of [...invites.values()]) {
+      if (invite.state === 'open' && t >= invite.expiresAt) expireInvite(invite);
+      else if (invite.state !== 'open' && t - (invite.endedAt ?? invite.joinedAt ?? invite.createdAt) >= INVITE_KEEP_MS) invites.delete(invite.inviteId);
+    }
+    sessions.sweep();
     const idleMs = idleShutdownMs();
     if (idleMs > 0 && !shuttingDown && t - lastClientCallAt >= idleMs) {
       const busy = [...requests.values()].some(record => LIVE.has(record.state))
@@ -2606,6 +3099,8 @@ export function createDaemon(options = {}) {
         if (LEASED.has(record.state)) endRequest(record, 'released', 'daemon_shutdown');
         else if (record.state === 'pending') setState(record, 'cancelled', 'daemon_shutdown');
       }
+      // Open wake polls answer now (empty), so the MCP servers re-register with the next daemon.
+      sessions.close();
       wake();
       try {
         await hub?.close();
