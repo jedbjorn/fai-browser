@@ -87,7 +87,7 @@ test('direct MCP: open waits for approval and observes; acts are host-chosen, le
   const serialized = JSON.stringify(tools);
   assert.equal(serialized, JSON.stringify(TOOLS), 'wire serialization preserves the exported schema prefix and order');
   assert.equal(createHash('sha256').update(serialized).digest('hex'),
-    '8203ee2c1d2a8aeb60a2e79559ece67a98d632047576dc8862ce7e912fea2c35', 'tool schema bytes stay stable');
+    '3b913ed36bff4e1a0d3e2ab8438b794b847fb0c33990757a6ff2f4cee1af7e3c', 'tool schema bytes stay stable');
   const repeated = await ctx.mcp.request('tools/list', {});
   assert.equal(JSON.stringify(repeated.result.tools), serialized, 'repeated tools/list reads are byte-identical');
   assert.deepEqual(tools.map(tool => tool.name), ['fai_browser_open', 'fai_browser_act', 'fai_browser_observe',
