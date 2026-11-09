@@ -825,8 +825,8 @@
    * The plan for typing `text`: { events, total, typed, chunked, blind, strokes ([{ ch, back?, index? }], what each
    * event's `index` presses), bursts (stroke indices that start one), slips, hesitations, hesitationMs (within what is
    * typed) }. A value within maxTyped is typed in full when its plan fits within budgetMs * RHYTHM.slack, dropping
-   * first its hesitations, then its slips, to fit; else the longest prefix whose plan (no slips) fits within budgetMs
-   * is typed and the rest goes in as one insertion. `slips` allows slips (never with `blind`); `slipRate` overrides
+   * first its hesitations, then its slips, to fit (and always, without them, up to RHYTHM.fullChars characters); else
+   * the longest prefix whose plan (no slips) fits within budgetMs is typed and the rest goes in as one insertion. `slips` allows slips (never with `blind`); `slipRate` overrides
    * their chance per letter.
    */
   function typingPlan(text, { session = rhythmSession(1), random = Math.random, budgetMs = config.typeBudgetMs,
