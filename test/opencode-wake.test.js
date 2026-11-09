@@ -259,17 +259,46 @@ test('plugin: the wake keeps the session\'s agent and model; without an earlier 
   assert.equal(client.calls.length, 1);
 });
 
-test('plugin: a subagent\'s task session tags (and wakes) the root conversation; an unknown session is not tagged', async t => {
+test('plugin: a subagent\'s task session (a task inside a task too) tags and wakes the root conversation only', async t => {
   const child = 'ses_cccccccccccccccccccc';
   const grandchild = 'ses_dddddddddddddddddddd';
-  const client = fakeClient({ parents: { [child]: SES_A, [grandchild]: child } });
+  const great = 'ses_ffffffffffffffffffff';
+  const client = fakeClient({ parents: { [child]: SES_A, [grandchild]: child, [great]: grandchild } });
   const { hooks } = await loadPlugin(t, client);
+  const path = process.env.FAI_OPENCODE_WAKE_SOCKET;
+  const auth = { type: 'auth', token: process.env.FAI_OPENCODE_WAKE_TOKEN };
+  // A FAI call from a task's task (and one more level down) is the root conversation's call.
   assert.equal((await tag(hooks, grandchild))._faiHostSession, SES_A);
-  assert.deepEqual([...globalThis[STATE].sessions.keys()], [SES_A]);
-  client.session.get = async () => ({ error: { name: 'NotFoundError' } });
-  assert.equal((await tag(hooks, 'ses_eeeeeeeeeeeeeeeeeeee'))._faiHostSession, undefined, 'unknown: no tag, so no wake');
+  assert.equal((await tag(hooks, great))._faiHostSession, SES_A);
+  assert.equal((await tag(hooks, child))._faiHostSession, SES_A);
+  assert.deepEqual([...globalThis[STATE].sessions.keys()], [SES_A], 'no child session is ever recorded');
+  // A wake can only reach the root: the children are not FAI sessions to the plugin.
+  for (const id of [child, grandchild, great]) {
+    assert.equal((await talk(path, [auth, { type: 'wake', sessionID: id, text: APPROVED }])).code, 'not_fai_session', id);
+  }
+  assert.deepEqual(await talk(path, [auth, { type: 'wake', sessionID: SES_A, text: APPROVED }]), { ok: true });
+  assert.deepEqual(client.calls.map(call => call.path.id), [SES_A]);
   // Cached: the known chain needs no lookup.
-  assert.equal((await tag(hooks, grandchild))._faiHostSession, SES_A);
+  client.session.get = async () => { throw new Error('no lookups expected'); };
+  assert.equal((await tag(hooks, great))._faiHostSession, SES_A);
+});
+
+test('plugin: when the root cannot be told, the call is not tagged (so no wake can go to a child)', async t => {
+  const child = 'ses_cccccccccccccccccccc';
+  const middle = 'ses_mmmmmmmmmmmmmmmmmmmm';
+  const loopA = 'ses_llllllllllllllllllla';
+  const loopB = 'ses_lllllllllllllllllllb';
+  const client = fakeClient({ parents: { [child]: middle, [loopA]: loopB, [loopB]: loopA } });
+  const lookups = client.session.get;
+  // The middle of the chain is unknown to OpenCode.
+  client.session.get = async request => (request.path.id === middle ? { error: { name: 'NotFoundError' } } : lookups(request));
+  const { hooks } = await loadPlugin(t, client);
+  assert.equal((await tag(hooks, child))._faiHostSession, undefined, 'a broken chain');
+  assert.equal((await tag(hooks, loopA))._faiHostSession, undefined, 'a parent loop ends at the depth cap');
+  client.session.get = async () => { throw new Error('offline'); };
+  assert.equal((await tag(hooks, 'ses_eeeeeeeeeeeeeeeeeeee', 'fai-browser_fai_browser_open', { _faiHostSession: SES_A }))._faiHostSession, undefined,
+    'a lookup that throws: no tag, and a model-written one is removed');
+  assert.equal(globalThis[STATE].sessions.size, 0);
 });
 
 test('plugin: only FAI\'s exact wake texts are taken (every template src/wake.js writes, nothing near them)', async t => {
