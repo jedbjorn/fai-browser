@@ -2089,7 +2089,7 @@ export interface DaemonStatus {
   warnings: string[];
 }
 
-export type WakeCapability = 'claude-socket' | 'codex-queue' | 'none';
+export type WakeCapability = 'claude-socket' | 'codex-queue' | 'opencode-plugin' | 'none';
 
 export interface AgentSessionView {
   sessionId: string;

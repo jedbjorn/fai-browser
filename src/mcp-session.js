@@ -11,7 +11,8 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { httpJson } from './client.js';
 import {
-  claudeSocket, codexSupportsQueue, codexThreadId, deliverWake, hostSessionId, repoName, wakeCapability, wakeText,
+  claudeSocket, codexSupportsQueue, codexThreadId, deliverWake, hostSessionId, opencodeChannel, opencodeSessionId,
+  opencodeVersionOk, repoName, wakeCapability, wakeText,
 } from './wake.js';
 
 const POLL_MS = 25_000;
@@ -22,6 +23,10 @@ const STOP_TIMEOUT_MS = 2_000;
 const HANDLED_KEEP = 256;
 const WAKES_PER_POLL = 4;
 const WAKES_PER_MINUTE = 12;
+// OpenCode: one MCP server serves every session of its OpenCode. An invite (addressed to this server, not a session)
+// goes to the one session that used FAI within this window; with two or more it is not delivered (the copy line).
+export const OPENCODE_RECENT_MS = 10 * 60_000;
+const OPENCODE_KEEP = 64;
 
 export class AgentSession {
   /**
@@ -29,10 +34,12 @@ export class AgentSession {
    * opencode or unknown (src/wake.js detectHost). `driver()`: the driver in effect (the wake text names its tools).
    * `waiting(wake)`: true when this server already showed the agent what the wake is about (a call waiting on that
    * request, or one that saw it become active). `deliver`: the delivery function (tests); `onOutcome(wake, outcome)`: told how each wake went (the server stops
-   * promising wakes after a failure); `pollMs`, `backoffMs`, `ppid`: test overrides.
+   * promising wakes after a failure); `pollMs`, `backoffMs`, `ppid`: test overrides. OpenCode: `clientVersion` (from
+   * initialize, the plugin's version gate) and `opencodeOwnerOf(requestId)` (the OpenCode session whose call created or
+   * joined that request, or null).
    */
   constructor({ env, home, connect, clientName, host, log = () => {}, driver = () => 'agent', waiting = () => false,
-    onOutcome = () => {},
+    onOutcome = () => {}, clientVersion = null, opencodeOwnerOf = () => null, now = Date.now,
     deliver = deliverWake, pollMs = POLL_MS, backoffMs = BACKOFF_MIN_MS, cwd = process.cwd(), pid = process.pid,
     ppid = undefined }) {
     this.env = env;
@@ -55,6 +62,11 @@ export class AgentSession {
     this.threadId = null;
     this.hostSessionId = hostSessionId(host, env);
     this.codexReady = false;
+    this.opencodeVersion = host === 'opencode' && opencodeVersionOk({ version: clientVersion });
+    this.opencodeOwnerOf = opencodeOwnerOf;
+    // OpenCode sessions that tagged a FAI call (id -> last time), newest last.
+    this.opencodeSessions = new Map();
+    this.now = now;
     this.sessionId = null;
     this.key = null;
     // The id and key the daemon dropped (it stopped seeing polls): sent once on the next registration.
@@ -80,10 +92,20 @@ export class AgentSession {
     return this.ppidOverride ?? process.ppid;
   }
 
-  /** claude-socket, codex-queue or none, from the host, its environment and what is known so far. */
+  /** claude-socket, codex-queue, opencode-plugin or none, from the host, its environment and what is known so far. */
   get capability() {
     return wakeCapability({ host: this.host, env: this.env, threadId: this.threadId, codexReady: this.codexReady,
-      ppid: this.ppid });
+      ppid: this.ppid, opencodeSession: this.hostSessionId, opencodeVersion: this.opencodeVersion });
+  }
+
+  /**
+   * The OpenCode session an invite goes to: the newest one that called a FAI tool, unless two or more did within
+   * OPENCODE_RECENT_MS (null: the user pastes the copy line into the one they mean).
+   */
+  opencodeInviteTarget() {
+    const since = this.now() - OPENCODE_RECENT_MS;
+    const recent = [...this.opencodeSessions.values()].filter(at => at >= since).length;
+    return recent > 1 ? null : opencodeSessionId(this.hostSessionId);
   }
 
   /** The X-Fai-Session value once registered, else null. */
@@ -94,7 +116,9 @@ export class AgentSession {
   view() {
     const note = this.host === 'claude' && !claudeSocket(this.env, { ppid: this.ppid })
       ? 'no messaging socket of its own (Claude Code 2.1.224+, not --bare, the MCP server started by Claude Code itself)'
-      : this.held ? 'waiting: the daemon runs another version' : null;
+      : this.host === 'opencode' && (!this.opencodeVersion || !opencodeChannel(this.env, { ppid: this.ppid }))
+        ? 'no FAI plugin channel (install --host opencode, OpenCode 1.19 to 1.x, not --pure, the MCP server started by OpenCode itself)'
+        : this.held ? 'waiting: the daemon runs another version' : null;
     return { sessionId: this.sessionId, host: this.host, repo: this.repo, wake: this.capability, ...(note ? { note } : {}) };
   }
 
@@ -123,9 +147,24 @@ export class AgentSession {
     return Boolean(this.sessionId);
   }
 
-  /** A tool call arrived (its _meta): the last activity, and a Codex thread id the first time one is named. */
-  noteToolCall(meta) {
+  /**
+   * A tool call arrived (its _meta, and the OpenCode session FAI's plugin tagged it with): the last activity, a Codex
+   * thread id the first time one is named, and for OpenCode the calling session (the newest is the session id reported).
+   */
+  noteToolCall(meta, { opencodeSession = null } = {}) {
     this.lastToolCallAt = new Date().toISOString();
+    if (this.host === 'opencode') {
+      const id = opencodeSessionId(opencodeSession);
+      if (!id) return;
+      this.opencodeSessions.delete(id);
+      this.opencodeSessions.set(id, this.now());
+      if (this.opencodeSessions.size > OPENCODE_KEEP) this.opencodeSessions.delete(this.opencodeSessions.keys().next().value);
+      if (this.hostSessionId !== id) {
+        this.hostSessionId = id;
+        this.pushUpdate();
+      }
+      return;
+    }
     if (this.host !== 'codex' || this.threadId) return;
     const threadId = codexThreadId(meta);
     if (!threadId) return;
@@ -310,8 +349,16 @@ export class AgentSession {
       } else {
         const text = wakeText({ kind: wake.kind, inviteId: wake.inviteId, requestId: wake.requestId, level: wake.level,
           userText: wake.userText, driver: this.driver() });
-        const delivered = await this.deliver({ capability: this.capability, text, env: this.env, threadId: this.threadId,
-          ppid: this.ppid });
+        const capability = this.capability;
+        // OpenCode: Approve and Resume go to the session whose call made (or joined) that request, never a guess; an
+        // invite to the only session that used FAI lately.
+        const opencodeSession = capability !== 'opencode-plugin' ? null
+          : wake.kind === 'invite' ? this.opencodeInviteTarget() : this.opencodeOwnerOf(wake.requestId) ?? null;
+        const delivered = capability === 'opencode-plugin' && !opencodeSession
+          ? (wake.kind === 'invite'
+            ? { ok: false, code: 'ambiguous_session', message: 'Several OpenCode sessions use FAI here: paste the line into the one you mean' }
+            : { ok: false, code: 'unknown_session', message: 'No OpenCode session of this server made this request' })
+          : await this.deliver({ capability, text, env: this.env, threadId: this.threadId, opencodeSession, ppid: this.ppid });
         outcome = delivered.ok ? { outcome: 'delivered', ...(delivered.reply ? { message: delivered.reply } : {}) }
           : { outcome: 'failed', code: delivered.code ?? 'wake_failed', message: delivered.message ?? 'The wake failed.' };
         this.log(`wake ${wake.kind} ${outcome.outcome}${delivered.ok ? '' : ` (${outcome.code})`}`);

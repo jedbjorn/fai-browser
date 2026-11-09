@@ -269,7 +269,7 @@ export function mountInvite({ root, context, onState, say }) {
 
   // Started at (so two look-alike sessions of one repo can be told apart), last activity, and how it is reached.
   function hint(agent) {
-    if (agent.host === 'codex' && !agent.ready) return `${startedLabel(agent)}not ready: ask it to run any FAI command`;
+    if (['codex', 'opencode'].includes(agent.host) && !agent.ready) return `${startedLabel(agent)}not ready: ask it to run any FAI command`;
     const when = since(agent.lastActiveAt);
     return `${startedLabel(agent)}${[when, agent.wake === 'none' ? 'you paste a line' : ''].filter(Boolean).join(' · ')}`;
   }

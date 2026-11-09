@@ -22,6 +22,9 @@ test('invite card helpers: labels, the copy line and what each wake state says',
   const failed = wakeLine({ state: 'open', session, wake: { state: 'failed', error: { message: 'crossSessionInbound is refuse' } } });
   assert.equal(failed.fallback, true);
   assert.match(failed.text, /Could not wake Claude Code · fai-browser \(crossSessionInbound is refuse\)/);
+  // OpenCode's plugin only knows OpenCode accepted the prompt: "Sent", with the copy line, as for Claude Code.
+  assert.deepEqual(wakeLine({ state: 'open', session: { host: 'opencode', repo: 'app' }, wake: { state: 'delivered' } }),
+    { text: 'Sent to OpenCode · app. It should start in a moment.', fallback: 'soft' });
   assert.equal(wakeLine({ state: 'open', session: null, wake: { state: 'none' } }).fallback, true);
   assert.match(wakeLine({ state: 'joined', joinedBy: session, wake: { state: 'delivered' } }).text, /joined/);
 });

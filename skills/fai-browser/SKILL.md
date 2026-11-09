@@ -35,7 +35,7 @@ Each result: `next`, status, `revision`, `page.digest` (`page.truncated`: more e
 | `choose` | Answer from `page.digest` if it answers the task; else act. |
 | `observe` | The page changed or the action could not land: `fai_browser_observe`, then choose. |
 | `answer` | Verified. Report the outcome; no tool call needed. |
-| `relay` | Tell the user `needs.message`. With `needs.level`: "approve the new FAI Browser request; its level is preselected", then `fai_browser_open` with the `requestId` and `mode` = `needs.level`. Paused/pending: end your turn (FAI wakes you) or run `next.text`'s `wait` command. |
+| `relay` | Tell the user `needs.message`. With `needs.level`: "approve the new FAI Browser request; its level is preselected", then `fai_browser_open` with the `requestId` and `mode` = `needs.level`. Paused/pending: end your turn (FAI wakes you; ignore OpenCode's `_faiHostSession`) or run `next.text`'s `wait` command. |
 | `approve` | A `needsApproval` action waits for the user's Approve once: relay `next.text`, then repeat the act unchanged. |
 | `wait` | `fai_browser_wait` with the `requestId` (or `runId`). |
 | `stop` | Report `next.text` (`refused_action`, `error_page`); no retry. |
@@ -50,7 +50,7 @@ Never repeat refused actions or invent ids. Calls are budgeted (`callsLeft`). Do
 **Uploads** (`full`, `testing`): `upload a file to "Avatar" (act with path)` takes `path`, a file in your workspace; the user approves name, size and site.
 
 ## Consent, popups, login, other origins
-Reject cookies first; below `full` an accept-only dialog returns `consent_banner`: relay it. A `popup (<kind>)` has its close action. A page outside `origins` returns `cross_origin`, a page-opened tab `child_tab` (`childOrigin` when known); a task spanning subdomains may request `"https://*.example.com"`; for Google list `["https://www.google.com", "https://consent.google.com"]`. Approved-origin children join (`tabs`) only in multiple-tab mode. `login` (sign-in), `blocked` (captcha, paywall) and `js_dialog` (a JavaScript dialog): the user clears it, then observe.
+Reject cookies first; below `full` an accept-only dialog returns `consent_banner`: relay it. A `popup (<kind>)` has its close action. A page outside `origins` returns `cross_origin`, a page-opened tab `child_tab` (`childOrigin` when known); a multi-subdomain task may request `"https://*.example.com"`; Google needs `["https://www.google.com", "https://consent.google.com"]`. Approved-origin children join (`tabs`) only in multiple-tab mode. `login` (sign-in), `blocked` (captcha, paywall) and `js_dialog` (JavaScript dialog): the user clears it, then observe.
 
 **Test sites** (`testing`): observe with `logs: true` returns console errors and failed requests; JavaScript dialogs are dismissed at once unless `dialog: "accept"` (prompt: `text`) armed the next answer. These hooks are page-visible.
 

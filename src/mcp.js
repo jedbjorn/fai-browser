@@ -27,7 +27,7 @@ import { lintExpectation, validateExpectation } from './expectation.js';
 import { scrubSecrets } from './secrets.js';
 import { withResumeWait } from './resume.js';
 import { AgentSession } from './mcp-session.js';
-import { detectHost } from './wake.js';
+import { detectHost, opencodeChannel, opencodeSessionId } from './wake.js';
 import { LEVELS, levelRank, normalizeAdditions } from './guardrails.js';
 import { browserMatches } from './bridge.js';
 import { BUDGET_LIMITS, DEFAULT_BUDGET, checkBudget, loadOversightConfig } from './settings.js';
@@ -586,11 +586,19 @@ export function toolsFor(driver) {
 // Codex names its thread (the wake address) only on a tool call: one cheap call early lets the user invite the session.
 export const CODEX_INSTRUCTIONS = 'Codex: call fai_browser_status once early in the session, so the user can invite '
   + 'you to a browser tab from the FAI popup.';
+// OpenCode: FAI's plugin learns which session to wake from that session's own FAI calls (and shows the tag it adds).
+export const OPENCODE_INSTRUCTIONS = 'OpenCode: call fai_browser_status once early in the session, so the user can '
+  + 'invite you to a browser tab from the FAI popup. Ignore a _faiHostSession argument on FAI calls: FAI\'s plugin adds it.';
 
 export function instructionsFor(driver, host = 'unknown') {
   const base = driver === 'jev' ? JEV_INSTRUCTIONS : INSTRUCTIONS;
-  return host === 'codex' ? `${base}\n${CODEX_INSTRUCTIONS}` : base;
+  if (host === 'codex') return `${base}\n${CODEX_INSTRUCTIONS}`;
+  if (host === 'opencode') return `${base}\n${OPENCODE_INSTRUCTIONS}`;
+  return base;
 }
+
+// How many request -> OpenCode session owners one server remembers.
+const OPENCODE_OWNERS_KEEP = 256;
 
 // ---------------------------------------------------------------------------------------------------------------
 // Minimal JSON Schema validator for exactly the keywords the schemas above use.
@@ -1621,6 +1629,9 @@ class McpServer {
     this.sawActive = new Map();
     // Requests the daemon records this session as the owner of: only their relay texts may say "FAI wakes you".
     this.wakeOwned = new Set();
+    // OpenCode: the session (tagged by FAI's plugin) whose call created or joined each request; Approve and Resume wake
+    // exactly that one, and a request without an entry is never promised a wake.
+    this.opencodeOwner = new Map();
     // The driver until the daemon names its own (X-Fai-Driver on every answer, noteDriver): config.json as a hint,
     // read without ever throwing, so a malformed file still lets initialize and tools/list answer.
     this.driver = this.driverHint();
@@ -1875,13 +1886,16 @@ class McpServer {
       connect: this.connect,
       clientName: clientNameFrom(this.env, this.clientInfo),
       host: this.host,
+      clientVersion: typeof this.clientInfo?.version === 'string' ? this.clientInfo.version : null,
+      opencodeOwnerOf: requestId => this.opencodeOwner.get(requestId) ?? null,
       log: message => this.log(message),
       driver: () => this.driver,
       // A failed wake: that request's (and, for ten minutes, every) relay text goes back to the wait command.
       onOutcome: (wake, outcome) => {
         if (outcome.outcome !== 'failed') return;
         if (wake.requestId) this.wakeOwned.delete(wake.requestId);
-        this.wakeFailedAt = Date.now();
+        // An invite with several OpenCode sessions to choose from says nothing about the channel.
+        if (outcome.code !== 'ambiguous_session') this.wakeFailedAt = Date.now();
       },
       // A resume or approval a call in flight is already waiting for (or one that just saw it) needs no wake: that call
       // returns the page.
@@ -1908,7 +1922,18 @@ class McpServer {
    * records this session as the owner of `requestId` (otherwise nobody would wake it: the wait command instead).
    */
   resumeOptions(requestId) {
-    return { env: this.env, wake: requestId && this.wakeOwned.has(requestId) ? this.wakeMode() : null };
+    const owned = requestId && this.wakeOwned.has(requestId)
+      // OpenCode wakes only the session that made the request: one without a recorded session keeps the wait command.
+      && (this.host !== 'opencode' || this.opencodeOwner.has(requestId));
+    return { env: this.env, wake: owned ? this.wakeMode() : null };
+  }
+
+  /** The OpenCode session whose call (`call.opencodeSession`) created or joined `requestId`. */
+  noteOpencodeOwner(call, requestId) {
+    if (!call?.opencodeSession || !requestId) return;
+    this.opencodeOwner.delete(requestId);
+    this.opencodeOwner.set(requestId, call.opencodeSession);
+    if (this.opencodeOwner.size > OPENCODE_OWNERS_KEEP) this.opencodeOwner.delete(this.opencodeOwner.keys().next().value);
   }
 
   /** Remember that the daemon's view names this session as the owner of its request. */
@@ -1934,9 +1959,19 @@ class McpServer {
       this.sendError(id, -32602, `Unknown tool: ${params.name}`);
       return;
     }
-    const args = params.arguments ?? {};
-    // The last activity this session reports, and a Codex thread id (its wake address) the first time one is named.
-    this.agentSession?.noteToolCall(params._meta);
+    let args = params.arguments ?? {};
+    // FAI's OpenCode plugin tags each FAI call with the calling session (`_faiHostSession`). It is removed here for every
+    // host, before the schema (additionalProperties: false) sees it, and honoured only from OpenCode with the plugin's
+    // channel: anything else (a model copying it, another host) is dropped.
+    let opencodeSession = null;
+    if (args && typeof args === 'object' && !Array.isArray(args) && Object.hasOwn(args, '_faiHostSession')) {
+      const { _faiHostSession: tag, ...rest } = args;
+      args = rest;
+      if (this.host === 'opencode' && opencodeChannel(this.env)) opencodeSession = opencodeSessionId(tag);
+    }
+    // The last activity this session reports, a Codex thread id (its wake address) the first time one is named, and the
+    // OpenCode session that made this call.
+    this.agentSession?.noteToolCall(params._meta, { opencodeSession });
     const started = Date.now();
     const call = {
       id,
@@ -1953,6 +1988,7 @@ class McpServer {
       stopOnCancel: false,
       runId: null,
       requestId: null,
+      opencodeSession,
       waitingOnRequest: false,
       // Budget accounting: whether this call counts as one of the request's calls, and the time spent waiting for
       // the user's approval (not charged to the budget).
@@ -2223,6 +2259,7 @@ class McpServer {
       throw new ToolError('internal', 'The daemon created no tab request');
     }
     this.noteOwner(response.request);
+    this.noteOpencodeOwner(call, requestId);
     this.ownedRequests.add(requestId);
     this.lastRequestId = requestId;
     return { requestId, state: response.state ?? 'pending', extensionConnected: response.extensionConnected,
@@ -2474,6 +2511,7 @@ class McpServer {
     const requestId = joined?.requestId;
     if (!requestId) throw new ToolError('internal', 'The daemon joined no invite');
     this.noteOwner(joined.request);
+    this.noteOpencodeOwner(call, requestId);
     this.ownedRequests.add(requestId);
     this.lastRequestId = requestId;
     const level = { 'read-only': 'Read', reversible: 'Use', interactive: 'Use', full: 'Act', testing: 'Test site' }[joined.level]
