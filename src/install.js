@@ -3,6 +3,9 @@
 //
 // JSON configs are merged and only the "fai-browser" entry is touched; the Codex TOML gets one managed block.
 // An existing file is backed up to <file>.bak-<timestamp> before it changes. Running twice changes nothing.
+// OpenCode also gets FAI's wake plugin (src/opencode-plugin.js) next to its config: <project>/.opencode/plugins/ or
+// ~/.config/opencode/plugins/, as fai-browser.js (copied, or a symlink with --link). A file there without the plugin's
+// version marker is left alone unless --force.
 // A file that cannot be edited safely (JSONC, a hand-written Codex entry) is left alone: the snippet is printed
 // and the command exits 2.
 import { execFileSync } from 'node:child_process';
@@ -23,6 +26,10 @@ export const MCP_ENTRY = join(PACKAGE_ROOT, 'src', 'mcp-main.js');
 const VERSION = JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8')).version;
 const CODEX_MARKER = '# fai-browser (managed by `fai-browser install --host codex`)';
 const SKILL_MARKER = /^<!-- fai-browser [^ ]+: re-run "fai-browser install" to update -->$/m;
+/** FAI's OpenCode wake plugin and the marker its first line carries (any version: an older one is updated). */
+export const OPENCODE_PLUGIN_SOURCE = join(PACKAGE_ROOT, 'src', 'opencode-plugin.js');
+export const OPENCODE_PLUGIN_FILE = 'fai-browser.js';
+const PLUGIN_MARKER = /^\/\/ fai-browser-opencode-plugin v\d+\b/;
 
 export class InstallError extends Error {
   constructor(message, { exitCode = 1, snippet, path } = {}) {
@@ -305,6 +312,38 @@ function planSkill(target, { link, force }) {
   return writes;
 }
 
+/** The OpenCode plugin file at `target`: copied (or linked) from OPENCODE_PLUGIN_SOURCE; a foreign file needs --force. */
+function planOpencodePlugin(target, { link, force }) {
+  const info = lstatOrNull(target);
+  const linked = info?.isSymbolicLink() && samePath(target, OPENCODE_PLUGIN_SOURCE);
+  if (info?.isSymbolicLink() && !linked && !force) {
+    throw new InstallError(`${target} is a symlink to somewhere else; rerun with --force to replace it`, { exitCode: 2, path: target });
+  }
+  if (info && !info.isSymbolicLink() && !info.isFile()) {
+    throw new InstallError(`${target} exists and is not a file`, { exitCode: 2, path: target });
+  }
+  const current = info?.isFile() ? readText(target) : null;
+  const foreign = current !== null && !PLUGIN_MARKER.test(current);
+  if (foreign && !force) {
+    throw new InstallError(`${target} is not FAI Browser's OpenCode plugin; rerun with --force to replace it`, {
+      exitCode: 2, path: target });
+  }
+  if (link) {
+    if (linked) return { path: target, action: 'unchanged', content: `symlink -> ${readlinkSync(target)}` };
+    return { path: target, action: info ? 'replace' : 'create', kind: 'symlink', source: OPENCODE_PLUGIN_SOURCE,
+      linkType: 'file', content: `symlink -> ${OPENCODE_PLUGIN_SOURCE}`, replace: Boolean(info), backup: foreign };
+  }
+  const content = readFileSync(OPENCODE_PLUGIN_SOURCE, 'utf8');
+  if (current === content) return { path: target, action: 'unchanged', content };
+  return { path: target, action: info ? 'update' : 'create', content, backup: foreign };
+}
+
+/** Where `install --host opencode` puts the plugin: beside the opencode.json it registers the server in. */
+export function opencodePluginPath({ scope = 'project', cwd, home = homedir() }) {
+  return scope === 'project' ? join(cwd, '.opencode', 'plugins', OPENCODE_PLUGIN_FILE)
+    : join(home, '.config', 'opencode', 'plugins', OPENCODE_PLUGIN_FILE);
+}
+
 /** Plan every write for a host without touching the filesystem. */
 export function planInstall({ host, scope = 'project', link = false, force = false, commandName = false, cwd,
   alwaysLoad = false, env = process.env, home = homedir(), execPath = process.execPath }) {
@@ -353,6 +392,10 @@ export function planInstall({ host, scope = 'project', link = false, force = fal
       defaults: { $schema: 'https://opencode.ai/config.json' },
       snippetFor: snippet,
     }));
+    // The wake plugin (OpenCode 1.19+, below 2) loads from the plugins directory beside that config. Wakes need the
+    // server started by OpenCode itself, which the entry above does (absolute node, no wrapper; not --command-name).
+    plan.writes.push(planOpencodePlugin(opencodePluginPath({ scope, cwd, home }), { link, force }));
+    plan.notes.push('OpenCode loads FAI\'s wake plugin (plugins/fai-browser.js) at startup; OpenCode 1.19 to 1.x, not with --pure.');
     skillTarget = scope === 'project' ? join(cwd, '.agents', 'skills', 'fai-browser')
       : join(home, '.agents', 'skills', 'fai-browser');
   }
@@ -386,11 +429,16 @@ export async function applyPlan(plan) {
       continue;
     }
     if (write.kind === 'symlink') {
+      const source = write.source ?? SKILL_SOURCE;
+      if (write.backup && existsSync(write.path)) {
+        record.backup = `${write.path}.bak-${stamp}`;
+        await copyFile(write.path, record.backup);
+      }
       if (write.replace) {
         await rm(write.path, { recursive: true, force: true });
       }
       await mkdir(dirname(write.path), { recursive: true });
-      await symlink(relative(dirname(write.path), SKILL_SOURCE) || SKILL_SOURCE, write.path, 'dir');
+      await symlink(relative(dirname(write.path), source) || source, write.path, write.linkType ?? 'dir');
       done.push(record);
       continue;
     }
@@ -528,6 +576,12 @@ export async function refreshUserSkills({ home = homedir() } = {}) {
     if (!info?.isDirectory() || !SKILL_MARKER.test(readText(join(target, 'SKILL.md')) ?? '')) continue;
     const writes = await applyPlan({ writes: planSkill(target, { link: false, force: false }) });
     refreshed.push({ host, path: target, writes: writes.filter(write => write.action !== 'unchanged').length });
+  }
+  // FAI's OpenCode plugin, when a user-level install copied it (a symlink follows the checkout by itself).
+  const plugin = opencodePluginPath({ scope: 'user', home });
+  if (lstatOrNull(plugin)?.isFile() && PLUGIN_MARKER.test(readText(plugin) ?? '')) {
+    const writes = await applyPlan({ writes: [planOpencodePlugin(plugin, { link: false, force: false })] });
+    refreshed.push({ host: 'opencode', path: plugin, writes: writes.filter(write => write.action !== 'unchanged').length });
   }
   return refreshed;
 }
