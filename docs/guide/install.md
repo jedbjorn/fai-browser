@@ -155,9 +155,9 @@ Chrome, Chromium, Brave, Edge and Vivaldi 116+ load the extension unpacked; ther
 ## Updating
 
 FAI Browser follows **tagged GitHub releases** only, never `main`. About once a day the local service asks GitHub's
-releases API whether a newer release is out (an anonymous request; while the repository is private it asks your clone's
-remote with `git ls-remote` and your own git credentials instead, so an ssh agent or credential helper that confirms
-each use (1Password, `ssh-add -c`, a FIDO key) may ask about once a day; `FAI_UPDATE_CHECK=0` or `"updateCheck": false`
+releases API whether a newer release is out (an anonymous request; only if the API answers 404 does it fall back to
+your clone's remote with `git ls-remote` and your own git credentials, where an ssh agent or credential helper that
+confirms each use (1Password, `ssh-add -c`, a FIDO key) may ask about once a day; `FAI_UPDATE_CHECK=0` or `"updateCheck": false`
 in `config.json` turns the automatic check off). When one is, the popup shows **Update available vX.Y.Z** with the release notes and an
 **Update** button, and `node src/cli.js status` says so. Nothing installs until you click or run:
 
@@ -175,9 +175,8 @@ back to the previous version; if it was interrupted, run `node src/cli.js update
 
 - **Chromium, from source**: the extension reloads itself once the new service answers. Restart your coding agent.
 - **Firefox (paths 1 and 2)**: Firefox updates the signed add-on by itself (its `update_url`); the updater only updates
-  the clone and the service. While the repository is private, that automatic update cannot reach the release: install
-  the new `.xpi` from the Releases page by hand. A temporary add-on from `dist/firefox/` needs `npm run build:firefox`
-  and a reload.
+  the clone and the service. If Firefox has not picked it up yet, install the new `.xpi` from the Releases page by hand.
+  A temporary add-on from `dist/firefox/` needs `npm run build:firefox` and a reload.
 
 Details: [Updates](../REFERENCE.md#updates).
 

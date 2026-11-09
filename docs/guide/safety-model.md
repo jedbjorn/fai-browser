@@ -83,8 +83,8 @@ Expectations are checked against redacted text, so they cannot be used to guess 
 
 The service listens on `127.0.0.1`. Clients use a bearer token, the extension a pairing secret handed out by the native
 host to the FAI extension only. In the default mode FAI makes **no** network calls of its own apart from the daily update check: one anonymous GET to
-GitHub's releases API (no token, no identifiers, a generic User-Agent), or, for a private repository, `git ls-remote`
-with your own git credentials; off with `FAI_UPDATE_CHECK=0`. Installing an update always takes your click in the popup
+GitHub's releases API (no token, no identifiers, a generic User-Agent), or, only as a fallback when that API answers 404, `git ls-remote`
+on your clone's remote with your own git credentials; off with `FAI_UPDATE_CHECK=0`. Installing an update always takes your click in the popup
 or `node src/cli.js update`; an agent's MCP calls cannot start one, while an agent with a shell can run that command
 like any other CLI command (the CLI's existing trust assumption), and the updater still refuses while a tab is held,
 on local changes and on anything but a fast-forward to a release. Traces stay local and are pruned (50 runs, 500 MB, 7 days).

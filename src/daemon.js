@@ -591,7 +591,7 @@ export function createDaemon(options = {}) {
   const launchEnv = scrubbedEnv(env);
   // Only a git clone can update itself; anything else is told how to update by hand.
   const installable = options.updateInstallable ?? existsSync(join(PACKAGE_ROOT, '.git'));
-  // A private repository is invisible to the anonymous API: then `git ls-remote` on the clone's verified remote, with
+  // When the anonymous API answers 404, the fallback is `git ls-remote` on the clone's verified remote, with
   // the user's own git credentials (never under node --test unless a test supplies its own source).
   const gitSource = options.updateGitSource
     ?? (installable && !underTest(env) ? gitReleaseSource({ root: PACKAGE_ROOT, env: launchEnv }) : null);
