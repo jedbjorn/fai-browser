@@ -49,6 +49,9 @@ const RECONNECT_ALARM = 'fai-reconnect';
 // 4003 a newer connection of this same browser.
 const CLOSE_REPLACED_LEGACY = 4000;
 const CLOSE_SUPERSEDED = 4003;
+// The service refused this install's browser id: it is bound to another extension Origin (a reinstall that kept old
+// storage, a stale record). The worker gives up its own claim once (a new id) and connects again.
+const CLOSE_IDENTITY_REFUSED = 4004;
 const SUPERSEDED_RETRY_MS = 5 * 60_000;
 // A connection that lasted at least this long resets the reconnect backoff.
 const STABLE_MS = 10_000;
@@ -574,6 +577,8 @@ let identity = null;
 let connectedBrowsers = [];
 let conflict = null;
 let supersededAt = 0;
+// How often this worker gave up its id after a refusal: once, then it stops (conflict 'identity') until the popup opens.
+let identityResets = 0;
 const replacedCloses = [];
 // The FAI service's update state (docs/REFERENCE.md "Updates"): a newer release, the last install. Shown by the popup.
 let updateInfo = null;
@@ -942,6 +947,8 @@ function updateBadge() {
     title = 'FAI Browser: not paired';
   } else if (conflict === 'superseded') {
     title = 'FAI Browser: another copy of this browser profile took the FAI connection';
+  } else if (conflict === 'identity') {
+    title = 'FAI Browser: the FAI service refused this browser\'s id';
   } else if (conflict === 'replaced') {
     title = 'FAI Browser: another browser keeps taking the FAI connection';
   } else if (!connected) {
@@ -1385,7 +1392,8 @@ function markDisconnected() {
   connected = false;
   transportName = 'none';
   if (!session) {
-    const text = conflict === 'superseded' ? 'Another copy of this browser profile took the FAI connection. Open this popup again to use it here.'
+    const text = conflict === 'identity' ? 'The FAI service refused this browser\'s id, even a new one. Open this popup to try again; if it keeps happening, reinstall the extension.'
+    : conflict === 'superseded' ? 'Another copy of this browser profile took the FAI connection. Open this popup again to use it here.'
       : conflict === 'replaced' ? 'Another browser keeps taking the FAI service connection (an older FAI service). Retrying slowly; update FAI Browser to use both.'
         : 'Not connected to the FAI service. Retrying.';
     ignore(chrome.storage.local.set({ status: text }));
@@ -1395,8 +1403,9 @@ function markDisconnected() {
 
 function scheduleReconnect() {
   if (reconnectTimer || !pairing) return;
-  // This browser's newer connection holds the service: never fight it (the popup or the alarm retries later).
-  if (conflict === 'superseded') return;
+  // This browser's newer connection holds the service: never fight it (the popup or the alarm retries later). A
+  // refused id the worker already replaced once: only the popup tries again.
+  if (conflict === 'superseded' || conflict === 'identity') return;
   // An unreachable service: the native host can start it, or knows a new address or secret (setup ran again).
   if (backoffIndex >= 2) ignore(nativePair());
   const base = BACKOFF_MS[Math.min(backoffIndex, BACKOFF_MS.length - 1)];
@@ -1415,11 +1424,32 @@ async function tryFallback() {
     handleHello(data, 'longpoll');
     fallbackUntil = Date.now() + FALLBACK_WINDOW_MS;
     longPollLoop();
-  } catch {
+  } catch (error) {
+    if (error?.code === 'identity_refused') {
+      if (await identityRefused()) tryFallback();
+      return;
+    }
     markDisconnected();
     settleAttempt();
     scheduleReconnect();
   }
+}
+
+// The service refused this install's browser id (bound to another extension Origin). The first time, the worker
+// gives up its own claim: a new id, saved, and true (connect again). A second refusal in this worker's life stops
+// with a visible status (conflict 'identity') instead of a loop; opening the popup tries once more.
+async function identityRefused() {
+  if (identityResets >= 1) {
+    conflict = 'identity';
+    markDisconnected();
+    settleAttempt();
+    return false;
+  }
+  identityResets++;
+  identity = null;
+  await chrome.storage.local.set({ browserId: newBrowserId() }).catch(() => {});
+  await browserIdentity();
+  return true;
 }
 
 function connectionFailed(opened) {
@@ -1539,6 +1569,14 @@ async function connect() {
     // A connection only counts as stable after STABLE_MS: one that keeps closing early keeps backing off.
     if (opened && Date.now() - openedAt >= STABLE_MS) backoffIndex = 0;
     const code = event?.code;
+    if (code === CLOSE_IDENTITY_REFUSED) {
+      ignore(identityRefused().then(retry => {
+        if (!retry) return;
+        backoffIndex = 0;
+        connect();
+      }));
+      return;
+    }
     if (code === CLOSE_SUPERSEDED) {
       // A newer connection of this same browser took over (src/bridge.js): reconnecting would only take it back.
       conflict = 'superseded';
@@ -1639,6 +1677,7 @@ async function longPollLoop() {
   if (longPolling) return;
   longPolling = true;
   let failures = 0;
+  let refused = false;
   try {
     while (pairing && !socketOpen && Date.now() < fallbackUntil) {
       const current = pairing;
@@ -1655,10 +1694,16 @@ async function longPollLoop() {
           signal,
         });
         body = await response.json();
-        if (!response.ok) throw new Error(body.error || `The FAI service returned ${response.status}`);
+        if (!response.ok) {
+          throw new ExtensionError(body.code || 'rejected', body.error || `The FAI service returned ${response.status}`);
+        }
         failures = 0;
-      } catch {
+      } catch (error) {
         if (controller.signal.aborted || pairing !== current) continue;
+        if (error?.code === 'identity_refused') {
+          refused = true;
+          break;
+        }
         if (++failures >= POLL_RETRIES) {
           fallbackUntil = 0;
           markDisconnected();
@@ -1679,6 +1724,10 @@ async function longPollLoop() {
   } finally {
     longPolling = false;
     pollController = null;
+  }
+  if (refused) {
+    if (await identityRefused()) longPollLoop();
+    return;
   }
   if (pairing && !socketOpen) scheduleReconnect();
 }
@@ -3801,7 +3850,10 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         && !sender.url.includes('window=1');
       if (!connected) {
         // Opening the popup is a user action: it may take the connection back from this browser's other window.
-        if (toolbarPopup && conflict === 'superseded') conflict = null;
+        if (toolbarPopup && (conflict === 'superseded' || conflict === 'identity')) {
+          if (conflict === 'identity') identityResets = 0;
+          conflict = null;
+        }
         connect();
         await waitForAttempt(1_000);
       }
@@ -3950,6 +4002,8 @@ try {
       return;
     }
     // Superseded by this browser's newer connection: try again only after a while (or when the popup opens).
+    // A refused id the worker already replaced once: only the popup tries again.
+    if (conflict === 'identity') return;
     if (conflict === 'superseded') {
       if (Date.now() - supersededAt < SUPERSEDED_RETRY_MS) return;
       conflict = null;
