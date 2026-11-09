@@ -506,6 +506,8 @@ export async function startStubDaemon(behavior = {}) {
     FAI_DAEMON_PORT: String(stub.port),
     FAI_CLIENT_TOKEN: token,
     FAI_DAEMON_START_TIMEOUT_MS: '1000',
+    // This stub has no agent-session registry (src/mcp-session.js); the real daemon's tests cover it.
+    FAI_MCP_REGISTRY: '0',
     // A short call budget keeps its approval wait short too (as before FAI_MCP_APPROVAL_WAIT_MS: the budget less the
     // 2 s daemon margin), unless the test sets the allowance itself.
     ...(extra.FAI_MCP_MAX_CALL_MS && !extra.FAI_MCP_APPROVAL_WAIT_MS
