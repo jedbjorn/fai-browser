@@ -76,7 +76,8 @@ function render() {
   warning.hidden = current !== 'testing';
   select.setAttribute('aria-describedby', current === 'testing' ? 'level-help level-warning' : 'level-help');
   document.body.dataset.level = current;
-  approve.textContent = approving ? 'Approving…' : `Approve ${chosen?.name ?? 'request'}`;
+  // A paused task resumed in a new tab (its card's "Resume in a new tab") says Resume, never the new-request Approve.
+  approve.textContent = approving ? 'Approving…' : `${request?.state === 'paused' ? 'Resume at' : 'Approve'} ${chosen?.name ?? 'request'}`;
   // Enabled as soon as the request is known and the held check is in: a click before arm_prepare answers is kept.
   const pattern = request ? (sameArm(approval, arm) ? approval.pattern : sitePattern(arm, request)) : null;
   const asked = pattern ? askedPatterns(sameArm(approval, arm) ? approval : null, pattern, request) : [];

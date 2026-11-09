@@ -712,6 +712,8 @@ export function pageExtras(observation) {
   // origin_changed: the origin the tab went to (the extension's report, origin only; a page can choose where it sends
   // the tab, so it is untrusted text, never part of needs.message).
   if (typeof observation.leftOrigin === 'string' && FRAME_ORIGIN.test(observation.leftOrigin)) out.leftOrigin = observation.leftOrigin;
+  // child_tab: the origin of the tab or window the page opened (the same rules: origin only, untrusted).
+  if (typeof observation.childOrigin === 'string' && FRAME_ORIGIN.test(observation.childOrigin)) out.childOrigin = observation.childOrigin;
   if (Array.isArray(observation.logs)) {
     out.logs = observation.logs.slice(-MAX_PAGE_LOGS).filter(entry => entry && LOG_KINDS.has(entry.kind)).map(entry => {
       const item = { kind: entry.kind, text: line(entry.text, 300) };
@@ -1896,7 +1898,7 @@ export function agentResult(source) {
   if (Array.isArray(result.did) && result.did.length) out.did = result.did.filter(line => typeof line === 'string').slice(0, 25);
   // The lease's tabs, a JavaScript dialog and Test-site logs on the page the act ended on (pageExtras; untrusted).
   Object.assign(out, pageExtras({ tabs: result.tabs, dialog: result.dialog, logs: result.logs, logsDropped: result.logsDropped,
-    frames: result.frames, leftOrigin: result.leftOrigin }));
+    frames: result.frames, leftOrigin: result.leftOrigin, childOrigin: result.childOrigin }));
   // Trusted: an act with a point: the pixels given, the CSS point they map to, the image size assumed and the control
   // under them (ref "point" for one the observation left out; label is page text), also when the act was refused.
   if (result.point && typeof result.point === 'object' && result.point.image) {
