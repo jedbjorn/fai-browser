@@ -9,12 +9,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 import { headlessEnv } from '../scripts/headless-env.mjs';
+import { loadFakes } from './helpers/secret-fakes.js';
 
 const PAGE_SCRIPT = new URL('../extension/page.js', import.meta.url).pathname;
 const SETTLE = { quietMs: 40, capMs: 600 };
 const TOP = 'https://example.com';
 const FRAME = 'https://other.test';
-const TOKEN = 'ghp_16C7e42F292c6912E7710c838347Ae178B4a';
+// A built fake GitHub token (test/helpers/secret-fakes.js), never a literal.
+const TOKEN = loadFakes().github;
 // The worker's frame context for a frame of TOP approved by the request [TOP, FRAME].
 const CONTEXT = { frame: true, topOrigin: TOP, origins: [TOP, FRAME] };
 const USE = ['navigate', 'controls'];
