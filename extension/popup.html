@@ -20,6 +20,14 @@
 
     <p id="pin-hint" class="pin-hint" role="note" hidden></p>
 
+    <section id="update" class="setup-card update-card" aria-label="FAI Browser update" aria-live="polite" hidden>
+      <span id="update-label" class="card-label">UPDATE</span>
+      <p id="update-text" class="setup-text"></p>
+      <a id="update-notes" class="update-notes" target="_blank" rel="noopener noreferrer" hidden>Release notes</a>
+      <button id="update-install" class="primary-button" type="button" hidden>Update</button>
+      <p id="update-error" class="field-error" role="alert"></p>
+    </section>
+
     <section id="setup" class="setup-card" aria-label="Setup" hidden>
       <span class="card-label">SETUP NEEDED</span>
       <p id="setup-text" class="setup-text">Run <code>npm run setup</code> in the fai-browser folder, then pair.</p>

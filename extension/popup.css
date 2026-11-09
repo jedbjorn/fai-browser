@@ -135,3 +135,9 @@ body.arm-page { width: auto; min-height: 100vh; }
 .arm-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 10px; }
 .arm-actions .status { flex-basis: 100%; min-height: 0; margin: 0; }
 body.arm-page[data-level="testing"] .level-select { border-color: var(--danger); color: var(--danger); font-weight: 650; }
+/* Update card (extension/update-card.js): only while a newer release is out or an install just ran. */
+.update-notes { display: inline-block; margin: -4px 0 10px; color: var(--amber-dark); font-size: 12px; }
+.update-card[data-state="failed"] { border-color: #e3bdb6; background: var(--danger-soft); }
+.update-card[data-state="failed"] .card-label { color: var(--danger); }
+.update-card[data-state="succeeded"] .card-label { color: var(--green); }
+.approval-window .update-card { display: none; }
