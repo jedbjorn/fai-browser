@@ -182,6 +182,40 @@ test('Agent direct: an act that lands on the browser\'s own error page is error_
   assert.equal(landed.code, 'step_complete');
 });
 
+// The stand-in keeps the URL the tab tried and a fixed text: an expectation must never pass there (a false verified
+// completion). A URL expectation and a textAbsent expectation would both match it.
+for (const expectation of [{ urlIncludes: '/monthly' }, { textAbsent: 'Reports' }]) {
+  test(`Agent direct: an act onto the browser's own error page never verifies ${JSON.stringify(expectation)}`, async () => {
+    const bridge = new BrowserErrorBridge({ pages: { ...DASHBOARD, '/monthly': BROWSER_ERROR }, path: '/dashboard' });
+    const runtime = new BrowserRuntime({ bridge });
+    const observed = await runtime.observe({ mode: 'read-only', grant: { level: 'read-only' }, allowedOrigins: [ORIGIN] });
+    const monthly = observed.actions.find(action => action.label === 'Monthly report');
+    const result = await runtime.act(monthly.id, { revision: observed.observation.revision, expectation });
+    assert.equal(result.code, 'error_page');
+    assert.notEqual(result.status, 'completed');
+    assert.notEqual(result.verification.passed, true);
+    assert.equal(directNext(result, { requestId: 'req_1' }).kind, 'stop');
+  });
+}
+
+test('a run whose URL expectation matches the browser\'s own error page is not completed: error_page, nothing verified', async () => {
+  const bridge = new BrowserErrorBridge({ pages: { ...DASHBOARD, '/monthly': BROWSER_ERROR }, path: '/dashboard' });
+  const provider = clickProvider(['Monthly report']);
+  const result = await new BrowserRuntime({ bridge, provider }).run('Open Monthly report and read the total.',
+    { expectation: { urlIncludes: '/monthly' }, maxActions: 4 });
+  assert.equal(result.status, 'failed');
+  assert.equal(result.code, 'error_page');
+  assert.equal(result.verification.passed, false);
+  assert.ok(result.verdict.why.includes('error_source:browser'));
+  assert.equal(agentResult(result).next.kind, 'stop');
+  // A start page that is the browser's error page is not exempt either.
+  const start = new BrowserErrorBridge({ pages: { '/monthly': BROWSER_ERROR }, path: '/monthly' });
+  const first = await new BrowserRuntime({ bridge: start, provider: clickProvider([]) }).run('Read the total.',
+    { expectation: { urlIncludes: '/monthly' } });
+  assert.equal(first.code, 'error_page');
+  assert.equal(first.verification.passed, false);
+});
+
 const SIZES = {
   '/sizes': {
     title: 'Canvas tool roll',

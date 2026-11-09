@@ -3138,15 +3138,22 @@ class Session {
   /**
    * An HTTP error page (404, 410, 500, 502, 503, 504 by status, title, heading or a tiny body) ends the run failed /
    * error_page before any further provider decision, unless the host's expectation passes on it (the host asked
-   * for that page: "read the error reference the Billing page shows"). Returns the result or null.
+   * for that page: "read the error reference the Billing page shows"). The browser's own error page is never exempt:
+   * it keeps the URL the tab tried and a fixed text, so a URL or textAbsent expectation would pass on a page that
+   * shows nothing; any pass recorded there is withdrawn. Returns the result or null.
    */
   async errorPage(observation, hasExpectation) {
     const error = errorPageOf(observation);
     if (!error) return null;
     const label = error.status ? `http:${error.status}` : 'http:error';
-    if (hasExpectation && await this.expectationFor(observation)) {
+    const browser = error.source === 'browser';
+    if (!browser && hasExpectation && await this.expectationFor(observation)) {
       this.why(label);
       return null;
+    }
+    if (browser && this.result.verification?.passed === true) {
+      this.result.verification.passed = false;
+      if (this.lastCheck?.observation === observation) this.lastCheck = { observation, passed: false };
     }
     setOutcome(this.result, 'error_page', error.status ? `HTTP ${error.status}` : undefined);
     this.why(label);
@@ -5827,10 +5834,12 @@ export class BrowserRuntime {
           // The field did not keep the value: not a step done, whatever the expectation says of the page.
           session.why('fill:not_kept');
           setOutcome(session.result, 'fill_not_kept');
+        } else if (errorPageOf(after)?.source === 'browser') {
+          // The browser's own error page (nothing on it to read): error_page, as a run's landing on an HTTP error
+          // page, before any expectation (its URL and fixed text would pass one falsely). The offer stays, so the host
+          // can still reload or open another approved URL once the site is back.
+          await session.errorPage(after, false);
         } else if (await session.checkExpectation(after)) setOutcome(session.result, 'expectation_passed');
-        // The browser's own error page (nothing on it to read): error_page, as a run's landing on an HTTP error page.
-        // The offer stays, so the host can still reload or open another approved URL once the site is back.
-        else if (errorPageOf(after)?.source === 'browser') await session.errorPage(after, false);
         else setOutcome(session.result, 'step_complete');
         // What the host may do next from here, without another observe(); listed by the task its observe() named.
         session.result.offer = this.#offerAfter(session, config, after, offer.hints, offer.question);
