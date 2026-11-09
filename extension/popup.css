@@ -86,6 +86,11 @@ input::placeholder { color: var(--muted); }
 .request-card { margin-top: 10px; padding: 12px 13px; border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 10px; background: var(--surface); }
 .request-card[data-state="active"] { border-left-color: var(--green); }
 .request-card[data-state="elsewhere"] { border-left-color: var(--line); }
+.request-card[data-state="paused"] { border-left-color: var(--line); border-style: dashed solid dashed solid; }
+.request-section { margin: 14px 0 0; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .105em; }
+.request-section:first-child { margin-top: 4px; }
+.stale-requests summary { cursor: pointer; }
+.pause-reason { margin: 0 0 6px; }
 .request-card .card-topline { margin-bottom: 6px; }
 .request-age { color: var(--muted); font-size: 11px; }
 .agent-says { margin: 0 0 4px; overflow-wrap: anywhere; }
@@ -95,6 +100,7 @@ input::placeholder { color: var(--muted); }
 .request-mismatch { margin: 0 0 8px; color: var(--amber-dark); font-size: 11px; overflow-wrap: anywhere; }
 .request-actions { display: flex; align-items: center; gap: 10px; }
 .request-actions .primary-button { flex: 1; min-height: 36px; }
+.request-actions .secondary-button { flex: 1; min-height: 34px; }
 .link-button { padding: 0; border: 0; background: none; color: var(--muted); font-size: 12px; text-decoration: underline; }
 .link-button:hover { color: var(--ink); }
 .transport { margin-top: 8px; }

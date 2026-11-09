@@ -61,6 +61,9 @@ const SHUTDOWN_RUN_WAIT_MS = 5_000;
 const DEFAULT_REQUEST_TTL_MS = 600_000;
 const DEFAULT_LEASE_IDLE_MS = 900_000;
 const PAUSED_TTL_MS = 30 * 60_000;
+// A paused request nobody can continue (its agent session is gone, or none made it) for this long is `stale`: the
+// popup no longer offers it for Resume by default and status says so (issue #13).
+export const STALE_IDLE_MS = 5 * 60_000;
 const TERMINAL_KEEP_MS = 60 * 60_000;
 const BODY_LIMIT = 1024 * 1024;
 const LOCK_WAIT_MS = 5_000;
@@ -543,6 +546,10 @@ export function createDaemon(options = {}) {
   const requestedPort = options.port ?? configuredPort(env);
 
   const requests = new Map();
+  // Creation order of requests (createdAt can tie within a millisecond): `newer_request` staleness compares it.
+  let requestSeq = 0;
+  // The stale markers last published, so the sweep re-publishes when one changes with time alone.
+  let publishedStale = '';
   // Invites by id ({inviteId, requestId, sessionId, state, ...}); see onInviteEvent.
   const invites = new Map();
   // The live coding-agent sessions (one per MCP server process) and their wakes (src/sessions.js).
@@ -708,6 +715,12 @@ export function createDaemon(options = {}) {
       stateReason: record.stateReason,
       // origin_changed: the origin the tab went to, when the extension could see it (origin only).
       ...(record.state === 'paused' && record.stateReason === 'origin_changed' && record.leftOrigin ? { leftOrigin: record.leftOrigin } : {}),
+      // child_tab: the origin of the tab or window the page opened, when the extension could see it (origin only).
+      ...(record.state === 'paused' && record.stateReason === 'child_tab' && record.childOrigin ? { childOrigin: record.childOrigin } : {}),
+      // A paused request nobody is expected to continue (staleOf): `newer_request` or `idle`. The popup shows it apart
+      // and offers no Resume for it by default; an agent that no longer needs it releases it.
+      ...(staleOf(record) ? { stale: staleOf(record) } : {}),
+      ...(record.state === 'paused' && record.pausedAt ? { pausedAt: iso(record.pausedAt) } : {}),
       origins: [...record.origins],
       mode: record.mode,
       grant: record.grant ? { ...record.grant } : null,
@@ -739,6 +752,28 @@ export function createDaemon(options = {}) {
 
   function liveViews() {
     return [...requests.values()].filter(record => LIVE.has(record.state)).map(view);
+  }
+
+  /**
+   * Why a paused request is stale, or null (issue #13: a finished or abandoned request must not capture the user's
+   * next Resume or Approve). `newer_request`: the agent that made it (the same owner session, else the same client
+   * instance) has asked for another tab since, so it moved on; approving that newer request in the same browser
+   * supersedes this one anyway. `idle`: no live agent session owns it and nothing used it for STALE_IDLE_MS since it
+   * paused. A stale request can still be resumed (the popup keeps it under "Older paused tasks") or released.
+   */
+  function staleOf(record, t = now()) {
+    if (record.state !== 'paused') return null;
+    const owner = record.ownerSession ?? null;
+    const instance = owner ? null : record.clientInstance ?? null;
+    if (owner || instance) {
+      for (const other of requests.values()) {
+        if (other === record || (other.seq ?? 0) <= (record.seq ?? 0)) continue;
+        if (owner ? other.ownerSession === owner : !other.ownerSession && other.clientInstance === instance) return 'newer_request';
+      }
+    }
+    const ownerLive = owner ? Boolean(sessions.view(owner)) : false;
+    if (!ownerLive && t - Math.max(record.pausedAt ?? 0, record.lastCallAt ?? 0) >= STALE_IDLE_MS) return 'idle';
+    return null;
   }
 
   function setState(record, state, reason = null) {
@@ -862,13 +897,17 @@ export function createDaemon(options = {}) {
     return null;
   }
 
-  /** Compatibility for a v2 extension that sends no requestId: the newest pending, else paused, request. */
-  function pickRequestFor(origin) {
+  /**
+   * Compatibility for an extension that names no request (a v2 popup's "Select tab and start"): the newest pending
+   * request for the tab's origin; with none pending, a paused one only on its own tab. Never the oldest request, never a
+   * paused request on another tab, and never a paused one while a request for the origin waits (issue #13).
+   */
+  function pickRequestFor(origin, tabId = null) {
     const candidates = [...requests.values()]
       .filter(record => originCovered(origin, record.origins))
-      .sort((a, b) => b.createdAt - a.createdAt);
+      .sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0) || b.createdAt - a.createdAt);
     return candidates.find(record => record.state === 'pending')
-      ?? candidates.find(record => record.state === 'paused')
+      ?? candidates.find(record => record.state === 'paused' && Number.isInteger(tabId) && record.lease?.tabId === tabId)
       ?? null;
   }
 
@@ -893,13 +932,21 @@ export function createDaemon(options = {}) {
    * so, so the agent can ask the user and request that origin up front next time. Returns the result.
    */
   function withLeftOrigin(record, result) {
-    if (result?.code !== 'origin_changed' || !record.leftOrigin || typeof result.needs?.message !== 'string') return result;
-    // The origin itself goes in `leftOrigin` (untrusted: a page chooses where it sends the tab); the trusted message
-    // only says where to find it.
-    result.leftOrigin = record.leftOrigin;
-    result.needs.message = `${result.needs.message} The tab went to an origin this request does not list (leftOrigin; `
-      + 'page-chosen, check it with the user). If the task needs it, ask the user, then request it in origins (a new '
-      + 'fai_browser_open).';
+    if (typeof result?.needs?.message !== 'string') return result;
+    if (result.code === 'origin_changed' && record.leftOrigin) {
+      // The origin itself goes in `leftOrigin` (untrusted: a page chooses where it sends the tab); the trusted message
+      // only says where to find it.
+      result.leftOrigin = record.leftOrigin;
+      result.needs.message = `${result.needs.message} The tab went to an origin this request does not list (leftOrigin; `
+        + 'page-chosen, check it with the user). If the task needs it, ask the user, then request it in origins (a new '
+        + 'fai_browser_open).';
+    } else if (result.code === 'child_tab' && record.childOrigin) {
+      // The same for a tab or window the page opened (issue #13): its origin is page-chosen, so untrusted.
+      result.childOrigin = record.childOrigin;
+      result.needs.message = `${result.needs.message} The page opened a tab or window on another page (childOrigin; `
+        + 'page-chosen, check it with the user). If the task needs it, ask the user, then request it in origins (a new '
+        + 'fai_browser_open).';
+    }
     return result;
   }
 
@@ -919,7 +966,7 @@ export function createDaemon(options = {}) {
       return replyTo(event, { error: { code: 'update_running',
         message: 'FAI Browser is installing an update and restarts in a moment. Approve again in a minute.' } });
     }
-    const record = event.requestId ? requests.get(event.requestId) : pickRequestFor(event.origin);
+    const record = event.requestId ? requests.get(event.requestId) : pickRequestFor(event.origin, event.tabId);
     if (!record) return replyTo(event, { error: { code: 'no_request', message: 'No such tab request' } });
     // Re-approval: the user changes the level of the active lease on the same tab (no new lease). A lower level
     // takes effect on the next command (the hub clamps every command to it); a higher one on the next run.
@@ -1152,6 +1199,7 @@ export function createDaemon(options = {}) {
     const inviteId = newInviteId();
     const record = {
       requestId: newRequestId(),
+      seq: ++requestSeq,
       state: 'pending',
       stateReason: null,
       origins: [event.origin],
@@ -1351,7 +1399,15 @@ export function createDaemon(options = {}) {
       const reason = PAUSE_REASONS.has(event.reason) ? event.reason : 'paused';
       interruptActive(record, reason);
       record.leftOrigin = reason === 'origin_changed' && typeof event.origin === 'string' ? event.origin : null;
+      record.childOrigin = reason === 'child_tab' && typeof event.origin === 'string' ? event.origin : null;
       setState(record, 'paused', reason);
+    } else if (event.status === 'paused' && record.state === 'paused' && record.stateReason === 'child_tab'
+      && event.reason === 'child_tab' && !record.childOrigin && typeof event.origin === 'string') {
+      // The child's address became readable only after the pause (a window that opens on about:blank first): the
+      // extension reports its origin once, for the same lease.
+      record.childOrigin = event.origin;
+      log('child_origin', { requestId: record.requestId });
+      changed();
     }
   }
 
@@ -2068,6 +2124,7 @@ export function createDaemon(options = {}) {
     }
     const record = {
       requestId: newRequestId(),
+      seq: ++requestSeq,
       state: 'pending',
       stateReason: null,
       origins: [...new Set(origins)],
@@ -3046,6 +3103,12 @@ export function createDaemon(options = {}) {
       else if (invite.state !== 'open' && t - (invite.endedAt ?? invite.joinedAt ?? invite.createdAt) >= INVITE_KEEP_MS) invites.delete(invite.inviteId);
     }
     sessions.sweep();
+    // A paused request turns stale with time alone (or its agent session went away): show the popup at once.
+    const stale = [...requests.values()].filter(record => staleOf(record, t)).map(record => record.requestId).join(',');
+    if (stale !== publishedStale) {
+      publishedStale = stale;
+      changed();
+    }
     const idleMs = idleShutdownMs();
     if (idleMs > 0 && !shuttingDown && t - lastClientCallAt >= idleMs) {
       const busy = [...requests.values()].some(record => LIVE.has(record.state))

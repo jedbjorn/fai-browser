@@ -933,9 +933,10 @@ export function createHub({
     if (lease.status === 'active') deactivate(lease, status, reason);
     else if (status === 'stopped' && lease.status !== 'stopped') lease.status = 'stopped';
     lease.state = status;
-    // An origin_changed pause names the origin the tab went to (origin only; the extension redacts it like any URL).
-    const left = reason === 'origin_changed' && typeof message.origin === 'string' && LEFT_ORIGIN.test(message.origin)
-      ? { origin: message.origin } : {};
+    // An origin_changed pause names the origin the tab went to, a child_tab pause the origin of the tab or window the
+    // page opened (origin only; the extension redacts it like any URL).
+    const left = ['origin_changed', 'child_tab'].includes(reason) && typeof message.origin === 'string'
+      && LEFT_ORIGIN.test(message.origin) ? { origin: message.origin } : {};
     emit({ type: 'status', leaseId: lease.leaseId, requestId: lease.requestId, status, reason, browserId: browser.id, ...left });
   }
 

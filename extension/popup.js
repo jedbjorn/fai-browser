@@ -167,18 +167,40 @@ function renderBrowsers() {
     : ' Connected to the FAI service';
 }
 
+// Why a request paused, in the user's words (the daemon's stateReason).
+const PAUSE_TEXT = {
+  paused: 'You paused it',
+  tab_changed: 'You switched tabs',
+  origin_changed: 'The tab left the site',
+  child_tab: 'The page opened a new tab or window',
+  session_inactive: 'The browser extension restarted',
+  disconnected: 'The connection dropped',
+};
+// Why a paused task is listed under "Older paused tasks" (the daemon's `stale`).
+const STALE_TEXT = {
+  newer_request: 'Its agent has asked for another tab since.',
+  idle: 'No agent is waiting for it.',
+};
+
 function requestCard(request, { serving }) {
   if (!serving && !here(request)) return elsewhereCard(request);
   const card = element('article', 'request-card');
   card.dataset.requestId = request.requestId;
   card.dataset.state = serving ? 'active' : request.state;
   const top = element('div', 'card-topline');
-  const labels = { pending: 'TAB REQUEST', paused: 'PAUSED REQUEST', active: 'ACTIVE REQUEST' };
-  const label = labels[serving ? 'active' : request.state] ?? 'TAB REQUEST';
-  top.append(element('span', 'card-label', label), element('span', 'request-age', age(request.createdAt)));
+  // A new request and a paused task never look alike (issue #13): the label, the age and the button differ.
+  const labels = { pending: 'NEW TAB REQUEST', paused: 'PAUSED TASK', active: 'ACTIVE REQUEST' };
+  const label = labels[serving ? 'active' : request.state] ?? 'NEW TAB REQUEST';
+  const paused = !serving && request.state === 'paused';
+  const when = paused && request.pausedAt ? `paused ${age(request.pausedAt)}` : age(request.createdAt);
+  top.append(element('span', 'card-label', label), element('span', 'request-age', when));
   const says = element('p', 'agent-says');
   says.append(element('strong', '', 'Agent says: '), element('span', 'request-reason', String(request.reason ?? '')));
   card.append(top, says);
+  if (paused) {
+    const why = [PAUSE_TEXT[request.stateReason], STALE_TEXT[request.stale]].filter(Boolean).join('. ').replace(/\.\.$/, '.');
+    if (why) card.append(element('p', 'field-help pause-reason', why.endsWith('.') ? why : `${why}.`));
+  }
   if (request.instruction) card.append(element('p', 'request-instruction', String(request.instruction)));
   const origins = Array.isArray(request.origins) ? request.origins.map(String) : [];
   // A domain root reads "all of example.com", never as a wildcard pattern; an exact origin as itself.
@@ -236,10 +258,13 @@ function requestCard(request, { serving }) {
     card.append(element('p', 'request-mismatch', opens ? `${text}. Open ${target.host} opens it in a new tab; approve there with the FAI Browser icon.` : text));
   }
   const actions = element('div', 'request-actions');
-  const approveText = request.state === 'paused' ? 'Resume on this tab' : 'Approve this tab';
-  const approve = element('button', opens ? 'primary-button open-request'
-    : onFaiTab ? 'primary-button fai-tab-request' : 'primary-button approve-request',
-    opens ? `Open ${target.host}` : onFaiTab ? 'Approve on the FAI tab' : approveText);
+  // A paused task's Resume is a secondary button with its own words, never the primary Approve or Open of a new request.
+  const approve = paused
+    ? element('button', opens ? 'secondary-button resume-request resume-open' : 'secondary-button resume-request',
+      opens ? `Resume in a new ${target.host} tab` : 'Resume on this tab')
+    : element('button', opens ? 'primary-button open-request'
+      : onFaiTab ? 'primary-button fai-tab-request' : 'primary-button approve-request',
+    opens ? `Open ${target.host}` : onFaiTab ? 'Approve on the FAI tab' : 'Approve this tab');
   approve.type = 'button';
   // The approval window's own tab is never the one to approve: a request with no page to open is approved on its tab.
   approve.disabled = (Boolean(mismatch) && !opens && !onFaiTab) || (windowMode && !opens && !onFaiTab) || busy;
@@ -252,7 +277,8 @@ function requestCard(request, { serving }) {
   actions.append(approve);
   if (target && !opens && !onFaiTab) {
     // This tab matches: approving it stays the primary path; the start URL can still get a new tab.
-    const elsewhere = element('button', 'link-button open-request', 'Open in a new tab');
+    const elsewhere = element('button', paused ? 'link-button resume-open' : 'link-button open-request',
+      paused ? 'Resume in a new tab' : 'Open in a new tab');
     elsewhere.type = 'button';
     elsewhere.disabled = busy;
     elsewhere.addEventListener('click', () => openRequest(request, level.value(), scope, target));
@@ -579,6 +605,16 @@ function renderSetup() {
   pairButton.textContent = paired && native !== 'missing' ? 'Reconnect' : 'Pair with the FAI service';
 }
 
+// Newest first: the request the agent made last is the one the user was just told about.
+const newestFirst = (a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''));
+
+// "Older paused tasks" (stale ones) stays open or closed across re-renders once the user toggled it.
+let staleOpen = false;
+
+function sectionLabel(text, className) {
+  return element('p', `request-section ${className}`, text);
+}
+
 function render() {
   if (holdRender(render)) return;
   const active = view.status === 'active';
@@ -587,16 +623,37 @@ function render() {
     // An active invited tab has its own card (extension/invite-card.js).
     if (request.invite && request.state === 'active') return false;
     if (request.requestId === servingId) return true;
+    // The approval window is for new requests only: a paused task is resumed from the toolbar popup (issue #13: its
+    // Open button there looked like the new request's and took the click meant for it).
+    if (windowMode) return request.state === 'pending';
     // Another browser's paused request stays there; its pending ones are listed with Open here.
     return request.state === 'pending' || (request.state === 'paused' && here(request));
   });
   if (windowMode && !closing && view.connection
-    && !visible.some(request => ['pending', 'paused'].includes(request.state) && here(request))) {
+    && !visible.some(request => request.state === 'pending' && here(request))) {
     // Approved, denied or expired: nothing left for this window.
     closing = true;
     window.close();
   }
-  const cards = visible.map(request => requestCard(request, { serving: request.requestId === servingId }));
+  // New requests first and apart, then the task in use, then paused tasks to resume, then stale ones folded away: the
+  // first button is always the newest request's, never an older task's (issue #13).
+  const serving = visible.filter(request => request.requestId === servingId);
+  const pending = visible.filter(request => request.requestId !== servingId && request.state === 'pending').sort(newestFirst);
+  const paused = visible.filter(request => request.requestId !== servingId && request.state === 'paused').sort(newestFirst);
+  const resumable = paused.filter(request => !request.stale);
+  const stale = paused.filter(request => request.stale);
+  const card = request => requestCard(request, { serving: request.requestId === servingId });
+  const cards = [];
+  if (pending.length && (serving.length || paused.length)) cards.push(sectionLabel('WAITING FOR YOUR APPROVAL', 'pending-section'));
+  cards.push(...pending.map(card), ...serving.map(card));
+  if (resumable.length) cards.push(sectionLabel('PAUSED TASKS', 'paused-section'), ...resumable.map(card));
+  if (stale.length) {
+    const fold = element('details', 'stale-requests');
+    fold.open = staleOpen;
+    fold.addEventListener('toggle', () => { staleOpen = fold.open; });
+    fold.append(element('summary', 'request-section stale-section', `Older paused tasks (${stale.length})`), ...stale.map(card));
+    cards.push(fold);
+  }
   checkHeld(visible);
   replaceCardsPreservingFocus(requestList, cards);
   const firstApprove = requestList.querySelector('.approve-request:not(:disabled)');

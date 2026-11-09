@@ -746,6 +746,46 @@ test('legacy start without a requestId picks the pending request for this origin
   assert.equal(h.sent.find(m => m.type === 'lease').requestId, 'req_mine');
 });
 
+// Issue #13 part 2: a start that names no request (an older popup's "Select tab and start") must never resolve to a
+// request other than the one the user would expect: the newest pending one for the tab's origin, else a paused request
+// only on its own tab. A paused request is never resumed on another tab, nor while a pending one asks for the origin.
+async function legacyStart(list, { activeTab = 7 } = {}) {
+  const h = harness();
+  await h.waitFor(m => m.type === 'hello');
+  h.push({ type: 'requests', requests: list });
+  await h.until(() => h.session.requests?.length === list.length);
+  h.setActiveTab(activeTab);
+  const reply = await h.send({ type: 'start', endpoint: ENDPOINT, secret: SECRET });
+  return { h, reply, lease: h.sent.find(m => m.type === 'lease') ?? null };
+}
+
+test('legacy start: of two pending requests for the origin, the newest is approved, never the oldest', async () => {
+  const { lease } = await legacyStart([
+    { requestId: 'req_old', state: 'pending', origins: [ORIGIN], createdAt: '2026-01-01T00:00:00Z' },
+    { requestId: 'req_new', state: 'pending', origins: [ORIGIN], createdAt: '2026-01-02T00:00:00Z' },
+  ]);
+  assert.equal(lease?.requestId, 'req_new');
+});
+
+test('legacy start: an old paused request never takes the click while a newer request is pending', async () => {
+  const { lease } = await legacyStart([
+    { requestId: 'req_paused', state: 'paused', origins: [ORIGIN], createdAt: '2026-01-01T00:00:00Z',
+      lease: { leaseId: 'old', tabId: 7 } },
+    { requestId: 'req_new', state: 'pending', origins: [ORIGIN], createdAt: '2026-01-02T00:00:00Z' },
+  ]);
+  assert.equal(lease?.requestId, 'req_new');
+});
+
+test('legacy start: a paused request resumes only on its own tab; on another tab nothing is leased', async () => {
+  const paused = { requestId: 'req_paused', state: 'paused', origins: [ORIGIN], createdAt: '2026-01-01T00:00:00Z',
+    lease: { leaseId: 'old', tabId: 12 } };
+  const elsewhere = await legacyStart([paused]);
+  assert.equal(elsewhere.lease, null, 'tab 7 is not the paused request\'s tab');
+  assert.match(elsewhere.reply.error, /Choose the request in the FAI Browser popup/);
+  const own = await legacyStart([{ ...paused, lease: { leaseId: 'old', tabId: 7 } }]);
+  assert.equal(own.lease?.requestId, 'req_paused');
+});
+
 test('an unpaired worker pairs through the native host, saves the pairing and connects', async () => {
   const h = harness({ paired: false, native: async () => ({ ok: true, endpoint: ENDPOINT, secret: SECRET, version: '0.2.0' }) });
   await h.waitFor(m => m.type === 'hello');
@@ -878,6 +918,39 @@ test('single-tab approval refuses agent opens and pauses on a page-created child
   const paused = await h.waitFor(m => m.type === 'status' && m.status === 'paused');
   assert.equal(paused.reason, 'child_tab');
   assert.equal(h.groups.size, 1);
+});
+
+// Issue #13 part 3: a child_tab pause names the origin of the tab or window the page opened (origin only, never its
+// path or query), so the agent can request it up front; a window that opens on about:blank reports it once it shows
+// a page; one whose URL the browser withholds names nothing.
+test('a child_tab pause names the child\'s origin only, also once it leaves about:blank; a withheld URL names none', async () => {
+  const h = await started();
+  h.chrome.tabs.onCreated.emit({ id: 99, openerTabId: 7, pendingUrl: 'https://signup.example.net/new?ref=secret-ish', windowId: 1 });
+  const paused = await h.waitFor(m => m.type === 'status' && m.status === 'paused');
+  assert.deepEqual({ reason: paused.reason, origin: paused.origin, leaseId: paused.leaseId },
+    { reason: 'child_tab', origin: 'https://signup.example.net', leaseId: LEASE_ID });
+
+  const late = await started();
+  late.openedTabs.set(99, { url: 'about:blank', status: 'loading' });
+  late.chrome.tabs.onCreated.emit({ id: 99, openerTabId: 7, url: 'about:blank', windowId: 2 });
+  const first = await late.waitFor(m => m.type === 'status' && m.status === 'paused');
+  assert.equal(first.reason, 'child_tab');
+  assert.equal(first.origin, undefined, 'nothing to name yet');
+  late.openedTabs.set(99, { url: 'https://signup.example.net/flow?token=abc#x', status: 'complete' });
+  const named = await late.waitFor(m => m.type === 'status' && typeof m.origin === 'string');
+  assert.deepEqual({ status: named.status, reason: named.reason, origin: named.origin, leaseId: named.leaseId },
+    { status: 'paused', reason: 'child_tab', origin: 'https://signup.example.net', leaseId: LEASE_ID });
+  await sleep(400);
+  assert.equal(late.sent.filter(m => m.type === 'status').length, 2, 'reported once');
+
+  const withheld = await started();
+  withheld.openedTabs.set(99, { status: 'complete' });
+  withheld.chrome.tabs.onCreated.emit({ id: 99, openerTabId: 7, windowId: 2 });
+  const none = await withheld.waitFor(m => m.type === 'status' && m.status === 'paused');
+  assert.equal(none.origin, undefined);
+  await sleep(400);
+  assert.equal(withheld.sent.some(m => m.type === 'status' && m.origin), false);
+  await withheld.send({ type: 'stop' });
 });
 
 const multiLease = { id: LEASE_ID, tabId: 7, requestId: 'req_1', tabMode: 'multiple' };

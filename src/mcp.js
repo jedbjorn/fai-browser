@@ -770,7 +770,9 @@ function requestLine(view) {
   const active = view.activeRunId ? `, active run ${view.activeRunId}` : '';
   const origins = Array.isArray(view.origins) && view.origins.length ? `, origins ${view.origins.join(' ')}` : '';
   const browser = view.browser?.name ? `, in ${oneLine(view.browser.name, 40)}` : '';
-  return `request: ${ids}${active}${origins}${browser}`;
+  // A paused request nobody is expected to continue (the daemon's staleOf): the popup no longer offers it for Resume.
+  const stale = ['newer_request', 'idle'].includes(view.stale) ? `, stale (${view.stale})` : '';
+  return `request: ${ids}${active}${origins}${browser}${stale}`;
 }
 
 // One line per connected browser in status: which ones an agent can name as `browser`, and what each holds.
@@ -1021,6 +1023,7 @@ function pageExtraLines(result) {
   }
   if (result.logsDropped) lines.push(`(${result.logsDropped} older log entries dropped)`);
   if (result.leftOrigin) lines.push(`tab went to: ${oneLine(result.leftOrigin, 300)}`);
+  if (result.childOrigin) lines.push(`page opened: ${oneLine(result.childOrigin, 300)}`);
   // Cross-origin frames: the ones read (their controls carry the id) and the ones not read, with why.
   if (Array.isArray(result.frames) && result.frames.length) {
     lines.push(`frames: ${result.frames.map(frame => (frame.read ? `${frame.id} ${frame.origin} (read)`
@@ -2163,7 +2166,20 @@ class McpServer {
     }
     // Only this session's own requests: never another session's tab, nor a tab the user invited another agent to.
     const live = Array.isArray(status?.requests) ? status.requests : [];
-    const views = live.filter(view => this.ownedRequests.has(view.requestId));
+    const owned = live.filter(view => this.ownedRequests.has(view.requestId));
+    // Its own stale requests (paused, and it asked for a newer tab since, or idle): never the one to wait on; named
+    // so the agent can release the ones it no longer needs (issue #13).
+    const stale = owned.filter(view => view.stale);
+    const next = this.nextForOwned(owned.filter(view => !view.stale));
+    if (!stale.length || !next) return next;
+    const ids = stale.map(view => view.requestId).join(', ');
+    const release = this.driver === 'jev' ? 'fai_browser_stop with its requestId' : 'fai_browser_release';
+    return { ...next, text: `${next.text} Stale (paused, not offered to the user for Resume): ${ids}; release each one `
+      + `you no longer need with ${release}.` };
+  }
+
+  /** nextForStatus for the session's own live requests that are not stale. */
+  nextForOwned(views) {
     const latest = list => list.find(view => view.requestId === this.lastRequestId) ?? list.at(-1);
     const running = latest(views.filter(view => view.activeRunId));
     if (running) {
