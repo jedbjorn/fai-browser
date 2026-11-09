@@ -8,6 +8,9 @@ import { fileURLToPath } from 'node:url';
 
 /** The CLI beside this module (absolute: the host's shell may start anywhere). */
 export const CLI_PATH = fileURLToPath(new URL('./cli.js', import.meta.url));
+/** What a session FAI can wake does instead of the wait command. */
+export const WAKE_TEXT = 'FAI Browser wakes this session with a message once the user has done it (no wait command '
+  + 'needed): tell the user, then end your turn.';
 /** The default --timeout of the resume wait: a paused lease expires after 30 minutes (src/daemon.js PAUSED_TTL_MS). */
 export const RESUME_WAIT_TIMEOUT = '30m';
 // What the CLI must share with this process to reach the same daemon. Never the client token: it stays in its file.
@@ -43,6 +46,9 @@ export function resumeWaitCommand(requestId, { env = process.env, execPath = pro
 export function resumeWaitText(requestId, options = {}) {
   // Only a daemon-issued id goes into a command (a result without one names no command).
   if (!REQUEST_ID.test(String(requestId ?? ''))) return '';
+  // A session FAI can wake (options.wake: claude-socket or codex-queue, src/wake.js) gets a message when the user
+  // approves or resumes this request: it ends its turn instead of starting a wait command.
+  if (options.wake) return WAKE_TEXT;
   return 'If you can run a background command that notifies you when it exits (for example Claude Code\'s Bash '
     + `run_in_background), start \`${resumeWaitCommand(requestId, options)}\` that way now, if one is not already `
     + 'running for this request, and end your turn: it exits 0 '

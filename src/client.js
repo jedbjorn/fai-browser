@@ -52,7 +52,7 @@ export class FaiClientError extends Error {
 const delay = ms => new Promise(resolveDelay => setTimeout(resolveDelay, ms));
 
 /** One HTTP/JSON call. Resolves {status, body, driver}; rejects only on transport failures. */
-function httpJson({ port, method, path, token, body, timeoutMs, signal, headers = {} }) {
+export function httpJson({ port, method, path, token, body, timeoutMs, signal, headers = {} }) {
   return new Promise((resolveCall, reject) => {
     const payload = body === undefined ? null : JSON.stringify(body);
     const requestHeaders = { Accept: 'application/json', ...headers };
@@ -175,7 +175,8 @@ async function waitForExit(port, deadline) {
 
 /**
  * Make sure a daemon is running and healthy, auto-starting one if needed (section 1).
- * Options: home, env, port, autoStart (default true), startTimeoutMs (default FAI_DAEMON_START_TIMEOUT_MS or
+ * Options: home, env, port, autoStart (default true), takeover (default true: an idle daemon of another version is
+ * shut down and replaced; false: `version_mismatch` instead), startTimeoutMs (default FAI_DAEMON_START_TIMEOUT_MS or
  * 5000), command (argv to spawn instead of src/daemon-main.js), version (default this package's).
  * Resolves {port, token, health, started, warnings}.
  */
@@ -190,6 +191,12 @@ export async function ensureDaemon(options = {}) {
   let port = resolveClientPort(paths, { port: options.port, env });
   let health = await probeHealth(port);
 
+  // `takeover: false` (the MCP server's background session loop): never stop a daemon of another version, however
+  // idle; refuse with `version_mismatch` instead, and leave the takeover to a real client call.
+  if (health && health.version !== version && options.takeover === false) {
+    throw new FaiClientError(409, 'version_mismatch', `The FAI Browser daemon runs ${health.version}, this client ${version}`,
+      { retryable: true });
+  }
   if (health && health.version !== version) {
     const token = readClientToken(paths, env);
     if (await isIdle(port, token)) {
@@ -239,9 +246,19 @@ export class FaiBrowserClient {
   }
 
   /** Connect to the daemon, auto-starting it unless autoStart is false. */
-  static async connect({ home, env, port, autoStart = true, clientName = 'sdk', startTimeoutMs, command } = {}) {
-    const daemon = await ensureDaemon({ home, env, port, autoStart, startTimeoutMs, command });
+  static async connect({ home, env, port, autoStart = true, takeover = true, clientName = 'sdk', startTimeoutMs, command } = {}) {
+    const daemon = await ensureDaemon({ home, env, port, autoStart, takeover, startTimeoutMs, command });
     return new FaiBrowserClient({ port: daemon.port, token: daemon.token, clientName, warnings: daemon.warnings });
+  }
+
+  /**
+   * The agent session this client speaks for (an MCP server's registry entry, `<sessionId>:<key>`), when one is set:
+   * `sessionAuth` is a string or a function returning one. The daemon records it as the owner of the requests it
+   * creates (woken on Approve and Resume) and as the session that joins an invite.
+   */
+  sessionHeader() {
+    const auth = typeof this.sessionAuth === 'function' ? this.sessionAuth() : this.sessionAuth;
+    return typeof auth === 'string' && auth ? { 'X-Fai-Session': auth } : {};
   }
 
   async request(method, path, body, { timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, signal } = {}) {
@@ -255,7 +272,7 @@ export class FaiBrowserClient {
         body,
         timeoutMs,
         signal,
-        headers: { 'X-Fai-Client': this.clientName },
+        headers: { 'X-Fai-Client': this.clientName, ...this.sessionHeader() },
       });
     } catch (error) {
       if (signal?.aborted) throw error;

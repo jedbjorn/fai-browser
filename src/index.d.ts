@@ -1863,6 +1863,10 @@ export interface RequestView {
   grant: Grant | null;
   activeRunId: string | null;
   lastRunId: string | null;
+  /** The live agent session that owns the request (made it through MCP, or joined its invite). */
+  owner?: { sessionId: string; host: string; repo: string } | null;
+  /** A tab the user invited an agent to from the popup: the invite and its wake. */
+  invite?: InviteView;
   /**
    * How a pending request is approved: `page` when the extension opened its page by itself (its "Open requested pages
    * right away" setting, on by default, for Interactive or less), where one click on the FAI Browser icon approves;
@@ -2066,8 +2070,47 @@ export interface DaemonStatus {
   /** The per-request call budget in effect (the popup setting, else config.json `budget`, else the defaults). */
   budget: EffectiveBudget;
   requests: RequestView[];
+  /** The live coding-agent sessions (one per MCP server process), without keys (docs/REFERENCE.md "Invites and wakes"). */
+  sessions?: AgentSessionView[];
+  /** Open invites the user made in the popup. */
+  invites?: InviteView[];
   runs: { active: RunSummary[]; recent: RunSummary[] };
   warnings: string[];
+}
+
+export type WakeCapability = 'claude-socket' | 'codex-queue' | 'none';
+
+export interface AgentSessionView {
+  sessionId: string;
+  host: 'claude' | 'codex' | 'opencode' | 'unknown';
+  /** The repository's folder name only. */
+  repo: string;
+  pid: number;
+  startedAt: string | null;
+  registeredAt: string | null;
+  lastSeenAt: string | null;
+  lastToolCallAt: string | null;
+  lastActiveAt: string | null;
+  wake: WakeCapability;
+  /** False for a Codex session whose thread id is not known yet (before its first FAI tool call). */
+  ready: boolean;
+}
+
+export interface InviteView {
+  /** `inv-` and 8 characters: single use, 10 minutes. */
+  inviteId: string;
+  requestId: string;
+  state: 'open' | 'joined' | 'expired' | 'revoked' | 'cancelled';
+  endReason: string | null;
+  level: AccessMode;
+  /** The invited tab's exact origin. */
+  origin: string;
+  createdAt: string;
+  expiresAt: string;
+  hasText: boolean;
+  session: { sessionId: string; host: string; repo: string } | null;
+  wake: { state: 'none' | 'queued' | 'sent' | 'delivered' | 'failed' | 'skipped'; error: { code: string; message: string } | null };
+  joinedBy: { host: string; repo: string } | null;
 }
 
 /** Every blocking client call returns within this bound. */

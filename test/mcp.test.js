@@ -162,7 +162,7 @@ test('tools/list returns exactly seven tools with closed inputs, short descripti
   const serialized = JSON.stringify(tools);
   assert.equal(serialized, JSON.stringify(JEV_TOOLS), 'wire serialization preserves the exported schema prefix and order');
   assert.equal(createHash('sha256').update(serialized).digest('hex'),
-    '670272da287cb9fbe4340e2385e372237228baf6f443ae14b041b6f08ecbbd78', 'tool schema bytes stay stable');
+    '547ae7a405954baaddb79e985f2b67a82acba42efa4b7461df5365121eb7b417', 'tool schema bytes stay stable');
   const repeated = await mcp.request('tools/list', {});
   assert.equal(JSON.stringify(repeated.result.tools), serialized, 'repeated tools/list reads are byte-identical');
   // 8126 bytes before step lists; `steps` adds about 420 (only its shape is declared: see src/mcp.js); the domain-root
@@ -170,8 +170,9 @@ test('tools/list returns exactly seven tools with closed inputs, short descripti
   // `instruction` about 22 (live Sonnet hosts sent an overall instruction with their steps); "can only lower the
   // user's setting" on `maxCalls` about 40 (the popup's budget setting is the ceiling); `point` on act (a guarded
   // click at screenshot pixels, for a host with vision) about 360: 9108 bytes measured with both; `browser` on run
-  // (which paired browser a new request opens in, issue #9) about 150: 9257 measured (limit: that plus a small margin).
-  assert.ok(Buffer.byteLength(JSON.stringify(response)) < 9300, 'the tool list stays small');
+  // (which paired browser a new request opens in, issue #9) about 150: 9257 measured; `inviteId` on run (the user's
+  // popup invite, docs/REFERENCE.md "Invites and wakes") about 150: 9404 measured (limit: that plus a small margin).
+  assert.ok(Buffer.byteLength(JSON.stringify(response)) < 9450, 'the tool list stays small');
   for (const tool of tools) {
     assert.equal(tool.inputSchema.type, 'object', tool.name);
     assert.equal(tool.inputSchema.additionalProperties, false, tool.name);
