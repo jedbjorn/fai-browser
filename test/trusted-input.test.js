@@ -97,6 +97,17 @@ test('an until step makes a call last a fixed time; past the deadline only the h
   assert.deepEqual(h.commands.map(c => `${c.params.type ?? 'text'}:${c.params.key ?? c.params.text}`), ['keyDown:a', 'keyDown:b', 'keyUp:a', 'keyUp:b']);
 });
 
+test('editing commands: select-all and (for macOS) Backspace\'s deleteBackward go out with their key; any other is dropped', () => {
+  const h = load();
+  const clean = step => JSON.parse(JSON.stringify(h.context.cleanTrustedStep(step, VIEWPORT)));
+  const backspace = { m: 'key', type: 'rawKeyDown', key: 'Backspace', code: 'Backspace', keyCode: 8 };
+  assert.deepEqual(clean({ ...backspace, commands: ['deleteBackward'] }).params.commands, ['deleteBackward']);
+  assert.deepEqual(clean({ m: 'key', type: 'rawKeyDown', key: 'a', code: 'KeyA', keyCode: 65, modifiers: 4, commands: ['selectAll'] }).params.commands, ['selectAll']);
+  for (const commands of [['insertText'], ['deleteBackward', 'paste'], ['selectAll', 'selectAll', 'selectAll'], 'deleteBackward']) {
+    assert.equal(clean({ ...backspace, commands }).params.commands, undefined, JSON.stringify(commands));
+  }
+});
+
 test('refuses other tabs, frames and senders, anything outside the step set, and does nothing while off', async () => {
   const h = load();
   await new Promise(resolve => setTimeout(resolve, 5));

@@ -179,9 +179,10 @@ test('intervals are right-skewed, with a human coefficient of variation', () => 
 function timings(blind) {
   const random = seeded(blind ? 31 : 32);
   const texts = blind ? ['Tr0ub4dor&3!xy', 'correct horse battery', 'P@ssw0rd-Is-Long', 'aaaaaaaa'] : [...SENTENCES, 'Hi there', 'Fjord Hotels'];
-  const out = { hold: [], interval: [], upToDown: [], upToShift: [], ratio: [] };
+  const out = { hold: [], interval: [], upToDown: [], upToShift: [], ratio: [], delta: [] };
   for (let i = 0; i < 6000; i++) {
     const p = plan(texts[i % texts.length], { session: session(i + 1), random, blind, slips: !blind, ...UNBOUNDED });
+    for (let k = 1; k < p.events.length; k++) out.delta.push(p.events[k].at - p.events[k - 1].at);
     const downAt = new Map();
     const upAt = new Map();
     let lastDown = null;
@@ -236,6 +237,16 @@ test('no artifacts: no 1 ms bin of holds, intervals or keyup-to-keydown times pi
     assert.ok(most / t.ratio.length < 0.002, `${blind ? 'blind' : 'normal'}: one hold/interval ratio in ${most} of ${t.ratio.length}`);
     // A blind hold is as long as a normal one.
     if (blind) assert.ok(median(t.hold) > 55, `blind hold median ${median(t.hold)}`);
+    // The time between two events rises from its floor instead of starting with a full bin there: the lowest
+    // populated 1 ms bins hold a small share of the fuller bins a few ms above them.
+    const bins = new Map();
+    for (const d of t.delta) bins.set(Math.floor(d), (bins.get(Math.floor(d)) ?? 0) + 1);
+    const floor = Math.min(...bins.keys());
+    const above = Math.max(...Array.from({ length: 20 }, (_, k) => bins.get(floor + 3 + k) ?? 0));
+    for (const k of [0, 1]) {
+      const count = bins.get(floor + k) ?? 0;
+      assert.ok(count < 0.3 * above, `${blind ? 'blind' : 'normal'}: bin ${floor + k} ms holds ${count}, the fullest above ${above}`);
+    }
   }
 });
 
@@ -484,4 +495,37 @@ test('slips forced on: thousands of random values still type exactly; slips coun
     if (p.chunked) assert.equal(p.slips, 0);
   }
   assert.ok(dropped > 0 && dropped < 2000, `dropped ${dropped}`);
+});
+
+test('containedOnce: a formatter\'s output holds the value; the value twice or with residue in it does not', () => {
+  const once = rhythm.containedOnce;
+  for (const [value, text] of [
+    ['$1,500.00', '1500'], ['1,500', '1500'], ['$0.00', '0'], ['+1 5551234567', '5551234567'], ['(555) 123-4567', '555 123 4567'],
+    ['ABC123', 'abc123'], ['NO9386011117947', 'NO93 8601 1117 947'], ['https://example.com', 'example.com'],
+    ['#abc', 'abc'], ['12 kg', '12'], ['@ada', 'ada'], ['Oslo', 'oslo'], ['', ''],
+  ]) assert.equal(once(value, text), true, `${JSON.stringify(value)} holds ${JSON.stringify(text)}`);
+  for (const [value, text] of [
+    ['abcabc', 'abc'], ['15001500', '1500'], ['$1,500.00$1,500.00', '1500'], ['resxervations', 'reservations'],
+    ['rservations', 'reservations'], ['old valuenew', 'new value'], ['x', ''], ['', 'abc'],
+  ]) assert.equal(once(value, text), false, `${JSON.stringify(value)} does not hold ${JSON.stringify(text)}`);
+});
+
+test('Backspace through trusted input: macOS carries its deleteBackward command on the key press, other platforms none', () => {
+  const mac = vm.createContext({ navigator: { platform: 'MacIntel' }, document: { hidden: false }, performance, setTimeout, clearTimeout });
+  vm.runInContext(SOURCE, mac);
+  const onMac = local(mac.__faiInput.rhythm.backspace);
+  const elsewhere = local(rhythm.backspace);
+  assert.deepEqual(onMac('rawKeyDown'), { m: 'key', type: 'rawKeyDown', key: 'Backspace', code: 'Backspace', keyCode: 8, modifiers: 0, commands: ['deleteBackward'] });
+  assert.deepEqual(onMac('keyUp'), { m: 'key', type: 'keyUp', key: 'Backspace', code: 'Backspace', keyCode: 8, modifiers: 0 });
+  assert.deepEqual(elsewhere('rawKeyDown'), { m: 'key', type: 'rawKeyDown', key: 'Backspace', code: 'Backspace', keyCode: 8, modifiers: 0 });
+  // A slip's steps on macOS carry it too.
+  const slipRandom = seeded(4);
+  let slipped = null;
+  for (let i = 0; !slipped && i < 200; i++) {
+    const p = JSON.parse(JSON.stringify(mac.__faiInput.rhythm.plan('typing slowly', { session: session(i + 1), random: slipRandom, slips: true, slipRate: 1, budgetMs: 1e9, maxTyped: 1e6 })));
+    if (p.slips) slipped = p;
+  }
+  const steps = JSON.parse(JSON.stringify(mac.__faiInput.rhythm.steps(Array.from('typing slowly'), slipped)));
+  const presses = steps.filter(step => step.key === 'Backspace' && step.type === 'rawKeyDown');
+  assert.ok(presses.length && presses.every(step => step.commands?.[0] === 'deleteBackward'));
 });

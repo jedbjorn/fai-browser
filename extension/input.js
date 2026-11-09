@@ -540,7 +540,8 @@
     holdMin: 30,
     holdMax: 180,
     flight: [12, 14, 0.55], // keyup to the next keydown where the key must be up first: floor + log-normal(median, sigma)
-    pad: [3, 12], // a per-key margin over `sep` and holdMin wherever events are pushed apart: low + exponential(mean)
+    pad: [10, 0.55], // a per-key margin over `sep` and holdMin wherever events are pushed apart: log-normal (median, sigma),
+    // so its density rises from zero (mode about 7 ms) instead of stepping up at a floor
     burst: [3, 8], // keys per burst
     inBurst: 0.92,
     burstStart: 1.3,
@@ -697,8 +698,7 @@
       }
       return low + random() * (high - low);
     };
-    const exponential = mean => -mean * Math.log(1 - random());
-    const pad = () => RHYTHM.pad[0] + exponential(RHYTHM.pad[1]);
+    const pad = () => logNormal(RHYTHM.pad[0], RHYTHM.pad[1], 0, 90);
     const out = { iki: [], extra: [], hold: [], lead: [], flight: [], pad: [], shiftAt: [], bursts: [], start: 0, tail: 0, shiftEnd: 0 };
     let burstLeft = 0;
     let hesitated = 0;
@@ -985,7 +985,28 @@
     return proceed;
   }
 
+  // Selects the field's whole value directly; whether it is (as far as the field can say).
+  function selectWhole(el) {
+    try {
+      el.select();
+    } catch {
+      return false;
+    }
+    return wholeSelected(el);
+  }
+
+  function wholeSelected(el) {
+    try {
+      if (typeof el.selectionStart === 'number') return el.selectionStart === 0 && el.selectionEnd === el.value.length;
+    } catch {
+      // No selection API on this input type: nothing says otherwise.
+    }
+    return true;
+  }
+
   // Ctrl/Cmd+A, synthetic: the page's own handlers see it, and the field's whole value is what the next edit replaces.
+  // A page that cancels the shortcut (a combobox keeping Ctrl+A for itself) gets the value selected directly, so the
+  // next edit still replaces it rather than adding to it. Resolves whether the whole value is selected.
   async function selectAll(el, state) {
     state.onShortcut = () => {
       try {
@@ -997,6 +1018,8 @@
     };
     await shortcut(el, 'a', state);
     delete state.onShortcut;
+    if (!state.replaceAll && el.isConnected && selectWhole(el)) state.replaceAll = true;
+    return state.replaceAll;
   }
 
   // CDP modifier bits.
@@ -1017,7 +1040,20 @@
       { wait: Math.round(jitter(60, 30, 15)) }];
   }
 
-  const trustedBackspace = (type, modifiers = 0) => ({ m: 'key', type, key: 'Backspace', code: 'Backspace', keyCode: 8, modifiers });
+  // Trusted Ctrl/Cmd+A on its own call, then the selection checked: a page that cancelled it gets the value selected
+  // directly (the browser's own keys then replace the selection). Resolves whether anything was dispatched.
+  async function trustedSelect(el) {
+    if (!(await sendTrusted(trustedSelectAll())).dispatched) return false;
+    if (el.isConnected && !wholeSelected(el)) selectWhole(el);
+    return true;
+  }
+
+  // Backspace as the browser's own key. On macOS the key alone edits nothing through the debugger: its editing command
+  // goes with it, as Chrome's own keyboard sends it there (Playwright does the same).
+  const trustedBackspace = (type, modifiers = 0) => ({
+    m: 'key', type, key: 'Backspace', code: 'Backspace', keyCode: 8, modifiers,
+    ...(MAC && type === 'rawKeyDown' ? { commands: ['deleteBackward'] } : {}),
+  });
 
   // The trusted-input steps of a plan: its events with the waits between them (none over TRUSTED_WAIT_MS; the
   // worker's limit is 600), Shift, keys and Backspace as the browser's own.
@@ -1057,25 +1093,25 @@
   // goes in as one insertion: on the synthetic path here, on the trusted path as the worker's deadline.
   const RHYTHM_LATE_MS = 400;
   // A blind plan's trusted call lasts a fixed time from its first step (an `until` step): its planned waits, then
-  // this margin plus a share per character for the commands themselves, so the number of Shift changes in a secret
-  // does not show in how long it took.
+  // this margin plus BLIND_STEP_MS for each command the worst case of its length sends (a Shift change around every
+  // key, Backspace, the inserted rest), so the number of Shift changes in a secret does not show in how long it took.
   const BLIND_MARGIN_MS = 100;
-  const BLIND_PER_CHAR_MS = 6;
+  const BLIND_STEP_MS = 3;
 
-  // Trusted typing: select-all when the field holds something, the plan's keys (or Backspace for an empty value), the
-  // rest as one insertText. Null when nothing was dispatched (the synthetic path runs instead); `late` when the worker
-  // stopped pressing keys at the deadline.
+  // Trusted typing: select-all when the field holds something (its own call, trustedSelect), the plan's keys (or
+  // Backspace for an empty value), the rest as one insertText. Null when nothing was dispatched (the synthetic path
+  // runs instead); `late` when the worker stopped pressing keys at the deadline.
   async function typeTrusted(el, chars, plan) {
-    const steps = el.value ? trustedSelectAll() : [];
-    const before = steps.reduce((sum, step) => sum + (step.wait ?? 0), 0);
+    if (el.value && !(await trustedSelect(el))) return null;
+    const steps = [];
     if (!chars.length && el.value) {
       steps.push(trustedBackspace('rawKeyDown'), { wait: Math.round(jitter(70, 30, 35)) }, trustedBackspace('keyUp'));
     }
     steps.push(...rhythmSteps(chars, plan));
     if (plan.chunked) steps.push({ wait: Math.round(jitter(60, 30, 15)) }, { m: 'text', text: chars.slice(plan.typed).join('') });
     const planned = steps.reduce((sum, step) => sum + (step.wait ?? 0), 0);
-    if (plan.blind) steps.push({ until: planned + BLIND_MARGIN_MS + BLIND_PER_CHAR_MS * chars.length });
-    const reply = await sendTrusted(steps, { deadline: before + plan.total + RHYTHM_LATE_MS });
+    if (plan.blind) steps.push({ until: planned + BLIND_MARGIN_MS + BLIND_STEP_MS * (3 * chars.length + 4) });
+    const reply = await sendTrusted(steps, { deadline: plan.total + RHYTHM_LATE_MS });
     return reply.dispatched ? { typed: plan.typed, chunked: plan.chunked, late: reply.late === true } : null;
   }
 
@@ -1136,32 +1172,59 @@
     return el.maxLength >= 0 ? fitUnits(text, el.maxLength) : text;
   }
 
-  // Field types whose value is exactly what was typed (email and url trim their ends).
+  // A field with a suggestion list (combobox, aria-autocomplete, a datalist, a popup): what it shows after typing is
+  // its own completion, and a Backspace or a wrong letter could pick a suggestion.
+  function suggests(el) {
+    const popup = (el.getAttribute('aria-haspopup') || 'false').toLowerCase();
+    return el.getAttribute('role') === 'combobox' || (el.getAttribute('aria-autocomplete') || 'none').toLowerCase() !== 'none'
+      || el.hasAttribute('list') || popup !== 'false';
+  }
+
+  /**
+   * Whether `value` shows `text` once: with whitespace and case ignored, the text occurs exactly once (a formatter's
+   * prefix or suffix, a country code, a currency sign, upper case pass; the text twice, or residue inside it, does
+   * not); for a number-like text, its digits occur exactly once in the value's digits, after the value drops a
+   * decimal part of zeros the text did not have ("1500" in "$1,500.00"). Same rule as page.js fillKept.
+   */
+  function containedOnce(value, text) {
+    const squash = s => String(s ?? '').replace(/\s+/g, '').toLowerCase();
+    const want = squash(text);
+    const have = squash(value);
+    if (!want) return !have;
+    if (have.split(want).length === 2) return true;
+    if (!/\d/.test(want) || !/^[\d()+.,\-$€£¥%]+$/.test(want)) return false;
+    const wantDigits = want.replace(/\D/g, '');
+    const haveDigits = (/[.,]/.test(want) ? have : have.replace(/[.,]0{1,2}(?!\d)/g, '')).replace(/\D/g, '');
+    return haveDigits.split(wantDigits).length === 2;
+  }
+
+  // Field types whose value is what was typed, give or take a formatter.
   const EXACT_TYPES = new Set(['text', 'search', 'tel', 'password', 'email', 'url']);
+  // Whether the field holds the value well enough to leave it: a field with a suggestion list always (its completion
+  // is its own), a field of another type always, else the value shown once (containedOnce): a formatter's output
+  // stands, only real residue (a slip's leftover, a dropped or doubled key) is corrected.
   function holds(el, expected) {
-    if (el.tagName === 'TEXTAREA') return el.value === expected;
-    if (el.tagName !== 'INPUT' || !EXACT_TYPES.has(el.type)) return true;
-    return el.value === (el.type === 'email' || el.type === 'url' ? expected.trim() : expected);
+    if (el.tagName !== 'TEXTAREA' && (el.tagName !== 'INPUT' || !EXACT_TYPES.has(el.type))) return true;
+    if (suggests(el)) return true;
+    return containedOnce(el.value, expected);
   }
 
   // Slips go only where a wrong key and a Backspace can do no harm: plain text, search, email and url inputs and
   // textareas without maxlength (no one-time-code boxes, no truncation), no numeric keyboard, no one-time-code,
-  // payment or password autocomplete, and nothing with a suggestion list that could take the Backspace or a wrong
-  // suggestion (combobox, aria-autocomplete, a datalist, a popup).
+  // payment or password autocomplete, and no suggestion list that could take the Backspace or a wrong suggestion.
   function slipsAllowed(el) {
     if (el.maxLength >= 0) return false;
     if (el.tagName === 'INPUT' ? !['text', 'search', 'email', 'url'].includes(el.type) : el.tagName !== 'TEXTAREA') return false;
     if (['numeric', 'decimal', 'tel', 'none'].includes((el.getAttribute('inputmode') || '').toLowerCase())) return false;
     if (/one-time-code|cc-|password/.test((el.getAttribute('autocomplete') || '').toLowerCase())) return false;
-    const popup = (el.getAttribute('aria-haspopup') || 'false').toLowerCase();
-    return el.getAttribute('role') !== 'combobox' && (el.getAttribute('aria-autocomplete') || 'none').toLowerCase() === 'none'
-      && !el.hasAttribute('list') && popup === 'false';
+    return !suggests(el);
   }
 
   // After the keys: a fill that stopped early gets the rest of its text (inserted at the end when what the field
-  // shows is the start of it); then, when the field does not hold exactly the value (a page's formatter or
-  // autocomplete, a key it swallowed), one correction: select all and insert the value (Backspace for an empty one).
-  // Trusted when the keys were. Resolves whether it corrected.
+  // shows is the start of it); then, when the field does not hold the value (holds: residue, not a formatter's
+  // output), one correction: select all and insert the value (Backspace for an empty one). Trusted when the keys
+  // were. Skipped when the whole value cannot be selected (it would add to the value, not replace it). Resolves
+  // whether it corrected.
   async function completeValue(el, expected, { stopped, trusted }) {
     if (!el.isConnected) return false;
     if (stopped && el.value !== expected && expected.startsWith(el.value)) {
@@ -1179,13 +1242,14 @@
       }
     }
     if (!el.isConnected || holds(el, expected)) return false;
-    if (trusted) {
-      const steps = [...trustedSelectAll(), expected ? { m: 'text', text: expected } : trustedBackspace('rawKeyDown'),
-        ...(expected ? [] : [{ wait: Math.round(jitter(70, 30, 35)) }, trustedBackspace('keyUp')])];
+    if (trusted && (await trustedSelect(el))) {
+      if (!el.isConnected || !wholeSelected(el)) return false;
+      const steps = expected ? [{ m: 'text', text: expected }]
+        : [trustedBackspace('rawKeyDown'), { wait: Math.round(jitter(70, 30, 35)) }, trustedBackspace('keyUp')];
       if ((await sendTrusted(steps)).dispatched) return true;
     }
     const state = { replaceAll: false };
-    await selectAll(el, state);
+    if (!(await selectAll(el, state))) return false;
     if (expected) inputText(el, expected, state);
     else deleteBackward(el, state);
     return true;
@@ -1519,6 +1583,6 @@
     click, keyboardClick, type, enter, press, hover, select, scroll, reveal, configure,
     stats: () => ({ ...totals }),
     // The typing rhythm's pure parts, for test/typing-rhythm.test.js.
-    rhythm: { session: rhythmSession, plan: typingPlan, steps: rhythmSteps, seeded, params: RHYTHM, neighbours: NEIGHBOURS },
+    rhythm: { session: rhythmSession, plan: typingPlan, steps: rhythmSteps, seeded, params: RHYTHM, neighbours: NEIGHBOURS, containedOnce, backspace: trustedBackspace },
   };
 })();

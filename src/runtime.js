@@ -3408,7 +3408,7 @@ class Session {
         this.runtime.secretIds);
       validateObservation(execution?.observation);
     } catch (error) {
-      if (error?.code === 'stale' || error?.code === 'target_unavailable' || error?.code === 'unsupported') {
+      if (['stale', 'target_unavailable', 'unsupported', 'line_break_input'].includes(error?.code)) {
         // The page script rejects these before acting, so nothing happened; drop the record.
         this.result.steps.pop();
       } else {

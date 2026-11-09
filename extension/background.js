@@ -108,6 +108,8 @@ const KNOWN_CODES = new Set([
   'no_control', 'point_outside', 'point_frame',
   // The page stopped answering while a JavaScript dialog (alert, confirm, prompt) is most likely open (callPage).
   'js_dialog',
+  // A fill with a line break aimed at a single-line input (page.js refuseLineBreak): refused, nothing typed.
+  'line_break_input',
 ]);
 const RECOVERABLE = new Set(['stale', 'target_unavailable', 'capture_failed']);
 // Message types that get exactly one reply, and their HTTP fallback paths.
@@ -1838,7 +1840,8 @@ function sessionStore(method, value) {
     return Promise.resolve(null);
   }
 }
-sessionStore('get', ['typingRhythm']).then(saved => {
+// Page calls wait for this read, so a restarted worker never draws a new seed before the saved one is back.
+const typingRhythmRestored = sessionStore('get', ['typingRhythm']).then(saved => {
   const kept = saved?.typingRhythm;
   if (!typingRhythm.seed && Number.isInteger(kept?.seed) && kept.seed > 0) typingRhythm = { leaseId: kept.leaseId ?? null, seed: kept.seed };
 });
@@ -1987,6 +1990,7 @@ async function scriptPage(details) {
 }
 
 async function callPageOnce(tabId, method, args = []) {
+  await typingRhythmRestored;
   const secrets = secretOptions();
   let [injection] = await scriptPage({ target: { tabId }, func: pageCall, args: [method, args, secrets] });
   if (injection?.result?.missing) {
