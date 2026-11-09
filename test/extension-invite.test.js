@@ -17,7 +17,8 @@ test('invite card helpers: labels, the copy line and what each wake state says',
   assert.equal(joinLine('inv-abcd2345'), 'join FAI invite inv-abcd2345');
   const session = { host: 'claude', repo: 'fai-browser' };
   assert.deepEqual(wakeLine({ state: 'open', session, wake: { state: 'queued' } }), { text: 'Waking Claude Code · fai-browser…', fallback: false });
-  assert.equal(wakeLine({ state: 'open', session, wake: { state: 'delivered' } }).fallback, false);
+  assert.deepEqual(wakeLine({ state: 'open', session, wake: { state: 'delivered' } }),
+    { text: 'Sent to Claude Code · fai-browser. It should start in a moment.', fallback: 'soft' });
   const failed = wakeLine({ state: 'open', session, wake: { state: 'failed', error: { message: 'crossSessionInbound is refuse' } } });
   assert.equal(failed.fallback, true);
   assert.match(failed.text, /Could not wake Claude Code · fai-browser \(crossSessionInbound is refuse\)/);
@@ -94,8 +95,9 @@ test('popup: one live session is one tap; the level defaults to Use and the text
   await page.waitForSelector('#invite .invite-status');
   const sent = await page.evaluate(() => __sent.filter(message => message.type === 'invite'));
   assert.deepEqual(sent, [{ type: 'invite', sessionId: 'ses_1', level: 'interactive', text: 'Compare the two plans' }]);
-  assert.match(await page.textContent('#invite .invite-line'), /got the invite/);
-  assert.equal(await page.$('#invite .invite-copy'), null, 'no copy line when the wake went through');
+  assert.match(await page.textContent('#invite .invite-line'), /^Sent to Claude Code · fai-browser\. It should start in a moment\.$/);
+  assert.match(await page.textContent('#invite .invite-copy-text'), /^If it does not start, tell it: join FAI invite inv-abcd2345$/,
+    'sent is not received: the copy line stays, softly');
 });
 
 test('popup: several sessions are a one-tap list; a level chip is remembered; a failed wake shows the copy line', async t => {

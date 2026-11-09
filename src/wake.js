@@ -154,6 +154,9 @@ export async function deliverCodexQueue({ threadId, text, env = process.env, tim
  * `{"type":"user","message":{"role":"user","content":text}}`, one JSON object per line. Resolves {ok: true} once both
  * lines are written and the socket closed or stayed quiet without an error line, else {ok: false, code, message}:
  * `no_socket`, `connect_failed`, `refused` (the session answered with an error), `timeout`.
+ * Claude Code 2.1.319 answers nothing on this socket, neither to a message it takes nor to a wrong token (it closes),
+ * and a message its crossSessionInbound setting holds or refuses looks the same: ok means "sent", not "received".
+ * Anything it does write back is kept as `reply`.
  */
 export function deliverClaudeSocket({ path, token, text, timeoutMs = SOCKET_TIMEOUT_MS, quietMs = 300 }) {
   if (!path || !token) return Promise.resolve({ ok: false, code: 'no_socket', message: 'This session has no messaging socket.' });

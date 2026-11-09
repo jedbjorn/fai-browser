@@ -548,7 +548,10 @@ MCP server writes the text from fixed templates in `src/wake.js`, prefixed `[FAI
 invited you … Call fai_browser_open with {"inviteId": "inv-…"}", then the user's words on one labelled line), an
 approval ("The user approved tab request req_… at level …") or a resume ("The user resumed tab request req_…"), each
 naming the tool to call next (`fai_browser_run` with the Jev autopilot). A wake never contains a page title, URL, origin
-or page text. It reports `delivered`, `failed` (`no_socket`, `connect_failed`, `refused`, `timeout`, `unknown_thread`,
+or page text. It reports `delivered` (written to the channel: Claude Code's socket answers nothing, not even to a wrong
+token or a message `crossSessionInbound` holds or refuses, checked on 2.1.319, so this means sent, not received, and the
+popup says "Sent to …"; anything the socket does write back is kept as the wake's `detail`; for Codex, `codex queue`
+exited 0), `failed` (`no_socket`, `connect_failed`, `refused`, `timeout`, `unknown_thread`,
 `no_codex`, `codex_failed`) or `skipped` (a call already waiting on that request returns the page itself); a wake no
 poll picks up fails after 10 s (`not_polling`), one never reported after 25 s (`no_report`).
 
@@ -569,8 +572,9 @@ browser needs it (Firefox, the exact origin), and the worker, which accepts `inv
 `sessionId`, `text`) over its paired channel. The daemon creates a request for that tab's exact origin (never a domain
 root), binds it at once as the browser's lease at the chosen level (single tab; it supersedes that browser's other
 lease as any approval does), creates a single-use invite id (`inv-` and 8 characters, 10 minutes), and queues the
-wake. The tab gets the usual `FAI` group mark. The card then shows "Waking …", "… got the invite and starts in a
-moment", or, when the wake failed or the session cannot be woken, **Tell your agent: join FAI invite inv-…** with
+wake. The tab gets the usual `FAI` group mark. The card then shows "Waking …", "Sent to …. It should start in a
+moment" (with "If it does not start, tell it: join FAI invite inv-…" under it: a held message shows in Claude Code
+for you to accept), or, when the wake failed or the session cannot be woken, **Tell your agent: join FAI invite inv-…** with
 **Copy**, and **Cancel invite** until an agent joins. No client API route creates an invite.
 
 **Joining.** `fai_browser_open {"inviteId": "inv-…"}` (or `fai_browser_run` with the Jev autopilot) calls
