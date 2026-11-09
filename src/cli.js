@@ -14,6 +14,7 @@ import { validateExpectation } from './expectation.js';
 import { LIST_MAX_ACTIONS, checkSummary, validateSteps } from './steps.js';
 import { LEVELS, normalizeAdditions } from './guardrails.js';
 import { requestStartUrl } from './origins.js';
+import { RESUME_WAIT_TIMEOUT } from './resume.js';
 
 const FAI_HOME = faiHome();
 const DEFAULT_LEASE_TIMEOUT_MS = 120_000;
@@ -27,6 +28,9 @@ const TERMINAL_REQUEST_STATES = new Set(['denied', 'expired', 'cancelled', 'rele
 const USAGE = `Usage (your agent chooses each action; the default driver):
   fai-browser request-tab --origin O [--origin O2] --reason TEXT [--mode M] [--instruction TEXT]
   fai-browser wait (<requestId> | --run <runId>) [--max-ms N]
+  fai-browser wait <requestId> --until active [--timeout 30m]
+                           block until the user resumes or approves the tab (run it in the background: it exits 0
+                           active, 3 ended, 2 timeout)
   fai-browser observe --request ID [--mode M] [--capture last]   (--capture last: also a screenshot)
   fai-browser act --request ID --action a3 --revision R [--expect-* ...]
   fai-browser act --request ID --point X,Y --revision R      (pixels of the observe screenshot; a guarded click)
@@ -82,7 +86,9 @@ Global flags:
   --no-auto-start          Fail with daemon_unreachable instead of starting the daemon
 
 Stdout is one JSON line. Exit codes for step/run/act: 0 completed|unverified|checkpoint,
-2 needs_user|needs_host|budget_exhausted|stopped, 1 failed. Other commands: 0 success, 1 error.
+2 needs_user|needs_host|budget_exhausted|stopped, 1 failed. wait --until active: 0 active, 3 the request ended
+(released, expired, denied, cancelled or unknown), 2 timeout (still pending or paused), 130 interrupted, 1 error.
+Other commands: 0 success, 1 error.
 First run: npm run setup. Every command except install and install-native starts the daemon if it is not running.`;
 
 class ConfigError extends Error {
@@ -169,6 +175,8 @@ function parseCli(argv) {
         policy: { type: 'string' },
         run: { type: 'string' },
         'max-ms': { type: 'string' },
+        until: { type: 'string' },
+        timeout: { type: 'string' },
         action: { type: 'string' },
         point: { type: 'string' },
         'open-tab': { type: 'string' },
@@ -800,6 +808,166 @@ async function commandWait(flags, positionals) {
   return client.wait({ requestId: positional(positionals, 1, 'A requestId (or --run <runId>)'), maxMs });
 }
 
+// wait --until active: the background command a host runs so the user's Resume (or approval) in the extension wakes
+// it (src/resume.js). Each round is one daemon long poll (POST /v1/wait, which blocks while the request is pending or
+// paused), so nothing spins; a daemon that stops answering is retried with a short backoff until the timeout.
+const UNTIL_EXIT = Object.freeze({ active: 0, timeout: 2, ended: 3, interrupted: 130 });
+const UNTIL_MAX_MS = 24 * 3_600_000;
+// A round that comes back early (a daemon shutting down answers at once) is not repeated sooner than this.
+const UNTIL_MIN_ROUND_MS = 250;
+const UNTIL_BACKOFF_MS = [250, 500, 1000, 2000, 5000];
+// After this long without a daemon, a reconnect may start one again (unless --no-auto-start): a new daemon answers
+// unknown_request at once instead of the wait hanging until its timeout.
+const UNTIL_RESTART_AFTER_MS = 30_000;
+
+/** A duration flag: an integer with a unit, ms, s, m or h (`30m`, `90s`, `1500ms`). */
+function durationFlag(name, value, { max = UNTIL_MAX_MS } = {}) {
+  const match = /^(\d+)(ms|s|m|h)$/.exec(String(value).trim());
+  const ms = match ? Number(match[1]) * { ms: 1, s: 1000, m: 60_000, h: 3_600_000 }[match[2]] : NaN;
+  if (!Number.isSafeInteger(ms) || ms > max) {
+    throw new ConfigError(`--${name} must be a duration with a unit, ms, s, m or h (for example 30m), of at most 24h`);
+  }
+  return ms;
+}
+
+function untilNext(outcome, requestId, timeoutText) {
+  const ref = `requestId ${requestId}`;
+  switch (outcome.state) {
+    case 'active':
+      return { kind: 'observe', text: `The tab is ready (request ${requestId} is active). Continue the task: call `
+        + `fai_browser_observe with ${ref} (Jev driver: fai_browser_run with ${ref}; CLI: observe --request `
+        + `${requestId}).` };
+    case 'timeout':
+      return { kind: 'relay', text: `Request ${requestId} is still ${outcome.lastState ?? 'waiting'} after `
+        + `${timeoutText}. Ask the user to ${outcome.lastState === 'pending' ? 'approve it' : 'click Resume'} in the `
+        + `FAI Browser extension and to tell you when they have; then call fai_browser_observe with ${ref}, or run this `
+        + 'wait again.' };
+    case 'interrupted':
+      return { kind: 'stop', text: `The wait was interrupted before request ${requestId} became active. Run it again, `
+        + 'or ask the user to tell you when they have resumed.' };
+    case 'unknown':
+      return { kind: 'stop', text: `The daemon no longer knows request ${requestId} (it may have restarted). Tell the `
+        + 'user; request a tab again only if they still want this.' };
+    default:
+      if (outcome.reason === 'superseded') {
+        return { kind: 'stop', text: `Request ${requestId} was replaced by a newer approved request. Continue on that `
+          + 'request\'s requestId, or ask the user.' };
+      }
+      return { kind: 'stop', text: `Tab request ${requestId} has ended (${outcome.state}`
+        + `${outcome.reason && outcome.reason !== outcome.state ? `: ${outcome.reason}` : ''}). Tell the user; request a `
+        + 'tab again only if they still want this.' };
+  }
+}
+
+// Daemon trouble the wait outlives: no answer (stopped, restarting, a reset socket or an HTTP timeout), shutting down,
+// or a token that changed under a client connected before (a fresh connection refused is a real configuration error).
+function transientWaitError(error, fresh) {
+  const status = Number.isInteger(error?.status) ? error.status : 0;
+  if (error?.code === 'port_in_use') return false;
+  return error?.code === 'daemon_unreachable' || status === 503 || (status === 401 && !fresh);
+}
+
+function pause(ms, signal) {
+  return new Promise(resolvePause => {
+    if (signal.aborted || ms <= 0) {
+      resolvePause();
+      return;
+    }
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', done);
+      resolvePause();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener('abort', done, { once: true });
+  });
+}
+
+async function commandWaitUntil(flags, positionals) {
+  if (flags.until !== 'active') throw new ConfigError('--until takes active (wait until the tab lease is usable)');
+  if (flags.run) throw new ConfigError('--until waits on a tab request: give a requestId, not --run');
+  if (flags['max-ms'] !== undefined) throw new ConfigError('--max-ms bounds one wait call; with --until use --timeout');
+  const requestId = positional(positionals, 1, 'A requestId');
+  const timeoutText = flags.timeout ?? RESUME_WAIT_TIMEOUT;
+  const timeoutMs = durationFlag('timeout', timeoutText);
+  const started = Date.now();
+  const deadline = started + timeoutMs;
+  const controller = new AbortController();
+  const { signal } = controller;
+  const onSignal = () => controller.abort();
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+  const { FaiBrowserClient } = await import('./client.js');
+  let client = null;
+  let fresh = false;
+  let last = null;
+  let reconnects = 0;
+  let failures = 0;
+  let downSince = null;
+  const finish = (state, extra = {}) => {
+    const outcome = {
+      state,
+      requestId,
+      until: 'active',
+      ...extra,
+      reason: extra.reason ?? last?.stateReason ?? null,
+      waitedMs: Date.now() - started,
+      reconnects,
+      request: last,
+    };
+    outcome.next = untilNext(outcome, requestId, timeoutText);
+    const exitCode = state === 'active' ? UNTIL_EXIT.active
+      : state === 'timeout' ? UNTIL_EXIT.timeout
+        : state === 'interrupted' ? UNTIL_EXIT.interrupted : UNTIL_EXIT.ended;
+    return { value: outcome, exitCode };
+  };
+  const timedOut = () => finish('timeout', { lastState: last?.state ?? null });
+  try {
+    for (;;) {
+      if (signal.aborted) return finish('interrupted');
+      try {
+        if (!client) {
+          // The first connection follows the usual auto-start; a reconnect waits for the daemon to come back first.
+          const autoStart = autoStartDefault && (downSince === null ? reconnects === 0
+            : Date.now() - downSince >= UNTIL_RESTART_AFTER_MS);
+          fresh = true;
+          client = await FaiBrowserClient.connect({ home: FAI_HOME, autoStart, clientName: 'cli' });
+          if (downSince !== null) {
+            reconnects += 1;
+            log(`daemon answering again; still waiting for request ${requestId}`);
+          }
+        }
+        const roundStarted = Date.now();
+        const maxMs = Math.max(0, Math.min(WAIT_SLICE_MS, deadline - roundStarted));
+        const response = await client.wait({ requestId, maxMs }, { signal });
+        fresh = false;
+        downSince = null;
+        failures = 0;
+        last = response.request ?? last;
+        const state = response.state ?? last?.state;
+        if (state === 'active') return finish('active');
+        if (TERMINAL_REQUEST_STATES.has(state)) return finish(state);
+        if (deadline - Date.now() <= 0) return timedOut();
+        await pause(UNTIL_MIN_ROUND_MS - (Date.now() - roundStarted), signal);
+      } catch (error) {
+        if (signal.aborted) return finish('interrupted');
+        if (error?.status === 404 && error?.code === 'unknown_request') return finish('unknown', { reason: 'unknown_request' });
+        if (!transientWaitError(error, fresh)) throw error;
+        client = null;
+        downSince ??= Date.now();
+        const backoff = UNTIL_BACKOFF_MS[Math.min(failures, UNTIL_BACKOFF_MS.length - 1)];
+        failures += 1;
+        if (failures === 1) log(`daemon not answering (${error.message}); retrying until the timeout`);
+        if (deadline - Date.now() <= 0) return timedOut();
+        await pause(Math.min(backoff, deadline - Date.now()), signal);
+      }
+    }
+  } finally {
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+  }
+}
+
 async function commandObserve(flags) {
   if (!flags.request) {
     throw new ConfigError('observe needs --request');
@@ -1109,6 +1277,12 @@ async function main() {
       }
       return exitCode;
     }
+    if (command === 'wait' && flags.until !== undefined) {
+      const { value, exitCode } = await commandWaitUntil(flags, positionals);
+      await emitLine(value, pretty);
+      return exitCode;
+    }
+    if (flags.timeout !== undefined) throw new ConfigError('--timeout belongs to wait <requestId> --until active');
     const handler = OTHER_COMMANDS[command];
     if (!handler) {
       throw new ConfigError(`Unknown command "${command}". Run with --help for usage.`);
