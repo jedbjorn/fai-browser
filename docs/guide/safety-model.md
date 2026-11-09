@@ -128,9 +128,12 @@ installs it only on that command (or setup's OpenCode registration), and only re
 marker. The plugin runs inside OpenCode with OpenCode's own rights: it has no dependencies, never throws out of a hook,
 logs nothing of arguments, texts or its token, and turns itself off when it cannot open its socket safely. It listens
 on a private socket (a 0700 directory it owns, never a symlink; the socket 0600, named after OpenCode's pid) and
-accepts a request only with the random token it minted at startup. It prompts only sessions it saw call a FAI tool,
-only with one text part that is one of FAI's wake templates (`[FAI Browser] The user approved / resumed / invited …`),
-never with a model, agent, tool or system field. The MCP server uses the socket only when OpenCode itself is its parent
+accepts a request only with the random token it minted at startup. It prompts only root sessions it saw call a FAI
+tool (a subagent's call counts for the conversation that started it, so a wake never lands in a task session), only
+with one text part that matches one of FAI's three wake templates exactly (ids, a level name, the tool, and for an
+invite your words as one quoted line of at most 500 characters), and with the agent and model of that session's last
+user message, so a session in `plan` is woken in `plan`, never in OpenCode's default agent; a session without such a
+message is not woken. It sends no tool or system field. The MCP server uses the socket only when OpenCode itself is its parent
 (socket name and `OPENCODE_PID` both name the parent pid). One OpenCode serves several sessions with one MCP server, so
 Approve and Resume wake exactly the session whose call made or joined that request, never a guess; an invite goes to
 the only session that used FAI in the last 10 minutes, and with two or more the popup shows the copy line instead.
@@ -147,9 +150,10 @@ the reviewed file `install` copies (or links with `--link`), and remove `plugins
 run OpenCode with `--pure`, or `FAI_WAKE=0`). The plugin adds the calling session's id as `_faiHostSession` to every
 FAI tool call's arguments, so it shows in OpenCode's tool display and transcript and goes to the model provider with
 the tool input: an opaque id, no secret, which the MCP server strips before use. And the socket path and token are in
-OpenCode's environment, so its bash tool's children inherit them, as Claude Code's socket variables are: a same-user
-process with the token could ask the plugin to prompt a session that used FAI with a FAI wake text, which is no more
-than such a process can already do to Claude Code's socket; the MCP server itself is not fooled (the parent-pid rule),
+OpenCode's environment, so everything OpenCode starts afterwards inherits them: its bash tool's children, and its other
+MCP servers, language servers and formatters, as with Claude Code's socket variables. Any of them could ask the plugin
+to prompt a session that used FAI with one of FAI's exact wake texts (no other text), which is no more than such a
+process can already do to Claude Code's socket; the MCP server itself is not fooled (the parent-pid rule),
 and the service never passes these variables on to processes it starts.
 As before, a process that can read the extension's pairing secret could speak for the extension on the service's
 extension channel (approve a request, or make an invite) without your click: keep `.env.local` and the browser

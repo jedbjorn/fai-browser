@@ -338,7 +338,10 @@ function planOpencodePlugin(target, { link, force }) {
   return { path: target, action: info ? 'update' : 'create', content, backup: foreign };
 }
 
-/** Where `install --host opencode` puts the plugin: beside the opencode.json it registers the server in. */
+/**
+ * Where `install --host opencode` puts the plugin: beside the opencode.json it registers the server in. Like that
+ * config path, user scope is always ~/.config/opencode: XDG_CONFIG_HOME and OPENCODE_CONFIG_DIR are not honoured.
+ */
 export function opencodePluginPath({ scope = 'project', cwd, home = homedir() }) {
   return scope === 'project' ? join(cwd, '.opencode', 'plugins', OPENCODE_PLUGIN_FILE)
     : join(home, '.config', 'opencode', 'plugins', OPENCODE_PLUGIN_FILE);
