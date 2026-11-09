@@ -810,6 +810,9 @@ request modal, or click the FAI Browser toolbar icon on that task tab (Ctrl+Shif
 site requests first show the request card: choose the level, click **Open**, then approve in the modal or toolbar.
 Opening a page grants no access. The modal's button requests optional access for the exact scheme and host in
 its native click gesture, then leases the original armed task tab. It never selects the extension window's tab.
+One click is enough: Approve is enabled as soon as the request is known (a click before the worker has prepared the
+approval is kept and completes once it is ready), and a click before the opened page has committed (a slow site, a
+redirect on the way) waits up to 15 s for the tab to commit on the approved origin before the origin check.
 Browser host patterns cover all ports; runtime checks still require the approved exact origins. The toolbar
 alternative grants `activeTab`. On both Chromium and Firefox, screenshots need `activeTab` or existing all-sites
 access; a modal's per-host permission alone is insufficient. No all-sites permission is requested for this flow.

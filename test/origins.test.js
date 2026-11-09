@@ -337,7 +337,8 @@ test('daemon: a tab outside the root is not approved; a domain scope on an exact
   const reply = await ctx.hub.approve(exact, { origin: DEV, level: 'read-only', scope: 'domain', tabMode: 'single' });
   assert.equal(reply.grant.scope, 'origin', 'nothing to widen without a root');
   assert.deepEqual(reply.origins, [DEV]);
-  const pending = await ctx.request([ROOT]);
+  // A second request (an identical one would get the first, still pending, back).
+  const pending = await ctx.request([ROOT], { reason: 'Domain roots again' });
   const blocked = await ctx.api('POST', '/v1/runs', { requestId: pending, instruction: 'x', operation: 'step', waitMs: 100 });
   assert.equal(blocked.body.result.permissions.scope, undefined, 'no scope before approval');
 });

@@ -526,7 +526,8 @@ test('daemon: a new request waits in the browser used last; the agent may name o
 
   chromium.ext.send('used');
   await until(() => ctx.daemon.hub.candidates().find(browser => browser.id === CHROMIUM.id).usedAt > 0);
-  const second = await ctx.client.requestTab({ origins: [ORIGIN], reason: 'Check members' });
+  // (Another reason: an identical repeat would get the first request back while it waits.)
+  const second = await ctx.client.requestTab({ origins: [ORIGIN], reason: 'Check members again' });
   assert.equal(second.request.browser.id, CHROMIUM.id);
   const named = await ctx.client.requestTab({ origins: [ORIGIN], reason: 'Check members', browser: 'firefox' });
   assert.equal(named.request.browser.id, FIREFOX.id, 'the agent named it');

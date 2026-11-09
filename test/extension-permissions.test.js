@@ -349,6 +349,7 @@ test('popup: replacing a request card preserves its selected level and keyboard 
   const original = request(['http://localhost:3000'], 'full');
   const page = await popup(t, { local: { ...PAIRED }, requests: [original] });
   await page.focus('.request-card .level-select');
+  assert.equal(await page.evaluate(() => document.activeElement.classList.contains('level-select')), true);
   await page.keyboard.press('ArrowUp');
   assert.equal(await page.$eval('.request-card .level-select', node => node.value), 'interactive');
   await page.evaluate(updated => {
@@ -1123,12 +1124,14 @@ test('arm.html: a different request on the tab needs its own approval: the click
 });
 
 test('popup: a press on Approve that spans a re-render still approves (the card is not replaced under the pointer)', async t => {
-  const page = await popup(t, { local: { ...PAIRED }, requests: [request(['http://localhost:3000'], 'read-only')] });
+  const page = await popup(t, { local: { ...PAIRED }, requests: [request(['http://localhost:3000'], 'reversible')] });
+  // Focus elsewhere first (the level just chosen): the press moves focus to Approve, which must not end the hold.
+  await page.focus('.request-card .level-select');
   const box = await page.locator('.approve-request').boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   // Another request arrives (or the connection or the arms change) while the button is held.
-  await emit(page, { requests: { newValue: [request(['http://localhost:3000'], 'read-only'), { ...request(['https://other.test'], 'read-only'), requestId: 'req_9' }] } });
+  await emit(page, { requests: { newValue: [request(['http://localhost:3000'], 'reversible'), { ...request(['https://other.test'], 'read-only'), requestId: 'req_9' }] } });
   await page.mouse.up();
   await page.waitForFunction(() => __sent.some(message => message.type === 'start'), null, { timeout: 2000 }).catch(() => {});
   assert.equal((await page.evaluate(() => __sent)).filter(message => message.type === 'start').length, 1, 'one press, one approval');
