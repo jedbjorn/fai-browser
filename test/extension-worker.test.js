@@ -10,6 +10,8 @@ import { readFile } from 'node:fs/promises';
 const source = await readFile(new URL('../extension/background.js', import.meta.url), 'utf8');
 // The worker loads the Public Suffix List with importScripts('psl-data.js'); the harness runs it in the VM first.
 const pslData = await readFile(new URL('../extension/psl-data.js', import.meta.url), 'utf8');
+// Approved cross-origin frames: the worker loads frames.js with importScripts too (globalThis.faiFrames).
+const framesSource = await readFile(new URL('../extension/frames.js', import.meta.url), 'utf8');
 const ORIGIN = 'https://example.com';
 const ENDPOINT = 'http://127.0.0.1:4318';
 const SECRET = 'x'.repeat(30);
@@ -471,6 +473,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     Math: Object.create(Math, { random: { value: () => 0.5 } }),
   });
   vm.runInNewContext(pslData, context);
+  vm.runInNewContext(framesSource, context);
   vm.runInNewContext(source, context);
 
   let commandSequence = 0;

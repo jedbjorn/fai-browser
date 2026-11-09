@@ -145,6 +145,8 @@ const CAPABILITIES = {
 if (typeof importScripts === 'function') importScripts('psl-data.js');
 // Trusted input (opt-in, chrome.debugger; off without the trusted-input build's permission): trusted-input.js.
 if (typeof importScripts === 'function') importScripts('trusted-input.js');
+// Approved cross-origin frames (frames.js, globalThis.faiFrames): without it every cross-origin frame stays unread.
+if (typeof importScripts === 'function') importScripts('frames.js');
 const PSL_RULES = globalThis.FAI_PSL_RULES ?? '';
 
 // <site-match> Identical in src/origins.js, extension/permissions.js and extension/background.js (drift check in
@@ -1150,7 +1152,8 @@ function reconcileSites() {
     }
     const keep = new Set([...remembered.map(entry => sitePattern(entry.root)),
       ...pendingPatterns, ...[...armed.values()].flatMap(arm => arm.patterns ?? []),
-      ...[...modalIntents.values()].filter(intent => armed.get(intent.arm.tabId) === intent.arm && Date.now() - intent.arm.at <= ARM_MS).map(intent => intent.pattern)]);
+      ...[...modalIntents.values()].filter(intent => armed.get(intent.arm.tabId) === intent.arm && Date.now() - intent.arm.at <= ARM_MS)
+        .flatMap(intent => [intent.pattern, ...(intent.extraPatterns ?? [])])]);
     for (const [pattern, at] of recentGrants) {
       if (Date.now() - at < RECENT_GRANT_MS) keep.add(pattern);
       else recentGrants.delete(pattern);
@@ -1736,12 +1739,19 @@ async function longPollLoop() {
 
 // Ends (pauses or stops) the current session locally first, so a user Pause/Stop always takes effect even when
 // the FAI service is unreachable, then reports it. `reason` becomes the BridgeError code on the service side.
-async function endSession(status, reason) {
+async function endSession(status, reason, extra = {}) {
   if (!session) return;
   const current = session;
   expireApprovals(current.leaseId);
   await setStatus(status);
-  await send('status', { leaseId: current.leaseId, status, reason }).catch(() => {});
+  await send('status', { leaseId: current.leaseId, status, reason, ...extra }).catch(() => {});
+}
+
+// The origin a tab left the approved site for, for an origin_changed pause: { origin } with the origin only (never
+// the path or query), redacted like any reported URL; {} when the browser withholds the URL or it is not http(s).
+function leftOrigin(url) {
+  const origin = originOf(url ?? '');
+  return origin && /^https?:\/\/[^/\s]+$/.test(origin) ? { origin: String(reportedUrl(origin)).replace(/\/$/, '') } : {};
 }
 
 function inactiveError() {
@@ -1790,7 +1800,7 @@ async function assertTab() {
   if (!sessionCovers(tab.url)) {
     throw new ExtensionError('origin_changed', tab.url ? 'Origin changed; select this tab again'
       : 'The browser withdrew access to this tab: it left the approved site, or (toolbar approval) the browser '
-        + 'showed its own error page; approve this tab again');
+        + 'showed its own error page; approve this tab again', { left: leftOrigin(tab.url) });
   }
   return tab;
 }
@@ -1820,7 +1830,9 @@ function clearVault() {
 function secretOptions() {
   // `input`: input.js's settings for the call (trusted input on or off, trusted-input.js).
   const trusted = typeof trustedInputOn === 'function' && trustedInputOn();
-  return { ...secretRedaction, salt: secretNumbering().salt, gates: approvalSettings, vault: true, input: { trusted } };
+  // `context`: what the tab's approved frames add to the page's restrictions (frames.js); none without frames.
+  const context = globalThis.faiFrames?.topContext(session?.tabId) ?? null;
+  return { ...secretRedaction, salt: secretNumbering().salt, gates: approvalSettings, vault: true, input: { trusted }, context };
 }
 
 // The values page.js redacted (VAULT_KEY of a page result: [{ tag, value, kind, pre, origin }]), kept under their
@@ -1903,6 +1915,7 @@ function pageCall(method, args, secrets) {
   if (secrets && typeof page.useSecrets === 'function') page.useSecrets(secrets);
   if (secrets?.gates && typeof page.useGates === 'function') page.useGates(secrets.gates);
   if (secrets?.input && typeof globalThis.__faiInput?.configure === 'function') globalThis.__faiInput.configure(secrets.input);
+  if (secrets && typeof page.useContext === 'function') page.useContext(secrets.context ?? null);
   return Promise.resolve()
     .then(() => page[method](...args))
     .then(
@@ -2016,7 +2029,9 @@ async function browserErrorObservation(tabId) {
 // observation (the session goes on: the agent can report it, wait, or reload once the site is back).
 async function observePage(tabId, method, args) {
   try {
-    return await callPage(tabId, method, args);
+    const value = await callPage(tabId, method, args);
+    const frames = globalThis.faiFrames;
+    return frames ? await frames.withFrames(tabId, value, frames.optionsOf(method, args)) : value;
   } catch (error) {
     if (!error?.browserErrorPage) throw error;
     const observation = await browserErrorObservation(tabId);
@@ -2058,7 +2073,7 @@ function cleanForbid(forbid) {
 // Observations never leave the worker unless they are from the leased origin (or its approved domain roots).
 function checkedObservation(observation, tabId) {
   if (!sessionCovers(observation?.url)) {
-    throw new ExtensionError('origin_changed', 'Origin changed; select this tab again');
+    throw new ExtensionError('origin_changed', 'Origin changed; select this tab again', { left: leftOrigin(observation?.url) });
   }
   // The secret handles the agent may use (fill_secret, copy_secret): handles and placeholders only, never a value.
   const secrets = vaultView();
@@ -2536,7 +2551,9 @@ async function locateCommand(command) {
   const forbid = cleanForbid(command.args?.forbid) ?? session.forbid ?? [];
   const allow = commandCapabilities(command);
   const sites = sessionSites();
-  const found = await callPage(tab.id, 'locate', [{ x: point.x, y: point.y }, expectedRevision, terms, forbid, allow, sites]);
+  // A point lands in the top document (a point on a cross-origin frame is refused there as point_frame).
+  const revision = globalThis.faiFrames?.resolve(tab.id, expectedRevision, undefined).top ?? expectedRevision;
+  const found = await callPage(tab.id, 'locate', [{ x: point.x, y: point.y }, revision, terms, forbid, allow, sites]);
   return { id: typeof found?.id === 'string' ? found.id : null, control: found?.control ?? null };
 }
 
@@ -2698,6 +2715,7 @@ async function approveCommand(command) {
     ? { revision: expectedRevision, documentId: null, label: session.lastDialog.text, labelHash: `dialog:${session.lastDialog.text}`, cls }
     : kind === 'copy_secret'
     ? { revision: expectedRevision, documentId: null, label: '', labelHash: '', cls: 'secret' }
+    : globalThis.faiFrames ? await globalThis.faiFrames.approvalInfo(tab.id, target, expectedRevision, kind ?? null)
     : await callPage(tab.id, 'approvalInfo', [target, expectedRevision, kind ?? null]);
   // The page script must classify the control the same way: the daemon cannot pick the class the user sees.
   if (info?.cls !== cls || typeof info.labelHash !== 'string') return { decision: 'refused', reason: 'class_mismatch' };
@@ -2880,8 +2898,10 @@ async function executeCommand(command) {
     } else {
       try {
         // Validate, dispatch, settle in place and observe in a single round trip.
-        outcome = await callPage(tab.id, 'execute', [pageAction, expectedRevision, SETTLE_IN_PLACE, terms, forbid, allow, sites,
-          expectText, approval]);
+        // A control of an approved cross-origin frame runs in that frame (frames.js).
+        const rest = [SETTLE_IN_PLACE, terms, forbid, allow, sites, expectText, approval];
+        outcome = globalThis.faiFrames ? await globalThis.faiFrames.execute(tab, pageAction, expectedRevision, rest, navigation)
+          : await callPage(tab.id, 'execute', [pageAction, expectedRevision, ...rest]);
       } catch (error) {
         if (error?.browserErrorPage && action.type === 'navigate_allowed_url') {
           // From the browser's own error page an approved URL (validateAction checked it) opens through the tab API,
@@ -3035,10 +3055,11 @@ function sameRects(a, b) {
 async function captureRedacted(tab) {
   for (let attempt = 0; ; attempt++) {
     if (attempt) await delay(Math.max(0, CAPTURE_SPACING_MS - (Date.now() - lastCapture)));
-    const before = await redactionQuery(tab.id, true);
+    const frames = globalThis.faiFrames;
+    const before = await redactionQuery(tab.id, true).then(value => frames?.redaction(tab.id, value, true) ?? value);
     const raw = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 70 });
     lastCapture = Date.now();
-    const after = await redactionQuery(tab.id, false);
+    const after = await redactionQuery(tab.id, false).then(value => frames?.redaction(tab.id, value, false) ?? value);
     const first = before.rects.map(cleanRect);
     const second = after.rects.map(cleanRect);
     if (first.includes(null) || second.includes(null)) throw new ExtensionError('capture_failed', 'Malformed secret boxes');
@@ -3072,7 +3093,7 @@ async function takeScreenshot(observation, details, labelRevision = observation?
     const tab = await assertTab();
     // The single revision check, immediately before capture. If the page changed by itself, annotate what
     // is actually on screen and label it with that revision; the runtime decides whether it is acceptable.
-    const fresh = checkedObservation(await callPage(tab.id, 'observe').catch(error => {
+    const fresh = checkedObservation(await (globalThis.faiFrames?.observeTab(tab.id) ?? callPage(tab.id, 'observe')).catch(error => {
       // The browser's own error page: no page script to ask for secret boxes, so no image (fail closed).
       throw error?.browserErrorPage ? new ExtensionError('capture_failed', BROWSER_ERROR_MESSAGE) : error;
     }), tab.id);
@@ -3214,6 +3235,7 @@ async function handleCommand(command) {
   const current = session;
   let reply;
   let endReason = null;
+  let endExtra = {};
   try {
     checkCommand(command);
     if (command.method === 'observe') {
@@ -3244,11 +3266,14 @@ async function handleCommand(command) {
   } catch (error) {
     const wire = wireError(error);
     reply = { id: command?.id, error: wire };
-    if (SESSION_ENDING_ERRORS.has(wire.code)) endReason = wire.code;
+    if (SESSION_ENDING_ERRORS.has(wire.code)) {
+      endReason = wire.code;
+      endExtra = wire.code === 'origin_changed' && error?.left ? error.left : {};
+    }
   }
   cancelled.delete(command?.id);
   await send('result', reply).catch(() => {});
-  if (endReason && session === current && current?.status === 'active') await endSession('paused', endReason);
+  if (endReason && session === current && current?.status === 'active') await endSession('paused', endReason, endExtra);
 }
 
 // Without an explicit request (the legacy "Select tab and start" button), a daemon gets the oldest pending
@@ -3392,6 +3417,7 @@ async function startSession(message, given = null) {
     session.patterns = [];
   }
   if (given?.modalPattern && !session.patterns.includes(given.modalPattern)) session.patterns.push(given.modalPattern);
+  for (const extra of given?.modalPatterns ?? []) if (!session.patterns.includes(extra)) session.patterns.push(extra);
   if (session.tabMode === 'multiple' && !session.patterns.includes(taskPattern)) session.patterns.push(taskPattern);
   // An armed tab's FAI ? group becomes the session's FAI mark (markTab retitles it).
   if (Number.isInteger(given?.armGroupId)) session.groupId = given.armGroupId;
@@ -3618,7 +3644,7 @@ async function prepareModalApproval(message, sender) {
   modalSender(message, sender);
   const { arm, request } = await modalArm(message);
   const existing = modalIntents.get(arm.tabId);
-  if (existing?.arm === arm) return { approval: { token: existing.token, pattern: existing.pattern } };
+  if (existing?.arm === arm) return { approval: { token: existing.token, pattern: existing.pattern, patterns: [existing.pattern, ...existing.extraPatterns] } };
   const tab = await chrome.tabs.get(arm.tabId);
   // Without activeTab Chrome may omit url. A freshly opened arm records its original origin; after permission
   // is granted, approval always reads and verifies the actual tab URL, including pending navigations.
@@ -3626,11 +3652,24 @@ async function prepareModalApproval(message, sender) {
   if (!origin || !originCovered(origin, request.origins) || tab.incognito) throw new Error(ARM_DECLINED);
   const pattern = taskOriginPattern(origin);
   const owned = !await hasSitePermission([pattern]);
+  // The request's other exact origins in the same browser prompt: an approved cross-origin frame (frames.js) or a
+  // sign-in hop can only be read with host access to its origin. Only those not held yet are tracked (and removed
+  // again with the session); a site the user allowed by hand is never touched.
+  const extraPatterns = [];
+  for (const entry of Array.isArray(request.origins) ? request.origins : []) {
+    const other = typeof entry === 'string' && !entry.includes('*') ? originOf(entry) : null;
+    if (!other || other !== entry || !/^https?:/.test(other)) continue;
+    const extra = taskOriginPattern(other);
+    if (extra !== pattern && !extraPatterns.includes(extra)) extraPatterns.push(extra);
+  }
+  const ownedExtra = [];
+  for (const extra of extraPatterns.slice(0, 10)) if (!await hasSitePermission([extra])) ownedExtra.push(extra);
   if (armed.get(arm.tabId) !== arm) throw new Error(ARM_DECLINED);
   const intent = { arm, origin, pattern, owned, token: randomId(), running: false,
-    addedPattern: !arm.patterns.includes(pattern) };
+    addedPattern: !arm.patterns.includes(pattern), extraPatterns: extraPatterns.slice(0, 10) };
   modalIntents.set(arm.tabId, intent);
   if (owned) await trackSites([pattern]);
+  if (ownedExtra.length) await trackSites(ownedExtra);
   if (armed.get(arm.tabId) !== arm || modalIntents.get(arm.tabId) !== intent) {
     modalIntents.delete(arm.tabId);
     recentGrants.delete(pattern);
@@ -3639,7 +3678,7 @@ async function prepareModalApproval(message, sender) {
   }
   if (!arm.patterns.includes(pattern)) arm.patterns.push(pattern);
   await saveArms();
-  return { approval: { token: intent.token, pattern } };
+  return { approval: { token: intent.token, pattern, patterns: [pattern, ...intent.extraPatterns] } };
 }
 async function finishModalApproval(message, sender) {
   modalSender(message, sender);
@@ -3671,13 +3710,14 @@ async function finishModalApproval(message, sender) {
     await chrome.tabs.update(tab.id, { active: true });
     await chrome.windows.update(tab.windowId, { focused: true });
     await startSession({ requestId: arm.requestId, level: message.level, scope: arm.scope, tabMode: arm.tabMode },
-      { ...tab, armGroupId: arm.groupId, modalPattern: pattern, approvalGuard: validate });
+      { ...tab, armGroupId: arm.groupId, modalPattern: pattern, modalPatterns: intent.extraPatterns, approvalGuard: validate });
     await disarm(arm.tabId, { keepGroup: true });
     return popupState();
   } finally {
     modalIntents.delete(arm.tabId);
     if (intent.addedPattern) arm.patterns = arm.patterns.filter(item => item !== pattern);
     recentGrants.delete(pattern);
+    for (const extra of intent.extraPatterns ?? []) recentGrants.delete(extra);
     await saveArms();
     await reconcileSites();
   }
@@ -3967,7 +4007,7 @@ chrome.tabs.onRemoved?.addListener(tabId => {
 });
 chrome.tabs.onUpdated?.addListener((tabId, info) => {
   if (session?.status === 'active' && tabId === session.tabId && info.url && !sessionCovers(info.url)) {
-    endSession('paused', 'origin_changed');
+    endSession('paused', 'origin_changed', leftOrigin(info.url));
   } else if (session?.status === 'active' && info.url && leaseTab(tabId) && !sessionCovers(info.url)) {
     // Another tab of the lease left the approved site: it is no longer part of it.
     session.tabs = session.tabs.filter(entry => entry.tabId !== tabId);

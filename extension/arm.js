@@ -89,7 +89,8 @@ approve.addEventListener('click', async () => {
   select.disabled = true;
   // Native user gesture: no await, messaging or storage read before permissions.request.
   let access;
-  try { access = chrome.permissions.request({ origins: [intent.pattern] }); }
+  // The task origin, plus the request's other exact origins (approved frames, sign-in hops) in the same prompt.
+  try { access = chrome.permissions.request({ origins: intent.patterns?.length ? intent.patterns : [intent.pattern] }); }
   catch { access = Promise.resolve(false); }
   chrome.runtime.sendMessage({ type: 'arm_begin', tabId, token: intent.token }).catch(() => {});
   status.textContent = 'Waiting for browser site access…';
