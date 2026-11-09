@@ -822,7 +822,8 @@ async function armPage(t, { arms, requests = [], permissions = null, tabId = 9, 
           if (__access) for (const origin of permission.origins) __held.add(origin);
           return Promise.resolve(__access);
         },
-        // `__held`: the host patterns the browser holds; `__holdContains`: the answer waits for __releaseContains().
+        // `__held`: the host patterns the browser holds; `__holdContains`: the answer waits until released.
+        // `__permissionsChanged()`: fires onAdded/onRemoved.
         async contains({ origins }) {
           if (globalThis.__holdContains) await new Promise(done => { (globalThis.__containsWaiting ??= []).push(done); });
           return origins.every(origin => __held.has(origin));
@@ -831,6 +832,10 @@ async function armPage(t, { arms, requests = [], permissions = null, tabId = 9, 
       commands: { async getAll() { return [{ name: '_execute_action', shortcut: 'Ctrl+Shift+Y' }]; } },
       action: { async getUserSettings() { return { isOnToolbar: pinned }; } },
     };
+    const permissionListeners = [];
+    chrome.permissions.onAdded = { addListener(listener) { permissionListeners.push(listener); } };
+    chrome.permissions.onRemoved = { addListener(listener) { permissionListeners.push(listener); } };
+    globalThis.__permissionsChanged = origins => { for (const listener of permissionListeners) listener({ origins }); };
     globalThis.__held = new Set(held);
     globalThis.__holdContains = holdContains;
   }, [arms, requests, permissions, pinned, holdPrepare, held, holdContains]);
@@ -1256,4 +1261,16 @@ test('arm.html: a worker that restarted after preparing is prepared again once a
   assert.equal(approves[1].token, `${preparedToken(ARM)}-2`, 'a freshly prepared token');
   assert.equal(approves[1].granted, true, 'the access the click obtained, read from the browser');
   assert.equal(await page.evaluate(() => __permissionCalls.length), 1, 'one prompt, one click');
+});
+
+test('arm.html: site access removed after the window checked it is reported again when the click grants it back', async t => {
+  const page = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST], held: ['https://shop.example.com/*'] });
+  await page.waitForFunction(() => !document.querySelector('#approve').disabled);
+  // The user removes the site's access (chrome://extensions) before clicking.
+  await page.evaluate(() => { __held.delete('https://shop.example.com/*'); __permissionsChanged(['https://shop.example.com/*']); });
+  await page.waitForFunction(() => !document.querySelector('#approve').disabled);
+  await page.click('#approve');
+  await page.waitForFunction(() => __closed > 0);
+  assert.deepEqual(await page.evaluate(() => __sent.filter(message => message.type === 'arm_track').map(message => message.patterns)),
+    [['https://shop.example.com/*']]);
 });
