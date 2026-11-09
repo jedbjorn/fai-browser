@@ -36,7 +36,7 @@ Up to 15 steps; each `expectation` is the page its step ends on; the list stops 
 | `choose` | `fai_browser_act` with one `verdict.decide.options[].id` (after an act: one `actions[].id`) as `actionId` and the given `revision`. |
 | `rerun` | `fai_browser_run` with `verdict.suggested` and the same `requestId`. |
 | `split` | Send the remaining hops as `steps` from the current page. |
-| `relay` | Tell the user `needs.message` (with `needs.level`, A's approval sentence for that level), then `fai_browser_run` again with the `requestId` (and `mode` = `needs.level`). |
+| `relay` | Tell the user `needs.message` (with `needs.level`, A's approval sentence for that level), then `fai_browser_run` again with the `requestId` (and `mode` = `needs.level`). Paused/pending: run `next.text`'s background `wait` first. |
 | `stop` | Report `next.text` (`refused_action`/`error_page`); no retry. |
 | `wait` | `fai_browser_wait` with the `runId`. |
 
