@@ -12,6 +12,7 @@ import { ratingValue } from './facts.js';
 import { siteRoot } from './origins.js';
 import { LEVEL_NAMES } from './oversight.js';
 import { capOffer, relevanceHints } from './relevance.js';
+import { withResumeWait } from './resume.js';
 
 export const RESULT_VERSION = 2;
 
@@ -368,16 +369,16 @@ const OUTCOMES = {
   },
 };
 
-const LEASE_PAUSED_MESSAGE = 'The tab lease is paused. Ask the user to return to the tab and press Resume for this '
-  + 'request in the extension, then wait on the requestId.';
+const LEASE_PAUSED_MESSAGE = 'The tab lease is paused. Ask the user to return to the tab and click Resume for this '
+  + 'request in the FAI Browser extension; next says how to continue once they do.';
 
 /**
  * `needs.message` overrides the daemon applies to results of runs on a tab request (design section 2.3). These are
  * runtime-written and trusted; they tell the agent how to continue with the lease.
  */
 export const LEASE_MESSAGES = Object.freeze({
-  paused: 'The user paused the tab. Call wait with requestId until state is active, then start a new run from the '
-    + 'current page.',
+  paused: 'The user paused the tab. Ask them to click Resume in the FAI Browser extension when the task may continue; '
+    + 'next says how to continue once they do.',
   tab_changed: LEASE_PAUSED_MESSAGE,
   origin_changed: LEASE_PAUSED_MESSAGE,
   child_tab: LEASE_PAUSED_MESSAGE,
@@ -1059,8 +1060,9 @@ export function selectTabMessage(approval) {
 function approveText(origin, requestId, approval) {
   const root = siteRoot(origin);
   const site = root ?? (origin ? origin.replace(/^https:\/\//, '') : null);
-  return `Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: ${approvalSteps(approval)}. `
-    + `Then call fai_browser_run again with requestId ${requestId}; no origins needed.`;
+  return withResumeWait(`Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: `
+    + `${approvalSteps(approval)}. Then call fai_browser_run again with requestId ${requestId}; no origins needed.`,
+  requestId);
 }
 
 function relayText(result, ref) {
@@ -1068,8 +1070,8 @@ function relayText(result, ref) {
   if (code === 'select_tab') return approveText(result.origin, ref, result.approval);
   if (code === 'approval_pending') return approvalPendingText(result);
   if (RESUME_CODES.has(code)) {
-    return `Relay needs.message to the user, then call fai_browser_run again with requestId ${ref}; it waits for `
-      + 'the tab and starts from the current page.';
+    return withResumeWait('Relay needs.message to the user (they click Resume in the FAI Browser extension), then '
+      + `call fai_browser_run again with requestId ${ref}; it starts from the current page.`, ref);
   }
   // A level request: a refusal a higher level would lift, or a login wall on a run that asked for testing.
   if ((code === 'refused_action' || code === 'login') && typeof result.needs?.level === 'string') {
@@ -1306,8 +1308,8 @@ function directChooseText(revision) {
 function directApproveText(origin, requestId, approval) {
   const root = siteRoot(origin);
   const site = root ?? (origin ? origin.replace(/^https:\/\//, '') : null);
-  return `Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: ${approvalSteps(approval)}. `
-    + `Then call fai_browser_open again with requestId ${requestId}.`;
+  return withResumeWait(`Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: `
+    + `${approvalSteps(approval)}. Then call fai_browser_open again with requestId ${requestId}.`, requestId);
 }
 
 // The label is page text (redacted, clipped, quotes and line breaks removed), quoted inside a trusted sentence.
@@ -1366,7 +1368,12 @@ export function directNext(result, context = {}) {
   if (DIRECT_OBSERVE_CODES.has(code) || (result.status === 'needs_host' && code !== 'request_closed')) {
     return { kind: 'observe', text: 'The page changed or the action could not land. Observe again (fai_browser_observe), then choose.' };
   }
-  if (RESUME_CODES.has(code) || RELAY_AND_RERUN.has(code) || result.status === 'needs_user') {
+  if (RESUME_CODES.has(code)) {
+    // The lease is paused: the user's Resume in the extension makes it active again (wait --until active wakes a host).
+    return { kind: 'relay', text: withResumeWait('Relay needs.message to the user (they click Resume in the FAI '
+      + `Browser extension); once the tab is active again, call fai_browser_observe with requestId ${ref}.`, ref) };
+  }
+  if (RELAY_AND_RERUN.has(code) || result.status === 'needs_user') {
     return { kind: 'relay', text: `Relay needs.message to the user; once they have done it, call fai_browser_observe with requestId ${ref}.` };
   }
   if (code === 'config') return { kind: 'relay', text: 'Relay needs.message to the user. Never ask for API keys in chat.' };

@@ -12,6 +12,7 @@ export const CLI_PATH = fileURLToPath(new URL('./cli.js', import.meta.url));
 export const RESUME_WAIT_TIMEOUT = '30m';
 // What the CLI must share with this process to reach the same daemon. Never the client token: it stays in its file.
 const CARRIED_ENV = ['FAI_HOME', 'FAI_DAEMON_DIR', 'FAI_DAEMON_PORT', 'FAI_BRIDGE_PORT'];
+const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function shellQuote(value) {
   const text = String(value);
@@ -33,13 +34,20 @@ export function resumeWaitCommand(requestId, { env = process.env, execPath = pro
 }
 
 /**
- * The trusted sentences that follow "tell the user to click Resume (or approve)": start the wait in the background when
- * the host can be notified on exit, else ask the user to say when. `then` is the step once the tab is ready
- * ("call fai_browser_observe with requestId r1").
+ * The trusted sentences appended to "tell the user to click Resume (or approve), then call X": start the wait in the
+ * background when the host is notified on exit, else ask the user to say when they are done.
  */
-export function resumeWaitText(requestId, then, options = {}) {
+export function resumeWaitText(requestId, options = {}) {
+  // Only a daemon-issued id goes into a command (a result without one names no command).
+  if (!REQUEST_ID.test(String(requestId ?? ''))) return '';
   return 'If you can run a background command that notifies you when it exits (for example Claude Code\'s Bash '
-    + `run_in_background), start \`${resumeWaitCommand(requestId, options)}\` that way now and end your turn; when it `
-    + `exits 0 the tab is ready: ${then}. On another exit code follow next.text in its JSON line. Without background `
-    + `commands, ask the user to tell you when they are done, then ${then}.`;
+    + `run_in_background), start \`${resumeWaitCommand(requestId, options)}\` that way now and end your turn: it exits 0 `
+    + 'once the tab is ready (on another exit code follow next.text in its JSON line). Otherwise ask the user to tell '
+    + 'you when they have done it.';
+}
+
+/** `text` followed by the resume wait sentences for `requestId` (unchanged when there is no usable id). */
+export function withResumeWait(text, requestId, options = {}) {
+  const wait = resumeWaitText(requestId, options);
+  return wait ? `${text} ${wait}` : text;
 }
