@@ -1065,10 +1065,13 @@ export function offeredActions(observation, options = {}) {
   markOverlayActions(observation, controlActions);
   markFloatingActions(observation, controlActions);
 
-  // Page-level actions are reserved so they survive the cap on busy pages.
+  // Page-level actions are reserved so they survive the cap on busy pages. The browser's own error page has nothing to
+  // scroll (no page script runs there): only wait, history moves and approved URLs apply.
   const reserved = [
-    { type: 'scroll', direction: 'down', label: 'scroll down', description: 'Scroll down to see more of the page' },
-    { type: 'scroll', direction: 'up', label: 'scroll up', description: 'Scroll up' },
+    ...(observation?.browserErrorPage === true ? [] : [
+      { type: 'scroll', direction: 'down', label: 'scroll down', description: 'Scroll down to see more of the page' },
+      { type: 'scroll', direction: 'up', label: 'scroll up', description: 'Scroll up' },
+    ]),
     { type: 'wait', label: 'wait', description: 'Wait briefly for page content to finish loading' },
   ];
   // A secret handle onto the OS clipboard (local programs, the agent included, can read it), approved each time.
