@@ -48,6 +48,8 @@ export function wakeLine(invite) {
   if (wake === 'queued' || wake === 'sent') return { text: `Waking ${who}…`, fallback: false };
   // "Sent", not "received": Claude Code's socket answers nothing, not even to a refused or held message (checked on
   // 2.1.319), so a delivered wake only means the message was written. The copy line stays one tap away.
+  // OpenCode's FAI plugin answers once the turn is queued: a real acknowledgement.
+  if (wake === 'delivered' && invite?.session?.host === 'opencode') return { text: `Woke ${who}. It is starting now.`, fallback: false };
   if (wake === 'delivered' || wake === 'skipped') return { text: `Sent to ${who}. It should start in a moment.`, fallback: 'soft' };
   if (wake === 'failed') {
     const why = invite.wake.error?.message ? ` (${String(invite.wake.error.message).slice(0, 120)})` : '';
@@ -269,7 +271,7 @@ export function mountInvite({ root, context, onState, say }) {
 
   // Started at (so two look-alike sessions of one repo can be told apart), last activity, and how it is reached.
   function hint(agent) {
-    if (agent.host === 'codex' && !agent.ready) return `${startedLabel(agent)}not ready: ask it to run any FAI command`;
+    if (['codex', 'opencode'].includes(agent.host) && !agent.ready) return `${startedLabel(agent)}not ready: ask it to run any FAI command`;
     const when = since(agent.lastActiveAt);
     return `${startedLabel(agent)}${[when, agent.wake === 'none' ? 'you paste a line' : ''].filter(Boolean).join(' · ')}`;
   }
