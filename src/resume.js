@@ -20,9 +20,12 @@ function shellQuote(value) {
 }
 
 /**
- * The shell command that waits for `requestId` to become active: `[env FAI_HOME=…] <node> <cli.js> wait <id> --until
- * active --timeout 30m`. `execPath` is the node this process runs on (the one install registered for the MCP server);
- * `env` supplies the daemon location variables to carry.
+ * The shell command that waits for `requestId` to become active: `[FAI_HOME=… ]<node> <cli.js> wait <id> --until active
+ * --timeout 30m`. `execPath` is the node this process runs on (the one install registered for the MCP server); `env`
+ * (the MCP server's environment) supplies the daemon location variables to carry. They go in as shell prefix
+ * assignments, not through `env(1)`, which would read a node path containing `=` as one more assignment; an absolute
+ * path never looks like an assignment to the shell. Without them (the usual install) the command starts with the node
+ * path, so a Claude Code allowlist rule `Bash(<node> <path>/src/cli.js wait:*)` matches it.
  */
 export function resumeWaitCommand(requestId, { env = process.env, execPath = process.execPath, cliPath = CLI_PATH,
   timeout = RESUME_WAIT_TIMEOUT } = {}) {
@@ -30,7 +33,7 @@ export function resumeWaitCommand(requestId, { env = process.env, execPath = pro
     .map(name => `${name}=${shellQuote(env[name])}`);
   const node = typeof execPath === 'string' && execPath ? execPath : 'node';
   const parts = [node, cliPath, 'wait', String(requestId), '--until', 'active', '--timeout', timeout].map(shellQuote);
-  return [...(carried.length ? ['env', ...carried] : []), ...parts].join(' ');
+  return [...carried, ...parts].join(' ');
 }
 
 /**
@@ -41,7 +44,8 @@ export function resumeWaitText(requestId, options = {}) {
   // Only a daemon-issued id goes into a command (a result without one names no command).
   if (!REQUEST_ID.test(String(requestId ?? ''))) return '';
   return 'If you can run a background command that notifies you when it exits (for example Claude Code\'s Bash '
-    + `run_in_background), start \`${resumeWaitCommand(requestId, options)}\` that way now and end your turn: it exits 0 `
+    + `run_in_background), start \`${resumeWaitCommand(requestId, options)}\` that way now, if one is not already `
+    + 'running for this request, and end your turn: it exits 0 '
     + 'once the tab is ready (on another exit code follow next.text in its JSON line). Otherwise ask the user to tell '
     + 'you when they have done it.';
 }
