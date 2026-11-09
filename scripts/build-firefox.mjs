@@ -7,7 +7,8 @@
 //
 // What the Firefox manifest changes (see docs/REFERENCE.md "Firefox"):
 // - background: an event page (`scripts`) instead of a service worker: compat.js first (the Firefox fallbacks,
-//   chrome.offscreen among them), then psl-data.js (a service worker loads it with importScripts), then background.js.
+//   chrome.offscreen among them), then psl-data.js and frames.js (a service worker loads them with importScripts),
+//   then background.js.
 // - browser_specific_settings.gecko.id = fai-browser@jedbjorn.github.io (src/native.js GECKO_ID, the ID the add-on is
 //   signed under on AMO; the native host manifest's allowed_extensions also keep the old dev ID fai-browser@local) and
 //   strict_min_version FIREFOX_MIN_VERSION, and update_url (src/launcher/release.js UPDATE_URL: the updates.json of the
@@ -44,7 +45,7 @@ export const FIREFOX_MIN_VERSION = '140.0';
 const CHROME_ONLY_PERMISSIONS = new Set(['offscreen']);
 export const FIREFOX_EXTENSION_PAGES_CSP = "script-src 'self'; object-src 'none'";
 export const FIREFOX_OPTIONAL_HOSTS = ['https://*/*', 'http://*/*', '<all_urls>'];
-export const FIREFOX_BACKGROUND_SCRIPTS = ['compat.js', 'psl-data.js', 'background.js'];
+export const FIREFOX_BACKGROUND_SCRIPTS = ['compat.js', 'psl-data.js', 'frames.js', 'background.js'];
 // Chromium-only files left out of the Firefox build: trusted-input.js needs chrome.debugger, which Firefox lacks
 // (background.js loads it only with importScripts, absent in the Firefox event page). input.js is shared.
 export const FIREFOX_EXCLUDED_FILES = ['trusted-input.js'];

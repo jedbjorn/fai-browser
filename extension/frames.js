@@ -109,7 +109,8 @@
   }
 
   function frameContext(tabId) {
-    return { ...(states.get(tabId)?.context ?? {}), frame: true, topOrigin: session?.origin ?? null, origins: exactOrigins() };
+    return { purchase: false, sensitive: false, secretPage: false, ...(states.get(tabId)?.context ?? {}), frame: true,
+      topOrigin: session?.origin ?? null, origins: exactOrigins() };
   }
 
   // One page.js call inside a frame: pinned to its document where the browser has document ids (Chromium), else to

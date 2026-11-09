@@ -24,7 +24,7 @@ const compatSource = await readFile(join(ROOT, 'extension', 'compat.js'), 'utf8'
 test('the Firefox manifest: event page with compat.js first, gecko id, no Chrome-only keys, no upgrade-insecure-requests', () => {
   const manifest = firefoxManifest(chromeManifest);
   assert.equal(manifest.manifest_version, 3);
-  assert.deepEqual(manifest.background, { scripts: ['compat.js', 'psl-data.js', 'background.js'] });
+  assert.deepEqual(manifest.background, { scripts: ['compat.js', 'psl-data.js', 'frames.js', 'background.js'] });
   assert.deepEqual(FIREFOX_BACKGROUND_SCRIPTS, manifest.background.scripts);
   for (const script of manifest.background.scripts) assert.ok(existsSync(join(ROOT, 'extension', script)), script);
   assert.equal(manifest.browser_specific_settings.gecko.id, GECKO_ID);
