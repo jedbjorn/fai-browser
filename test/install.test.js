@@ -245,3 +245,110 @@ test('--dry-run lists writes without touching disk; --link symlinks the skill', 
   const bad = install(['--host', 'cursor']);
   assert.equal(bad.code, 1);
 });
+
+// --- pi: a managed loader for the FAI pi extension (integrations/pi/fai-browser.js) ---------------------------------
+
+const PI_EXTENSION_PATH = resolve(import.meta.dirname, '..', 'integrations', 'pi', 'fai-browser.js');
+
+test('pi project install writes the stamped loader and the shared skill; a rerun changes nothing', async t => {
+  const { project, install } = await sandbox(t);
+  const first = install(['--host', 'pi']);
+  assert.equal(first.code, 0, first.stderr);
+  assert.match(first.stderr, /restart pi \(or run \/reload\)/);
+  assert.match(first.stderr, /trust the project/);
+  const loader = read(join(project, '.pi', 'extensions', 'fai-browser.js'));
+  const lines = loader.trimEnd().split('\n');
+  assert.match(lines[0], /^\/\/ fai-browser \d+\.\d+\.\d+ \(managed by `fai-browser install --host pi`\): re-run install to update$/);
+  assert.equal(lines[1], `import activate from ${JSON.stringify(PI_EXTENSION_PATH)};`);
+  const options = JSON.parse(/^export default pi => activate\(pi, (\{.*\})\);$/.exec(lines[2])[1]);
+  assert.deepEqual(options, { command: NODE, args: [MCP_ENTRY] });
+  assert.ok(existsSync(join(project, '.agents', 'skills', 'fai-browser', 'SKILL.md')));
+  const second = install(['--host', 'pi']);
+  assert.ok(second.json.writes.every(write => write.action === 'unchanged'), JSON.stringify(second.json.writes));
+  assert.deepEqual(backups(join(project, '.pi', 'extensions')), []);
+});
+
+test('pi user install honours PI_CODING_AGENT_DIR and FAI_HOME; --command-name; --always-load is refused', async t => {
+  const { root, home, install } = await sandbox(t);
+  const user = install(['--host', 'pi', '--scope', 'user']);
+  assert.equal(user.code, 0, user.stderr);
+  assert.ok(existsSync(join(home, '.pi', 'agent', 'extensions', 'fai-browser.js')));
+  assert.ok(existsSync(join(home, '.agents', 'skills', 'fai-browser', 'SKILL.md')));
+
+  const agentDir = join(root, 'pi-agent');
+  const custom = install(['--host', 'pi', '--scope', 'user', '--command-name'], { PI_CODING_AGENT_DIR: agentDir,
+    FAI_HOME: '/data/fai' });
+  assert.equal(custom.code, 0, custom.stderr);
+  const loader = read(join(agentDir, 'extensions', 'fai-browser.js'));
+  assert.match(loader, /activate\(pi, \{"command":"fai-browser-mcp","args":\[\],"env":\{"FAI_HOME":"\/data\/fai"\}\}\);/);
+
+  const always = install(['--host', 'pi', '--always-load']);
+  assert.equal(always.code, 1);
+  assert.match(always.json.error.message, /--always-load applies to --host claude only/);
+});
+
+test('pi: a loader fai-browser did not write is refused without --force; a stamped one is updated with a backup', async t => {
+  const { project, install } = await sandbox(t);
+  const dir = join(project, '.pi', 'extensions');
+  const path = join(dir, 'fai-browser.js');
+  await mkdir(dir, { recursive: true });
+  await writeFile(path, 'export default () => {};\n');
+  const refused = install(['--host', 'pi']);
+  assert.equal(refused.code, 2);
+  assert.equal(read(path), 'export default () => {};\n');
+  const forced = install(['--host', 'pi', '--force']);
+  assert.equal(forced.code, 0, forced.stderr);
+  assert.match(read(path), /managed by `fai-browser install --host pi`/);
+  assert.equal(backups(dir).length, 1);
+
+  await writeFile(path, read(path).replace(JSON.stringify(NODE), JSON.stringify('/old/node')));
+  const updated = install(['--host', 'pi']);
+  assert.equal(updated.code, 0);
+  assert.equal(updated.json.writes[0].action, 'update');
+  assert.ok(read(path).includes(JSON.stringify(NODE)));
+});
+
+test('pi: a path pi would interpolate is refused with the snippet', async () => {
+  const { planInstall, InstallError } = await import('../src/install.js');
+  const refusedWith = pattern => error => error instanceof InstallError && error.exitCode === 2
+    && pattern.test(error.message) && error.snippet.includes('activate');
+  assert.throws(() => planInstall({ host: 'pi', cwd: '/tmp/x', home: '/tmp/h', env: {}, execPath: '/opt/$weird/node' }),
+    refusedWith(/interpolate/));
+  assert.throws(() => planInstall({ host: 'pi', cwd: '/tmp/x', home: '/tmp/h', env: { FAI_HOME: '/data/${X}' },
+    execPath: '/usr/bin/node' }), refusedWith(/interpolate/), 'FAI_HOME is checked too');
+});
+
+test('detectHosts: pi needs its agent directory as well as a pi on PATH (Debian ships an unrelated pi)', async t => {
+  const { detectHosts } = await import('../src/install.js');
+  const root = await mkdtemp(join(tmpdir(), 'fai-detect-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = join(root, 'bin');
+  await mkdir(bin);
+  await writeFile(join(bin, 'pi'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const home = join(root, 'home');
+  await mkdir(home);
+  const env = { PATH: bin };
+  assert.deepEqual(detectHosts({ env, home }).map(item => item.host), [], 'a bare pi on PATH is not the coding agent');
+  await mkdir(join(home, '.pi', 'agent'), { recursive: true });
+  assert.deepEqual(detectHosts({ env, home }).map(item => item.host), ['pi']);
+  assert.deepEqual(detectHosts({ env: { PATH: bin, PI_CODING_AGENT_DIR: join(root, 'nope') }, home }), []);
+});
+
+test('refreshUserSkills rewrites a stamped user pi loader with the new node path and keeps its options', async t => {
+  const { refreshUserSkills, piLoader } = await import('../src/install.js');
+  const root = await mkdtemp(join(tmpdir(), 'fai-refresh-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const home = join(root, 'home');
+  const path = join(home, '.pi', 'agent', 'extensions', 'fai-browser.js');
+  await mkdir(join(path, '..'), { recursive: true });
+  await writeFile(path, piLoader({ command: '/old/node', args: [MCP_ENTRY], env: { FAI_HOME: '/data/fai' } }));
+  const refreshed = await refreshUserSkills({ home, env: {}, execPath: '/new/node' });
+  assert.deepEqual(refreshed.filter(item => item.host === 'pi'), [{ host: 'pi', path, writes: 1 }]);
+  assert.match(read(path), /\{"command":"\/new\/node","args":\[[^\]]+\],"env":\{"FAI_HOME":"\/data\/fai"\}\}/);
+
+  // A foreign file at the same path is never touched.
+  await writeFile(path, 'export default () => {};\n');
+  const again = await refreshUserSkills({ home, env: {}, execPath: '/new/node' });
+  assert.deepEqual(again.filter(item => item.host === 'pi'), []);
+  assert.equal(read(path), 'export default () => {};\n');
+});
