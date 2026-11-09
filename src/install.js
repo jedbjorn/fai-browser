@@ -510,3 +510,24 @@ export async function registerHost(host, { env = process.env, home = homedir(), 
   }
   return { host, writes };
 }
+
+/**
+ * The updater's refresh (`fai-browser update --finish`): re-copy the skill into each user-level skill directory that an
+ * earlier `install` or setup wrote (its SKILL.md carries the version marker). A symlinked skill, a foreign skill and a
+ * host never registered are left alone; project-level installs are not discovered (their version marker says to re-run
+ * install). Resolves `[{ host, path, writes }]` for the directories it refreshed.
+ */
+export async function refreshUserSkills({ home = homedir() } = {}) {
+  const targets = new Map([
+    [join(home, '.claude', 'skills', 'fai-browser'), 'claude'],
+    [join(home, '.agents', 'skills', 'fai-browser'), 'codex/opencode'],
+  ]);
+  const refreshed = [];
+  for (const [target, host] of targets) {
+    const info = lstatOrNull(target);
+    if (!info?.isDirectory() || !SKILL_MARKER.test(readText(join(target, 'SKILL.md')) ?? '')) continue;
+    const writes = await applyPlan({ writes: planSkill(target, { link: false, force: false }) });
+    refreshed.push({ host, path: target, writes: writes.filter(write => write.action !== 'unchanged').length });
+  }
+  return refreshed;
+}

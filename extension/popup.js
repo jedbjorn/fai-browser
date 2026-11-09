@@ -10,6 +10,7 @@ import {
   addRelaxedOrigin, removeRelaxedOrigin,
 } from './permissions.js';
 import { mountApprovals } from './approval-card.js';
+import { mountUpdate } from './update-card.js';
 import {
   PIN_HINT, TESTING_WARNING, actionShortcut, allSitesGranted, askSiteAccess, element, fillLevelSelect, iconPinned,
   orShortcut, removeAllSites, replaceCardsPreservingFocus, requestAllSites,
@@ -502,6 +503,10 @@ async function savePermissions(next) {
 // The Approve gate's cards and settings live in their own module (extension/approval-card.js).
 mountApprovals({ list: document.getElementById('approvals'), settings: document.getElementById('approval-settings') })
   .catch(() => {});
+// "Update available" and the install's outcome (extension/update-card.js); installs only on the user's Update click.
+mountUpdate({ card: document.getElementById('update'), label: document.getElementById('update-label'),
+  text: document.getElementById('update-text'), notes: document.getElementById('update-notes'),
+  button: document.getElementById('update-install'), error: document.getElementById('update-error') }).catch(() => {});
 // Setup state: not paired or not reachable shows the setup card (Pair asks the native host, which also starts the FAI
 // service); connected collapses to one line, everything else lives under Advanced.
 function renderSetup() {

@@ -9,6 +9,7 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 
 ### Added
 
+- Update notice and one-click update from tagged GitHub releases. About once a day the local service checks GitHub's releases API anonymously (`FAI_UPDATE_CHECK=0` or `"updateCheck": false` turns it off). The popup then shows "Update available vX.Y.Z" with release notes and an Update button, and status and `fai_browser_status` carry an `update` field. The update installs only on that click or `node src/cli.js update` (`--check` only looks). It moves the git clone to the release tag, refreshes pairing and installed skills, restarts the service and reloads the unpacked Chromium extension. It refuses while a tab lease is held, on local changes, unpushed commits, another branch or another remote, and rolls back if a step fails after the move. While an update installs, new tab requests and approvals wait. For a private repository the check falls back to `git ls-remote` with the user's own git credentials (status `source: git`). No FAI secret reaches git, npm or the restarted service.
 - Clicking Resume (or approving) in the extension can wake the agent. `fai-browser wait <requestId> --until active [--timeout 30m]` blocks on the daemon's long poll until the tab is usable again and prints one JSON line: exit 0 active, 3 the request ended (released, expired, denied, cancelled or unknown to the daemon), 2 timeout, 130 interrupted. It never starts a daemon: it rides out a dropped connection or a restart with a short backoff, and after 30 s without a daemon ends as `unknown` (`daemon_gone`), since tab requests do not survive a restart. A failure still prints one line with a `next`; `next` follows the driver (`observe`, or `rerun` with `fai_browser_run` for Jev).
 - Paused and pending relays (Agent direct and Jev) name that command in `next.text` with the absolute node and CLI paths, so a host that is notified when a background command exits (Claude Code's `run_in_background`) starts it (unless one is already running) and ends its turn instead of waiting for the user to type "resumed"; other hosts ask the user to say when they are done.
 
@@ -24,6 +25,8 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 ### Known limits
 
 - With a toolbar (activeTab) approval, Chrome withdraws access when its own error page appears, so that session still pauses as `origin_changed`; approve the tab again once the site is back. Approval in the request modal (browser site access) keeps the session. Firefox is not covered by this fix (untested): its network error pages (`about:neterror`) may still pause as `origin_changed`.
+- With the repository private, only final releases may carry a plain `vX.Y.Z` tag (the git fallback cannot see prerelease flags), and Firefox cannot fetch the signed add-on's update by itself.
+- Project-level skill installs are not refreshed by an update; re-run `node src/cli.js install --host ...` there.
 
 ## 0.4.0 (2026-11-07)
 
