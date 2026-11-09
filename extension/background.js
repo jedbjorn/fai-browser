@@ -3417,7 +3417,11 @@ async function startSession(message, given = null) {
   }
   if (!requestId && !invite) {
     requestId = pickRequest(origin, tab.id);
-    if (!requestId) throw new Error('Choose the request in the FAI Browser popup: none waits for this tab.');
+    // Requests for this site that the rule refuses (a paused one on another tab): the user picks one on its card. With
+    // none known, the service decides (the in-process companion has no requests; the daemon applies the same rule).
+    const known = requests.some(item => ['pending', 'paused'].includes(item.state) && here(item)
+      && Array.isArray(item.origins) && originCovered(origin, item.origins));
+    if (!requestId && known) throw new Error('Choose the request in the FAI Browser popup: none waits for this tab.');
   }
   // The level the user picked on the request card. Anything unknown or missing is read-only.
   const level = cleanLevel(message.level) ?? 'read-only';
