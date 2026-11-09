@@ -32,7 +32,7 @@ Or ask your agent to call `fai_browser_status`. Reference: [REFERENCE.md: The da
 | Deny / `refused_action` | By design: the agent must tell you, not retry. Ask it to do it another way, or do it yourself |
 | `stale` / "revision spent" | The page changed or the revision was used already. The agent should `fai_browser_observe` and choose again |
 | A purchase button is "refused", not "asks the user" | Approve gate is off (popup, Permissions), or you are below the level that offers it. With the gate on, purchases ask |
-| Session pauses with `origin_changed` | The tab left the approved origins (or, on Firefox, `activeTab` ended at the first navigation and you declined the origin prompt). Approve again |
+| Session pauses with `origin_changed` | The tab left the approved origins (or, on Firefox, `activeTab` ended at the first navigation and you declined the origin prompt). With a toolbar-icon approval, Chrome also withdraws access when it shows its own error page (an HTTP error without a page, an unreachable site). Approve again; approving in the request modal (browser site access) keeps the session through such errors |
 
 ## Pages and actions
 
@@ -49,6 +49,7 @@ Or ask your agent to call `fai_browser_status`. Reference: [REFERENCE.md: The da
 | `expectation_failed` / `unverified` | The final page did not match the expectation. Check it against the real URL/text (it is matched on redacted, settled text); loosen it |
 | `budget_exhausted` / call budget | Each request allows 50 calls / 20 minutes by default (popup, Advanced, Per-request budget raises the ceiling) |
 | `error_page` | The page returned an HTTP error; the agent should stop and tell you |
+| `error_page` or the `browser_error_page` warning on the approved site | The browser shows its own error page: the server answered with an HTTP error and no page, or could not be reached. The tab stays approved; once the site is back the agent can reload it (`nav: "reload"`) or open another approved URL |
 
 ## Tests and development
 
