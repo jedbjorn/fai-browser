@@ -21,7 +21,19 @@
 // The `settings` message {settings: {budget}} (HTTP /settings), and `hello.settings`, carry the user's popup settings:
 // `budget` {maxCalls, maxMs} is the per-request call budget (null when not set). The hub keeps the last reported
 // settings (`extension().settings`) and emits a `settings` event; the daemon answers with the budget in effect.
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+//
+// Several browsers (issue #9): every extension install reports a stable browser identity, the `browser` query
+// parameter of the WebSocket URL and the X-Fai-Browser header of every HTTP call (a per-install random id from
+// extension storage), plus `hello.browser` {product, name, version}. The hub keeps one connection per identity, with
+// its own socket, held long-polls, outbox and liveness; a lease belongs to the browser that approved it, and its
+// commands and pushes go to that connection only. A newer connection of the SAME identity (a restarted service
+// worker) closes the older socket with CLOSE_SUPERSEDED, which the extension never answers with a reconnect; a
+// connection of another identity never closes anyone. An older extension that reports no identity is known by its
+// extension Origin (unique per Firefox install; one per Chromium-family browser). Each connection gets the request
+// views the daemon publishes plus the list of connected browsers (`browsers`) for its popup; an older extension
+// gets only the requests meant for it. `used {}` (the user opened the popup or clicked the toolbar icon) and `move
+// {requestId}` (the popup's "Open here") are forwarded to the daemon as events with the sender's browserId.
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { acceptUpgrade, offeredProtocols, rejectUpgrade } from './ws.js';
 import { LEVELS, clampLevel, isLevel, levelRank } from './guardrails.js';
 
@@ -38,6 +50,22 @@ export const WS_PATH = '/ext/ws';
 export const FIREFOX_EXTENSION_ORIGIN = /^moz-extension:\/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const WS_PROTOCOL = 'fai-browser.v3';
 export const AUTH_PROTOCOL_PREFIX = 'fai-auth.';
+// WebSocket close codes the hub sends. 4000 was "replaced by a newer connection" from ANY browser before 0.6 (the
+// cause of issue #9); the hub no longer sends it, and the extension backs off on it when an older service does.
+export const CLOSE_REPLACED_LEGACY = 4000;
+export const CLOSE_PAIRING_CHANGED = 4001;
+// A newer connection of the same browser identity took over: the extension must not reconnect on it.
+export const CLOSE_SUPERSEDED = 4003;
+// The header (HTTP fallback) and query parameter (WebSocket) that carry the extension's browser identity.
+export const BROWSER_HEADER = 'x-fai-browser';
+export const BROWSER_ID = /^[A-Za-z0-9_-]{8,64}$/;
+const BROWSER_PRODUCT = /^[a-z0-9-]{1,24}$/;
+// A connection that closes more than this many times within FLAP_WINDOW_MS is reported as flapping.
+export const FLAP_LIMIT = 8;
+export const FLAP_WINDOW_MS = 60_000;
+// Disconnected browsers with no lease are forgotten after this long.
+const FORGET_BROWSER_MS = 10 * 60_000;
+const MAX_BROWSERS = 16;
 
 export const BRIDGE_ERROR_CODES = Object.freeze([
   'stale', 'target_unavailable', 'blocked_risky', 'cross_origin', 'child_tab', 'tab_changed', 'origin_changed',
@@ -68,6 +96,8 @@ const HTTP_ROUTES = {
   '/results': 'result',
   '/screenshots': 'screenshot',
   '/heartbeat': 'heartbeat',
+  '/used': 'used',
+  '/move': 'move',
   '/commands': 'commands',
 };
 const REPLY_HTTP_STATUS = {
@@ -173,6 +203,71 @@ function sanitizeSession(session) {
 }
 
 /**
+ * The browser identity of an extension connection: the id it reports (`reported`, the WebSocket URL's `browser`
+ * parameter or the X-Fai-Browser header) when well formed, else one derived from its extension Origin (an extension
+ * older than multi-browser support): `{id, legacy}`.
+ */
+export function connectionIdentity(reported, origin) {
+  if (typeof reported === 'string' && BROWSER_ID.test(reported)) return { id: reported, legacy: false };
+  const digest = createHash('sha256').update(String(origin ?? '')).digest('hex').slice(0, 16);
+  return { id: `origin-${digest}`, legacy: true };
+}
+
+/** What a hello says about the browser: {product, name, version}, each cleaned, or nulls. */
+export function sanitizeBrowserInfo(value) {
+  const info = value && typeof value === 'object' ? value : {};
+  const product = typeof info.product === 'string' && BROWSER_PRODUCT.test(info.product.toLowerCase())
+    ? info.product.toLowerCase() : null;
+  const printable = text => (typeof text === 'string' ? text.replace(/[^\x20-\x7e]/g, '').trim().slice(0, 40) : '');
+  return { product, name: printable(info.name) || null, version: printable(info.version).slice(0, 20) || null };
+}
+
+// The product an older extension stands for, from its Origin.
+function originProduct(origin) {
+  return typeof origin === 'string' && origin.startsWith('moz-extension://') ? 'firefox' : 'chromium';
+}
+
+const PRODUCT_NAMES = { firefox: 'Firefox', chrome: 'Chrome', chromium: 'Chromium', edge: 'Edge', brave: 'Brave',
+  opera: 'Opera', vivaldi: 'Vivaldi' };
+const PRODUCT_ALIASES = { 'google chrome': 'chrome', 'microsoft edge': 'edge', msedge: 'edge', 'mozilla firefox': 'firefox' };
+
+/** The label of a browser for people: its name, else its product's, else "Browser". */
+export function browserLabel(browser) {
+  return browser?.name || PRODUCT_NAMES[browser?.product] || browser?.product || 'Browser';
+}
+
+/** "Firefox (firefox), Chromium (chromium)": the connected browsers as an agent can name them. */
+export function describeBrowsers(browsers) {
+  return browsers.map(browser => `${browserLabel(browser)} (${browser.product ?? browser.id})`).join(', ');
+}
+
+/**
+ * The browser a new tab request goes to: `wanted` (what the agent named: an id, a product such as "firefox" or a
+ * name, case-insensitive) when given, else the one the user used FAI in most recently (`usedAt`: the last approval,
+ * popup open or toolbar click), else the most recently connected one. Several matches: the most recently used.
+ * Returns {browser} (null when nothing is connected and nothing was asked for) or {error: {code, message}}.
+ * `browsers` are the connected browsers ({id, product, name, usedAt, connectedAt}).
+ */
+export function pickBrowser(browsers, wanted) {
+  const list = Array.isArray(browsers) ? browsers : [];
+  const recent = (a, b) => (b.usedAt ?? 0) - (a.usedAt ?? 0) || (b.connectedAt ?? 0) - (a.connectedAt ?? 0);
+  if (wanted === undefined || wanted === null || wanted === '') {
+    return { browser: [...list].sort(recent)[0] ?? null };
+  }
+  const key = String(wanted).trim().toLowerCase();
+  const product = PRODUCT_ALIASES[key] ?? key;
+  const matches = list.filter(browser => browser.id === String(wanted).trim() || browser.product === product
+    || (browser.name && browser.name.toLowerCase() === key));
+  if (matches.length) return { browser: matches.sort(recent)[0] };
+  const message = list.length
+    ? `No connected browser matches "${String(wanted).slice(0, 40)}". Connected: ${describeBrowsers(list)}. Pass one of `
+      + 'those as browser, or leave browser out to use the one the user used FAI in last.'
+    : `No browser with FAI Browser is connected, so "${String(wanted).slice(0, 40)}" cannot be used. Ask the user to open `
+      + 'the browser with the FAI Browser extension, or leave browser out.';
+  return { error: { code: 'browser_not_connected', message } };
+}
+
+/**
  * The extension transport hub. See the Phase 2 design section 3 for the contract the daemon consumes.
  * `log(event, fields)` receives transport events only; it never sees secrets, page text or message bodies.
  */
@@ -189,6 +284,9 @@ export function createHub({
   leaseTimeoutMs = 35_000,
   pingIntervalMs,
   idleTimeoutMs,
+  // More closes than flapLimit within flapWindowMs: the browser's connection is flapping (a warning in status).
+  flapLimit = FLAP_LIMIT,
+  flapWindowMs = FLAP_WINDOW_MS,
 } = {}) {
   validateCredentials(secret, extensionId);
   const extensionOrigin = `chrome-extension://${extensionId}`;
@@ -203,19 +301,14 @@ export function createHub({
   setCredentials(secret);
 
   let closed = false;
-  let socket = null; // the open WebSocketConnection, if any
-  let socketReady = false; // hello handled on the current socket
-  let connected = false;
-  let connectedTransport = 'none';
-  let extensionVersion = null;
-  let extensionSettings = null; // the popup settings last reported ({budget}), null until an extension reports any
-  let lastSeen = 0;
-  let graceTimer = null;
+  // One entry per browser identity (connectionIdentity): {id, legacy, origin, product, name, version, socket,
+  // socketReady, connected, transport, connectedAt, lastSeen, graceTimer, outbox, waiters, settings, usedAt, closes,
+  // sentJson, flapping}.
+  const browsers = new Map();
+  let extensionSettings = null; // the popup settings last reported by any browser ({budget}), null until one does
   let requests = [];
   let requestsJson = '[]';
-  const outbox = []; // daemon->extension messages waiting for the next long-poll response
-  const waiters = new Set(); // held long-poll responses
-  const leases = new Map(); // leaseId -> {leaseId, requestId, tabId, origin, allowedOrigins, status, reason, state}
+  const leases = new Map(); // leaseId -> {leaseId, requestId, browserId, tabId, origin, allowedOrigins, status, reason, state}
   const pending = new Map(); // command id -> {method, leaseId, delivered, resolve, reject}
   const queue = []; // commands not yet delivered to the extension
   const screenshots = new Map(); // execute command id -> {resolve, timer}
@@ -242,71 +335,188 @@ export function createHub({
     return delivered;
   }
 
-  // --- connection state ----------------------------------------------------------------------------------
+  // --- browsers (one connection each) ---------------------------------------------------------------------
 
-  const transport = () => (socket?.open ? 'websocket' : connected ? connectedTransport : 'none');
-
-  function markSeen(kind) {
-    lastSeen = Date.now();
-    clearTimeout(graceTimer);
-    graceTimer = null;
-    const effective = socket?.open ? 'websocket' : kind;
-    if (connected && connectedTransport === effective) return;
-    connected = true;
-    connectedTransport = effective;
-    logEvent('extension_connected', { transport: effective });
-    emit({ type: 'connected', transport: effective });
-  }
-
-  function connectionLost() {
-    clearTimeout(graceTimer);
-    graceTimer = null;
-    const previous = connectedTransport;
-    for (const lease of leases.values()) {
-      if (lease.status === 'active') deactivate(lease, 'paused', 'disconnected');
+  function browserFor({ id, legacy }, origin) {
+    let browser = browsers.get(id);
+    if (!browser) {
+      browser = {
+        id, legacy, origin, product: originProduct(origin), name: null, version: null,
+        socket: null, socketReady: false, connected: false, transport: 'none', connectedAt: 0, lastSeen: Date.now(),
+        graceTimer: null, outbox: [], waiters: new Set(), settings: null, usedAt: 0, closes: [], sentJson: null,
+        flapping: false,
+      };
+      browsers.set(id, browser);
+      pruneBrowsers();
     }
-    if (!connected) return;
-    connected = false;
-    connectedTransport = 'none';
-    logEvent('extension_disconnected', { transport: previous });
-    emit({ type: 'disconnected', transport: previous });
+    return browser;
   }
 
-  // The extension went away (socket closed or held long-poll dropped). A live worker reconnects or re-polls
-  // well within the grace period.
-  function scheduleGrace() {
-    clearTimeout(graceTimer);
-    graceTimer = setTimeout(() => {
-      graceTimer = null;
-      if (!socket?.open && !waiters.size) connectionLost();
+  // Forgets disconnected browsers without a lease (long gone, or too many).
+  function pruneBrowsers() {
+    const idle = [...browsers.values()].filter(browser => !browser.connected && !browser.socket?.open
+      && !browser.waiters.size && ![...leases.values()].some(lease => lease.browserId === browser.id));
+    for (const browser of idle) {
+      if (browsers.size > MAX_BROWSERS || Date.now() - browser.lastSeen > FORGET_BROWSER_MS) {
+        clearTimeout(browser.graceTimer);
+        browsers.delete(browser.id);
+      }
+    }
+  }
+
+  const connectedBrowsers = () => [...browsers.values()].filter(browser => browser.connected || browser.socket?.open);
+  // The browser of the most recent activity: used last, else connected last. A lease bound without a browserId
+  // (an embedding or a test that names none) belongs to it.
+  function latestBrowser() {
+    const live = connectedBrowsers();
+    const pool = live.length ? live : [...browsers.values()];
+    return pool.sort((a, b) => b.usedAt - a.usedAt || b.connectedAt - a.connectedAt)[0] ?? null;
+  }
+  const ownerOf = lease => (lease?.browserId ? browsers.get(lease.browserId) ?? null : latestBrowser());
+  const transportOf = browser => (browser?.socket?.open ? 'websocket' : browser?.connected ? browser.transport : 'none');
+
+  function markSeen(browser, kind) {
+    browser.lastSeen = Date.now();
+    clearTimeout(browser.graceTimer);
+    browser.graceTimer = null;
+    const effective = browser.socket?.open ? 'websocket' : kind;
+    if (browser.connected && browser.transport === effective) return;
+    const wasConnected = browser.connected;
+    browser.connected = true;
+    browser.transport = effective;
+    if (!wasConnected) browser.connectedAt = Date.now();
+    logEvent('extension_connected', { transport: effective, browserId: browser.id });
+    emit({ type: 'connected', transport: effective, browserId: browser.id });
+    if (!wasConnected) publishAll();
+  }
+
+  function connectionLost(browser) {
+    clearTimeout(browser.graceTimer);
+    browser.graceTimer = null;
+    const previous = browser.transport;
+    for (const lease of leases.values()) {
+      if (lease.status === 'active' && ownerOf(lease) === browser) deactivate(lease, 'paused', 'disconnected');
+    }
+    if (!browser.connected) return;
+    browser.connected = false;
+    browser.transport = 'none';
+    logEvent('extension_disconnected', { transport: previous, browserId: browser.id });
+    emit({ type: 'disconnected', transport: previous, browserId: browser.id });
+    publishAll();
+  }
+
+  // The browser went away (socket closed or held long-poll dropped). A live worker reconnects or re-polls well
+  // within the grace period.
+  function scheduleGrace(browser) {
+    clearTimeout(browser.graceTimer);
+    browser.graceTimer = setTimeout(() => {
+      browser.graceTimer = null;
+      if (!browser.socket?.open && !browser.waiters.size) connectionLost(browser);
     }, disconnectGraceMs);
-    graceTimer.unref?.();
+    browser.graceTimer.unref?.();
+  }
+
+  // A closed socket of `browser`: counted, so a reconnect loop shows up as `extension_flapping` (status warnings).
+  function noteClose(browser) {
+    const now = Date.now();
+    browser.closes = browser.closes.filter(at => now - at < flapWindowMs);
+    browser.closes.push(now);
+    const flapping = browser.closes.length > flapLimit;
+    if (flapping && !browser.flapping) {
+      logEvent('extension_flapping', { browserId: browser.id, closes: browser.closes.length, windowMs: flapWindowMs });
+    }
+    browser.flapping = flapping;
   }
 
   // An open socket or a held long-poll counts as liveness.
   const expiry = setInterval(() => {
-    if (socket?.open || waiters.size) lastSeen = Date.now();
-    if (connected && Date.now() - lastSeen > leaseTimeoutMs) connectionLost();
+    const now = Date.now();
+    for (const browser of [...browsers.values()]) {
+      if (browser.socket?.open || browser.waiters.size) browser.lastSeen = now;
+      if (browser.connected && now - browser.lastSeen > leaseTimeoutMs) connectionLost(browser);
+      if (browser.flapping && !browser.closes.some(at => now - at < flapWindowMs)) {
+        browser.flapping = false;
+        browser.closes = [];
+      }
+    }
+    pruneBrowsers();
   }, 250);
   expiry.unref();
 
-  // --- outbound --------------------------------------------------------------------------------------------
-
-  // Sends a daemon->extension push: over the socket when open, else queued for the next long-poll response.
-  function push(message) {
-    const framed = { v: 3, ...message };
-    if (socket?.open) {
-      socket.send(framed);
-      return;
-    }
-    outbox.push(framed);
-    if (outbox.length > 100) outbox.shift();
-    wakeWaiters();
+  function browserView(browser) {
+    const iso = ms => (ms ? new Date(ms).toISOString() : null);
+    const now = Date.now();
+    return {
+      id: browser.id,
+      product: browser.product,
+      name: browserLabel(browser),
+      version: browser.version,
+      transport: transportOf(browser),
+      connected: browser.connected || Boolean(browser.socket?.open),
+      connectedAt: iso(browser.connectedAt),
+      lastSeen: iso(browser.lastSeen),
+      lastUsedAt: iso(browser.usedAt),
+      legacy: browser.legacy,
+      closesLastMinute: browser.closes.filter(at => now - at < flapWindowMs).length,
+      leases: [...leases.values()]
+        .filter(lease => ownerOf(lease) === browser && ['active', 'paused'].includes(lease.status))
+        .map(lease => ({ leaseId: lease.leaseId, requestId: lease.requestId, status: lease.status })),
+    };
   }
 
-  function takeCommand() {
-    for (let command = queue.shift(); command; command = queue.shift()) {
+  // The connected browsers as each popup lists them.
+  const browserList = () => connectedBrowsers().sort((a, b) => a.connectedAt - b.connectedAt)
+    .map(browser => ({ id: browser.id, product: browser.product, name: browserLabel(browser) }));
+
+  // --- outbound --------------------------------------------------------------------------------------------
+
+  // Sends a daemon->extension push to one browser: over its socket when open, else queued for its next long-poll.
+  function push(browser, message) {
+    if (!browser) return;
+    const framed = { v: 3, ...message };
+    if (browser.socket?.open) {
+      browser.socket.send(framed);
+      return;
+    }
+    browser.outbox.push(framed);
+    if (browser.outbox.length > 100) browser.outbox.shift();
+    wakeWaiters(browser);
+  }
+
+  // The request views one browser gets: all of them with the browser list (a current extension marks the ones meant
+  // for another browser itself), or only its own and unassigned ones for an older extension that cannot tell.
+  function snapshotFor(browser) {
+    if (browser.legacy) {
+      return { requests: requests.filter(view => !view?.browser?.id || view.browser.id === browser.id) };
+    }
+    return { requests, browsers: browserList() };
+  }
+
+  // Sends each ready socket its snapshot when it changed, and wakes held long-polls.
+  function publishAll() {
+    for (const browser of browsers.values()) {
+      const snapshot = snapshotFor(browser);
+      const json = JSON.stringify(snapshot);
+      if (json === browser.sentJson) continue;
+      if (browser.socket?.open) {
+        if (!browser.socketReady) continue;
+        browser.sentJson = json;
+        browser.socket.send({ v: 3, type: 'requests', ...snapshot });
+      } else {
+        wakeWaiters(browser, { requestsChanged: true });
+      }
+    }
+  }
+
+  function takeCommand(browser) {
+    for (let index = 0; index < queue.length;) {
+      const command = queue[index];
       const lease = leases.get(command.lease.id);
+      if (ownerOf(lease) !== browser) {
+        index++;
+        continue;
+      }
+      queue.splice(index, 1);
       if (['open_tab', 'switch_tab'].includes(command.args?.action?.type) && lease?.tabMode !== 'multiple') {
         pending.get(command.id)?.reject(new BridgeError('blocked_risky', 'This request allows one task tab'));
         continue;
@@ -317,12 +527,12 @@ export function createHub({
     return null;
   }
 
-  function wakeWaiters({ requestsChanged = false } = {}) {
-    for (const waiter of [...waiters]) {
-      const command = takeCommand();
+  function wakeWaiters(browser, { requestsChanged = false } = {}) {
+    for (const waiter of [...browser.waiters]) {
+      const command = takeCommand(browser);
       if (command) {
         waiter.finish(command);
-      } else if (outbox.length || requestsChanged) {
+      } else if (browser.outbox.length || requestsChanged) {
         waiter.finish(null);
       } else {
         return;
@@ -330,47 +540,52 @@ export function createHub({
     }
   }
 
-  // Delivers queued commands: over the socket once its hello is handled, else to held long-polls.
+  // Delivers queued commands, each to the browser that holds its lease: over its socket once its hello is handled,
+  // else to its held long-polls.
   function dispatch() {
-    if (socket?.open) {
-      if (!socketReady) return;
-      for (let command = takeCommand(); command; command = takeCommand()) {
-        socket.send({ v: 3, type: 'command', command });
-        const entry = pending.get(command.id);
-        if (entry) entry.delivered = true;
+    for (const browser of browsers.values()) {
+      if (browser.socket?.open) {
+        if (!browser.socketReady) continue;
+        for (let command = takeCommand(browser); command; command = takeCommand(browser)) {
+          browser.socket.send({ v: 3, type: 'command', command });
+          const entry = pending.get(command.id);
+          if (entry) entry.delivered = true;
+        }
+        continue;
       }
-      return;
+      wakeWaiters(browser);
     }
-    wakeWaiters();
   }
 
-  function longPollBody(command) {
+  function longPollBody(browser, command) {
     if (command) {
       const entry = pending.get(command.id);
       if (entry) entry.delivered = true;
     }
-    return { command, requests, messages: outbox.splice(0) };
+    const snapshot = snapshotFor(browser);
+    browser.sentJson = JSON.stringify(snapshot);
+    return { command, ...snapshot, messages: browser.outbox.splice(0) };
   }
 
-  function holdLongPoll(res, waitMs, reply) {
+  function holdLongPoll(browser, res, waitMs, reply) {
     const waiter = {
       finish(command) {
-        if (!waiters.delete(waiter)) return;
+        if (!browser.waiters.delete(waiter)) return;
         clearTimeout(waiter.timer);
-        reply(200, longPollBody(command));
+        reply(200, longPollBody(browser, command));
       },
     };
     waiter.timer = setTimeout(() => waiter.finish(null), waitMs);
     // Per-connection cleanup: a dropped connection must neither keep a timer nor swallow a command.
     res.on('close', () => {
       clearTimeout(waiter.timer);
-      if (waiters.delete(waiter) && !socket?.open) scheduleGrace();
+      if (browser.waiters.delete(waiter) && !browser.socket?.open) scheduleGrace(browser);
     });
-    waiters.add(waiter);
+    browser.waiters.add(waiter);
   }
 
   function releaseWaiters() {
-    for (const waiter of [...waiters]) waiter.finish(null);
+    for (const browser of browsers.values()) for (const waiter of [...browser.waiters]) waiter.finish(null);
   }
 
   // --- leases and commands ---------------------------------------------------------------------------------
@@ -398,6 +613,7 @@ export function createHub({
       state: lease.state,
       reason: lease.reason,
       ...(lease.level ? { level: lease.level } : {}),
+      ...(lease.browserId ? { browserId: lease.browserId } : {}),
     };
   }
 
@@ -421,7 +637,7 @@ export function createHub({
           // Tell the extension to drop a delivered command the host gave up on (abort or timeout). Lease ends and
           // extension-reported errors need no cancel.
           const gaveUp = !(error instanceof BridgeError) || error.code === 'timeout';
-          if (entry?.delivered && gaveUp && !closed) push({ type: 'cancel', id });
+          if (entry?.delivered && gaveUp && !closed) push(ownerOf(leases.get(leaseId)), { type: 'cancel', id });
           reject(error);
         } else {
           resolve(result);
@@ -577,26 +793,29 @@ export function createHub({
 
   // --- inbound messages ------------------------------------------------------------------------------------
 
-  // The most recently bound active lease; used for v2-style /status reports that carry no leaseId.
-  function currentActiveLease() {
+  // The browser's most recently bound active lease; used for v2-style /status reports that carry no leaseId.
+  function currentActiveLease(browser) {
     let found = null;
-    for (const lease of leases.values()) if (lease.status === 'active') found = lease;
+    for (const lease of leases.values()) if (lease.status === 'active' && ownerOf(lease) === browser) found = lease;
     return found;
   }
 
-  function handleStatus(message) {
+  function handleStatus(message, browser) {
     const status = ['active', 'paused', 'stopped'].includes(message.status) ? message.status : 'paused';
     const reason = typeof message.reason === 'string' ? message.reason : status;
-    const lease = typeof message.leaseId === 'string' ? leases.get(message.leaseId) : currentActiveLease();
+    const lease = typeof message.leaseId === 'string' ? leases.get(message.leaseId) : currentActiveLease(browser);
     if (!lease || status === 'active') return;
+    // A browser reports on its own leases only.
+    if (lease.browserId && lease.browserId !== browser.id) return;
     if (lease.status === 'active') deactivate(lease, status, reason);
     else if (status === 'stopped' && lease.status !== 'stopped') lease.status = 'stopped';
     lease.state = status;
-    emit({ type: 'status', leaseId: lease.leaseId, requestId: lease.requestId, status, reason });
+    emit({ type: 'status', leaseId: lease.leaseId, requestId: lease.requestId, status, reason, browserId: browser.id });
   }
 
-  // Routes one extension message. `answer(ok, payload)` replies to ref'd types exactly once.
-  function handleMessage(message, answer, via) {
+  // Routes one extension message from `browser` (over `connection` when via the WebSocket). `answer(ok, payload)`
+  // replies to ref'd types exactly once.
+  function handleMessage(message, answer, via, browser, connection = null) {
     let answered = false;
     const reply = value => {
       if (answered) return;
@@ -612,28 +831,62 @@ export function createHub({
         answer(true, value ?? {});
       }
     };
+    const browserId = browser.id;
+    const browserRef = () => ({ id: browserId, product: browser.product, name: browserLabel(browser) });
     switch (message?.type) {
       case 'hello': {
-        extensionVersion = typeof message.ext?.version === 'string' ? message.ext.version.slice(0, 40) : null;
+        browser.version = typeof message.ext?.version === 'string' ? message.ext.version.slice(0, 40) : null;
+        const info = sanitizeBrowserInfo(message.browser);
+        if (info.product) browser.product = info.product;
+        if (info.name) browser.name = info.name;
         const session = sanitizeSession(message.session);
         // An older extension sends no settings: the ones last reported (if any) stand.
-        if (message.settings !== undefined) extensionSettings = sanitizeSettings(message.settings);
+        if (message.settings !== undefined) {
+          browser.settings = sanitizeSettings(message.settings);
+          extensionSettings = browser.settings;
+        }
         const finish = value => {
           const wasAnswered = answered;
-          reply(via === 'http' && !value?.error ? { ...value, requests } : value);
-          if (wasAnswered || via !== 'ws') return;
-          socketReady = true;
-          socket?.send({ v: 3, type: 'requests', requests });
+          if (via === 'http' && !value?.error) {
+            const snapshot = snapshotFor(browser);
+            browser.sentJson = JSON.stringify(snapshot);
+            reply({ ...value, ...snapshot });
+          } else {
+            reply(value);
+          }
+          if (wasAnswered || via !== 'ws' || browser.socket !== connection || !connection?.open) return;
+          browser.socketReady = true;
+          const snapshot = snapshotFor(browser);
+          browser.sentJson = JSON.stringify(snapshot);
+          connection.send({ v: 3, type: 'requests', ...snapshot });
           dispatch();
         };
-        const event = { type: 'hello', session, settings: extensionSettings, reply: finish };
+        const event = { type: 'hello', session, settings: extensionSettings, browserId, browser: browserRef(), reply: finish };
         if (!emit(event)) finish({ mode, endSession: Boolean(session) });
+        // The other browsers list this one by its reported name from now on.
+        publishAll();
+        return;
+      }
+      case 'used': {
+        // The user opened the popup or clicked the toolbar icon in this browser: new tab requests go here.
+        browser.usedAt = Date.now();
+        emit({ type: 'used', browserId });
+        if (message.ref !== undefined || via === 'http') answer(true, { ok: true });
+        return;
+      }
+      case 'move': {
+        // The popup's "Open here": the user wants a request that waits in another browser in this one.
+        const requestId = typeof message.requestId === 'string' ? message.requestId : null;
+        browser.usedAt = Date.now();
+        const event = { type: 'move', requestId, browserId, browser: browserRef(), reply };
+        if (!emit(event)) reply({ error: { code: 'no_request', message: 'No tab request is pending' } });
         return;
       }
       case 'settings': {
         // The user changed a popup setting (the per-request budget). Kept here for extension(); the daemon replies
         // with what is in effect.
         extensionSettings = sanitizeSettings(message.settings) ?? { budget: null };
+        browser.settings = extensionSettings;
         const event = { type: 'settings', settings: extensionSettings, reply };
         if (!emit(event)) reply({ settings: extensionSettings });
         return;
@@ -662,7 +915,7 @@ export function createHub({
         return;
       }
       case 'ping':
-        if (via === 'ws') socket?.send({ v: 3, type: 'pong' });
+        if (via === 'ws') connection?.send({ v: 3, type: 'pong' });
         return;
       case 'heartbeat':
         answer(true, { ok: true });
@@ -692,8 +945,13 @@ export function createHub({
           // anything else is the exact-origin scope.
           scope: message.scope === 'domain' ? 'domain' : 'origin',
           tabMode: message.tabMode ?? 'single',
+          // The browser the user approved in: the lease, and every command of it, belong to it.
+          browserId,
+          browser: browserRef(),
           reply,
         };
+        // An approval is the strongest sign of where the user works: new tab requests go here.
+        browser.usedAt = Date.now();
         if (!emit(event)) reply({ error: { code: 'no_request', message: 'No tab request is pending' } });
         return;
       }
@@ -705,7 +963,7 @@ export function createHub({
           return;
         }
         const lease = typeof message.leaseId === 'string' ? leases.get(message.leaseId) : null;
-        if (!lease) {
+        if (!lease || (lease.browserId && lease.browserId !== browserId)) {
           reply({ error: { code: 'no_request', message: 'No such tab lease' } });
           return;
         }
@@ -721,12 +979,12 @@ export function createHub({
       }
       case 'deny': {
         const requestId = typeof message.requestId === 'string' ? message.requestId : null;
-        const event = { type: 'deny', requestId, reply };
+        const event = { type: 'deny', requestId, browserId, reply };
         if (!emit(event)) reply({ error: { code: 'no_request', message: 'No tab request is pending' } });
         return;
       }
       case 'status':
-        handleStatus(message);
+        handleStatus(message, browser);
         if (via === 'http') answer(true, { ok: true });
         return;
       case 'validate': {
@@ -773,15 +1031,18 @@ export function createHub({
     if (!protocols.includes(WS_PROTOCOL)) return reject(400, 'unsupported_protocol');
     const connection = acceptUpgrade(req, rawSocket, head, { protocol: WS_PROTOCOL, pingIntervalMs, idleTimeoutMs });
     if (!connection) return true;
-    const previous = socket;
-    socket = connection;
-    socketReady = false;
-    if (previous?.open) previous.close(4000, 'Replaced by a newer connection');
-    logEvent('extension_ws_open', {});
-    markSeen('websocket');
+    const browser = browserFor(connectionIdentity(url.searchParams.get('browser'), req.headers.origin), req.headers.origin);
+    const previous = browser.socket;
+    browser.socket = connection;
+    browser.socketReady = false;
+    browser.sentJson = null;
+    // Only this browser's own older socket is replaced (a restarted worker); never another browser's (issue #9).
+    if (previous?.open) previous.close(CLOSE_SUPERSEDED, "Superseded by this browser's newer connection");
+    logEvent('extension_ws_open', { browserId: browser.id });
+    markSeen(browser, 'websocket');
     connection.on('message', text => {
-      if (socket !== connection) return;
-      lastSeen = Date.now();
+      if (browser.socket !== connection) return;
+      browser.lastSeen = Date.now();
       let message;
       try {
         message = JSON.parse(text);
@@ -801,14 +1062,15 @@ export function createHub({
         const body = ok ? { data: payload } : { error: payload };
         connection.send({ v: 3, type: 'reply', ref: message.ref, ok, ...body });
       };
-      handleMessage(message, answer, 'ws');
+      handleMessage(message, answer, 'ws', browser, connection);
     });
     connection.on('close', ({ code }) => {
-      logEvent('extension_ws_close', { code });
-      if (socket !== connection) return;
-      socket = null;
-      socketReady = false;
-      scheduleGrace();
+      logEvent('extension_ws_close', { code, browserId: browser.id });
+      noteClose(browser);
+      if (browser.socket !== connection) return;
+      browser.socket = null;
+      browser.socketReady = false;
+      scheduleGrace(browser);
     });
     return true;
   }
@@ -855,7 +1117,7 @@ export function createHub({
     }
     res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
     if (req.method === 'OPTIONS') {
-      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Fai-Browser');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
       reply(200, {});
       return true;
@@ -864,17 +1126,19 @@ export function createHub({
       reply(404, { error: 'Unknown route' });
       return true;
     }
-    // Any authenticated request proves the extension is alive.
-    markSeen('longpoll');
+    // Which browser this is (the X-Fai-Browser header; an older extension by its Origin). Any authenticated request
+    // proves that browser is alive.
+    const browser = browserFor(connectionIdentity(req.headers[BROWSER_HEADER], req.headers.origin), req.headers.origin);
+    markSeen(browser, 'longpoll');
     (async () => {
       try {
         const body = req.method === 'POST' ? await readBody(req) : {};
         if (type === 'commands') {
-          const command = takeCommand();
+          const command = takeCommand(browser);
           const requested = Number(url.searchParams.get('wait') ?? 0);
           const waitMs = Number.isFinite(requested) ? Math.min(Math.max(requested, 0), MAX_LONG_POLL_MS) : 0;
-          if (command || outbox.length || !waitMs || closed) return reply(200, longPollBody(command));
-          return holdLongPoll(res, waitMs, reply);
+          if (command || browser.outbox.length || !waitMs || closed) return reply(200, longPollBody(browser, command));
+          return holdLongPoll(browser, res, waitMs, reply);
         }
         const answer = (ok, payload) => {
           if (ok) return reply(200, payload);
@@ -882,7 +1146,7 @@ export function createHub({
           const origins = payload.origins ? { origins: payload.origins } : {};
           return reply(status, { error: payload.message, code: payload.code, ...origins });
         };
-        handleMessage({ ...body, type }, answer, 'http');
+        handleMessage({ ...body, type }, answer, 'http', browser);
       } catch (error) {
         reply(400, { error: error.message });
       }
@@ -906,7 +1170,7 @@ export function createHub({
       if (state !== 'paused') lease.status = 'stopped';
       lease.reason = reason;
     }
-    push({ type: 'lease_update', requestId: lease.requestId, leaseId, state, reason });
+    push(ownerOf(lease), { type: 'lease_update', requestId: lease.requestId, leaseId, state, reason });
     return true;
   }
 
@@ -914,12 +1178,32 @@ export function createHub({
     mode,
     handleHttp,
     handleUpgrade,
-    extension: () => ({
-      connected: connected || Boolean(socket?.open),
-      transport: transport(),
-      version: extensionVersion,
-      lastSeenMs: lastSeen ? Date.now() - lastSeen : null,
-      settings: extensionSettings,
+    // The extension side as a whole (any browser connected; transport and version of the browser used last) and
+    // `browsers`: every connected browser (browserView).
+    extension: () => {
+      const live = connectedBrowsers();
+      const latest = live.length ? latestBrowser() : null;
+      const seen = Math.max(0, ...[...browsers.values()].map(browser => browser.lastSeen));
+      return {
+        connected: live.length > 0,
+        transport: transportOf(latest),
+        version: latest?.version ?? null,
+        lastSeenMs: live.length && seen ? Date.now() - seen : null,
+        settings: extensionSettings,
+        browsers: live.map(browserView),
+      };
+    },
+    // Every browser known to the hub (connected first), for status.
+    browsers: () => [...browsers.values()].map(browserView),
+    // The connected browsers a new tab request can go to, for pickBrowser(): {id, product, name, usedAt, connectedAt}.
+    candidates: () => connectedBrowsers().map(browser => ({ id: browser.id, product: browser.product,
+      name: browserLabel(browser), usedAt: browser.usedAt, connectedAt: browser.connectedAt })),
+    // Status warnings: a browser whose connection keeps closing (a reconnect loop, issue #9).
+    warnings: () => [...browsers.values()].filter(browser => browser.flapping).map(browser => {
+      const closes = browser.closes.filter(at => Date.now() - at < flapWindowMs).length;
+      return `extension_flapping: ${browserLabel(browser)} (${browser.id}) lost its connection ${closes} times in `
+        + `${Math.round(flapWindowMs / 1000)} s; another FAI Browser install with the same identity, or an older `
+        + 'FAI service, may be fighting over it';
     }),
     publishRequests(views = []) {
       const next = JSON.parse(JSON.stringify(Array.isArray(views) ? views : []));
@@ -927,19 +1211,21 @@ export function createHub({
       if (json === requestsJson) return;
       requests = next;
       requestsJson = json;
-      if (socket?.open && socketReady) socket.send({ v: 3, type: 'requests', requests });
-      wakeWaiters({ requestsChanged: true });
+      publishAll();
     },
     onEvent(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    bindLease({ leaseId, requestId = null, tabId, origin, allowedOrigins = [], level, tabMode = 'single' }) {
+    // `browserId`: the browser that holds the tab (the lease event's); its commands go only to that connection.
+    // None (an embedding or a test): the browser used last.
+    bindLease({ leaseId, requestId = null, browserId = null, tabId, origin, allowedOrigins = [], level, tabMode = 'single' }) {
       if (typeof leaseId !== 'string' || !leaseId) throw new TypeError('leaseId is required');
       if (level !== undefined && level !== null && !isLevel(level)) throw new TypeError('level must be a level');
       const lease = {
         leaseId,
         requestId,
+        browserId: typeof browserId === 'string' && browserId ? browserId : null,
         tabId,
         origin,
         allowedOrigins: [...allowedOrigins],
@@ -1009,15 +1295,17 @@ export function createHub({
         approve: (details, options, signal) => approve(leaseId, details, options, signal),
       };
     },
-    // Replaces the pairing secret; an open socket authenticated with the old one is closed with 4001.
+    // Replaces the pairing secret; every open socket authenticated with the old one is closed with 4001.
     setSecret(value) {
       validateCredentials(value, extensionId);
       setCredentials(value);
-      if (socket?.open) socket.close(4001, 'Pairing changed');
+      for (const browser of browsers.values()) {
+        if (browser.socket?.open) browser.socket.close(CLOSE_PAIRING_CHANGED, 'Pairing changed');
+      }
     },
     stats: () => ({
-      polling: waiters.size > 0 || Boolean(socket?.open),
-      heldPolls: waiters.size,
+      polling: [...browsers.values()].some(browser => browser.waiters.size > 0 || browser.socket?.open),
+      heldPolls: [...browsers.values()].reduce((sum, browser) => sum + browser.waiters.size, 0),
       pendingCommands: pending.size,
       pendingScreenshots: screenshots.size,
       queuedCommands: queue.length,
@@ -1026,7 +1314,7 @@ export function createHub({
       if (closed) return;
       closed = true;
       clearInterval(expiry);
-      clearTimeout(graceTimer);
+      for (const browser of browsers.values()) clearTimeout(browser.graceTimer);
       for (const lease of leases.values()) {
         if (lease.status === 'active') {
           lease.status = 'stopped';
@@ -1038,9 +1326,10 @@ export function createHub({
         settleScreenshot(id, { error: { code: 'capture_failed', message: 'Companion closed' } });
       }
       releaseWaiters();
-      if (socket) {
-        const current = socket;
-        socket = null;
+      for (const browser of browsers.values()) {
+        const current = browser.socket;
+        if (!current) continue;
+        browser.socket = null;
         current.close(1001, 'Shutting down');
         current.socket.end();
       }
