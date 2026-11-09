@@ -5,6 +5,25 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## Unreleased (approved frames)
+
+### Added
+
+- Cross-origin frames whose origin the request approved are read and acted on (#11). A frame from another origin inside the approved page (the content blades of the Microsoft Entra admin center and the Azure portal, for example) is read when its own origin is one of the request's `origins` or under an approved domain root, nested up to four levels, at most eight per page. Its text, blocks and controls join the observation (control ids `f<n>.<id>`, with `frame` and `frameOrigin`); an act on such a control runs in that frame after its origin is probed again (a frame that moved to an unapproved origin refuses it with `cross_origin`, another document is `stale`). Inside the frame the same page script applies the same level, `forbid`, Approve gate, secret redaction, vault, password and sign-in detection and consent rules, and one page context covers the tab (a purchase page, a password or payment field or a credentials page anywhere restricts every document). Screenshots box each approved frame's own secrets. No new permission: frames are found with `scripting.executeScript` (`allFrames`).
+- `frames` in observations and act results lists the page's cross-origin frames: the ones read and, for each one not read, its origin and why (`not_approved`, `no_access`, `sandboxed`, `limit`, `unavailable`); `next` tells the agent to ask for missing origins. Frames from unapproved origins are still never read.
+- An `origin_changed` pause names the origin the tab went to (origin only): `leftOrigin` in the request view and a sentence in `needs.message`, so the agent can request it up front (a sign-in hop, for example).
+
+### Changed
+
+- Approving in the request modal asks the browser for every exact origin of the request in one prompt (not only the tab's host); the ones it adds are removed again when the session ends.
+- A point click on any cross-origin frame stays refused as `point_frame`; name an approved frame control's action id instead.
+
+### Known limits
+
+- A toolbar-icon approval (`activeTab`) reaches only the tab's own origin: approved frames on other origins come back as `no_access`. Approve from the request modal, or allow all sites.
+- Firefox uses the same code path but is untested; it has no `location.ancestorOrigins`, so the in-frame ancestor check is Chromium only.
+- Structured records and derived views (tables, charts) come from the top document only; frame content arrives as blocks and text. Scrolling scrolls the top document.
+
 ## 0.5.1 (2026-11-09)
 
 ### Added
