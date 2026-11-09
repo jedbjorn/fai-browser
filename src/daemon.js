@@ -765,6 +765,29 @@ export function createDaemon(options = {}) {
     }
   }
 
+  /**
+   * A run or observe of `requestId` (`options`: its trace's options, for one whose request record is gone): only the
+   * owner of an invited tab may read, wait on, stop or fetch the evidence of it. Throws `not_owner` otherwise.
+   */
+  function checkRunUse(requestId, options, caller) {
+    const record = requestId ? requests.get(requestId) : null;
+    if (record) return checkUse(record, caller);
+    if (options?.invite && (!caller || !options.ownerSession || caller.sessionId !== options.ownerSession)) {
+      throw new HttpError(403, 'not_owner', 'This run belongs to the agent session the user invited to that tab.');
+    }
+    return undefined;
+  }
+
+  // Whether `caller` may see a run or observe in a list (the same rule, without throwing).
+  function seesRun(requestId, options, caller) {
+    try {
+      checkRunUse(requestId, options, caller);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // Whether `caller` may see an invited tab in full: its addressee before the join, its owner after.
   function seesInvite(record, caller) {
     const invite = record.invite ? invites.get(record.invite) : null;
@@ -1727,9 +1750,14 @@ export function createDaemon(options = {}) {
     return Object.keys(merged).length ? merged : undefined;
   }
 
+  // An invited tab's runs and observes carry its invite flag and owner session, so who may read them still holds once
+  // the request record is gone (traces stay on disk up to retention's 7 days).
+  const inviteStamp = record => (record.invite ? { invite: true, ownerSession: record.ownerSession ?? null } : {});
+
   function traceOptions(spec, record) {
     const options = {
       requestId: record.requestId,
+      ...inviteStamp(record),
       mode: spec.mode,
       level: effectiveLevel(spec.mode, record),
       grant: record.grant?.level ?? null,
@@ -1918,19 +1946,19 @@ export function createDaemon(options = {}) {
   // --- route handlers ---------------------------------------------------------------------------------------
 
   /**
-   * The open health answer. With `?challenge=<nonce>` it also proves the daemon holds the client token (an HMAC of the
-   * nonce under it), so an MCP server checks it is talking to the real daemon before it registers (src/mcp-session.js):
+   * The open health answer. With `?challenge=<nonce>` it also proves the daemon holds the client token (an HMAC of its
+   * own listening port and the nonce under it, so a proof cannot be relayed from a daemon on another port), so an MCP server checks it is talking to the real daemon before it registers (src/mcp-session.js):
    * a process squatting on the port learns no token and cannot inject wakes.
    */
   function health(url) {
     const challenge = url?.searchParams?.get('challenge');
     const proof = typeof challenge === 'string' && CHALLENGE.test(challenge) && token
-      ? createHmac('sha256', token).update(`fai-health:${challenge}`).digest('hex') : undefined;
+      ? createHmac('sha256', token).update(`fai-health:${port}:${challenge}`).digest('hex') : undefined;
     return { ok: true, service: SERVICE_NAME, version, pid: process.pid, ...(proof ? { proof } : {}) };
   }
 
   function statusView(caller = null) {
-    const all = [...runs.values()];
+    const all = [...runs.values()].filter(run => seesRun(run.requestId, null, caller));
     return {
       daemon: {
         version,
@@ -2066,8 +2094,8 @@ export function createDaemon(options = {}) {
     if (body.runId !== undefined) {
       const run = runs.get(body.runId);
       if (!run) {
-        const stored = await storedRun(body.runId);
-        if (stored) return stored;
+        const found = await runFor(body.runId, caller);
+        if (found) return found.stored;
         throw new HttpError(404, 'unknown_run', `No run ${body.runId}`);
       }
       const afterStep = optionalInt(body, 'afterStep', 0, 10_000);
@@ -2292,6 +2320,7 @@ export function createDaemon(options = {}) {
       trace: tracePath,
       options: {
         requestId: record.requestId,
+        ...inviteStamp(record),
         mode: spec.mode,
         level: effectiveLevel(spec.mode, record),
         allowedUrls: spec.allowedUrls,
@@ -2519,17 +2548,35 @@ export function createDaemon(options = {}) {
       state: 'done',
       runId,
       requestId: stored.trace.options?.requestId ?? null,
+      options: stored.trace.options ?? null,
       result: stored.trace.operation === 'observe' ? stored.trace : toAgentResult(stored.trace),
     };
   }
 
-  async function listRuns(url) {
+  // A run by id as `caller` may read it: in memory or on disk, the owner check applied (src/daemon.js checkRunUse).
+  async function runFor(runId, caller) {
+    const run = runs.get(runId);
+    if (run) {
+      checkRunUse(run.requestId, null, caller);
+      return { run };
+    }
+    const stored = await storedRun(runId);
+    if (!stored) return null;
+    checkRunUse(stored.requestId, stored.options, caller);
+    const { options: _options, ...answer } = stored;
+    return { stored: answer };
+  }
+
+  async function listRuns(url, caller = null) {
     const limitText = url.searchParams.get('limit');
     const limit = limitText === null ? 20 : Number(limitText);
     if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw badOptions('limit must be an integer 1-200');
     const requestId = url.searchParams.get('requestId');
     const byId = new Map();
-    for (const run of runs.values()) byId.set(run.runId, runSummary(run));
+    for (const run of runs.values()) {
+      if (seesRun(run.requestId, null, caller)) byId.set(run.runId, runSummary(run));
+      else byId.set(run.runId, null);
+    }
     const dir = outputDir();
     let entries = [];
     try {
@@ -2542,6 +2589,7 @@ export function createDaemon(options = {}) {
       const stored = await readStoredTrace(entry.name);
       if (!stored) continue;
       const { trace } = stored;
+      if (!seesRun(trace.options?.requestId ?? null, trace.options, caller)) continue;
       byId.set(entry.name, {
         runId: entry.name,
         state: 'done',
@@ -2555,13 +2603,13 @@ export function createDaemon(options = {}) {
       });
     }
     const list = [...byId.values()]
-      .filter(run => !requestId || run.requestId === requestId)
+      .filter(run => run && (!requestId || run.requestId === requestId))
       .sort((a, b) => String(b.startedAt ?? '').localeCompare(String(a.startedAt ?? '')))
       .slice(0, limit);
     return { runs: list };
   }
 
-  async function evidenceRoute(runId, url) {
+  async function evidenceRoute(runId, url, caller = null) {
     const kind = url.searchParams.get('kind') ?? 'screenshot';
     if (kind !== 'screenshot' && kind !== 'trace') throw badOptions('kind must be screenshot or trace');
     const stepText = url.searchParams.get('step');
@@ -2572,12 +2620,14 @@ export function createDaemon(options = {}) {
     let tracePath = null;
     const run = runs.get(runId);
     if (run) {
+      checkRunUse(run.requestId, null, caller);
       if (run.state !== 'done') throw new HttpError(404, 'no_evidence', 'The run is still running; wait for it first');
       tracePath = run.result?.trace ?? null;
       if (!tracePath) throw new HttpError(404, 'no_evidence', 'This run has no trace on disk');
     } else {
       const stored = await readStoredTrace(runId);
       if (!stored) throw new HttpError(404, 'unknown_run', `No run ${runId}`);
+      checkRunUse(stored.trace.options?.requestId ?? null, stored.trace.options, caller);
       tracePath = stored.path;
     }
     let trace;
@@ -2620,13 +2670,11 @@ export function createDaemon(options = {}) {
     return response;
   }
 
-  async function stopRun(runId) {
-    const run = runs.get(runId);
-    if (!run) {
-      const stored = await storedRun(runId);
-      if (stored) return stored;
-      throw new HttpError(404, 'unknown_run', `No run ${runId}`);
-    }
+  async function stopRun(runId, caller = null) {
+    const found = await runFor(runId, caller);
+    if (!found) throw new HttpError(404, 'unknown_run', `No run ${runId}`);
+    if (found.stored) return found.stored;
+    const { run } = found;
     if (run.state === 'running') {
       requests.get(run.requestId)?.runtime?.interrupt('cancelled');
       await waitUntil(() => run.state === 'done', STOP_WAIT_MS);
@@ -2794,18 +2842,16 @@ export function createDaemon(options = {}) {
       case 'runs.create':
         return { body: await runsRoute(body, signal, caller) };
       case 'runs.list':
-        return { body: await listRuns(url) };
+        return { body: await listRuns(url, caller) };
       case 'runs.get': {
-        const run = runs.get(route.param);
-        if (run) return { body: runResponse(run) };
-        const stored = await storedRun(route.param);
-        if (!stored) throw new HttpError(404, 'unknown_run', `No run ${route.param}`);
-        return { body: stored };
+        const found = await runFor(route.param, caller);
+        if (!found) throw new HttpError(404, 'unknown_run', `No run ${route.param}`);
+        return { body: found.run ? runResponse(found.run) : found.stored };
       }
       case 'runs.stop':
-        return { body: await stopRun(route.param) };
+        return { body: await stopRun(route.param, caller) };
       case 'runs.evidence':
-        return { body: await evidenceRoute(route.param, url) };
+        return { body: await evidenceRoute(route.param, url, caller) };
       case 'observe':
         return { body: await observeRoute(body, caller) };
       case 'act':

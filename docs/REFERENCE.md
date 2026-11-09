@@ -587,7 +587,10 @@ session. It is single use; the joining session owns the request from then on (it
 when its stdio closes). An invited tab is never a bearer handle: before the join every observe, act, run and release
 is refused (`invite_not_joined`, 409), after it any caller but the owner gets `not_owner` (403); status, the request
 list and `GET /v1/requests/:id` show it in full only to its addressee or owner, and to anyone else as
-`{requestId, state, stateReason, invited: true}` (the CLI's `wait --until active` still works). Ordinary requests stay
+`{requestId, state, stateReason, invited: true}` (the CLI's `wait --until active` still works). The same owner rule
+covers its runs and observes: `GET /v1/runs` and status `runs` leave them out for anyone else, and `GET /v1/runs/:id`,
+`/evidence` (trace and screenshot), `/stop` and `POST /v1/wait {runId}` answer `not_owner`; the traces carry
+`options.invite` and `options.ownerSession`, so this holds from disk after the request record is gone. Ordinary requests stay
 open to any client-token holder, as before: the CLI and SDK drive MCP-made requests too (the resume wait command is the
 CLI). `fai_browser_status` lists only the invites this session may join, and its next is the join when one is for
 this session; its other nexts only ever name this session's own requests.
@@ -595,9 +598,12 @@ this session; its other nexts only ever name this session's own requests.
 **Registry safety.** The MCP server's session loop connects with `autoStart: false` and `takeover: false`: it never
 starts a daemon and never stops one of another version (after an update an old server would otherwise shut the new,
 idle daemon down); on `version_mismatch` it waits until the server's own tool call (which may replace the daemon as any
-client call does) and then registers. Before registering it asks `GET /v1/health?challenge=<nonce>` without the token
-and checks `proof`, an HMAC-SHA256 of `fai-health:<nonce>` under the client token, so a process squatting on the port
-gets no registration and cannot inject wakes (a daemon without the proof, an older one, turns invites and wakes off).
+client call does) and then registers. Every new connection (the first, and every one after `closed: true`, a 5xx such
+as `503 shutting_down`, or a transport error) asks `GET /v1/health?challenge=<nonce>` without the token and checks
+`proof`, an HMAC-SHA256 of `fai-health:<daemon port>:<nonce>` under the client token, before the token or the session
+key is sent, so a process squatting on the port gets nothing and cannot inject wakes (a daemon without the proof, an
+older one, turns invites and wakes off). The server acts on each wake id once (the last 256 remembered), at most 4
+new ones from one poll and 12 a minute.
 A session the daemon dropped for not polling registers again with `previous: {sessionId, key}` and takes its requests
 and invites back; at most two entries per pid. A server registers (up to 3 s) before it creates a request or joins an
 invite, so the daemon records it as the owner; a relay `next.text` says "FAI Browser wakes this session" only for
