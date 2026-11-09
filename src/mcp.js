@@ -587,9 +587,14 @@ export function toolsFor(driver) {
 export const CODEX_INSTRUCTIONS = 'Codex: call fai_browser_status once early in the session, so the user can invite '
   + 'you to a browser tab from the FAI popup.';
 
+// pi shows MCP tools as mcp__<server>__<tool>; FAI's texts (next, wake, the skill) use the bare names.
+export const PI_INSTRUCTIONS = 'pi: these tools are named mcp__fai_browser__<tool> here (mcp__fai_browser__fai_browser_open, '
+  + '..._act, ..._observe, ..._status); where FAI names fai_browser_<tool>, call mcp__fai_browser__fai_browser_<tool>.';
+
 export function instructionsFor(driver, host = 'unknown') {
   const base = driver === 'jev' ? JEV_INSTRUCTIONS : INSTRUCTIONS;
-  return host === 'codex' ? `${base}\n${CODEX_INSTRUCTIONS}` : base;
+  if (host === 'codex') return `${base}\n${CODEX_INSTRUCTIONS}`;
+  return host === 'pi' ? `${base}\n${PI_INSTRUCTIONS}` : base;
 }
 
 // ---------------------------------------------------------------------------------------------------------------

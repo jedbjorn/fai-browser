@@ -2089,11 +2089,11 @@ export interface DaemonStatus {
   warnings: string[];
 }
 
-export type WakeCapability = 'claude-socket' | 'codex-queue' | 'none';
+export type WakeCapability = 'claude-socket' | 'codex-queue' | 'pi-socket' | 'none';
 
 export interface AgentSessionView {
   sessionId: string;
-  host: 'claude' | 'codex' | 'opencode' | 'unknown';
+  host: 'claude' | 'codex' | 'opencode' | 'pi' | 'unknown';
   /** The repository's folder name only. */
   repo: string;
   pid: number;
