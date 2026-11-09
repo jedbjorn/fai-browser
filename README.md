@@ -156,7 +156,7 @@ node examples/fake-demo.js   # deterministic provider and in-memory bridge; prin
 
 1. Run `npm run setup`. It saves its settings in `~/.config/fai-browser` (macOS: `~/Library/Application
    Support/fai-browser`), installs browser pairing for every browser it finds, starts the FAI service and asks
-   whether to register FAI Browser with each coding agent on your `PATH` (Claude Code, Codex, OpenCode).
+   whether to register FAI Browser with each coding agent on your `PATH` (Claude Code, Codex, OpenCode, pi).
 2. Open `chrome://extensions` (or `brave://`, `edge://`), turn on Developer mode, click **Load unpacked** and
    select `extension/`. The extension pairs by itself: nothing to copy or paste. Firefox: `npm run
    build:firefox`, then load `dist/firefox/` ([Browsers](#browsers)).
@@ -164,7 +164,7 @@ node examples/fake-demo.js   # deterministic provider and in-memory bridge; prin
 4. Restart your coding agent.
 
 To try the experimental Jev autopilot, run `npm run setup -- --driver jev` instead: it asks for the Jev key at
-a hidden prompt. To register an agent later: `node src/cli.js install --host claude|codex|opencode`.
+a hidden prompt. To register an agent later: `node src/cli.js install --host claude|codex|opencode|pi`.
 
 **Updating.** About once a day FAI checks GitHub for a newer tagged release and the popup then shows **Update
 available vX.Y.Z**. One click on **Update** (or `node src/cli.js update`) moves this clone to the release tag, refreshes
@@ -268,7 +268,7 @@ retention](docs/REFERENCE.md#traces-and-retention).
 
 | | |
 |---|---|
-| **Coding agents** | Claude Code, Codex CLI and OpenCode via `node src/cli.js install --host claude\|codex\|opencode`; any other MCP client through the stdio server `fai-browser-mcp` |
+| **Coding agents** | Claude Code, Codex CLI, OpenCode and pi (1.2.0+, through a small FAI extension) via `node src/cli.js install --host claude\|codex\|opencode\|pi`; any other MCP client through the stdio server `fai-browser-mcp` |
 | **Without MCP** | the CLI (`node src/cli.js`, one JSON line per command) and the SDK client (`FaiBrowserClient`) |
 | **Decision providers** | TypeSafe Jev (default) and local SystemOne-compatible servers; custom providers implement one `decide()` method |
 | **Browser** | Chrome, Chromium, Brave, Edge or Vivaldi 116+ (Manifest V3), Firefox 140+ (a build of the same extension); pairing by native messaging. See [Browsers](#browsers) |

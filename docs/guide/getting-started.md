@@ -61,10 +61,10 @@ The extension should now say it is paired. If not, click **Pair with the FAI ser
 
 ## 3. Restart your agent
 
-Restart Claude Code, Codex or OpenCode so it loads the `fai-browser` MCP server and the skill. To register one later:
+Restart Claude Code, Codex, OpenCode or pi (or run `/reload` in pi) so it loads the `fai-browser` MCP server and the skill. To register one later:
 
 ```sh
-node src/cli.js install --host claude     # or codex, opencode; add --scope user for all projects
+node src/cli.js install --host claude     # or codex, opencode, pi; add --scope user for all projects
 ```
 
 ## 4. First task
