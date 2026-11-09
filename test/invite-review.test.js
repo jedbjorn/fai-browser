@@ -212,9 +212,8 @@ test('re-review: after a shutdown (closed, 503) the loop proves the next daemon 
   assert.deepEqual(delivered, [], 'no wake from it');
 });
 
-test('re-review: each wake is acted on once, at most 4 a poll and 12 a minute', async t => {
+test('re-review: each wake is acted on once, at most 4 a poll; extras are reported rate_limited at once', async t => {
   const fakeWakes = Array.from({ length: 20 }, (_, i) => ({ wakeId: `w${i}`, kind: 'resume', requestId: 'req_1', level: 'read-only' }));
-  const perPoll = [];
   const reports = [];
   const daemon = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
@@ -224,13 +223,15 @@ test('re-review: each wake is acted on once, at most 4 a poll and 12 a minute', 
         proof: createHmac('sha256', TOKEN).update(`fai-health:${daemon.address().port}:${challenge}`).digest('hex') });
     }
     if (url.pathname === '/v1/sessions') return send(res, 201, { sessionId: 'ses_x', key: 'k'.repeat(32) });
-    if (url.pathname.endsWith('/poll')) {
-      perPoll.push(reports.length);
-      return setTimeout(() => send(res, 200, { wakes: fakeWakes }), 5);
-    }
+    if (url.pathname.endsWith('/poll')) return setTimeout(() => send(res, 200, { wakes: fakeWakes }), 5);
     if (url.pathname.includes('/wakes/')) {
-      reports.push(url.pathname);
-      return send(res, 200, {});
+      let raw = '';
+      req.on('data', chunk => { raw += chunk; });
+      req.on('end', () => {
+        reports.push({ path: url.pathname, ...JSON.parse(raw || '{}') });
+        send(res, 200, {});
+      });
+      return undefined;
     }
     return send(res, 404, { error: { code: 'not_found' } });
   });
@@ -245,9 +246,11 @@ test('re-review: each wake is acted on once, at most 4 a poll and 12 a minute', 
   session.start();
   await delay(600);
   await session.stop();
-  assert.equal(delivered.length, 12, 'twenty wakes resent on every poll: each acted on once, and no more than 12 a minute');
-  assert.equal(new Set(reports).size, reports.length, 'each reported once');
-  for (let i = 1; i < perPoll.length; i++) assert.ok(perPoll[i] - perPoll[i - 1] <= 4, 'at most 4 from one poll');
+  assert.equal(delivered.length, 4, 'four from the first poll; the same ids again on later polls are not acted on');
+  assert.equal(new Set(reports.map(report => report.path)).size, reports.length, 'each reported once');
+  assert.equal(reports.length, 20, 'every wake got an outcome, none left hanging');
+  assert.equal(reports.filter(report => report.outcome === 'failed' && report.code === 'rate_limited').length, 16);
+  assert.equal(reports.filter(report => report.outcome === 'delivered').length, 4);
 });
 
 // A stand-in for FaiBrowserClient: records every request it is asked to send.
