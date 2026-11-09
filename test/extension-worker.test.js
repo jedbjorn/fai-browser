@@ -3050,12 +3050,15 @@ test('modal early grant whose approval never happens (prepare refused, arm ended
 });
 
 test('arm_track accepts only the request\'s own patterns and the window of that arm, never a user\'s other grants', async () => {
-  const h = await openedRightAway({ request: { origins: [SHOP, 'https://login.example.com', 'https://*.example.org'] } });
+  // The page opened on app.example.org, under the requested root *.example.org: of the root's hosts, only that one.
+  const h = await openedRightAway({ request: { origins: ['https://login.example.com', 'https://*.example.org'],
+    url: 'https://app.example.org/cart' } });
   const arm = h.session.armedTabs[0];
   const base = { tabId: 9, requestId: arm.requestId, at: arm.at };
-  for (const pattern of ['https://evil.test/*', 'https://login.example.com/*', 'https://app.example.org/*', 'https://*.example.org/*']) h.grant(pattern);
-  const tracked = await h.send({ type: 'arm_track', ...base,
-    patterns: ['https://evil.test/*', 'https://login.example.com/*', 'https://app.example.org/*', 'https://*.example.org/*', '<all_urls>'] }, MODAL_SENDER);
+  const all = ['https://evil.test/*', 'https://login.example.com/*', 'https://app.example.org/*', 'https://other.example.org/*',
+    'https://*.example.org/*'];
+  for (const pattern of all) h.grant(pattern);
+  const tracked = await h.send({ type: 'arm_track', ...base, patterns: [...all, '<all_urls>'] }, MODAL_SENDER);
   assert.deepEqual(tracked.tracked, ['https://login.example.com/*', 'https://app.example.org/*']);
   assert.ok((await h.send({ type: 'arm_track', ...base, at: arm.at + 1, patterns: ['https://login.example.com/*'] }, MODAL_SENDER)).error,
     'another arm');
@@ -3064,7 +3067,8 @@ test('arm_track accepts only the request\'s own patterns and the window of that 
   await h.send({ type: 'deny', requestId: arm.requestId });
   h.push({ type: 'requests', requests: [] });
   await h.until(() => !h.grants.has('https://login.example.com/*') && !h.grants.has('https://app.example.org/*'));
-  assert.ok(h.grants.has('https://evil.test/*') && h.grants.has('https://*.example.org/*'), 'grants it did not report stay');
+  assert.ok(['https://evil.test/*', 'https://other.example.org/*', 'https://*.example.org/*'].every(pattern => h.grants.has(pattern)),
+    'grants outside what the window asked for stay');
 });
 
 test('modal approval while the page never commits says it is still loading', async () => {

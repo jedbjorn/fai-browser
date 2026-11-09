@@ -20,8 +20,13 @@ let approving = false;
 let restoreApprovalFocus = false;
 // Which host patterns the browser already held before any click here (chrome.permissions.contains, per pattern): after
 // a grant, the ones that were not held are reported to the worker (arm_track), which tracks and later removes them.
-// Approve waits for this local check only.
+// Approve waits for this local check only. Any change to the browser's host permissions starts it over (a pattern held
+// at first and removed before the click is reported again when the click grants it).
 const heldBefore = new Map();
+const recheckHeld = () => {
+  heldBefore.clear();
+  if (!approving) render();
+};
 const deny = document.getElementById('deny');
 const status = document.getElementById('status');
 const pinHint = document.getElementById('pin-hint');
@@ -158,6 +163,8 @@ approve.addEventListener('click', () => {
   if (!pattern) return;
   const asked = askedPatterns(ready, pattern, request);
   if (!asked.every(item => typeof heldBefore.get(item) === 'boolean')) return;
+  // This click's own snapshot: its grant changes the browser's permissions (and so heldBefore) before it is reported.
+  const before = new Map(asked.map(item => [item, heldBefore.get(item)]));
   const level = select.value;
   approving = true;
   approve.disabled = true;
@@ -173,17 +180,17 @@ approve.addEventListener('click', () => {
     if (intent) chrome.runtime.sendMessage({ type: 'arm_begin', tabId, token: intent.token }).catch(() => {});
   }, () => {});
   say('Waiting for browser site access…');
-  complete(arm, prepared, pattern, asked, access, level);
+  complete(arm, prepared, pattern, asked, before, access, level);
 });
 
 const holds = pattern => Promise.resolve(chrome.permissions?.contains?.({ origins: [pattern] })).then(held => held === true, () => false);
 
-async function complete(arm, prepared, pattern, asked, access, level) {
+async function complete(arm, prepared, pattern, asked, before, access, level) {
   try {
     let granted = await Promise.resolve(access).catch(() => false);
     // What this click newly obtained goes to the worker first, whatever happens to the approval below, so it is
     // removed again once no session needs it.
-    const obtained = granted === true ? asked.filter(item => heldBefore.get(item) === false) : [];
+    const obtained = granted === true ? asked.filter(item => before.get(item) === false) : [];
     if (obtained.length) {
       await chrome.runtime.sendMessage({ type: 'arm_track', tabId, requestId: arm.requestId, at: arm.at, patterns: obtained })
         .catch(() => {});
@@ -274,4 +281,7 @@ try {
 } catch {
   // storage.session is unavailable: nothing to show.
 }
+// Registered once the page's state exists (recheckHeld renders).
+chrome.permissions?.onAdded?.addListener?.(recheckHeld);
+chrome.permissions?.onRemoved?.addListener?.(recheckHeld);
 render();

@@ -3780,14 +3780,14 @@ const MOVED_AWAY = 'The page moved to an address this approval does not cover. N
   + 'site the agent asked for, click the FAI Browser icon on the tab.';
 
 // The host patterns a modal approval of this arm may ask Chrome for (prepareModalApproval's derivation): one per exact
-// origin of the request, and the host of a tab on a domain root the request lists.
+// origin of the request, and, under a domain root the request lists, only the host of the page the arm opened.
 function armPatternAllowed(arm, pattern) {
-  const match = typeof pattern === 'string' ? /^(https?):\/\/([^/*\s:]+)\/\*$/.exec(pattern) : null;
-  if (!match) return false;
+  if (typeof pattern !== 'string' || !/^https?:\/\/[^/*\s:]+\/\*$/.test(pattern)) return false;
   const origins = Array.isArray(arm.origins) ? arm.origins
     : requests.find(item => item.requestId === arm.requestId)?.origins ?? [];
-  return origins.some(entry => typeof entry === 'string' && !entry.includes('*') && originOf(entry) === entry
-    && taskOriginPattern(entry) === pattern) || originCovered(`${match[1]}://${match[2]}`, origins);
+  if (origins.some(entry => typeof entry === 'string' && !entry.includes('*') && originOf(entry) === entry
+    && taskOriginPattern(entry) === pattern)) return true;
+  return typeof arm.origin === 'string' && originCovered(arm.origin, origins) && taskOriginPattern(arm.origin) === pattern;
 }
 
 // arm_track: the modal reports the host patterns Chrome just granted in its click that were not held before it (its
