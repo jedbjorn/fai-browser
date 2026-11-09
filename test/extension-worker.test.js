@@ -146,6 +146,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     },
     execute(action, expectedRevision, settleOptions, terms, forbid, allow, sites, expectText, approval) {
       pageArgs.push({ method: 'execute', args: clone([action, expectedRevision, settleOptions, terms ?? null, forbid ?? null, allow ?? null]),
+        context: clone(secretCalls.at(-1)?.context ?? null),
         expectText: clone(expectText ?? null), approval: clone(approval ?? null) });
       if (expectedRevision !== `doc:${revision}`) throw Object.assign(new Error('Stale observation'), { code: 'stale' });
       revision++;
@@ -3123,7 +3124,8 @@ function framePage({ origin = PORTAL, doc = 'framedoc', label = 'Save settings',
       calls.push({ method: 'redactionRects', arm });
       if (rects === 'silent') return new Promise(() => {});
       return { rects: rects ?? [{ x: 1, y: 2, width: 20, height: 8, kind: 'password' }], viewport: { width: 80, height: 70, dpr: 1 },
-        scroll: { x: 0, y: 0 }, strict: false, ...(arm ? {} : { dirty: false }) };
+        scroll: { x: 0, y: 0 }, strict: false, ...(slots ? { frameBoxes: slots.map(({ path, box, clip }) => ({ path, box, clip })) } : {}),
+        ...(arm ? {} : { dirty: false }) };
     },
   };
   return page;
@@ -3146,11 +3148,17 @@ function frameWorld(h, frames) {
     if (func.name === 'frameProbe') {
       log.push({ kind: 'probe', all: Boolean(target.allFrames) });
       return chosen.map(frame => ({ frameId: frame.frameId, documentId: frame.documentId,
-        result: { origin: frame.origin ?? frame.page.origin, opaque: false, path: frame.path, ready: 'complete', page: true } }));
+        result: { origin: frame.origin ?? frame.page.origin, opaque: false, path: frame.path, ready: 'complete', page: true,
+          width: frame.width ?? 80, height: frame.height ?? 70 } }));
     }
     const [method, callArgs, secrets] = args;
+    // `frame.refuse(method)`: the browser refuses that injection before anything runs (the document went away).
+    for (const frame of chosen) {
+      const refusal = frame.refuse?.(method);
+      if (refusal) throw new Error(refusal);
+    }
     return Promise.all(chosen.map(async frame => {
-      log.push({ kind: 'call', frameId: frame.frameId, method, context: clone(secrets?.context ?? null) });
+      log.push({ kind: 'call', frameId: frame.frameId, method, args: clone(callArgs), context: clone(secrets?.context ?? null) });
       try {
         return { frameId: frame.frameId, documentId: frame.documentId, result: { value: await frame.page[method](...callArgs) } };
       } catch (error) {
@@ -3334,26 +3342,68 @@ test('frames: the Approve gate reads a frame control in its frame; the execute c
   assert.deepEqual(call.approval, { target: '1', cls: 'delete', labelHash: 'h-frame' });
 });
 
-test('frames: screenshot boxes from a frame land in the top viewport; a frame that does not answer is boxed whole', async () => {
+// The top page's redaction answer naming its cross-origin frames where they are now (page.js redactionRects).
+const topBoxes = (arm, boxes) => ({ rects: [], frameBoxes: boxes, viewport: { width: 100, height: 100, dpr: 1 }, scroll: { x: 0, y: 0 },
+  strict: false, ...(arm ? {} : { dirty: false }) });
+const at = (x, y) => ({ path: [0], box: { x, y, width: 80, height: 70 }, clip: { left: x, top: y, right: x + 80, bottom: y + 70 } });
+const hasBox = (rects, x, y, width, height) => rects.some(rect => rect.x === x && rect.y === y && rect.width === width && rect.height === height);
+
+async function captured(h) {
+  const id = h.command('capture', { action: null });
+  const reply = await h.waitFor(m => m.type === 'result' && m.id === id, 12000);
+  assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+  return { reply, redact: h.annotations.at(-1).redact };
+}
+
+test('frames: screenshot boxes from a frame land where the frame is now; a frame that does not answer is boxed whole', async () => {
   const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
   h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
   const page = framePage();
   frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
-  const id = h.command('capture', { action: null });
-  const reply = await h.waitFor(m => m.type === 'result' && m.id === id, 8000);
-  assert.equal(reply.error, undefined, JSON.stringify(reply.error));
-  const rects = h.annotations.at(-1).redact.rects;
-  assert.ok(rects.some(rect => rect.x === 11 && rect.y === 22 && rect.width === 20 && rect.height === 8), JSON.stringify(rects));
+  h.redaction = ({ arm }) => topBoxes(arm, [at(10, 20)]);
+  let { redact } = await captured(h);
+  assert.ok(hasBox(redact.rects, 11, 22, 20, 8), JSON.stringify(redact.rects));
+  assert.equal(redact.withheld, false);
   assert.deepEqual(page.calls.filter(call => call.method === 'redactionRects').map(call => call.arm), [true, false]);
+
+  // The page moved the frame down 15px after the observation (a banner): the password box follows the frame (review #1).
+  h.redaction = ({ arm }) => topBoxes(arm, [at(10, 35)]);
+  ({ redact } = await captured(h));
+  assert.ok(hasBox(redact.rects, 11, 37, 20, 8), JSON.stringify(redact.rects));
+  assert.ok(!hasBox(redact.rects, 11, 22, 20, 8), 'never at the place the frame left');
 
   const silent = await started({ leaseOrigins: [ORIGIN, PORTAL] });
   silent.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
   frameWorld(silent, [{ frameId: 5, documentId: 'D5', path: [0], page: framePage({ rects: 'silent' }) }]);
-  const shot = silent.command('capture', { action: null });
-  const answered = await silent.waitFor(m => m.type === 'result' && m.id === shot, 12000);
-  assert.equal(answered.error, undefined, JSON.stringify(answered.error));
-  assert.ok(silent.annotations.at(-1).redact.rects.some(rect => rect.x === 10 && rect.y === 20 && rect.width === 80 && rect.height === 70),
-    'the whole frame is boxed');
+  silent.redaction = ({ arm }) => topBoxes(arm, [at(10, 20)]);
+  assert.ok(hasBox((await captured(silent)).redact.rects, 10, 20, 80, 70), 'the whole frame is boxed');
+});
+
+test('frames: a frame moving during the capture withholds it; a read frame no query can place is boxed and withheld', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page: framePage() }]);
+  // Before the capture at y 20, after it at y 60, every time: never stable.
+  h.redaction = ({ arm }) => topBoxes(arm, [at(10, arm ? 20 : 60)]);
+  let { redact } = await captured(h);
+  assert.equal(redact.withheld, true, 'a frame that moved between the two queries withholds the frame');
+
+  // The frame is gone from the page's frames (or its path no longer matches): boxed where it was, withheld.
+  h.redaction = ({ arm }) => topBoxes(arm, []);
+  ({ redact } = await captured(h));
+  assert.ok(hasBox(redact.rects, 10, 20, 80, 70), JSON.stringify(redact.rects));
+  assert.equal(redact.withheld, true);
+});
+
+test('frames: every cross-origin frame that was not read is boxed whole on screenshots', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page: framePage() }]);
+  h.redaction = ({ arm }) => topBoxes(arm, [at(10, 20)]);
+  const { redact, reply } = await captured(h);
+  assert.ok(hasBox(redact.rects, 10, 20, 80, 70), JSON.stringify(redact.rects));
+  assert.equal(redact.withheld, false);
+  assert.equal(reply.result.screenshot.redactions, 1);
 });
 
 test('frames: a nested approved frame is read inside its approved parent, at the summed offset', async () => {
@@ -3363,7 +3413,8 @@ test('frames: a nested approved frame is read inside its approved parent, at the
     declared: 'https://blade.example.net' };
   const outer = framePage({ slots: [inner] });
   const blade = framePage({ origin: 'https://blade.example.net', doc: 'bladedoc', label: 'Add domain', text: 'Custom domains' });
-  frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page: outer }, { frameId: 6, documentId: 'D6', path: [0, 1], page: blade }]);
+  frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page: outer },
+    { frameId: 6, documentId: 'D6', path: [0, 1], page: blade, width: 40, height: 30 }]);
   const observation = await observed(h);
   const control = observation.controls.find(item => item.id === 'f2.1');
   assert.ok(control, JSON.stringify(observation.controls.map(item => item.id)));
@@ -3375,7 +3426,7 @@ test('frames: a nested approved frame is read inside its approved parent, at the
   const lone = await started({ leaseOrigins: [ORIGIN, 'https://blade.example.net'] });
   lone.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
   frameWorld(lone, [{ frameId: 5, documentId: 'D5', path: [0], page: framePage({ slots: [inner] }) },
-    { frameId: 6, documentId: 'D6', path: [0, 1], page: framePage({ origin: 'https://blade.example.net' }) }]);
+    { frameId: 6, documentId: 'D6', path: [0, 1], page: framePage({ origin: 'https://blade.example.net' }), width: 40, height: 30 }]);
   const second = await observed(lone);
   assert.ok(!second.controls.some(item => String(item.id).startsWith('f')));
   assert.deepEqual(second.frames, [{ origin: PORTAL, read: false, reason: 'not_approved' }]);
@@ -3405,4 +3456,172 @@ test('modal approval asks for every exact origin of the request in one prompt, a
   assert.ok(h.grants.has(`${PORTAL}/*`), 'kept while the session lives');
   await h.send({ type: 'stop' });
   await h.until(() => !h.grants.has(`${PORTAL}/*`) && !h.grants.has(`${SHOP}/*`));
+});
+
+// --- Security review of approved frames: regressions ---------------------------------------------------------------
+test('frames review #2: the approval card names the frame origin "in a frame of" the page, and the approval binds it', async () => {
+  const h = await started({ level: 'full', leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const page = framePage({ label: 'Delete tenant', cls: 'delete' });
+  frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
+  const before = await observed(h);
+  const { entry } = await asked(h, { target: 'f1.1', expectedRevision: before.revision, cls: 'delete' });
+  assert.equal(entry.origin, PORTAL, 'the site the control is on');
+  assert.equal(entry.frameOf, ORIGIN, 'the page that embeds it');
+  // A top control's card is unchanged.
+  const top = await started({ level: 'full' });
+  const { entry: plain } = await asked(top);
+  assert.equal(plain.origin, ORIGIN);
+  assert.equal(plain.frameOf, undefined);
+});
+
+test('frames review #2: a frame whose page script reports another origin than the one probed is refused', async () => {
+  const h = await started({ level: 'full', leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const page = framePage({ label: 'Delete tenant', cls: 'delete' });
+  page.approvalInfo = (target, expected) => ({ revision: expected, documentId: 'framedoc', target, label: 'Delete tenant',
+    labelHash: 'h-frame', cls: 'delete', origin: ELSEWHERE });
+  frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
+  const before = await observed(h);
+  const id = h.command('approve', { target: 'f1.1', expectedRevision: before.revision, cls: 'delete', waitMs: 100 });
+  const reply = await h.waitFor(m => m.type === 'result' && m.id === id);
+  assert.equal(reply.error?.code, 'cross_origin', JSON.stringify(reply));
+  assert.equal((h.session.approvals ?? []).length, 0, 'no card');
+});
+
+test('frames review #3: a frame act sees the page as it is now: a changed page is stale, a checkout page is the context', async () => {
+  const h = await started({ level: 'full', leaseOrigins: [ORIGIN, PORTAL] });
+  let topFacts = NO_FACTS;
+  h.observationExtra = () => ({ warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: topFacts });
+  const page = framePage({ label: 'Continue', cls: 'submit' });
+  const log = frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
+  let before = await observed(h);
+  // The page turned into a checkout (same semantic revision): the frame runs with purchase in its context.
+  topFacts = { ...NO_FACTS, purchase: true };
+  const ran = await executed(h, { type: 'click', target: 'f1.1' }, before.revision);
+  assert.equal(ran.error, undefined, JSON.stringify(ran.error));
+  const call = log.filter(item => item.kind === 'call' && item.method === 'execute').pop();
+  assert.equal(call.context.purchase, true, 'the current page facts, not the observation\'s');
+  // The page changed (another revision) since the observation: stale, nothing runs in the frame.
+  topFacts = NO_FACTS;
+  before = await observed(h);
+  h.bumpRevision();
+  const executes = page.calls.filter(item => item.method === 'execute').length;
+  const stale = await executed(h, { type: 'click', target: 'f1.1' }, before.revision);
+  assert.equal(stale.error?.code, 'stale', JSON.stringify(stale.error));
+  assert.equal(page.calls.filter(item => item.method === 'execute').length, executes);
+  // The Approve gate's read of a frame control checks the page the same way.
+  const asking = h.command('approve', { target: 'f1.1', expectedRevision: before.revision, cls: 'submit', waitMs: 100 });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === asking)).error?.code, 'stale');
+});
+
+test('frames review #3: a top act first looks at the frames again: a frame that became a payment form restricts it', async () => {
+  const h = await started({ level: 'full', leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const facts = {};
+  const page = framePage({ facts });
+  const log = frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
+  const before = await observed(h);
+  facts.purchase = true;
+  const ran = await executed(h, { type: 'click', target: '1' }, before.revision);
+  assert.equal(ran.error, undefined, JSON.stringify(ran.error));
+  const looks = log.filter(item => item.kind === 'call' && item.method === 'observe' && item.args[0]?.blocks === false);
+  assert.equal(looks.length, 1, 'one cheap look per frame before the act');
+  const execute = h.pageArgs.filter(item => item.method === 'execute').at(-1);
+  assert.equal(execute.context?.purchase, true, 'the top execute ran with the frame\'s purchase fact');
+});
+
+test('frames review #4: a frame document gone before the act ran is never a success (stale or cross_origin)', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const page = framePage();
+  const frame = { frameId: 5, documentId: 'D5', path: [0], page };
+  frameWorld(h, [frame]);
+  const before = await observed(h);
+  // The browser refuses the injection (the document went away between the probe and the call), then the frame is
+  // found on another approved document: stale.
+  frame.refuse = method => {
+    if (method !== 'execute') return null;
+    frame.documentId = 'D7';
+    return 'No document with id D5';
+  };
+  const gone = await executed(h, { type: 'click', target: 'f1.1' }, before.revision);
+  assert.equal(gone.error?.code, 'stale', JSON.stringify(gone));
+  assert.equal(page.calls.filter(item => item.method === 'execute').length, 0);
+  // Or on an unapproved origin: cross_origin.
+  frame.documentId = 'D5';
+  const again = await observed(h);
+  frame.refuse = method => {
+    if (method !== 'execute') return null;
+    frame.origin = ELSEWHERE;
+    return 'No document with id D5';
+  };
+  const moved = await executed(h, { type: 'click', target: 'f1.1' }, again.revision);
+  assert.equal(moved.error?.code, 'cross_origin', JSON.stringify(moved));
+});
+
+test('frames review #9 and #10: a frame of another size than its slot, or a nested slot outside its parent, is not read', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const page = framePage();
+  frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page, width: 300, height: 100 }]);
+  const observation = await observed(h);
+  assert.equal(page.calls.length, 0, 'the frame at that path is not the one page.js placed there');
+  assert.deepEqual(observation.frames, [{ origin: PORTAL, read: false, reason: 'unavailable' }]);
+
+  // An approved frame that names a slot outside itself (path [1], a sibling) is ignored.
+  const other = await started({ leaseOrigins: [ORIGIN, PORTAL, 'https://blade.example.net'] });
+  other.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const sibling = { path: [1], box: { x: 0, y: 0, width: 40, height: 30 }, clip: { left: 0, top: 0, right: 40, bottom: 30 },
+    declared: 'https://blade.example.net' };
+  const blade = framePage({ origin: 'https://blade.example.net', doc: 'bladedoc', label: 'Sibling button' });
+  frameWorld(other, [{ frameId: 5, documentId: 'D5', path: [0], page: framePage({ slots: [sibling] }) },
+    { frameId: 6, documentId: 'D6', path: [1], page: blade, width: 40, height: 30 }]);
+  const second = await observed(other);
+  assert.equal(blade.calls.length, 0);
+  assert.ok(!second.controls.some(control => control.label === 'Sibling button'));
+});
+
+test('frames review #11: when a fact leaves the tab, the documents are read again without it', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const facts = { purchase: true };
+  const log = frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page: framePage({ facts }) }]);
+  await observed(h);
+  assert.equal(h.secretCalls.at(-1).context.purchase, true);
+  facts.purchase = false;
+  const topReads = h.pageArgs.filter(item => item.method === 'observe').length;
+  await observed(h);
+  // The top document was read with purchase from the last context; it is read again without it.
+  assert.equal(h.pageArgs.filter(item => item.method === 'observe').length, topReads + 2);
+  assert.equal(h.secretCalls.at(-1).context.purchase, false);
+  assert.equal(log.filter(item => item.kind === 'call' && item.method === 'observe').at(-1).context.purchase, false);
+});
+
+test('frames review: an extra origin the user already allowed survives the session stop; a declined prompt keeps nothing', async () => {
+  const h = harness({ hostGrants: [`${PORTAL}/*`], leaseOrigins: [SHOP, PORTAL], local: {}, permissions: { defaultLevel: 'read-only' } });
+  await h.waitFor(m => m.type === 'hello');
+  h.push({ type: 'requests', requests: [pendingRequest('req_1', { mode: 'reversible', origins: [SHOP, PORTAL] })] });
+  await h.until(() => h.session.armedTabs?.length === 1 && h.session.armedTabs[0].promptWindowId !== null);
+  const arm = h.session.armedTabs[0];
+  const base = { tabId: 9, requestId: arm.requestId, at: arm.at };
+  const { approval } = await h.send({ type: 'arm_prepare', ...base }, MODAL_SENDER);
+  for (const pattern of approval.patterns) h.grant(pattern);
+  const reply = await h.send({ type: 'arm_approve', ...base, ...approval, level: arm.level, granted: true }, MODAL_SENDER);
+  assert.equal(reply.status, 'active', JSON.stringify(reply));
+  await h.send({ type: 'stop' });
+  await h.until(() => !h.grants.has(`${SHOP}/*`));
+  await sleep(50);
+  assert.ok(h.grants.has(`${PORTAL}/*`), 'the user-held grant stays');
+
+  const declined = harness({ hostGrants: [], leaseOrigins: [SHOP, PORTAL], local: {}, permissions: { defaultLevel: 'read-only' } });
+  await declined.waitFor(m => m.type === 'hello');
+  declined.push({ type: 'requests', requests: [pendingRequest('req_1', { mode: 'reversible', origins: [SHOP, PORTAL] })] });
+  await declined.until(() => declined.session.armedTabs?.length === 1 && declined.session.armedTabs[0].promptWindowId !== null);
+  const armed = declined.session.armedTabs[0];
+  const at2 = { tabId: 9, requestId: armed.requestId, at: armed.at };
+  const prepared = await declined.send({ type: 'arm_prepare', ...at2 }, MODAL_SENDER);
+  const refused = await declined.send({ type: 'arm_approve', ...at2, ...prepared.approval, level: armed.level, granted: false }, MODAL_SENDER);
+  assert.notEqual(refused.status, 'active');
+  assert.equal(declined.grants.size, 0);
 });

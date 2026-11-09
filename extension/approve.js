@@ -4,7 +4,7 @@
 // a total the page shows and the agent's one line (both untrusted, marked as such). Approve once or Deny; neither
 // button has focus at first, so no key press decides. It closes itself once the action no longer waits. Everything
 // an agent or a page wrote is rendered with textContent only.
-import { KIND_TEXT, SECRET_USE_TEXT, secretUseLine } from './approval-card.js';
+import { KIND_TEXT, SECRET_USE_TEXT, originText, secretUseLine } from './approval-card.js';
 
 const id = new URLSearchParams(location.search).get('id');
 const approve = document.getElementById('approve');
@@ -33,7 +33,7 @@ function render(list) {
     return;
   }
   const secretUse = entry.kind === 'fill_secret' || entry.kind === 'copy_secret';
-  document.getElementById('origin').textContent = entry.origin ?? '';
+  document.getElementById('origin').textContent = originText(entry);
   document.getElementById('title').textContent = entry.title || '(no title)';
   document.getElementById('kind').textContent = secretUse ? SECRET_USE_TEXT[entry.kind] : KIND_TEXT[entry.cls] ?? entry.cls;
   document.getElementById('label').textContent = secretUse && entry.kind === 'copy_secret' ? (entry.secret?.label ?? '') : entry.label || '(unlabelled control)';
@@ -50,7 +50,7 @@ function render(list) {
     // An upload: the file (from the agent's workspace), its size and the site that receives it.
     const size = entry.file.size >= 1024 * 1024 ? `${(entry.file.size / 1024 / 1024).toFixed(1)} MB`
       : entry.file.size >= 1024 ? `${Math.round(entry.file.size / 1024)} KB` : `${entry.file.size} bytes`;
-    document.getElementById('headline').textContent = `Upload ${entry.file.name} (${size}) to ${entry.origin ?? 'this site'}?`;
+    document.getElementById('headline').textContent = `Upload ${entry.file.name} (${size}) to ${originText(entry) || 'this site'}?`;
     document.getElementById('detail').textContent = `Approve once puts this one file from the agent's workspace into the `
       + `file field above (within a minute); the site receives it when the form is sent. ${wait}`;
   } else if (entry.kind === 'dialog') {

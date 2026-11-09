@@ -24,6 +24,12 @@ export const SECRET_USE_TEXT = {
 const SECRET_WORDS = { password: 'password', 'private-key': 'private key', totp: 'TOTP seed', 'recovery-code': 'recovery code',
   jwt: 'token', generic: 'secret' };
 
+/** Where the control is: its site, and for a control inside a frame from another site, the page that embeds it. */
+export function originText(entry) {
+  const origin = entry?.origin ?? '';
+  return entry?.frameOf && entry.frameOf !== origin ? `${origin} (in a frame of ${entry.frameOf})` : origin;
+}
+
 function hostOf(origin) {
   try {
     return new URL(origin).host;
@@ -42,7 +48,8 @@ export function secretUseLine(entry) {
   const to = hostOf(entry.origin);
   const kind = String(entry.secret?.kind ?? 'generic');
   const what = `secret:${entry.handle} (${SECRET_WORDS[kind] ?? `${kind} key`}${from ? ` from ${from}` : ''})`;
-  const line = entry.kind === 'fill_secret' ? `Paste ${what} into "${entry.label || 'this field'}" on ${to || 'this site'}`
+  const inFrame = entry.frameOf && hostOf(entry.frameOf) && hostOf(entry.frameOf) !== to ? ` (in a frame of ${hostOf(entry.frameOf)})` : '';
+  const line = entry.kind === 'fill_secret' ? `Paste ${what} into "${entry.label || 'this field'}" on ${to || 'this site'}${inFrame}`
     : `Copy ${what} to the clipboard`;
   return { line, cross: Boolean(from && to && from !== to), from, to };
 }
@@ -74,7 +81,7 @@ export function approvalCard(entry, decide) {
   const uploadUse = entry.kind === 'upload' && entry.file;
   top.append(element('span', 'card-label', secretUse ? 'APPROVE SECRET USE?' : uploadUse ? 'APPROVE UPLOAD?'
     : `APPROVE ${String(KIND_NAME[entry.cls] ?? entry.cls).toUpperCase()}?`),
-    element('span', 'request-age', entry.origin ?? ''));
+    element('span', 'request-age', originText(entry)));
   card.append(top);
   card.append(element('p', 'request-meta', entry.title || '(no title)'));
   if (secretUse) {
@@ -86,7 +93,7 @@ export function approvalCard(entry, decide) {
     if (uploadUse) {
       const size = entry.file.size >= 1024 * 1024 ? `${(entry.file.size / 1024 / 1024).toFixed(1)} MB`
         : entry.file.size >= 1024 ? `${Math.round(entry.file.size / 1024)} KB` : `${entry.file.size} bytes`;
-      card.append(element('p', 'approval-label', `Upload ${entry.file.name} (${size}) to ${entry.origin ?? 'this site'}?`),
+      card.append(element('p', 'approval-label', `Upload ${entry.file.name} (${size}) to ${originText(entry) || 'this site'}?`),
         element('p', 'request-meta', "Approve once puts this one file from the agent's workspace into the file field below "
           + '(within a minute); the site receives it when the form is sent.'));
     } else {

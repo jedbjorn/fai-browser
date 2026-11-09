@@ -682,11 +682,15 @@
         if (outer >= 0 && index >= 0) path = [...own, outer, index];
       }
       if (!path || path.length > MAX_FRAME_DEPTH) continue;
+      // The content box (inside border and padding): where the frame's own viewport starts, and its size, which the
+      // worker matches against the frame's own innerWidth and innerHeight.
       const rect = toTop(el.getBoundingClientRect(), frame);
-      const left = rect.left + el.clientLeft;
-      const top = rect.top + el.clientTop;
-      const width = el.clientWidth;
-      const height = el.clientHeight;
+      const style = styleOf(el);
+      const pad = side => parseFloat(style[`padding${side}`]) || 0;
+      const left = rect.left + el.clientLeft + pad('Left');
+      const top = rect.top + el.clientTop + pad('Top');
+      const width = el.clientWidth - pad('Left') - pad('Right');
+      const height = el.clientHeight - pad('Top') - pad('Bottom');
       let clip = { left, top, right: left + width, bottom: top + height };
       if (frame) {
         clip = { left: Math.max(clip.left, frame.clip.left), top: Math.max(clip.top, frame.clip.top),
@@ -744,7 +748,8 @@
     const ancestors = location.ancestorOrigins;
     for (let i = 0; ancestors && i < ancestors.length; i++) {
       const origin = ancestors[i];
-      if (origin !== 'null' && origin !== pageContext.topOrigin && !approvedOrigin(origin)) {
+      // An ancestor the browser names only as 'null' (an opaque origin) is not an approved page either.
+      if (origin === 'null' || (origin !== pageContext.topOrigin && !approvedOrigin(origin))) {
         throw new PageError('cross_origin', 'This frame is no longer inside approved pages');
       }
     }
@@ -4752,7 +4757,7 @@
    */
   function redactionRects({ arm = false } = {}) {
     const roots = collectShadowRoots();
-    const { frames } = collectFrames();
+    const { frames, crossOrigin } = collectFrames();
     frameByDoc = frames;
     secretInputs = { roots, frames: Array.from(frames.values()) };
     secretState = null;
@@ -4818,8 +4823,12 @@
     let dirty = false;
     if (arm) redactArm(docs, roots);
     else dirty = redactDisarm()?.dirty ?? true;
+    // The cross-origin frames as they sit now ({path, box, clip}): the worker places an approved frame's own boxes by
+    // them and boxes every frame it did not read (numbers and paths only).
+    const frameBoxes = crossOrigin.length ? crossOriginSlots(crossOrigin).map(({ path, box, clip }) => ({ path, box, clip })) : [];
     return {
       rects,
+      ...(frameBoxes.length ? { frameBoxes } : {}),
       viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
       scroll: { x: Math.round(scrollX), y: Math.round(scrollY) },
       strict,

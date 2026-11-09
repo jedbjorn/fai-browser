@@ -901,12 +901,13 @@ export function offeredActions(observation, options = {}) {
   // Links are offered only on the approved site: to the current page's origin, or (with a domain root the user
   // approved) to another https subdomain of the same root. The extension refuses any other link click.
   const linkAllowed = href => Boolean(href) && Boolean(leaseOrigin) && sameSite(observation.url, href, allowedOrigins);
-  // A link inside an approved cross-origin frame (extension/frames.js, `frameOrigin`) that navigates only that frame
-  // must land on an approved origin (the frame stays readable); one that navigates the tab (_top, _parent) follows the
-  // page's rule above. The frame's page script checks the same again at dispatch.
+  // A link inside an approved cross-origin frame (extension/frames.js, `frameOrigin`) that navigates only a frame
+  // must land on an approved origin (the frame stays readable); one that navigates the tab (_top, or _parent from a
+  // frame directly under the page) follows the page's rule above. The frame's page script checks the same again at dispatch.
   const frameLinkAllowed = control => {
     const target = String(control.linkTarget ?? '').toLowerCase();
-    if (['_top', '_parent'].includes(target)) return linkAllowed(control.href);
+    // _parent navigates the tab only from a frame whose parent is the top document (frameDepth 1), as page.js checks.
+    if (target === '_top' || (target === '_parent' && control.frameDepth === 1)) return linkAllowed(control.href);
     return Boolean(control.href) && Boolean(leaseOrigin) && (sameSite(control.frameOrigin, control.href, allowedOrigins)
       || allowedOrigin(control.href, allowedOrigins));
   };

@@ -31,6 +31,10 @@
   const COMPOSITES_MAX = 32;
   const FRAME_TARGET = /^f([1-9])\.(\d{1,3})$/;
   const ORIGIN = /^https?:\/\/[^/\s?#]+$/;
+  // executeScript refusals that happen before the script runs (the target is gone or out of reach).
+  const NOT_STARTED = /No document with id|No frame with id|Cannot access|Missing host permission|showing error page/i;
+  // How far a frame may have moved (CSS px) between two looks and still count as in place.
+  const MOVE_TOLERANCE_PX = 2;
 
   // Per tab: { context, frames (the read frames of the last merged observation), composites: Map revision -> parts }.
   const states = new Map();
@@ -70,7 +74,7 @@
       return null;
     }
     return { origin: location.origin, opaque: window.origin === 'null', path, ready: document.readyState,
-      page: Boolean(globalThis.__faiPage) };
+      page: Boolean(globalThis.__faiPage), width: innerWidth, height: innerHeight };
   }
 
   /** The request's exact origins (and the tab's) as page.js gets them for link checks in a frame. */
@@ -118,14 +122,22 @@
   async function callFrame(tabId, frame, method, args, context = frameContext(tabId)) {
     const secrets = { ...secretOptions(), context };
     const target = frame.documentId ? { tabId, documentIds: [frame.documentId] } : { tabId, frameIds: [frame.frameId] };
-    const run = () => chrome.scripting.executeScript({ target, func: pageCall, args: [method, args, secrets] });
+    // The browser refusing the injection itself (the document or frame is gone, no access) means nothing ran: never a
+    // navigation the act started (execute re-probes the frame to say what happened).
+    const script = details => chrome.scripting.executeScript(details).catch(error => {
+      if (NOT_STARTED.test(String(error?.message ?? error))) {
+        throw new ExtensionError('target_unavailable', 'The frame document is gone', { notStarted: true });
+      }
+      throw error;
+    });
+    const run = () => script({ target, func: pageCall, args: [method, args, secrets] });
     let [injection] = await run();
     if (injection?.result?.missing) {
       const [probe] = await probeFrames(tabId, [frame.frameId]);
       if (!probe || probe.result.origin !== frame.origin || !frameApproved(probe.result.origin)) {
-        throw new ExtensionError('cross_origin', 'The frame left the approved origins; observe again');
+        throw new ExtensionError('cross_origin', 'The frame left the approved origins; observe again', { notStarted: true });
       }
-      await chrome.scripting.executeScript({ target, files: ['input.js', 'page.js'] });
+      await script({ target, files: ['input.js', 'page.js'] });
       [injection] = await run();
     }
     const outcome = injection?.result;
@@ -141,12 +153,18 @@
   }
 
   const pathKey = path => path.join('.');
+  const startsWith = (path, prefix) => path.length > prefix.length && prefix.every((step, i) => path[i] === step);
+  // The frame a probe found has the size of the slot page.js saw at that path (a frame that was reordered or swapped
+  // between the two looks does not), within MOVE_TOLERANCE_PX.
+  const sameSize = (probe, slot) => [[probe.result.width, slot.width], [probe.result.height, slot.height]]
+    .every(([a, b]) => Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= MOVE_TOLERANCE_PX);
   const cleanOrigin = origin => (typeof origin === 'string' && ORIGIN.test(origin) ? reportedUrl(origin) : null);
   const facts = observation => ({
     purchase: observation?.pageFacts?.purchase === true,
     sensitive: observation?.pageFacts?.sensitive === true,
     secretPage: observation?.pageFacts?.secretPage === true,
   });
+  const FACT_KEYS = ['purchase', 'sensitive', 'secretPage'];
   const union = list => ({
     purchase: list.some(item => item.purchase), sensitive: list.some(item => item.sensitive), secretPage: list.some(item => item.secretPage),
   });
@@ -174,6 +192,8 @@
       dx: box.x + offset.dx,
       dy: box.y + offset.dy,
       clip: offset.clip ? intersect(shifted, offset.clip) : shifted,
+      width: box.width,
+      height: box.height,
       declared: typeof slot.declared === 'string' ? slot.declared : null,
     };
   }
@@ -207,6 +227,9 @@
           unread.push({ origin, reason: 'sandboxed' });
         } else if (!frameApproved(origin)) {
           unread.push({ origin, reason: 'not_approved' });
+        } else if (!sameSize(probe, slot)) {
+          // The frame at this path is not the one page.js placed there (the page moved its frames in between).
+          unread.push({ origin, reason: 'unavailable' });
         } else if (slot.path.length > FRAME_DEPTH_MAX || read.length + reading.length >= FRAME_READ_MAX) {
           unread.push({ origin, reason: 'limit' });
         } else {
@@ -226,7 +249,8 @@
         read.push({ frame, observation });
         for (const slot of Array.isArray(observation.frameSlots) ? observation.frameSlots : []) {
           const placed = placeSlot(slot, { dx: frame.dx, dy: frame.dy, clip: frame.clip });
-          if (placed && placed.path.length > frame.path.length) next.push(placed);
+          // A frame only reports frames below itself.
+          if (placed && startsWith(placed.path, frame.path)) next.push(placed);
         }
       }
       level = next;
@@ -236,8 +260,9 @@
     const all = union([facts(top), ...read.map(item => facts(item.observation))]);
     const before = state.context ?? union([]);
     state.context = all;
-    // What a document lacked: a fact of the tab that neither it has itself nor the context it was read with had.
-    const lacking = own => ['purchase', 'sensitive', 'secretPage'].some(key => all[key] && !own[key] && !before[key]);
+    // A document read with another context than the tab's (a fact it lacked, or one that no longer holds anywhere) is
+    // read again: what applied to it is its own facts or the context's.
+    const lacking = own => FACT_KEYS.some(key => (own[key] || before[key]) !== (own[key] || all[key]));
     let current = top;
     if (lacking(facts(top))) current = (await retop().catch(() => null)) ?? top;
     for (const item of read) {
@@ -245,6 +270,8 @@
       const again = await callFrame(tabId, item.frame, 'observe', [options]).catch(() => null);
       if (again && Array.isArray(again.controls)) item.observation = again;
     }
+    state.topFacts = facts(current);
+    for (const item of read) item.frame.facts = facts(item.observation);
     return { top: current, read, unread };
   }
 
@@ -286,7 +313,8 @@
         frameBlocks.push(copy);
       }
       for (const control of observation.controls) {
-        const copy = { ...control, id: id(control.id), frame: `f${frame.n}`, frameOrigin: reportedUrl(frame.origin) };
+        const copy = { ...control, id: id(control.id), frame: `f${frame.n}`, frameOrigin: reportedUrl(frame.origin),
+          frameDepth: frame.path.length };
         const bounds = control.bounds;
         if (bounds && [bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)) {
           copy.bounds = { x: bounds.x + frame.dx, y: bounds.y + frame.dy, width: bounds.width, height: bounds.height };
@@ -352,8 +380,8 @@
       for (const [revision, parts] of state.composites) if (parts.key === key) composite = revision;
       if (!composite) {
         composite = `${top.revision}.${++sequence}`;
-        state.composites.set(composite, { key, top: top.revision, frames: new Map(read.map(({ frame, observation }) => [frame.n,
-          { ...frame, revision: observation.revision }])) });
+        state.composites.set(composite, { key, top: top.revision, topFacts: { ...(state.topFacts ?? facts(top)) },
+          frames: new Map(read.map(({ frame, observation }) => [frame.n, { ...frame, revision: observation.revision }])) });
         while (state.composites.size > COMPOSITES_MAX) state.composites.delete(state.composites.keys().next().value);
       }
       out.revision = composite;
@@ -424,22 +452,67 @@
     }
   }
 
-  /** approvalInfo for the Approve gate, in the document the target is in; its revision is the expected one. */
+  // The page context from the documents' current own facts: `top` (the top document's), and each frame's from
+  // `frames` (a Map n -> facts) or, for a frame not looked at again, the facts it had when it was read.
+  function setContext(tabId, parts, top, frames = new Map()) {
+    const state = stateOf(tabId);
+    const list = [top, ...[...parts.frames.values()].map(frame => frames.get(frame.n) ?? frame.facts ?? union([]))];
+    state.context = union(list);
+  }
+
+  // Before anything runs in a frame: the top document must still be the page the decision saw (its revision), and
+  // the frame then runs with the tab context as the top document has it now (a page that turned into a checkout
+  // since the observation makes a frame's "Continue" a purchase). A top document that changed is `stale`.
+  async function refreshTop(tabId, parts, options = {}) {
+    const fresh = await callPage(tabId, 'observe', [{ ...options, blocks: false }]);
+    if (fresh?.revision !== parts.top) throw new ExtensionError('stale', 'Stale observation: the page changed since the decision');
+    setContext(tabId, parts, facts(fresh));
+  }
+
+  // Before a top act: each read frame's facts as they are now (one cheap look per frame), so a frame that turned into
+  // a payment or sign-in form since the observation restricts the top document's control. A frame that does not
+  // answer keeps the facts it had.
+  async function refreshFrames(tabId, parts, options = {}) {
+    const looks = await Promise.all([...parts.frames.values()].map(frame => callFrame(tabId, frame, 'observe',
+      [{ ...options, blocks: false }]).then(value => [frame.n, value], () => [frame.n, null])));
+    const current = new Map(looks.filter(([, value]) => value?.pageFacts).map(([n, value]) => [n, facts(value)]));
+    setContext(tabId, parts, parts.topFacts ?? union([]), current);
+  }
+
+  // The frame of an act, the top document refreshed and the frame probed again (see refreshTop, recheckFrame).
+  async function prepareFrameAct(tabId, expectedRevision, frame, options) {
+    const parts = states.get(tabId)?.composites.get(expectedRevision);
+    if (!parts) throw new ExtensionError('stale', 'Stale observation: the frame changed since the decision');
+    await recheckFrame(tabId, frame);
+    await refreshTop(tabId, parts, options);
+  }
+
+  /**
+   * approvalInfo for the Approve gate, in the document the target is in; its revision is the expected one. For a frame
+   * control `frameOrigin` names the frame's own origin (checked against the request) and `topOrigin` the page's.
+   */
   async function approvalInfo(tabId, target, expectedRevision, kind) {
     const { top, frame, local } = resolve(tabId, expectedRevision, target);
     if (!frame) {
       const info = await callPage(tabId, 'approvalInfo', [target, top, kind]);
       return info?.revision === top ? { ...info, revision: expectedRevision } : info;
     }
-    await recheckFrame(tabId, frame);
+    await prepareFrameAct(tabId, expectedRevision, frame, {});
     const info = await callFrame(tabId, frame, 'approvalInfo', [local, frame.revision, kind]);
     if (!info || info.revision !== frame.revision) return info;
-    return { ...info, revision: expectedRevision, target };
+    // The origin the control is on, as the frame's page script reads it: the one the request approved for that frame.
+    if (info.origin !== frame.origin || !frameApproved(info.origin)) {
+      throw new ExtensionError('cross_origin', 'The frame moved to an origin this request does not approve');
+    }
+    return { ...info, revision: expectedRevision, target, frameOrigin: frame.origin, topOrigin: session?.origin ?? null };
   }
 
   function frameTarget(action) {
     return typeof action?.target === 'string' && FRAME_TARGET.test(action.target);
   }
+
+  // Top acts that may submit, pay or sign in look at the frames' facts again first (refreshFrames).
+  const REFRESHING = new Set(['click', 'submit_field', 'press']);
 
   // A page action (execute) in the top document or a frame. `rest` are execute()'s arguments after the revision
   // (settle, terms, forbid, allow, sites, expectText, approval). Returns execute()'s outcome, its observation merged; an
@@ -449,10 +522,12 @@
     const options = { terms, forbid, allow, sites, expectText };
     const { top, frame, local } = resolve(tab.id, expectedRevision, action.target);
     if (!frame) {
+      const parts = states.get(tab.id)?.composites.get(expectedRevision);
+      if (parts?.frames.size && action.target !== undefined && REFRESHING.has(action.type)) await refreshFrames(tab.id, parts, options);
       const outcome = await callPage(tab.id, 'execute', [action, top, ...rest]);
       return outcome?.observation ? withFrames(tab.id, outcome, options) : outcome;
     }
-    await recheckFrame(tab.id, frame);
+    await prepareFrameAct(tab.id, expectedRevision, frame, options);
     const id = value => `f${frame.n}.${value}`;
     const fromUrl = reportedUrl(tab.url);
     const inFrame = { ...action, target: local };
@@ -462,6 +537,11 @@
     try {
       outcome = await callFrame(tab.id, frame, 'execute', [inFrame, frame.revision, settle, terms, forbid, allow, sites, expectText, frameApproval]);
     } catch (error) {
+      // Refused before the script ran (the frame's document is gone): say what the frame is now, never a success.
+      if (error?.notStarted) {
+        await recheckFrame(tab.id, frame);
+        throw new ExtensionError('stale', 'Stale observation: the frame changed before the action could run');
+      }
       if (!isTeardown(error)) throw error;
       navigated = true;
       outcome = {};
@@ -487,44 +567,90 @@
     return { ...kept, fromUrl, target, observation };
   }
 
-  // Screenshot redaction inside the frames read last: each frame's own boxes (secrets, password, payment and secret
-  // fields, and in Strict mode its canvases, code and unread frames), moved into the top viewport and clipped to the
-  // frame's box. A frame that does not answer in time is boxed whole (fail closed).
+  // Screenshot redaction for the tab's cross-origin frames, placed where they are now: the top document's query
+  // (`value`, page.js redactionRects) names each cross-origin frame's current box by path (frameBoxes), and so does
+  // each approved frame's own query for the frames inside it. A frame read last is asked for its own boxes (secrets,
+  // password, payment and secret fields, and in Strict mode its canvases, code and unread frames), moved into the top
+  // viewport by its current box and clipped to it; a frame that does not answer in time is boxed whole. Every frame
+  // that was not read is boxed whole. A frame read last that is no longer where a query can place it is boxed where
+  // it was and the capture is marked dirty; so is one that moved more than MOVE_TOLERANCE_PX between the query
+  // before the capture and the one after it (the worker then takes the capture again or withholds it).
   async function redaction(tabId, value, arm) {
-    const frames = states.get(tabId)?.frames ?? [];
-    if (!frames.length || !value || !Array.isArray(value.rects)) return value;
-    const rects = [...value.rects];
-    let incomplete = value.incomplete === true;
-    let dirty = value.dirty;
+    if (!value || !Array.isArray(value.rects)) return value;
+    const { frameBoxes = [], ...rest } = value;
+    const state = stateOf(tabId);
+    const frames = state.frames ?? [];
+    if (!frames.length && !(Array.isArray(frameBoxes) && frameBoxes.length)) return rest;
+    const rects = [...rest.rects];
+    let incomplete = rest.incomplete === true;
+    let dirty = rest.dirty;
     const box = (clip, kind) => ({ x: Math.floor(clip.left), y: Math.floor(clip.top), width: Math.ceil(clip.right - clip.left),
       height: Math.ceil(clip.bottom - clip.top), kind });
-    for (const frame of frames) {
-      if (!(frame.clip.right > frame.clip.left && frame.clip.bottom > frame.clip.top)) continue;
-      let answer = null;
-      try {
-        answer = await Promise.race([callFrame(tabId, frame, 'redactionRects', [{ arm }]), delay(FRAME_REDACT_MS).then(() => null)]);
-      } catch {
-        answer = null;
-      }
-      if (!answer || !Array.isArray(answer.rects)) {
-        rects.push(box(frame.clip, 'frame'));
-        continue;
-      }
-      if (answer.incomplete === true) incomplete = true;
-      if (!arm && answer.dirty !== false) dirty = true;
-      for (const rect of answer.rects) {
-        const clean = cleanRect(rect);
-        if (!clean) {
-          rects.push(box(frame.clip, 'frame'));
+    const visible = clip => clip.right > clip.left && clip.bottom > clip.top;
+    const readByPath = new Map(frames.map(frame => [pathKey(frame.path), frame]));
+    const now = new Map();
+    let level = (Array.isArray(frameBoxes) ? frameBoxes : []).map(slot => placeSlot(slot, { dx: 0, dy: 0, clip: null })).filter(Boolean);
+    while (level.length) {
+      const next = [];
+      for (const slot of level) {
+        const key = pathKey(slot.path);
+        if (now.has(key)) continue;
+        now.set(key, slot);
+        const frame = readByPath.get(key);
+        if (!frame) {
+          // Not read: nothing of it is known, so none of it is shown.
+          if (visible(slot.clip)) rects.push(box(slot.clip, 'frame'));
           continue;
         }
-        const clip = intersect({ left: clean.x + frame.dx, top: clean.y + frame.dy, right: clean.x + frame.dx + clean.width,
-          bottom: clean.y + frame.dy + clean.height }, frame.clip);
-        if (clip.right <= clip.left || clip.bottom <= clip.top) continue;
-        rects.push({ ...box(clip, rect.kind ?? 'secret'), ...(clean.label ? { label: clean.label } : {}) });
+        let answer = null;
+        try {
+          answer = await Promise.race([callFrame(tabId, frame, 'redactionRects', [{ arm }]), delay(FRAME_REDACT_MS).then(() => null)]);
+        } catch {
+          answer = null;
+        }
+        if (!answer || !Array.isArray(answer.rects)) {
+          if (visible(slot.clip)) rects.push(box(slot.clip, 'frame'));
+          continue;
+        }
+        if (answer.incomplete === true) incomplete = true;
+        if (!arm && answer.dirty !== false) dirty = true;
+        for (const rect of answer.rects) {
+          const clean = cleanRect(rect);
+          if (!clean) {
+            rects.push(box(slot.clip, 'frame'));
+            continue;
+          }
+          const clip = intersect({ left: clean.x + slot.dx, top: clean.y + slot.dy, right: clean.x + slot.dx + clean.width,
+            bottom: clean.y + slot.dy + clean.height }, slot.clip);
+          if (!visible(clip)) continue;
+          rects.push({ ...box(clip, rect.kind ?? 'secret'), ...(clean.label ? { label: clean.label } : {}) });
+        }
+        for (const inner of Array.isArray(answer.frameBoxes) ? answer.frameBoxes : []) {
+          const placed = placeSlot(inner, { dx: slot.dx, dy: slot.dy, clip: slot.clip });
+          if (placed && startsWith(placed.path, slot.path)) next.push(placed);
+        }
       }
+      level = next;
     }
-    return { ...value, rects, ...(incomplete ? { incomplete: true } : {}), ...(arm ? {} : { dirty }) };
+    // A frame read last that no query placed: box it where it was, and the capture cannot be trusted as is.
+    for (const frame of frames) {
+      if (now.has(pathKey(frame.path))) continue;
+      if (visible(frame.clip)) rects.push(box(frame.clip, 'frame'));
+      if (arm) state.redactMissing = true;
+      else dirty = true;
+    }
+    if (arm) {
+      state.redactBoxes = now;
+    } else {
+      const before = state.redactBoxes ?? new Map();
+      const moved = (a, b) => !a || !b || Math.abs(a.dx - b.dx) > MOVE_TOLERANCE_PX || Math.abs(a.dy - b.dy) > MOVE_TOLERANCE_PX
+        || Math.abs(a.width - b.width) > MOVE_TOLERANCE_PX || Math.abs(a.height - b.height) > MOVE_TOLERANCE_PX;
+      for (const key of new Set([...before.keys(), ...now.keys()])) if (moved(before.get(key), now.get(key))) dirty = true;
+      if (state.redactMissing) dirty = true;
+      state.redactBoxes = null;
+      state.redactMissing = false;
+    }
+    return { ...rest, rects, ...(incomplete ? { incomplete: true } : {}), ...(arm ? {} : { dirty }) };
   }
 
   globalThis.faiFrames = { withFrames, optionsOf, observeTab, approvalInfo, execute, frameTarget, redaction, topContext,
