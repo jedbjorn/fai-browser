@@ -16,10 +16,17 @@
     enabled: true,
     // Think time before each action (ms, a jittered draw between the two).
     think: [15, 70],
-    // Typing: characters typed key by key until this much time went by or this many characters, the rest inserted
-    // in one piece (as an IME commit or autocomplete does), so long text never takes long.
+    // Typing: characters typed key by key while the planned rhythm stays within this much time (a whole value within
+    // RHYTHM.slack of it is typed in full) and up to this many characters, the rest inserted in one piece (as an IME
+    // commit or autocomplete does), so long text never takes long.
     typeBudgetMs: 1000,
     maxTyped: 40,
+    // The typist's speed for this session (RHYTHM): the worker sends one seed per lease, so every document of a task
+    // types at the same pace; 0 means a seed of this document's own.
+    rhythmSeed: 0,
+    // Test hooks: a seed for the per-key draws (0: Math.random), and the chance of a slip per letter (null: RHYTHM's).
+    keySeed: 0,
+    slipRate: null,
     // Wheel scrolling of the window to an off-screen target: farther than this jumps (scrollIntoView).
     revealMaxPx: 4000,
     // Trusted input (the worker's chrome.debugger replay, trusted-input.js): set by the worker per call, only when
@@ -235,10 +242,15 @@
   // events go out instead (the setting off, a build without the permission, Firefox, an attach Chrome refused).
   // ---------------------------------------------------------------------------------------------------------------
 
-  async function sendTrusted(steps) {
+  // `deadline` (ms from the first step): past it the worker presses no more keys, releases what is held and says
+  // `late`.
+  async function sendTrusted(steps, { deadline } = {}) {
     if (!config.trusted || document.hidden || typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return { ok: false, dispatched: 0 };
     try {
-      const reply = await chrome.runtime.sendMessage({ kind: 'fai-trusted-input', steps, viewport: { width: innerWidth, height: innerHeight } });
+      const reply = await chrome.runtime.sendMessage({
+        kind: 'fai-trusted-input', steps, viewport: { width: innerWidth, height: innerHeight },
+        ...(Number.isFinite(deadline) ? { deadline: Math.round(deadline) } : {}),
+      });
       return reply && typeof reply.dispatched === 'number' ? reply : { ok: false, dispatched: 0 };
     } catch {
       return { ok: false, dispatched: 0 };
@@ -496,6 +508,378 @@
     return { key: ch, code: '', keyCode: 0, charCode: point, shift: false };
   }
 
+  // ---------------------------------------------------------------------------------------------------------------
+  // Typing rhythm: when each key of a fill goes down and comes up, planned before the first key (pure: no DOM, no
+  // timers, `random` injectable so test/typing-rhythm.test.js runs it seeded). Shaped on keystroke studies of fast
+  // typists rather than a steady metronome:
+  // - a typist per session (config.rhythmSeed, one per lease): the median keydown-to-keydown interval (IKI) and key
+  //   hold, drawn once, so pace differs between tasks and stays put within one;
+  // - log-normal (right-skewed) intervals around that median, scaled by context: common English bigrams and a change
+  //   of hand are quicker; the same finger on another key, Shift, digits, symbols and keys outside the US layout
+  //   slower; a new word, the key after punctuation and the start of a new burst (keys come in runs of 3-8) later;
+  // - rare hesitations (2% of keys, 250-550 ms, at most 600 ms per fill);
+  // - holds log-normal on their own, so a key can still be down when the next goes down (rollover), never across a
+  //   Shift change, on the same key twice, or for Enter, Backspace and keys outside the US layout; at most two keys
+  //   down; where a key must be up first, a flight time of its own before the next goes down;
+  // - every bound is a truncated draw or a per-key random margin, never a clamp: no time shows up exactly at a limit;
+  // - now and then (slips: letters only, outside secrets and fields where a wrong key could do harm) a neighbouring
+  //   key, a beat to notice it, Backspace and the right key; a quarter of the time one more key goes in first, so two
+  //   Backspaces and both keys again.
+  // A secret (fill_secret, a password field) is planned blind: every draw from its length alone (no context, no slips,
+  // no rollover, a Shift slot drawn for every key whether used or not), so neither the time a fill took nor how much
+  // was typed says more than its length.
+  // ---------------------------------------------------------------------------------------------------------------
+
+  const RHYTHM = {
+    iki: [75, 108], // session median IKI range (ms, log-uniform): with the context factors about 95-120 WPM overall
+    hold: [62, 92], // session median hold range (ms, log-uniform)
+    ikiSigma: 0.3,
+    holdSigma: 0.22,
+    ikiMin: 35, // intervals and holds are drawn within these (truncated: redrawn, never clamped)
+    ikiMax: 650,
+    holdMin: 30,
+    holdMax: 180,
+    flight: [12, 14, 0.55], // keyup to the next keydown where the key must be up first: floor + log-normal(median, sigma)
+    pad: [10, 0.55], // a per-key margin over `sep` and holdMin wherever events are pushed apart: log-normal (median, sigma),
+    // so its density rises from zero (mode about 7 ms) instead of stepping up at a floor
+    burst: [3, 8], // keys per burst
+    inBurst: 0.92,
+    burstStart: 1.3,
+    bigram: 0.8,
+    alternate: 0.88,
+    sameFinger: 1.3,
+    sameKey: 1.05,
+    shift: 1.35,
+    shiftRun: 1.1,
+    digit: 1.25,
+    digitRun: 1.1,
+    symbol: 1.25,
+    foreign: 1.4,
+    enter: 1.6,
+    wordStart: 1.3,
+    afterPunctuation: 1.5,
+    floor: 0.62, // lowest combined context factor
+    hesitation: 0.02, // chance per key
+    hesitationMs: [250, 550],
+    hesitationCap: 600, // most hesitation per fill
+    lead: 45, // median Shift lead before its key (ms)
+    sep: 8, // least time between two key events
+    blindIkiMin: 45,
+    shiftAt: [0.3, 0.7], // where a blind plan's Shift sits in the gap before its key
+    slack: 1.4, // a whole value is typed when its plan is within budget * slack
+    fullChars: 14, // a value this short is always typed in full (without hesitations and slips when they do not fit)
+    slip: 1 / 45, // chance of a slip per eligible letter: about one per 60 characters typed
+    slipMinLength: 6,
+    slipMax: [1, 2], // most slips per fill: under 40 characters, from 40
+    slipLate: 0.25, // one more key goes in before the slip is noticed
+    notice: [150, 350, 240], // the beat before the Backspace: truncated log-normal (low, high, median)
+    back: 1.1, // Backspace's own interval factor; a second one comes quicker
+    backRun: 0.85,
+    retype: 1.2, // the right key after Backspace
+  };
+
+  // Common English bigrams (letters, either case): the hands know them.
+  const BIGRAMS = new Set(('th he in er an re on at en nd ti es or te of ed is it al ar st to nt ng se ha as ou io le ve co '
+    + 'me de hi ri ro ic ne ea ra ce li ch ll be ma si om ur').split(' '));
+  // Touch-typing fingers on a US keyboard, by physical key: hand (L/R) and finger 0-3 (pinky to index).
+  const FINGERS = {};
+  for (const [finger, codes] of Object.entries({
+    L0: 'Backquote Digit1 KeyQ KeyA KeyZ', L1: 'Digit2 KeyW KeyS KeyX', L2: 'Digit3 KeyE KeyD KeyC',
+    L3: 'Digit4 Digit5 KeyR KeyT KeyF KeyG KeyV KeyB', R3: 'Digit6 Digit7 KeyY KeyU KeyH KeyJ KeyN KeyM',
+    R2: 'Digit8 KeyI KeyK Comma', R1: 'Digit9 KeyO KeyL Period',
+    R0: 'Digit0 Minus Equal KeyP BracketLeft BracketRight Backslash Semicolon Quote Slash Backspace',
+  })) for (const code of codes.split(' ')) FINGERS[code] = finger;
+  const PUNCTUATION = /^[.,;:!?)]$/;
+  // The letters next to each letter on a QWERTY keyboard: the keys a slip lands on.
+  const NEIGHBOURS = {
+    q: 'wa', w: 'qeas', e: 'wrsd', r: 'etdf', t: 'ryfg', y: 'tugh', u: 'yihj', i: 'uojk', o: 'ipkl', p: 'ol',
+    a: 'qwsz', s: 'awedxz', d: 'serfcx', f: 'drtgvc', g: 'ftyhbv', h: 'gyujnb', j: 'huikmn', k: 'jiolm', l: 'kop',
+    z: 'asx', x: 'zsdc', c: 'xdfv', v: 'cfgb', b: 'vghn', n: 'bhjm', m: 'njk',
+  };
+  const BACKSPACE = { key: 'Backspace', code: 'Backspace', keyCode: 8, charCode: 0 };
+
+  // A small seeded generator (mulberry32): the session's draws, and the tests' per-key draws.
+  function seeded(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /** The typist of a session: median IKI and hold (ms), drawn once from `seed`. */
+  function rhythmSession(seed) {
+    const draw = seeded(seed || 1);
+    const logUniform = ([low, high]) => low * (high / low) ** draw();
+    return { iki: logUniform(RHYTHM.iki), hold: logUniform(RHYTHM.hold) };
+  }
+
+  function describeKey(ch) {
+    if (ch === '\b') return { ch, shift: false, kind: 'back', id: 'Backspace', finger: 'R0', hand: 'R' };
+    const key = keyFor(ch);
+    const kind = ch === ' ' ? 'space' : ch === '\n' ? 'enter' : /^[a-z]$/i.test(ch) ? 'letter' : /^[0-9]$/.test(ch) ? 'digit'
+      : key.code ? 'symbol' : 'foreign';
+    const finger = FINGERS[key.code] ?? null;
+    return { ch, shift: key.shift, kind, id: key.code || ch, finger, hand: finger?.[0] ?? null };
+  }
+
+  // How much slower (above 1) or quicker this key comes after `prev`.
+  function contextFactor(prev, key) {
+    if (!prev) return 1;
+    if (key.kind === 'back') return prev.kind === 'back' ? RHYTHM.backRun : RHYTHM.back;
+    let f = prev.kind === 'back' ? RHYTHM.retype : 1;
+    if (key.kind === 'letter' && prev.kind === 'letter' && BIGRAMS.has((prev.ch + key.ch).toLowerCase())) f *= RHYTHM.bigram;
+    if (prev.hand && key.hand) {
+      if (prev.id === key.id) f *= RHYTHM.sameKey;
+      else if (prev.finger === key.finger) f *= RHYTHM.sameFinger;
+      else if (prev.hand !== key.hand) f *= RHYTHM.alternate;
+    }
+    if (key.shift) f *= prev.shift ? RHYTHM.shiftRun : RHYTHM.shift;
+    if (key.kind === 'digit') f *= prev.kind === 'digit' ? RHYTHM.digitRun : RHYTHM.digit;
+    if (key.kind === 'symbol') f *= RHYTHM.symbol;
+    if (key.kind === 'foreign') f *= RHYTHM.foreign;
+    if (key.kind === 'enter' || prev.kind === 'enter') f *= RHYTHM.enter;
+    if (prev.kind === 'space' && key.kind !== 'space') f *= RHYTHM.wordStart;
+    if (PUNCTUATION.test(prev.ch)) f *= RHYTHM.afterPunctuation;
+    return Math.max(RHYTHM.floor, f);
+  }
+
+  // Where slips go: { index -> { wrong, late } }, on letters away from both ends, at most slipMax per fill.
+  function chooseSlips(keys, random, rate) {
+    const slips = new Map();
+    if (keys.length < RHYTHM.slipMinLength || !(rate > 0)) return slips;
+    const most = keys.length >= 40 ? RHYTHM.slipMax[1] : RHYTHM.slipMax[0];
+    for (let i = 1; i < keys.length - 1 && slips.size < most; i++) {
+      const lower = keys[i].ch.toLowerCase();
+      if (keys[i].kind !== 'letter' || !NEIGHBOURS[lower] || random() >= rate) continue;
+      const late = random() < RHYTHM.slipLate && i + 2 < keys.length && keys[i + 1].kind === 'letter';
+      const options = NEIGHBOURS[lower];
+      const wrong = options[Math.floor(random() * options.length)];
+      slips.set(i, { wrong: keys[i].ch === lower ? wrong : wrong.toUpperCase(), late });
+      i += late ? 3 : 2;
+    }
+    return slips;
+  }
+
+  // The keystrokes of a plan: each key once, or for a slip the wrong key, Backspace and the right key again.
+  // { key, ch, index (the character it types; none for Backspace), wrong?, back?, notice? }
+  function strokesOf(keys, slips = new Map()) {
+    const strokes = [];
+    const back = describeKey('\b');
+    const plain = index => ({ key: keys[index], ch: keys[index].ch, index });
+    for (let i = 0; i < keys.length; i++) {
+      const slip = slips.get(i);
+      if (!slip) {
+        strokes.push(plain(i));
+        continue;
+      }
+      strokes.push({ key: describeKey(slip.wrong), ch: slip.wrong, index: i, wrong: true, slip: true });
+      if (slip.late) strokes.push({ ...plain(i + 1), wrong: true });
+      strokes.push({ key: back, ch: '\b', back: true, notice: true });
+      if (slip.late) strokes.push({ key: back, ch: '\b', back: true });
+      strokes.push(plain(i));
+      if (slip.late) strokes.push(plain(++i));
+    }
+    return strokes;
+  }
+
+  // The random part of a plan, stroke by stroke: interval before it (and any hesitation apart), hold, Shift lead,
+  // flight, the margins where events are pushed apart, and the blind Shift slot.
+  function rhythmDraws(strokes, session, random, blind) {
+    const normal = () => Math.sqrt(-2 * Math.log(1 - random())) * Math.cos(2 * Math.PI * random());
+    // A log-normal draw kept within [low, high] by drawing again (no pile-up at a bound).
+    const logNormal = (median, sigma, low, high) => {
+      for (let tries = 0; tries < 16; tries++) {
+        const value = median * Math.exp(sigma * normal());
+        if (value >= low && value <= high) return value;
+      }
+      return low + random() * (high - low);
+    };
+    const pad = () => logNormal(RHYTHM.pad[0], RHYTHM.pad[1], 0, 90);
+    const out = { iki: [], extra: [], hold: [], lead: [], flight: [], pad: [], shiftAt: [], bursts: [], start: 0, tail: 0, shiftEnd: 0 };
+    let burstLeft = 0;
+    let hesitated = 0;
+    for (let i = 0; i < strokes.length; i++) {
+      const stroke = strokes[i];
+      const key = stroke.key;
+      const prev = strokes[i - 1]?.key;
+      let f = blind ? 1 : contextFactor(prev, key);
+      const wordStart = !blind && prev?.kind === 'space' && key.kind !== 'space';
+      if (i === 0 || wordStart || burstLeft <= 0) {
+        out.bursts.push(i);
+        burstLeft = RHYTHM.burst[0] + Math.floor(random() * (RHYTHM.burst[1] - RHYTHM.burst[0] + 1));
+        if (i > 0 && !wordStart) f *= RHYTHM.burstStart;
+      } else {
+        f *= RHYTHM.inBurst;
+      }
+      burstLeft--;
+      const median = session.iki * f;
+      let iki = i === 0 ? 0 : logNormal(median, RHYTHM.ikiSigma, Math.min(blind ? RHYTHM.blindIkiMin : RHYTHM.ikiMin, median * 0.6), RHYTHM.ikiMax);
+      if (stroke.notice) iki += logNormal(RHYTHM.notice[2], 0.3, RHYTHM.notice[0], RHYTHM.notice[1]);
+      let extra = 0;
+      if (i > 0 && !stroke.back && !stroke.wrong && !strokes[i - 1].back && random() < RHYTHM.hesitation) {
+        const [low, high] = RHYTHM.hesitationMs;
+        extra = Math.max(0, Math.min(low + random() * (high - low), RHYTHM.hesitationCap - hesitated));
+        hesitated += extra;
+      }
+      out.iki.push(iki);
+      out.extra.push(extra);
+      const space = !blind && key.kind === 'space' ? 0.9 : 1;
+      out.hold.push(logNormal(session.hold * space, RHYTHM.holdSigma, RHYTHM.holdMin, RHYTHM.holdMax));
+      out.lead.push(logNormal(RHYTHM.lead, 0.3, 20, 90));
+      out.flight.push(RHYTHM.flight[0] + logNormal(RHYTHM.flight[1], RHYTHM.flight[2], 0, 120));
+      out.pad.push({ two: pad(), order: pad(), gap: pad(), mod: pad(), hold: pad() });
+      out.shiftAt.push(RHYTHM.shiftAt[0] + random() * (RHYTHM.shiftAt[1] - RHYTHM.shiftAt[0]));
+    }
+    out.start = logNormal(RHYTHM.lead, 0.3, 30, 90);
+    out.tail = logNormal(42, 0.3, 30, 75);
+    out.shiftEnd = RHYTHM.shiftAt[0] + random() * (RHYTHM.shiftAt[1] - RHYTHM.shiftAt[0]);
+    return out;
+  }
+
+  const rollable = key => key.kind !== 'enter' && key.kind !== 'foreign' && key.kind !== 'back';
+
+  // The events of the first `count` strokes: { at, type: 'down'|'up'|'shift', index? (stroke), on? }, in time order
+  // from 0. `hesitate` false lays them out without the hesitations.
+  function rhythmLayout(strokes, d, count, hesitate = true) {
+    const { sep } = RHYTHM;
+    const events = [];
+    let shift = false;
+    let last = null; // the previous key: { index, key, down, up (tentative until the next key is placed) }
+    let lastUp = -Infinity; // the key before it, already up
+    for (let i = 0; i < count; i++) {
+      const key = strokes[i].key;
+      const pad = d.pad[i];
+      const holdFloor = last ? last.down + RHYTHM.holdMin + pad.hold : 0;
+      // At most two keys down: the one before the previous is up before this one goes down.
+      let down = Math.max(i === 0 ? 0 : last.down + d.iki[i] + (hesitate ? d.extra[i] : 0), lastUp + sep + pad.two);
+      const change = key.shift !== shift;
+      let mod = change ? down - d.lead[i] : null;
+      if (last) {
+        last.up = Math.max(last.up, lastUp + sep + pad.order);
+        const releaseFirst = change || last.key.id === key.id || !rollable(last.key) || !rollable(key);
+        if (releaseFirst) {
+          // Up before the Shift change (with a margin), or a flight time before the next key.
+          const before = change ? mod - sep - pad.gap : down - d.flight[i];
+          if (last.up > before) last.up = Math.max(holdFloor, lastUp + sep + pad.order, before);
+          if (last.up > before) {
+            const push = last.up - before;
+            down += push;
+            if (mod !== null) mod += push;
+          }
+        } else if (Math.abs(last.up - down) < sep + pad.gap) {
+          const earlier = down - sep - pad.gap;
+          last.up = earlier >= holdFloor && earlier >= lastUp + sep + pad.order ? earlier : down + sep + pad.gap;
+        }
+        events.push({ at: last.up, type: 'up', index: last.index });
+        lastUp = last.up;
+      }
+      if (mod !== null) {
+        if (last) mod = Math.max(mod, last.down + sep + pad.mod);
+        down = Math.max(down, mod + 15 + pad.mod);
+        events.push({ at: mod, type: 'shift', on: key.shift });
+        shift = key.shift;
+      }
+      events.push({ at: down, type: 'down', index: i });
+      last = { index: i, key, down, up: down + d.hold[i] };
+    }
+    if (last) {
+      last.up = Math.max(last.up, lastUp + sep + d.pad[last.index].order);
+      events.push({ at: last.up, type: 'up', index: last.index });
+      if (shift) events.push({ at: last.up + d.tail, type: 'shift', on: false });
+    }
+    events.sort((a, b) => a.at - b.at);
+    const base = events.length ? events[0].at : 0;
+    for (const event of events) event.at -= base;
+    return { events, total: events.length ? events.at(-1).at : 0 };
+  }
+
+  // A secret's events: every time from draws made for every key alike (an interval, a flight after the key before
+  // is up, a hold of its own, a Shift slot used or not), and a total that does not depend on which keys needed Shift.
+  function rhythmLayoutBlind(strokes, d, count, hesitate = true) {
+    const events = [];
+    let shift = false;
+    let down = d.start;
+    let prevDown = 0;
+    let prevUp = 0;
+    for (let i = 0; i < count; i++) {
+      if (i > 0) down = Math.max(prevDown + d.iki[i] + (hesitate ? d.extra[i] : 0), prevUp + 2 * RHYTHM.sep + d.flight[i]);
+      if (strokes[i].key.shift !== shift) {
+        shift = !shift;
+        events.push({ at: prevUp + d.shiftAt[i] * (down - prevUp), type: 'shift', on: shift });
+      }
+      const up = down + d.hold[i];
+      events.push({ at: down, type: 'down', index: i }, { at: up, type: 'up', index: i });
+      prevDown = down;
+      prevUp = up;
+    }
+    if (shift) events.push({ at: prevUp + d.shiftEnd * d.tail, type: 'shift', on: false });
+    events.sort((a, b) => a.at - b.at);
+    return { events, total: count ? prevUp + d.tail : 0 };
+  }
+
+  /**
+   * The plan for typing `text`: { events, total, typed, chunked, blind, strokes ([{ ch, back?, index? }], what each
+   * event's `index` presses), bursts (stroke indices that start one), slips, hesitations, hesitationMs (within what is
+   * typed) }. A value within maxTyped is typed in full when its plan fits within budgetMs * RHYTHM.slack, dropping
+   * first its hesitations, then its slips, to fit (and always, without them, up to RHYTHM.fullChars characters); else
+   * the longest prefix whose plan (no slips) fits within budgetMs is typed and the rest goes in as one insertion. `slips` allows slips (never with `blind`); `slipRate` overrides
+   * their chance per letter.
+   */
+  function typingPlan(text, { session = rhythmSession(1), random = Math.random, budgetMs = config.typeBudgetMs,
+    maxTyped = config.maxTyped, blind = false, slips = false, slipRate = RHYTHM.slip } = {}) {
+    const chars = Array.from(text);
+    const n = Math.max(0, Math.min(chars.length, maxTyped));
+    const keys = chars.slice(0, n).map(describeKey);
+    const lay = blind ? rhythmLayoutBlind : rhythmLayout;
+    const make = (strokes, d, count, hesitate) => ({ ...lay(strokes, d, count, hesitate), strokes, d, count, hesitate });
+    const whole = n === chars.length;
+    const candidates = [];
+    const chosenSlips = whole && slips && !blind ? chooseSlips(keys, random, slipRate) : new Map();
+    if (chosenSlips.size) {
+      const strokes = strokesOf(keys, chosenSlips);
+      const d = rhythmDraws(strokes, session, random, blind);
+      candidates.push(make(strokes, d, strokes.length, true), make(strokes, d, strokes.length, false));
+    }
+    const plain = strokesOf(keys);
+    const d = rhythmDraws(plain, session, random, blind);
+    if (whole) candidates.push(make(plain, d, n, true), make(plain, d, n, false));
+    let plan = candidates.find(candidate => candidate.total <= budgetMs * RHYTHM.slack);
+    if (!plan && whole && n <= RHYTHM.fullChars && budgetMs > 0) plan = candidates.at(-1);
+    if (!plan) {
+      let count = n;
+      plan = make(plain, d, count, true);
+      while (count > 0 && plan.total > budgetMs) plan = make(plain, d, --count, true);
+    }
+    const strokes = plan.strokes.slice(0, plan.count);
+    const typed = strokes.reduce((most, stroke) => (stroke.back ? most : Math.max(most, stroke.index + 1)), 0);
+    const extras = plan.hesitate ? plan.d.extra.slice(0, plan.count).filter(ms => ms > 0) : [];
+    return {
+      events: plan.events, total: plan.total, typed, chunked: typed < chars.length, blind,
+      strokes: strokes.map(stroke => ({ ch: stroke.ch, ...(stroke.back ? { back: true } : { index: stroke.index }) })),
+      bursts: plan.d.bursts.filter(i => i < plan.count),
+      slips: strokes.filter(stroke => stroke.slip).length,
+      hesitations: extras.length, hesitationMs: extras.reduce((sum, ms) => sum + ms, 0),
+    };
+  }
+
+  // The session's typist (config.rhythmSeed, else this document's own seed).
+  const documentSeed = (Math.floor(Math.random() * 2 ** 32) >>> 0) || 1;
+  let typist = null;
+  function currentTypist() {
+    const seed = config.rhythmSeed || documentSeed;
+    if (typist?.seed !== seed) typist = { seed, session: rhythmSession(seed) };
+    return typist.session;
+  }
+  // Per-key draws: Math.random, or (config.keySeed, a test hook) a seeded sequence, one per fill.
+  let keySeedFills = 0;
+  function keyRandom() {
+    return config.keySeed ? seeded(config.keySeed + keySeedFills++) : Math.random;
+  }
+
   function fireKey(el, type, key, mods = {}) {
     const press = type === 'keypress';
     const code = press ? key.charCode : key.keyCode;
@@ -513,38 +897,50 @@
     return Object.getOwnPropertyDescriptor(prototype, 'value').set;
   }
 
-  // Inserts `data` where a keystroke would: over the selection (all of it right after select-all), else at the caret,
-  // else at the end (an email or number field has no caret API). The native setter, so a framework's controlled
-  // input sees the change on the input event that follows. Returns false when maxlength leaves no room.
-  function insert(el, data, state) {
-    const value = el.value;
-    let start = value.length;
-    let end = value.length;
-    if (state.replaceAll) {
-      start = 0;
-    } else {
-      try {
-        if (typeof el.selectionStart === 'number') {
-          start = el.selectionStart;
-          end = el.selectionEnd;
-        }
-      } catch {
-        // No selection API on this input type.
-      }
+  // The part of `text` that fits in `room` UTF-16 units (maxlength counts them), never half a surrogate pair.
+  function fitUnits(text, room) {
+    let fit = '';
+    for (const ch of text) {
+      if (fit.length + ch.length > room) break;
+      fit += ch;
     }
-    let text = data;
-    if (el.maxLength >= 0) {
-      const room = el.maxLength - (value.length - (end - start));
-      if (room <= 0) return false;
-      text = text.slice(0, room);
-    }
-    state.replaceAll = false;
-    valueSetter(el).call(el, value.slice(0, start) + text + value.slice(end));
+    return fit;
+  }
+
+  // Where an edit lands: over the selection (all of it right after select-all), else at the caret, else at the end (an
+  // email or number field has no caret API).
+  function editRange(el, state) {
+    const length = el.value.length;
+    if (state.replaceAll) return { start: 0, end: length };
     try {
-      el.setSelectionRange(start + text.length, start + text.length);
+      if (typeof el.selectionStart === 'number') return { start: el.selectionStart, end: el.selectionEnd };
     } catch {
       // No selection API on this input type.
     }
+    return { start: length, end: length };
+  }
+
+  function setValue(el, value, caret) {
+    valueSetter(el).call(el, value);
+    try {
+      el.setSelectionRange(caret, caret);
+    } catch {
+      // No selection API on this input type.
+    }
+  }
+
+  // Inserts `data` where a keystroke would (editRange), with the native setter, so a framework's controlled input sees
+  // the change on the input event that follows. Returns false when maxlength leaves no room.
+  function insert(el, data, state) {
+    const value = el.value;
+    const { start, end } = editRange(el, state);
+    let text = data;
+    if (el.maxLength >= 0) {
+      text = fitUnits(text, el.maxLength - (value.length - (end - start)));
+      if (!text) return false;
+    }
+    state.replaceAll = false;
+    setValue(el, value.slice(0, start) + text + value.slice(end), start + text.length);
     return true;
   }
 
@@ -555,6 +951,22 @@
     const init = { bubbles: true, composed: true, view, inputType: lineBreak ? 'insertLineBreak' : 'insertText', data: lineBreak ? null : data };
     if (!fire(el, 'beforeinput', 'InputEvent', { ...init, cancelable: true })) return;
     if (!el.isConnected || !insert(el, data, state)) return;
+    fire(el, 'input', 'InputEvent', { ...init, cancelable: false });
+  }
+
+  // What Backspace does to a field: beforeinput, the selection or the character before the caret removed, input.
+  function deleteBackward(el, state) {
+    const init = { bubbles: true, composed: true, view: viewOf(el), inputType: 'deleteContentBackward', data: null };
+    if (!fire(el, 'beforeinput', 'InputEvent', { ...init, cancelable: true }) || !el.isConnected) return;
+    const value = el.value;
+    let { start, end } = editRange(el, state);
+    state.replaceAll = false;
+    if (start === end) {
+      if (start === 0) return;
+      const pair = start >= 2 && /[\uDC00-\uDFFF]/.test(value[start - 1]) && /[\uD800-\uDBFF]/.test(value[start - 2]);
+      start -= pair ? 2 : 1;
+    }
+    setValue(el, value.slice(0, start) + value.slice(end), start);
     fire(el, 'input', 'InputEvent', { ...init, cancelable: false });
   }
 
@@ -573,63 +985,346 @@
     return proceed;
   }
 
+  // Selects the field's whole value directly; whether it is (as far as the field can say).
+  function selectWhole(el) {
+    try {
+      el.select();
+    } catch {
+      return false;
+    }
+    return wholeSelected(el);
+  }
+
+  function wholeSelected(el) {
+    try {
+      if (typeof el.selectionStart === 'number') return el.selectionStart === 0 && el.selectionEnd === el.value.length;
+    } catch {
+      // No selection API on this input type: nothing says otherwise.
+    }
+    return true;
+  }
+
+  // Ctrl/Cmd+A, synthetic: the page's own handlers see it, and the field's whole value is what the next edit replaces.
+  // A page that cancels the shortcut (a combobox keeping Ctrl+A for itself) gets the value selected directly, so the
+  // next edit still replaces it rather than adding to it. Resolves whether the whole value is selected.
+  async function selectAll(el, state) {
+    state.onShortcut = () => {
+      try {
+        el.select();
+      } catch {
+        // Not selectable; the next edit still replaces everything.
+      }
+      state.replaceAll = true;
+    };
+    await shortcut(el, 'a', state);
+    delete state.onShortcut;
+    if (!state.replaceAll && el.isConnected && selectWhole(el)) state.replaceAll = true;
+    return state.replaceAll;
+  }
+
   // CDP modifier bits.
   const CDP_CTRL = 2;
   const CDP_META = 4;
   const CDP_SHIFT = 8;
 
-  // Trusted typing: select-all when the field holds something, keys within the typing budget (by planned time), the
-  // rest as one insertText. Null when nothing was dispatched (the synthetic path runs instead).
-  async function typeTrusted(el, text) {
+  // Trusted Ctrl/Cmd+A steps.
+  function trustedSelectAll() {
+    const mod = MAC ? NAMED.Meta : NAMED.Control;
+    const bit = MAC ? CDP_META : CDP_CTRL;
+    return [{ m: 'key', type: 'rawKeyDown', key: mod.key, code: mod.code, keyCode: mod.keyCode, modifiers: bit },
+      { wait: Math.round(jitter(60, 30, 20)) },
+      { m: 'key', type: 'rawKeyDown', key: 'a', code: 'KeyA', keyCode: 65, modifiers: bit, commands: ['selectAll'] },
+      { wait: Math.round(jitter(55, 25, 20)) },
+      { m: 'key', type: 'keyUp', key: 'a', code: 'KeyA', keyCode: 65, modifiers: bit },
+      { m: 'key', type: 'keyUp', key: mod.key, code: mod.code, keyCode: mod.keyCode, modifiers: 0 },
+      { wait: Math.round(jitter(60, 30, 15)) }];
+  }
+
+  // Trusted Ctrl/Cmd+A on its own call, then the selection checked: a page that cancelled it gets the value selected
+  // directly (the browser's own keys then replace the selection); a field with no selection API to ask is selected
+  // directly either way. Resolves whether anything was dispatched.
+  async function trustedSelect(el) {
+    if (!(await sendTrusted(trustedSelectAll())).dispatched) return false;
+    if (el.isConnected && (!hasSelectionApi(el) || !wholeSelected(el))) selectWhole(el);
+    return true;
+  }
+
+  function hasSelectionApi(el) {
+    try {
+      return typeof el.selectionStart === 'number';
+    } catch {
+      return false;
+    }
+  }
+
+  // Trusted keys and text go to whatever has focus: `el` focused again if something else took it (a page moving
+  // focus on input). Whether `el` has focus now.
+  function focusOn(el) {
+    if (!el.isConnected) return false;
+    const doc = el.ownerDocument;
+    if (deepActive(doc) !== el) el.focus({ preventScroll: true });
+    return deepActive(doc) === el;
+  }
+
+  // Backspace as the browser's own key. On macOS the key alone edits nothing through the debugger: its editing command
+  // goes with it, as Chrome's own keyboard sends it there (Playwright does the same).
+  const trustedBackspace = (type, modifiers = 0) => ({
+    m: 'key', type, key: 'Backspace', code: 'Backspace', keyCode: 8, modifiers,
+    ...(MAC && type === 'rawKeyDown' ? { commands: ['deleteBackward'] } : {}),
+  });
+
+  // The trusted-input steps of a plan: its events with the waits between them (none over TRUSTED_WAIT_MS; the
+  // worker's limit is 600), Shift, keys and Backspace as the browser's own.
+  const TRUSTED_WAIT_MS = 500;
+  function rhythmSteps(chars, plan) {
     const steps = [];
-    if (el.value) {
-      const mod = MAC ? NAMED.Meta : NAMED.Control;
-      const bit = MAC ? CDP_META : CDP_CTRL;
-      steps.push({ m: 'key', type: 'rawKeyDown', key: mod.key, code: mod.code, keyCode: mod.keyCode, modifiers: bit },
-        { wait: Math.round(jitter(60, 30, 20)) },
-        { m: 'key', type: 'rawKeyDown', key: 'a', code: 'KeyA', keyCode: 65, modifiers: bit, commands: ['selectAll'] },
-        { wait: Math.round(jitter(55, 25, 20)) },
-        { m: 'key', type: 'keyUp', key: 'a', code: 'KeyA', keyCode: 65, modifiers: bit },
-        { m: 'key', type: 'keyUp', key: mod.key, code: mod.code, keyCode: mod.keyCode, modifiers: 0 },
-        { wait: Math.round(jitter(60, 30, 15)) });
-    }
-    const chars = Array.from(text);
-    let planned = 0;
-    let typed = 0;
+    let clock = 0;
     let shift = false;
-    while (typed < chars.length && typed < config.maxTyped && planned < config.typeBudgetMs) {
-      const ch = chars[typed];
-      const key = keyFor(ch);
-      if (key.shift !== shift) {
-        shift = key.shift;
+    const waitUntil = at => {
+      let ms = Math.round(at) - clock;
+      clock += Math.max(0, ms);
+      for (; ms > 0; ms -= TRUSTED_WAIT_MS) steps.push({ wait: Math.min(ms, TRUSTED_WAIT_MS) });
+    };
+    for (const event of plan.events) {
+      waitUntil(event.at);
+      if (event.type === 'shift') {
+        shift = event.on;
         steps.push({ m: 'key', type: shift ? 'rawKeyDown' : 'keyUp', key: 'Shift', code: 'ShiftLeft', keyCode: 16, modifiers: shift ? CDP_SHIFT : 0 });
+        continue;
       }
+      const stroke = plan.strokes[event.index];
       const modifiers = shift ? CDP_SHIFT : 0;
-      const hold = Math.round(jitter(35, 20, 12));
-      const gap = Math.round(jitter(ch === ' ' ? 70 : 40, 30, 10));
-      steps.push({ m: 'key', type: 'keyDown', key: key.key, code: key.code, keyCode: key.keyCode, text: ch === '\n' ? '\r' : ch, modifiers },
-        { wait: hold }, { m: 'key', type: 'keyUp', key: key.key, code: key.code, keyCode: key.keyCode, modifiers }, { wait: gap });
-      planned += hold + gap;
-      typed++;
+      if (stroke.back) {
+        steps.push(trustedBackspace(event.type === 'down' ? 'rawKeyDown' : 'keyUp', modifiers));
+        continue;
+      }
+      const key = keyFor(stroke.ch);
+      steps.push(event.type === 'down'
+        ? { m: 'key', type: 'keyDown', key: key.key, code: key.code, keyCode: key.keyCode, text: stroke.ch === '\n' ? '\r' : stroke.ch, modifiers }
+        : { m: 'key', type: 'keyUp', key: key.key, code: key.code, keyCode: key.keyCode, modifiers });
     }
-    if (shift) steps.push({ m: 'key', type: 'keyUp', key: 'Shift', code: 'ShiftLeft', keyCode: 16, modifiers: 0 });
-    const chunked = typed < chars.length;
-    if (chunked) steps.push({ m: 'text', text: chars.slice(typed).join('') });
-    const reply = await sendTrusted(steps);
-    return reply.dispatched ? { typed, chunked } : null;
+    if (plan.blind) waitUntil(plan.total);
+    return steps;
+  }
+
+  // How far behind its plan typing may fall (a page whose key handlers are slow) before the keys stop and the rest
+  // goes in as one insertion: on the synthetic path here, on the trusted path as the worker's deadline.
+  const RHYTHM_LATE_MS = 400;
+  // A blind plan's trusted call lasts a fixed time from its first step (an `until` step): its planned waits, then
+  // this margin plus BLIND_STEP_MS for each command the worst case of its length sends (a Shift change around every
+  // key, Backspace, the inserted rest), so the number of Shift changes in a secret does not show in how long it took.
+  const BLIND_MARGIN_MS = 100;
+  const BLIND_STEP_MS = 3;
+
+  // Trusted typing: select-all when the field holds something (its own call, trustedSelect), the plan's keys (or
+  // Backspace for an empty value), the rest as one insertText. Null when nothing was dispatched (the synthetic path
+  // runs instead); `late` when the worker stopped pressing keys at the deadline.
+  async function typeTrusted(el, chars, plan) {
+    if (el.value && !(await trustedSelect(el))) return null;
+    const steps = [];
+    if (!chars.length && el.value) {
+      steps.push(trustedBackspace('rawKeyDown'), { wait: Math.round(jitter(70, 30, 35)) }, trustedBackspace('keyUp'));
+    }
+    steps.push(...rhythmSteps(chars, plan));
+    if (plan.chunked) steps.push({ wait: Math.round(jitter(60, 30, 15)) }, { m: 'text', text: chars.slice(plan.typed).join('') });
+    const planned = steps.reduce((sum, step) => sum + (step.wait ?? 0), 0);
+    if (plan.blind) steps.push({ until: planned + BLIND_MARGIN_MS + BLIND_STEP_MS * (3 * chars.length + 4) });
+    const reply = await sendTrusted(steps, { deadline: plan.total + RHYTHM_LATE_MS });
+    return reply.dispatched ? { typed: plan.typed, chunked: plan.chunked, late: reply.late === true } : null;
+  }
+
+  // Plays a plan's events on `el` against the clock, so a slow handler eats into the next gap instead of adding to
+  // it. Stops early, releasing what is held, when the field went away or a key would go down more than
+  // RHYTHM_LATE_MS late. Returns { stopped }.
+  async function playRhythm(el, plan, state) {
+    const started = performance.now();
+    const held = new Map();
+    let stopped = false;
+    for (const event of plan.events) {
+      // Behind the plan, still a few ms between two events (never a keyup a moment after a keydown).
+      if (event.at > 0) await pause(Math.max(event.at - (performance.now() - started), 6));
+      if (!el.isConnected || (event.type === 'down' && performance.now() - started - event.at > RHYTHM_LATE_MS)) {
+        stopped = true;
+        break;
+      }
+      if (event.type === 'shift') {
+        fireKey(el, event.on ? 'keydown' : 'keyup', NAMED.Shift, { shift: event.on });
+        state.shift = event.on;
+        continue;
+      }
+      const stroke = plan.strokes[event.index];
+      const key = stroke.back ? BACKSPACE : keyFor(stroke.ch);
+      const mods = { shift: state.shift };
+      if (event.type === 'down') {
+        let proceed = fireKey(el, 'keydown', key, mods);
+        if (stroke.back) {
+          if (proceed) deleteBackward(el, state);
+        } else {
+          if (proceed && key.charCode) proceed = fireKey(el, 'keypress', key, mods);
+          if (proceed) inputText(el, stroke.ch, state);
+        }
+        held.set(event.index, key);
+      } else if (held.has(event.index)) {
+        held.delete(event.index);
+        fireKey(el, 'keyup', key, mods);
+      }
+    }
+    if (stopped && (held.size || state.shift)) await pause(RHYTHM.sep + 4);
+    for (const key of held.values()) fireKey(el, 'keyup', key, { shift: state.shift });
+    if (state.shift) {
+      fireKey(el, 'keyup', NAMED.Shift, {});
+      state.shift = false;
+    }
+    if (plan.blind && !stopped) await pause(plan.total - (performance.now() - started));
+    return { stopped };
+  }
+
+  // The text a field is given: no line break in a single-line input (the browser would drop it, and a keyboard's
+  // Enter there submits the form), and a textarea's line breaks as the browser keeps them.
+  function fieldText(el, text) {
+    return el.tagName === 'TEXTAREA' ? text.replace(/\r\n?/g, '\n') : text.replace(/[\r\n]/g, '');
+  }
+
+  // The value the field should end up with: its text, cut to maxlength as typing would.
+  function expectedValue(el, text) {
+    return el.maxLength >= 0 ? fitUnits(text, el.maxLength) : text;
+  }
+
+  // A field with a suggestion list (combobox, aria-autocomplete, a datalist, a popup): what it shows after typing is
+  // its own completion, and a Backspace or a wrong letter could pick a suggestion.
+  function suggests(el) {
+    const popup = (el.getAttribute('aria-haspopup') || 'false').toLowerCase();
+    return el.getAttribute('role') === 'combobox' || (el.getAttribute('aria-autocomplete') || 'none').toLowerCase() !== 'none'
+      || el.hasAttribute('list') || popup !== 'false';
+  }
+
+  /**
+   * Whether `value` shows `text` once, with case and runs of whitespace ignored: the same text with spaces aside
+   * ("NO9386011117947" for "NO93 8601 1117 947"); or the text exactly once with anything around it set off by a
+   * character that is not a letter or digit ("#abc", "https://example.com", "1500 kr"; not "abcc" for "abc"); or, for
+   * a number-like text, its digits as whole digit groups exactly once in the value, with only a country code (one
+   * group of up to three digits) before
+   * them (set off by a space, a bracket or a dash, not a decimal point) and only a zero decimal part after them
+   * ("$1,500.00" and "1500.0" for "1500", "+1 555 1234567" for "5551234567"; not "$150.00" or "155" for "15", not
+   * "$0.15" for "15"). Same rule as page.js fillKept.
+   */
+  function containedOnce(value, text) {
+    const collapse = s => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const want = collapse(text);
+    const have = collapse(value);
+    if (!want) return !have;
+    if (have.replace(/ /g, '') === want.replace(/ /g, '')) return true;
+    const parts = have.split(want);
+    // Set off: by a character that is not a letter or digit, and not a decimal point or comma inside a number.
+    const openStart = !parts[0] || (/[^\p{L}\p{N}]$/u.test(parts[0]) && !/\p{N}[.,]$/u.test(parts[0]));
+    const openEnd = !parts[1] || (/^[^\p{L}\p{N}]/u.test(parts[1]) && !/^[.,]\p{N}/u.test(parts[1]));
+    if (parts.length === 2 && openStart && openEnd) return true;
+    if (!/\d/.test(want) || !/^[\d\s()+.,\-$€£¥%]+$/.test(want)) return false;
+    const digits = want.replace(/\D/g, '');
+    const groups = [];
+    const before = [];
+    let end = 0;
+    for (const match of have.matchAll(/\d+/g)) {
+      before.push(have.slice(end, match.index));
+      groups.push(match[0]);
+      end = match.index + match[0].length;
+    }
+    let found = 0;
+    for (let i = 0; i < groups.length; i++) {
+      let joined = '';
+      for (let j = i; j < groups.length && joined.length < digits.length; j++) {
+        joined += groups[j];
+        if (joined !== digits) continue;
+        const lead = i === 0 || (i === 1 && groups[0].length <= 3 && !/[.,]/.test(before[i]));
+        const tail = groups.slice(j + 1);
+        const rest = !tail.length || (tail.length === 1 && /^0{1,2}$/.test(tail[0]) && /^[.,]$/.test(before[j + 1]));
+        if (lead && rest) found++;
+      }
+    }
+    return found === 1;
+  }
+
+  // Field types whose value is what was typed, give or take a formatter.
+  const EXACT_TYPES = new Set(['text', 'search', 'tel', 'password', 'email', 'url']);
+  // Whether the field holds the value well enough to leave it: a field with a suggestion list always (its completion
+  // is its own), a field of another type always, else the value shown once (containedOnce): a formatter's output
+  // stands, only real residue (a slip's leftover, a dropped or doubled key) is corrected. After a slip (`slipped`),
+  // the whole value (whitespace and case aside): a wrong key a page kept next to the right one ("rreservations") still
+  // shows the value once, but is residue.
+  function holds(el, expected, slipped = false) {
+    if (el.tagName !== 'TEXTAREA' && (el.tagName !== 'INPUT' || !EXACT_TYPES.has(el.type))) return true;
+    if (suggests(el)) return true;
+    if (slipped) {
+      const squash = s => String(s).replace(/\s+/g, '').toLowerCase();
+      return squash(el.value) === squash(expected);
+    }
+    return containedOnce(el.value, expected);
+  }
+
+  // Slips go only where a wrong key and a Backspace can do no harm: plain text, search, email and url inputs and
+  // textareas without maxlength (no one-time-code boxes, no truncation), no numeric keyboard, no one-time-code,
+  // payment or password autocomplete, and no suggestion list that could take the Backspace or a wrong suggestion.
+  function slipsAllowed(el) {
+    if (el.maxLength >= 0) return false;
+    if (el.tagName === 'INPUT' ? !['text', 'search', 'email', 'url'].includes(el.type) : el.tagName !== 'TEXTAREA') return false;
+    if (['numeric', 'decimal', 'tel', 'none'].includes((el.getAttribute('inputmode') || '').toLowerCase())) return false;
+    if (/one-time-code|cc-|password/.test((el.getAttribute('autocomplete') || '').toLowerCase())) return false;
+    return !suggests(el);
+  }
+
+  // After the keys: a fill that stopped early gets the rest of its text (inserted at the end when what the field
+  // shows is the start of it); then, when the field does not hold the value (holds: residue, not a formatter's
+  // output), one correction: select all and insert the value (Backspace for an empty one). Trusted when the keys
+  // were. Skipped when the whole value cannot be selected (it would add to the value, not replace it). Resolves
+  // whether it corrected.
+  async function completeValue(el, expected, { stopped, trusted, slipped = false }) {
+    if (!el.isConnected) return false;
+    if (stopped && el.value !== expected && expected.startsWith(el.value)) {
+      const rest = expected.slice(el.value.length);
+      const done = trusted && focusOn(el) && (await sendTrusted([{ wait: Math.round(jitter(40, 20, 15)) }, { m: 'text', text: rest }])).dispatched;
+      if (!done) {
+        await pause(jitter(40, 20, 15));
+        const state = { replaceAll: false };
+        try {
+          el.setSelectionRange(el.value.length, el.value.length);
+        } catch {
+          // No caret API: the insertion goes to the end anyway.
+        }
+        inputText(el, rest, state);
+      }
+    }
+    if (!el.isConnected || holds(el, expected, slipped)) return false;
+    // Trusted only into `el` itself: with focus elsewhere (and not to be had back), the synthetic route below, whose
+    // events go to `el` whatever has focus.
+    if (trusted && focusOn(el) && (await trustedSelect(el))) {
+      if (!el.isConnected || !wholeSelected(el)) return false;
+      if (!focusOn(el)) return false;
+      const steps = expected ? [{ m: 'text', text: expected }]
+        : [trustedBackspace('rawKeyDown'), { wait: Math.round(jitter(70, 30, 35)) }, trustedBackspace('keyUp')];
+      if ((await sendTrusted(steps)).dispatched) return true;
+    }
+    const state = { replaceAll: false };
+    if (!(await selectAll(el, state))) return false;
+    if (expected) inputText(el, expected, state);
+    else deleteBackward(el, state);
+    return true;
   }
 
   /**
    * Types `text` into a text field as a keyboard does: focus it with a click if it is not focused, select what it
-   * holds (Ctrl/Cmd+A), then per character Shift as needed, keydown, keypress, beforeinput, the insertion, input and
-   * keyup, with human gaps; past the typing budget the rest goes in as one insertion. A key the page cancels inserts
-   * nothing, as for a person. change is left for the blur or Enter that follows (commitPending).
+   * holds (Ctrl/Cmd+A), then per keystroke Shift as needed, keydown, keypress, beforeinput, the insertion, input and
+   * keyup (Backspace: keydown, beforeinput, the deletion, input, keyup), with the session's typing rhythm (typingPlan);
+   * past the typing budget the rest goes in as one insertion. An empty text clears the field (select-all, Backspace).
+   * A single-line input gets no line breaks. A key the page cancels inserts nothing, as for a person. change is left
+   * for the blur or Enter that follows (commitPending).
+   * The field is then read back: not holding exactly the value, it is corrected once (completeValue; `corrected`).
    * `kept()` says whether the field shows the text afterwards; when it does not (a page that swallowed the keys, or
    * a field that was replaced), `fallback()` sets the value the plain way and the pending change is dropped (the
    * fallback fires its own).
-   * Resolves { typed, chunked, fallback, ms }.
+   * `secret` (fill_secret; a password field counts as one) plans the rhythm blind, with no slips.
+   * Resolves { typed, chunked, slips, corrected, fallback, ms }.
    */
-  async function type(el, text, { kept = () => true, fallback = null } = {}) {
+  async function type(el, text, { kept = () => true, fallback = null, secret = false } = {}) {
     const started = performance.now();
     await think();
     const doc = el.ownerDocument;
@@ -643,59 +1338,46 @@
       pending = { el, start: el.value };
       watchBlur(viewOf(el));
     }
+    const value = fieldText(el, text);
+    const chars = Array.from(value);
+    const expected = expectedValue(el, value);
+    const blind = secret || el.type === 'password';
+    const plan = typingPlan(value, {
+      session: currentTypist(), random: keyRandom(), blind, slips: !blind && slipsAllowed(el),
+      slipRate: Number.isFinite(config.slipRate) ? config.slipRate : RHYTHM.slip,
+    });
+    let result = null;
     if (config.trusted && deepActive(doc) === el) {
-      const result = await typeTrusted(el, text);
-      if (result) {
+      const trusted = await typeTrusted(el, chars, plan);
+      if (trusted) {
         // The browser fires change itself on the blur or Enter that follows trusted typing.
         if (pending?.el === el) pending = null;
-        let fellBack = false;
-        if (fallback && !kept()) {
-          fallback();
-          fellBack = true;
-        }
-        return finish(started, { ...result, fallback: fellBack, trusted: true });
+        const corrected = await completeValue(el, expected, { stopped: trusted.late, trusted: true, slipped: plan.slips > 0 });
+        result = { typed: trusted.typed, chunked: trusted.chunked, slips: trusted.late ? 0 : plan.slips, corrected, trusted: true };
       }
     }
-    const state = { replaceAll: false, shift: false };
-    if (el.value) {
-      await pause(jitter(90, 40, 30));
-      state.onShortcut = () => {
-        try {
-          el.select();
-        } catch {
-          // Not selectable; the first insertion still replaces everything.
-        }
-        state.replaceAll = true;
-      };
-      await shortcut(el, 'a', state);
-      delete state.onShortcut;
-    }
-    const chars = Array.from(text);
-    let typed = 0;
-    const typingStarted = performance.now();
-    while (typed < chars.length && el.isConnected) {
-      if (typed >= config.maxTyped || performance.now() - typingStarted > config.typeBudgetMs) break;
-      const ch = chars[typed];
-      const key = keyFor(ch);
-      if (key.shift !== state.shift) {
-        fireKey(el, key.shift ? 'keydown' : 'keyup', NAMED.Shift, { shift: key.shift });
-        state.shift = key.shift;
-        await pause(jitter(35, 20, 8));
+    if (!result) {
+      const state = { replaceAll: false, shift: false };
+      if (el.value) {
+        await pause(jitter(90, 40, 30));
+        await selectAll(el, state);
       }
-      const mods = { shift: state.shift };
-      let proceed = fireKey(el, 'keydown', key, mods);
-      if (proceed && key.charCode) proceed = fireKey(el, 'keypress', key, mods);
-      if (proceed) inputText(el, ch, state);
-      await pause(jitter(35, 20, 12));
-      fireKey(el, 'keyup', key, mods);
-      typed++;
-      if (typed < chars.length) await pause(jitter(ch === ' ' ? 70 : 40, 30, 10));
-    }
-    if (state.shift) fireKey(el, 'keyup', NAMED.Shift, {});
-    const chunked = typed < chars.length && el.isConnected;
-    if (chunked) {
-      await pause(jitter(60, 30, 15));
-      inputText(el, chars.slice(typed).join(''), state);
+      let stopped = false;
+      if (!chars.length) {
+        if (el.value) {
+          if (fireKey(el, 'keydown', BACKSPACE)) deleteBackward(el, state);
+          await pause(jitter(70, 30, 35));
+          fireKey(el, 'keyup', BACKSPACE);
+        }
+      } else {
+        ({ stopped } = await playRhythm(el, plan, state));
+        if (plan.chunked && !stopped && el.isConnected) {
+          await pause(jitter(60, 30, 15));
+          inputText(el, chars.slice(plan.typed).join(''), state);
+        }
+      }
+      const corrected = await completeValue(el, expected, { stopped, trusted: false, slipped: plan.slips > 0 });
+      result = { typed: plan.typed, chunked: plan.chunked && el.isConnected, slips: stopped ? 0 : plan.slips, corrected };
     }
     let fellBack = false;
     if (fallback && !kept()) {
@@ -703,7 +1385,7 @@
       fellBack = true;
       if (pending?.el === el) pending = null;
     }
-    return finish(started, { typed, chunked, fallback: fellBack });
+    return finish(started, { ...result, fallback: fellBack });
   }
 
   /**
@@ -942,6 +1624,9 @@
     for (const key of ['enabled', 'typeBudgetMs', 'maxTyped', 'revealMaxPx', 'trusted']) {
       if (typeof settings[key] === typeof config[key]) config[key] = settings[key];
     }
+    if (Number.isInteger(settings.rhythmSeed) && settings.rhythmSeed >= 0) config.rhythmSeed = settings.rhythmSeed >>> 0;
+    if (Number.isInteger(settings.keySeed) && settings.keySeed >= 0) config.keySeed = settings.keySeed >>> 0;
+    if (settings.slipRate === null || (Number.isFinite(settings.slipRate) && settings.slipRate >= 0 && settings.slipRate <= 1)) config.slipRate = settings.slipRate;
     if (Array.isArray(settings.think) && settings.think.length === 2 && settings.think.every(Number.isFinite)) {
       config.think = [Math.max(0, settings.think[0]), Math.max(settings.think[0], settings.think[1])];
     }
@@ -952,5 +1637,7 @@
     get enabled() { return config.enabled; },
     click, keyboardClick, type, enter, press, hover, select, scroll, reveal, configure,
     stats: () => ({ ...totals }),
+    // The typing rhythm's pure parts, for test/typing-rhythm.test.js.
+    rhythm: { session: rhythmSession, plan: typingPlan, steps: rhythmSteps, seeded, params: RHYTHM, neighbours: NEIGHBOURS, containedOnce, backspace: trustedBackspace },
   };
 })();

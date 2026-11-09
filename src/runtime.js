@@ -1620,22 +1620,28 @@ function historyEntry(step) {
   return entry;
 }
 
+// `corrected`: the page's input read the field back after typing and set the exact value once (a formatter or
+// autocomplete had changed it); no value is ever reported.
+const corrected = reported => (reported.corrected === true ? { corrected: true } : {});
+
 /**
  * Whether a fill kept its value: the page script's own read-back of the field after the page settled (`fill: {kept,
- * empty}`, extension/page.js fillKept: the value contains the supplied text with whitespace and case ignored, the
- * same digits, or the same ISO date in another form), else, from a bridge that reports none (an older extension, a
- * custom bridge), the next observation's `filled` flag on the same control: a field left empty did not keep it. Null
- * for any other action, and when nothing can be read. The field's value itself never reaches the runtime.
+ * empty, corrected?}`, extension/page.js fillKept: with whitespace and case ignored, the value shows the supplied text
+ * exactly once in a plain text field (or its digits once) and contains it in a picker's or combobox's, or holds the
+ * same ISO date in another form), else, from a bridge that reports none (an older extension, a custom bridge), the next observation's
+ * `filled` flag on the same control: a field left empty did not keep it. Null for any other action, and when nothing
+ * can be read. The field's value itself never reaches the runtime.
  */
 function fillOutcome(action, execution, after) {
   if (action?.type === 'fill_secret') {
     const reported = execution?.fill;
-    return reported && typeof reported.kept === 'boolean' ? { kept: reported.kept, empty: reported.empty === true, holds: `[secret:${action.handle}]` } : null;
+    return reported && typeof reported.kept === 'boolean'
+      ? { kept: reported.kept, empty: reported.empty === true, ...corrected(reported), holds: `[secret:${action.handle}]` } : null;
   }
   if (action?.type !== 'fill_supplied_text' && action?.type !== 'fill') return null;
   const reported = execution?.fill;
   if (reported && typeof reported === 'object' && typeof reported.kept === 'boolean') {
-    return { kept: reported.kept, empty: reported.empty === true };
+    return { kept: reported.kept, empty: reported.empty === true, ...corrected(reported) };
   }
   if (action.target === undefined) return null;
   const control = (after?.controls ?? []).find(entry => String(entry?.id) === String(action.target));
@@ -3402,7 +3408,7 @@ class Session {
         this.runtime.secretIds);
       validateObservation(execution?.observation);
     } catch (error) {
-      if (error?.code === 'stale' || error?.code === 'target_unavailable' || error?.code === 'unsupported') {
+      if (['stale', 'target_unavailable', 'unsupported', 'line_break_input'].includes(error?.code)) {
         // The page script rejects these before acting, so nothing happened; drop the record.
         this.result.steps.pop();
       } else {

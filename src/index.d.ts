@@ -234,7 +234,9 @@ export type BridgeErrorCode =
   | 'paused'
   | 'stopped'
   /** The page stopped answering while a JavaScript dialog (alert, confirm, prompt) is most likely open. */
-  | 'js_dialog';
+  | 'js_dialog'
+  /** A fill with a line break aimed at a single-line input: refused before anything was typed. */
+  | 'line_break_input';
 
 /** Error shape thrown by observe/execute. Plain Errors without a code are treated as `failed`. */
 export interface BridgeErrorLike extends Error {
@@ -1150,6 +1152,8 @@ export type OutcomeCode =
   | 'stale' | 'target_unavailable' | 'capture_failed' | 'stopped' | 'cancelled' | 'paused' | 'cross_origin'
   | 'consent_banner' | 'blocked' | 'login' | 'child_tab' | 'tab_changed' | 'origin_changed' | 'session_inactive'
   | 'disconnected' | 'js_dialog'
+  /** A fill with a line break aimed at a single-line input, refused (needs_host; fill without it, then submit_field). */
+  | 'line_break_input'
   /** A step list stopped before a step whose {{answer:N}} had no auto-confirmed answer (needs_host, next rerun). */
   | 'placeholder_unconfirmed'
   /**

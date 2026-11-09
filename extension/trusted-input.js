@@ -17,8 +17,15 @@ const TRUSTED_IDLE_MS = 600;
 const TRUSTED_MAX_STEPS = 400;
 const TRUSTED_MAX_WAIT_MS = 600;
 const TRUSTED_MAX_TEXT = 4000;
+// `until` steps (wait until this long after the first step) and a call's `deadline` stay within this.
+const TRUSTED_MAX_UNTIL_MS = 10_000;
+// Past the deadline, a beat before the held keys are released (never a keyup a moment after a keydown).
+const TRUSTED_LATE_RELEASE_MS = 12;
 const TRUSTED_MOUSE = new Set(['mouseMoved', 'mousePressed', 'mouseReleased', 'mouseWheel']);
 const TRUSTED_KEY = new Set(['keyDown', 'keyUp', 'rawKeyDown']);
+// Editing commands a key may carry: Ctrl/Cmd+A's select-all, and Backspace's delete on macOS (where the key alone
+// edits nothing through the debugger). Any other command is dropped.
+const TRUSTED_COMMANDS = new Set(['selectAll', 'deleteBackward']);
 
 let trustedInputSetting = false;
 let trustedAttached = null; // { tabId, timer, ready: Promise }
@@ -42,6 +49,7 @@ function cleanTrustedStep(step, viewport) {
   if (!step || typeof step !== 'object') return null;
   const finite = (value, low, high) => Number.isFinite(value) && value >= low && value <= high;
   if (step.wait !== undefined) return finite(step.wait, 0, TRUSTED_MAX_WAIT_MS) ? { wait: step.wait } : null;
+  if (step.until !== undefined) return finite(step.until, 0, TRUSTED_MAX_UNTIL_MS) ? { until: step.until } : null;
   const modifiers = finite(step.modifiers, 0, 15) ? Math.trunc(step.modifiers) : 0;
   if (step.m === 'mouse') {
     if (!TRUSTED_MOUSE.has(step.type) || !finite(step.x, 0, viewport.width) || !finite(step.y, 0, viewport.height)) return null;
@@ -66,7 +74,7 @@ function cleanTrustedStep(step, viewport) {
       nativeVirtualKeyCode: finite(step.keyCode, 0, 255) ? step.keyCode : 0,
     };
     if (typeof step.text === 'string' && step.text.length <= 2) Object.assign(params, { text: step.text, unmodifiedText: step.text });
-    if (Array.isArray(step.commands) && step.commands.every(command => command === 'selectAll')) params.commands = step.commands;
+    if (Array.isArray(step.commands) && step.commands.length <= 2 && step.commands.every(command => TRUSTED_COMMANDS.has(command))) params.commands = step.commands;
     return { method: 'Input.dispatchKeyEvent', params };
   }
   if (step.m === 'text') {
@@ -107,10 +115,13 @@ async function trustedDetach() {
 }
 
 /**
- * Replays `steps` in tab `tabId` (viewport `viewport`, CSS px). Resolves { ok, dispatched, reason? }: `dispatched`
- * counts the input events sent, so a caller falls back to its own events only when none went out.
+ * Replays `steps` in tab `tabId` (viewport `viewport`, CSS px). Resolves { ok, dispatched, late?, reason? }:
+ * `dispatched` counts the input events sent, so a caller falls back to its own events only when none went out.
+ * `{ until }` waits until that many ms after the first step (a call that must last a fixed time). Past `deadline` (ms
+ * after the first step; a page whose key handlers are slow) no more keys go down and no text goes in: only the keyUps
+ * that release what is held, after a beat, and the reply says `late` (the caller inserts the rest).
  */
-async function runTrustedSteps(tabId, steps, viewport) {
+async function runTrustedSteps(tabId, steps, viewport, { deadline = null } = {}) {
   if (!trustedInputOn()) return { ok: false, dispatched: 0, reason: 'off' };
   if (!Array.isArray(steps) || steps.length > TRUSTED_MAX_STEPS) return { ok: false, dispatched: 0, reason: 'invalid' };
   const box = {
@@ -119,18 +130,37 @@ async function runTrustedSteps(tabId, steps, viewport) {
   };
   const cleaned = steps.map(step => cleanTrustedStep(step, box));
   if (cleaned.some(step => !step)) return { ok: false, dispatched: 0, reason: 'invalid' };
+  const limit = Number.isFinite(deadline) ? Math.min(Math.max(deadline, 0), TRUSTED_MAX_UNTIL_MS) : null;
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   let dispatched = 0;
+  let late = false;
+  const held = new Set(); // keys down (by key value), so past the deadline only those come up
   try {
     await trustedAttach(tabId);
+    const started = Date.now();
     for (const step of cleaned) {
-      if (step.wait !== undefined) {
-        await new Promise(resolve => setTimeout(resolve, step.wait));
+      if (!late && limit !== null && Date.now() - started > limit) {
+        late = true;
+        await sleep(TRUSTED_LATE_RELEASE_MS);
+      }
+      if (step.until !== undefined) {
+        if (!late) await sleep(Math.max(0, step.until - (Date.now() - started)));
         continue;
       }
+      if (step.wait !== undefined) {
+        if (!late) await sleep(step.wait);
+        continue;
+      }
+      const keyEvent = step.method === 'Input.dispatchKeyEvent';
+      if (late && !(keyEvent && step.params.type === 'keyUp' && held.has(step.params.key))) continue;
       await chrome.debugger.sendCommand({ tabId }, step.method, step.params);
       dispatched++;
+      if (keyEvent) {
+        if (step.params.type === 'keyUp') held.delete(step.params.key);
+        else held.add(step.params.key);
+      }
     }
-    return { ok: true, dispatched };
+    return { ok: true, dispatched, ...(late ? { late: true } : {}) };
   } catch (error) {
     await trustedDetach();
     return { ok: false, dispatched, reason: String(error?.message || error).slice(0, 200) };
@@ -155,7 +185,8 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
       respond({ ok: false, dispatched: 0, reason: 'not_leased' });
       return false;
     }
-    runTrustedSteps(sender.tab.id, message.steps, message.viewport).then(respond, () => respond({ ok: false, dispatched: 0 }));
+    runTrustedSteps(sender.tab.id, message.steps, message.viewport, { deadline: message.deadline })
+      .then(respond, () => respond({ ok: false, dispatched: 0 }));
     return true;
   });
   chrome.debugger?.onDetach?.addListener(source => {

@@ -5,19 +5,31 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
-## Unreleased (approved frames)
+## Unreleased
 
 ### Added
 
 - Cross-origin frames whose origin the request approved are read and acted on (#11). A frame from another origin inside the approved page (the content blades of the Microsoft Entra admin center and the Azure portal, for example) is read when its own origin is one of the request's `origins` or under an approved domain root, nested up to four levels, at most eight per page. Its text, blocks and controls join the observation (control ids `f<n>.<id>`, with `frame` and `frameOrigin`); an act on such a control runs in that frame after its origin is probed again (a frame that moved to an unapproved origin refuses it with `cross_origin`, another document is `stale`). Inside the frame the same page script applies the same level, `forbid`, Approve gate, secret redaction, vault, password and sign-in detection and consent rules, and one page context covers the tab (a purchase page, a password or payment field or a credentials page anywhere restricts every document). Screenshots place each approved frame's own secret boxes where the frame is at the capture and box every cross-origin frame that was not read. A frame act first re-reads the page (a changed page is `stale`; a page that turned into a checkout restricts the frame), a page act first re-reads the frames' facts, and the Approve card names a frame control's own origin "in a frame of" the page. No new permission: frames are found with `scripting.executeScript` (`allFrames`).
 - `frames` in observations and act results lists the page's cross-origin frames: the ones read and, for each one not read, its origin and why (`not_approved`, `no_access`, `sandboxed`, `limit`, `unavailable`), as untrusted page content; the trusted `next` counts the unread frames and tells the agent to ask for their origins. Frames from unapproved origins are still never read.
 - An `origin_changed` pause names the origin the tab went to (origin only): `leftOrigin` in the request view and the paused result, as untrusted text, so the agent can request it up front (a sign-in hop, for example).
+- Occasional typing slips: now and then a neighbouring key, a beat, Backspace and the right key (about one per 64 characters when there is time; at most one per fill, two from 40 characters). Letters only, never in secrets, password, numeric or one-time-code fields, fields with `maxlength`, or fields with a suggestion list.
 
 ### Changed
 
 - Approving in the request modal asks the browser for the tab's host and up to 10 other exact origins of the request in one prompt (not only the tab's host); the ones it adds are removed again when the session ends, and a list that cannot be asked for falls back to the tab's host.
 - Screenshots box every cross-origin frame, `<object>` and `<embed>` FAI did not read (before, only Strict mode and payment or sign-in widgets).
 - A point click on any cross-origin frame stays refused as `point_frame`; name an approved frame control's action id instead.
+- Typing follows a human rhythm instead of a steady jittered beat: a pace drawn once per task (lease, kept across worker restarts), right-skewed (log-normal) key intervals shaped by context (quicker on common bigrams and alternating hands; slower for Shift, digits, symbols and the same finger; later at word starts, after punctuation and between bursts of 3-8 keys), rare capped hesitations, holds and flight times of their own with occasional key rollover, and no times piled up at a limit. Both the synthetic and the trusted-input path play the same plan. Values of up to 14 characters are always typed in full; longer ones in full when they fit in 1.4 s, else for up to 1 s and the rest inserted, as before. A 10-character fill takes about 0.2 s longer, 30- and 100-character fills about 0.1 s less. Secrets are typed with a timing, and on the trusted path a call length, that depend on their length alone.
+- After typing, the field is read back. Residue (a slip's leftover, a key the page ate, the value twice) is corrected once (select-all, the value; through trusted input only into the focused field) and the fill result says `corrected: true`; a formatter's output (a currency sign, grouping, a country code, upper case) stands, and a field with a suggestion list is never corrected. The kept check in a plain text field asks for the value exactly once, set off from anything around it by a non-letter, non-digit character (whitespace and case aside), or its digits as whole groups once, instead of anywhere in the field, and respects `maxlength`.
+- A page that cancels Ctrl+A gets the field's value selected directly, so a fill replaces it instead of adding to it.
+- Trusted input stops pressing keys past a deadline on a slow page (held keys come up, the rest is inserted), as the synthetic path already did.
+
+### Fixed
+
+- A line break in `fill_supplied_text` or `fill_secret` aimed at a single-line input was typed as Enter, which submitted the form past the submit gate and the request's forbid list (trusted input submitted it mid-fill). Such a fill is now refused with its own code, `line_break_input`, whose next text says to fill without the line break and submit with `submit_field`; a textarea still takes line breaks.
+- Backspace through trusted input on macOS carries its `deleteBackward` command, which the worker now allows.
+- `maxlength` no longer leaves half an emoji (a lone surrogate) on the synthetic path.
+- A fill with an empty value now clears the field, and is reported kept only when the field is empty.
 
 ### Known limits
 
