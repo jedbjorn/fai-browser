@@ -46,6 +46,7 @@ const setupCard = document.getElementById('setup');
 const setupText = document.getElementById('setup-text');
 const pairButton = document.getElementById('pair');
 const connectionLine = document.getElementById('connection-line');
+const connectionText = document.getElementById('connection-text');
 const privacyNote = document.getElementById('privacy-note');
 const pinHint = document.getElementById('pin-hint');
 const endpointField = document.getElementById('endpoint');
@@ -117,7 +118,52 @@ function age(createdAt) {
   return minutes < 60 ? `${minutes} min ago` : `${Math.round(minutes / 60)} h ago`;
 }
 
+// Whether a request is meant for this browser: one that names none (an older FAI service) or names this one.
+function here(request) {
+  const self = view.connection?.browserId;
+  return !request?.browser?.id || !self || request.browser.id === self;
+}
+
+// A request that waits in another browser (several browsers are paired): what it asks, and Open here, which moves it
+// to this browser, where it then shows as usual. Deny works from any browser.
+function elsewhereCard(request) {
+  const card = element('article', 'request-card elsewhere-request');
+  card.dataset.requestId = request.requestId;
+  card.dataset.state = 'elsewhere';
+  const top = element('div', 'card-topline');
+  top.append(element('span', 'card-label', 'IN ANOTHER BROWSER'), element('span', 'request-age', age(request.createdAt)));
+  const says = element('p', 'agent-says');
+  says.append(element('strong', '', 'Agent says: '), element('span', 'request-reason', String(request.reason ?? '')));
+  const origins = Array.isArray(request.origins) ? request.origins.map(String) : [];
+  const where = String(request.browser?.name || 'another browser');
+  card.append(top, says, element('p', 'request-meta', [describeOrigins(origins).join(', '), `waiting in ${where}`]
+    .filter(Boolean).join(' · ')));
+  const actions = element('div', 'request-actions');
+  const move = element('button', 'primary-button move-request', 'Open here');
+  move.type = 'button';
+  move.disabled = busy;
+  move.addEventListener('click', () => send('move', { requestId: request.requestId }, 'Moved here. Approve it below.'));
+  const deny = element('button', 'link-button deny-request', 'Deny');
+  deny.type = 'button';
+  deny.disabled = busy;
+  deny.addEventListener('click', () => send('deny', { requestId: request.requestId }));
+  actions.append(move, deny);
+  card.append(actions);
+  return card;
+}
+
+// "Connected to the FAI service", and the other browsers connected to it when there are any.
+function renderBrowsers() {
+  const self = view.connection?.browserId;
+  const others = (view.connection?.browsers ?? []).filter(browser => browser.id !== self)
+    .map(browser => String(browser.name || browser.product || 'Browser'));
+  connectionText.textContent = others.length
+    ? ` Connected to the FAI service, with ${others.join(', ')}`
+    : ' Connected to the FAI service';
+}
+
 function requestCard(request, { serving }) {
+  if (!serving && !here(request)) return elsewhereCard(request);
   const card = element('article', 'request-card');
   card.dataset.requestId = request.requestId;
   card.dataset.state = serving ? 'active' : request.state;
@@ -528,9 +574,11 @@ function render() {
   const servingId = active ? view.session?.requestId ?? null : null;
   const visible = (view.requests ?? []).filter(request => {
     if (request.requestId === servingId) return true;
-    return request.state === 'pending' || request.state === 'paused';
+    // Another browser's paused request stays there; its pending ones are listed with Open here.
+    return request.state === 'pending' || (request.state === 'paused' && here(request));
   });
-  if (windowMode && !closing && view.connection && !visible.some(request => ['pending', 'paused'].includes(request.state))) {
+  if (windowMode && !closing && view.connection
+    && !visible.some(request => ['pending', 'paused'].includes(request.state) && here(request))) {
     // Approved, denied or expired: nothing left for this window.
     closing = true;
     window.close();
@@ -545,6 +593,7 @@ function render() {
   pause.hidden = !active;
   const transport = view.connection?.connected ? view.connection.transport : 'not connected';
   transportLabel.textContent = `Connection: ${transport}`;
+  renderBrowsers();
   renderSetup();
   renderBudgetEffective();
   renderDriver();

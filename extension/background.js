@@ -22,6 +22,16 @@
 //   cheap chrome.storage.session.get() every 20 s keeps the worker alive.
 // - The port comes from the saved FAI service address. The shipped manifest grants HTTP host access only to
 //   127.0.0.1:4318; the WebSocket needs no host permission, and test harnesses use their own manifest.
+// - Several browsers may be paired with one FAI service at once (issue #9). This install has a stable browser id
+//   (chrome.storage.local.browserId, random, created once) that it sends as the WebSocket URL's `browser` parameter,
+//   the X-Fai-Browser header and in the hello, with the product (firefox, chrome, chromium, edge, brave, ...). A close
+//   with CLOSE_SUPERSEDED (4003) means a newer connection of this same browser took over: no reconnect until the
+//   user opens the popup (or SUPERSEDED_RETRY_MS passes). A close with 4000 comes from an older service that lets two
+//   browsers replace each other: the worker backs off and says so. A connection counts as stable (its backoff
+//   resets) only after STABLE_MS, so no close pattern can reconnect it in a tight loop.
+// - A pending request names the browser it waits in (`request.browser`). Only that browser opens its approval UI;
+//   every other connected browser lists it with "Open here", which moves it (`move`). Opening the popup or clicking
+//   the toolbar icon tells the service this browser was used last (`used`), where new requests then go.
 
 const PROTOCOL_VERSION = 3;
 const WS_PROTOCOL = 'fai-browser.v3';
@@ -35,6 +45,14 @@ const CONNECT_WAIT_MS = 2_500;
 const LONG_POLL_MS = 25_000;
 const POLL_RETRIES = 3;
 const RECONNECT_ALARM = 'fai-reconnect';
+// Close codes from the FAI service (src/bridge.js): 4000 an older service replacing this browser with another one,
+// 4003 a newer connection of this same browser.
+const CLOSE_REPLACED_LEGACY = 4000;
+const CLOSE_SUPERSEDED = 4003;
+const SUPERSEDED_RETRY_MS = 5 * 60_000;
+// A connection that lasted at least this long resets the reconnect backoff.
+const STABLE_MS = 10_000;
+const BROWSER_ID = /^[A-Za-z0-9_-]{8,64}$/;
 // The native messaging host (src/native.js NATIVE_HOST_NAME) and how often an unreachable service re-asks it.
 const NATIVE_HOST = 'fai_browser';
 const NATIVE_RETRY_MS = 30_000;
@@ -89,7 +107,7 @@ const KNOWN_CODES = new Set([
 ]);
 const RECOVERABLE = new Set(['stale', 'target_unavailable', 'capture_failed']);
 // Message types that get exactly one reply, and their HTTP fallback paths.
-const REPLY_TYPES = new Set(['hello', 'lease', 'lease_level', 'deny', 'validate', 'settings', 'driver', 'update']);
+const REPLY_TYPES = new Set(['hello', 'lease', 'lease_level', 'deny', 'validate', 'settings', 'driver', 'update', 'move']);
 const HTTP_PATHS = {
   hello: '/hello',
   lease: '/lease',
@@ -102,6 +120,8 @@ const HTTP_PATHS = {
   validate: '/validate',
   result: '/results',
   screenshot: '/screenshots',
+  used: '/used',
+  move: '/move',
 };
 const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
@@ -546,6 +566,14 @@ let budget = null;
 let budgetLoaded = false;
 let effectiveBudget = null;
 let driverControl = null; // Daemon-owned choice; never replayed from extension storage.
+// This install's browser identity ({id, product, name, version}; browserIdentity()), the browsers the service has
+// connected ([{id, product, name}]), and why the connection is held back: 'superseded' (this browser's newer
+// connection took over), 'replaced' (an older service keeps replacing this browser with another), or null.
+let identity = null;
+let connectedBrowsers = [];
+let conflict = null;
+let supersededAt = 0;
+const replacedCloses = [];
 // The FAI service's update state (docs/REFERENCE.md "Updates"): a newer release, the last install. Shown by the popup.
 let updateInfo = null;
 // "Open requested pages right away" (chrome.storage.local.openRightAway): on unless the user turned it off (an absent
@@ -662,7 +690,61 @@ function storeSession(values) {
 
 function connectionView() {
   return { connected, transport: connected ? transportName : 'none', budget: effectiveBudget, paired: Boolean(pairing),
-    native: nativeState, ...(driverControl ? { control: driverControl } : {}), ...(updateInfo ? { update: updateInfo } : {}) };
+    native: nativeState, ...(driverControl ? { control: driverControl } : {}), ...(updateInfo ? { update: updateInfo } : {}),
+    ...(identity ? { browserId: identity.id } : {}), ...(connectedBrowsers.length ? { browsers: connectedBrowsers } : {}),
+    ...(conflict ? { conflict } : {}) };
+}
+
+// --- browser identity ------------------------------------------------------------------------------------------
+
+// The product this browser is, by feature (Firefox builds carry gecko settings) and the User-Agent Client Hints brand.
+function detectProduct() {
+  const manifest = chrome.runtime.getManifest?.() ?? {};
+  if (manifest.browser_specific_settings?.gecko) return { product: 'firefox', name: 'Firefox' };
+  const nav = globalThis.navigator;
+  if (nav?.brave) return { product: 'brave', name: 'Brave' };
+  const brands = (nav?.userAgentData?.brands ?? []).map(entry => String(entry?.brand ?? ''));
+  const known = [['Microsoft Edge', 'edge', 'Edge'], ['Brave', 'brave', 'Brave'], ['Opera', 'opera', 'Opera'],
+    ['Vivaldi', 'vivaldi', 'Vivaldi'], ['Google Chrome', 'chrome', 'Chrome']];
+  for (const [brand, product, name] of known) {
+    if (brands.some(item => item === brand || item.startsWith(`${brand} `))) return { product, name };
+  }
+  return { product: 'chromium', name: 'Chromium' };
+}
+
+function newBrowserId() {
+  const uuid = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+  return `b-${uuid.replace(/[^A-Za-z0-9]/g, '').slice(0, 24)}`;
+}
+
+// This install's identity: the id saved in chrome.storage.local (created once), the product and its version.
+async function browserIdentity() {
+  if (identity) return identity;
+  const saved = await chrome.storage.local.get(['browserId']).catch(() => ({}));
+  let id = typeof saved?.browserId === 'string' && BROWSER_ID.test(saved.browserId) ? saved.browserId : null;
+  if (!id) {
+    id = newBrowserId();
+    await chrome.storage.local.set({ browserId: id }).catch(() => {});
+  }
+  const { product, name } = detectProduct();
+  let version = null;
+  try {
+    const info = await globalThis.browser?.runtime?.getBrowserInfo?.();
+    if (typeof info?.version === 'string') version = info.version;
+  } catch {
+    // Not Firefox.
+  }
+  if (!version) {
+    const brands = globalThis.navigator?.userAgentData?.brands ?? [];
+    version = brands.find(entry => /Chrom|Edge|Brave|Opera|Vivaldi/.test(String(entry?.brand)))?.version ?? null;
+  }
+  identity = { id, product, name, version: typeof version === 'string' ? version.slice(0, 20) : null };
+  return identity;
+}
+
+// Whether a request is meant for this browser: one that names no browser (an older service), or names this one.
+function here(request) {
+  return !request?.browser?.id || !identity || request.browser.id === identity.id;
 }
 
 // --- updates ---------------------------------------------------------------------------------------------------
@@ -729,8 +811,13 @@ function publishConnection() {
   updateBadge();
 }
 
-function setRequests(list) {
+function setRequests(list, browsers) {
   requests = Array.isArray(list) ? list.filter(item => item && typeof item.requestId === 'string') : [];
+  if (Array.isArray(browsers)) {
+    connectedBrowsers = browsers.filter(item => item && typeof item.id === 'string')
+      .map(item => ({ id: item.id, product: String(item.product ?? ''), name: String(item.name ?? '') }));
+    publishConnection();
+  }
   storeSession({ requests });
   updateBadge();
   ignore(expireArms(true));
@@ -777,7 +864,8 @@ async function showApproval() {
   const shown = Array.isArray(stored.shownRequests) ? stored.shownRequests : [];
   // A request the live session already serves needs no window.
   const served = session && ['active', 'paused'].includes(session.status) ? session.requestId : null;
-  const pending = requests.filter(item => item.state === 'pending').map(item => item.requestId);
+  // Only the requests meant for this browser: another browser shows its own (this popup lists them with Open here).
+  const pending = requests.filter(item => item.state === 'pending' && here(item)).map(item => item.requestId);
   const fresh = pending.filter(id => !shown.includes(id) && id !== served);
   if (!fresh.length) return;
   await chrome.storage.session?.set?.({ shownRequests: [...shown, ...fresh].slice(-SHOWN_KEEP) });
@@ -818,7 +906,7 @@ let badgeTabId = null;
 function updateBadge() {
   let text = '';
   let title = 'FAI Browser';
-  const pendingCount = requests.filter(item => item.state === 'pending').length;
+  const pendingCount = requests.filter(item => item.state === 'pending' && here(item)).length;
   const live = session && ['active', 'paused'].includes(session.status) ? session : null;
   const tabText = live ? (live.status === 'active' ? 'ON' : 'Ⅱ') : null;
   try {
@@ -842,10 +930,14 @@ function updateBadge() {
   } else if (pendingCount) {
     text = '?';
     title = `FAI Browser: ${pendingCount} tab request${pendingCount === 1 ? '' : 's'} waiting`;
-  } else if (requests.some(item => item.state === 'paused' && item.requestId !== live?.requestId)) {
+  } else if (requests.some(item => item.state === 'paused' && here(item) && item.requestId !== live?.requestId)) {
     text = 'Ⅱ';
   } else if (!pairing) {
     title = 'FAI Browser: not paired';
+  } else if (conflict === 'superseded') {
+    title = 'FAI Browser: connected from another window of this browser';
+  } else if (conflict === 'replaced') {
+    title = 'FAI Browser: another browser keeps taking the FAI connection';
   } else if (!connected) {
     title = 'FAI Browser: daemon not running';
   }
@@ -1205,11 +1297,17 @@ function rejectReplies(code, message) {
   }
 }
 
+// The HTTP headers of every call to the service: the pairing secret, and this browser's identity once known.
+function requestHeaders(current) {
+  return { Authorization: `Bearer ${current.secret}`, 'Content-Type': 'application/json',
+    ...(identity ? { 'X-Fai-Browser': identity.id } : {}) };
+}
+
 async function http(type, body, current = pairing) {
   if (!current) throw new ExtensionError('session_inactive', 'Pair the extension first');
   const response = await fetch(current.endpoint + HTTP_PATHS[type], {
     method: 'POST',
-    headers: { Authorization: `Bearer ${current.secret}`, 'Content-Type': 'application/json' },
+    headers: requestHeaders(current),
     body: JSON.stringify({ v: 3, ...body }),
   });
   const data = await response.json();
@@ -1245,7 +1343,10 @@ function helloBody() {
   const version = chrome.runtime.getManifest?.().version ?? null;
   // `settings.budget`: the user's per-request budget, or null when not set (the daemon's default then applies);
   // `settings.openRightAway`: whether a request's page opens by itself (the daemon words its approval hint by it).
-  return { ext: { version, protocol: PROTOCOL_VERSION }, session: sessionView(), settings: reportedSettings() };
+  // `browser`: which browser this is (its id is also in the connection itself), so the service can tell several apart.
+  const browser = identity ? { product: identity.product, name: identity.name, version: identity.version } : undefined;
+  return { ext: { version, protocol: PROTOCOL_VERSION }, session: sessionView(), settings: reportedSettings(),
+    ...(browser ? { browser } : {}) };
 }
 
 function handleHello(data, via) {
@@ -1267,7 +1368,7 @@ function handleHello(data, via) {
     // Connected with no lease: clear the worker-start "Reconnect required" text so the popup reads Ready.
     ignore(chrome.storage.local.set({ status: '' }));
   }
-  if (Array.isArray(data?.requests)) setRequests(data.requests);
+  if (Array.isArray(data?.requests)) setRequests(data.requests, data.browsers);
   publishConnection();
   settleAttempt();
 }
@@ -1275,12 +1376,19 @@ function handleHello(data, via) {
 function markDisconnected() {
   connected = false;
   transportName = 'none';
-  if (!session) ignore(chrome.storage.local.set({ status: 'Not connected to the FAI service. Retrying.' }));
+  if (!session) {
+    const text = conflict === 'superseded' ? 'Connected from another window of this browser. Open this popup again to use it here.'
+      : conflict === 'replaced' ? 'Another browser keeps taking the FAI service connection (an older FAI service). Retrying slowly; update FAI Browser to use both.'
+        : 'Not connected to the FAI service. Retrying.';
+    ignore(chrome.storage.local.set({ status: text }));
+  }
   publishConnection();
 }
 
 function scheduleReconnect() {
   if (reconnectTimer || !pairing) return;
+  // This browser's newer connection holds the service: never fight it (the popup or the alarm retries later).
+  if (conflict === 'superseded') return;
   // An unreachable service: the native host can start it, or knows a new address or secret (setup ran again).
   if (backoffIndex >= 2) ignore(nativePair());
   const base = BACKOFF_MS[Math.min(backoffIndex, BACKOFF_MS.length - 1)];
@@ -1368,6 +1476,8 @@ async function connect() {
   if (socket || longPolling) return;
   clearTimeout(reconnectTimer);
   reconnectTimer = null;
+  await browserIdentity();
+  if (socket || longPolling) return;
   if (Date.now() < fallbackUntil) {
     longPollLoop();
     return;
@@ -1378,7 +1488,7 @@ async function connect() {
     tryFallback();
     return;
   }
-  const url = pairing.endpoint.replace(/^http:/, 'ws:') + '/ext/ws';
+  const url = `${pairing.endpoint.replace(/^http:/, 'ws:')}/ext/ws?browser=${encodeURIComponent(identity.id)}`;
   let current;
   try {
     current = new WebSocket(url, [WS_PROTOCOL, AUTH_PROTOCOL_PREFIX + pairing.secret]);
@@ -1388,14 +1498,19 @@ async function connect() {
   }
   socket = current;
   let opened = false;
+  let openedAt = 0;
   current.onopen = () => {
     if (socket !== current) return;
     opened = true;
+    openedAt = Date.now();
     socketOpen = true;
     wsFailures = 0;
-    backoffIndex = 0;
     fallbackUntil = 0;
-    send('hello', helloBody()).then(data => handleHello(data, 'websocket'), () => {});
+    send('hello', helloBody()).then(data => {
+      // Only a connection the service answered clears a conflict.
+      if (socket === current) conflict = null;
+      handleHello(data, 'websocket');
+    }, () => {});
   };
   current.onmessage = event => {
     if (socket !== current) return;
@@ -1408,17 +1523,37 @@ async function connect() {
     handleMessage(message);
   };
   current.onerror = () => {};
-  current.onclose = () => {
+  current.onclose = event => {
     if (socket !== current) return;
     socket = null;
     socketOpen = false;
     rejectReplies('disconnected', 'Connection to the FAI service closed');
+    // A connection only counts as stable after STABLE_MS: one that keeps closing early keeps backing off.
+    if (opened && Date.now() - openedAt >= STABLE_MS) backoffIndex = 0;
+    const code = event?.code;
+    if (code === CLOSE_SUPERSEDED) {
+      // A newer connection of this same browser took over (src/bridge.js): reconnecting would only take it back.
+      conflict = 'superseded';
+      supersededAt = Date.now();
+      markDisconnected();
+      settleAttempt();
+      return;
+    }
+    if (code === CLOSE_REPLACED_LEGACY) {
+      // An older FAI service replaced this browser with another one. Back off at least 4 s, longer each time.
+      const now = Date.now();
+      replacedCloses.push(now);
+      while (replacedCloses.length && now - replacedCloses[0] > 60_000) replacedCloses.shift();
+      backoffIndex = Math.max(backoffIndex, 3);
+      if (replacedCloses.length >= 2) conflict = 'replaced';
+    }
     connectionFailed(opened);
   };
 }
 
 // Drops the current transport and connects with the saved pairing (after a pairing change).
 function reconnect() {
+  conflict = null;
   const current = socket;
   socket = null;
   socketOpen = false;
@@ -1445,6 +1580,13 @@ async function usePairing(next) {
   reconnect();
 }
 
+// Tells the service the user just used FAI in this browser (popup opened, toolbar click), so new tab requests open
+// here. Best effort: nothing waits on it.
+function reportUsed() {
+  if (!connected || !pairing) return;
+  ignore(send('used', {}));
+}
+
 // Daemon -> extension messages, from the socket or from a long-poll response.
 function handleMessage(message) {
   switch (message?.type) {
@@ -1462,7 +1604,7 @@ function handleMessage(message) {
       return;
     }
     case 'requests':
-      setRequests(message.requests);
+      setRequests(message.requests, message.browsers);
       return;
     case 'command':
       handleCommand(message.command);
@@ -1500,7 +1642,7 @@ async function longPollLoop() {
         // POST, not GET: Chrome omits the Origin header on extension GETs and the service requires it.
         const response = await fetch(`${current.endpoint}/commands?wait=${LONG_POLL_MS}`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${current.secret}`, 'Content-Type': 'application/json' },
+          headers: requestHeaders(current),
           body: '{}',
           signal,
         });
@@ -1522,7 +1664,7 @@ async function longPollLoop() {
         transportName = 'longpoll';
         publishConnection();
       }
-      if (Array.isArray(body.requests)) setRequests(body.requests);
+      if (Array.isArray(body.requests)) setRequests(body.requests, body.browsers);
       for (const message of body.messages ?? []) handleMessage(message);
       if (body.command) await handleCommand(body.command);
     }
@@ -3632,6 +3774,11 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       arm.level = level;
       saveArms();
       ignore(showArm(arm));
+    } else if (message.type === 'move') {
+      // "Open here": a request that waits in another browser moves to this one (it then shows here as usual).
+      if (typeof message.requestId !== 'string') throw new Error('No request to move');
+      if (!connected) throw new Error('Connect to the FAI service first.');
+      await send('move', { requestId: message.requestId });
     } else if (message.type === 'deny') {
       if (typeof message.requestId !== 'string') throw new Error('No request to deny');
       for (const arm of [...armed.values()]) if (arm.requestId === message.requestId) await disarm(arm.tabId);
@@ -3640,10 +3787,16 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       // Sent when the popup opens or its permissions change: connect with the saved pairing if not connected yet,
       // and re-read the testing environments so the reply's session level is current (no race with onChanged).
       await loadTestingOrigins();
+      // The toolbar popup (not the approval window the worker opened by itself) is the user using FAI here.
+      const toolbarPopup = typeof sender.url === 'string' && sender.url.split('?')[0] === chrome.runtime.getURL('popup.html')
+        && !sender.url.includes('window=1');
       if (!connected) {
+        // Opening the popup is a user action: it may take the connection back from this browser's other window.
+        if (toolbarPopup && conflict === 'superseded') conflict = null;
         connect();
         await waitForAttempt(1_000);
       }
+      if (toolbarPopup) reportUsed();
       // A failed driver read never fails the connect: the popup keeps the last known choice.
       if (connected && driverControl) await readDriver().catch(() => {});
       // The daily check may have found a release since the hello (a service that knows updates said so in it).
@@ -3736,6 +3889,7 @@ chrome.tabs.onUpdated?.addListener(async (tabId, info) => {
 chrome.action?.onClicked?.addListener(tab => {
   // Request native site access synchronously inside the toolbar gesture, before any await.
   const arm = armed.get(tab?.id);
+  reportUsed();
   const request = arm && requests.find(item => item.requestId === arm.requestId);
   let access = globalThis.faiCompat?.approvalAccess?.(tab?.id) ?? null;
   if (arm?.tabMode === 'multiple' && tabMode === 'multiple' && originCovered(originOf(tab.url ?? ''), request?.origins ?? [])) {
@@ -3785,6 +3939,11 @@ try {
     if (!pairing) {
       ignore(nativePair());
       return;
+    }
+    // Superseded by this browser's newer connection: try again only after a while (or when the popup opens).
+    if (conflict === 'superseded') {
+      if (Date.now() - supersededAt < SUPERSEDED_RETRY_MS) return;
+      conflict = null;
     }
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
