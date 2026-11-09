@@ -192,7 +192,7 @@ test('direct MCP cannot observe an unapproved request', async t => {
   }));
   assert.equal(result.status, 'needs_user');
   assert.equal(result.next.kind, 'relay');
-  assert.match(result.next.text, /fai_browser_open again/);
+  assert.match(result.next.text, /Then call fai_browser_observe with requestId/);
   assert.equal(ctx.hub.bridges.size, 0);
   assert.equal(ctx.providers(), 0);
 });
