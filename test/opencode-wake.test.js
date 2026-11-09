@@ -31,6 +31,7 @@ function fakeClient({ answer = () => ({ data: undefined, response: { status: 204
   const calls = [];
   const client = {
     calls,
+    limits: [],
     after,
     emit: () => {},
     session: {
@@ -39,13 +40,22 @@ function fakeClient({ answer = () => ({ data: undefined, response: { status: 204
         const result = answer(request);
         const sessionID = request.path.id;
         if (!result?.error && client.after !== 'none') {
-          setImmediate(() => client.emit(client.after === 'error'
-            ? { type: 'session.error', properties: { sessionID, error: { name: 'UnknownError', data: { message: 'x' } } } }
-            : { type: 'session.status', properties: { sessionID, status: { type: 'busy' } } }));
+          const kind = client.after;
+          setImmediate(() => {
+            client.emit(kind === 'error'
+              ? { type: 'session.error', properties: { sessionID, error: { name: 'UnknownError', data: { message: 'x' } } } }
+              : { type: 'session.status', properties: { sessionID, status: { type: 'busy' } } });
+            // The turn ends: the session is idle again.
+            if (kind !== 'error') setImmediate(() => client.emit({ type: 'session.idle', properties: { sessionID } }));
+          });
         }
         return result;
       },
-      messages: async ({ path }) => ({ data: turns[path.id] ?? [{ info: { role: 'assistant' } }, PLAN_TURN, { info: { role: 'assistant' } }] }),
+      messages: async ({ path, query }) => {
+        client.limits.push(query?.limit);
+        const list = turns[path.id] ?? [{ info: { role: 'assistant' } }, PLAN_TURN, { info: { role: 'assistant' } }];
+        return { data: query?.limit ? list.slice(-query.limit) : list };
+      },
       get: async ({ path }) => ({ data: { id: path.id, ...(parents[path.id] ? { parentID: parents[path.id] } : {}) } }),
     },
   };
@@ -229,6 +239,17 @@ test('plugin: wakes only a session that used FAI, with a FAI text, after the tok
   assert.deepEqual(await talk(path, [auth, wake(SES_A)]), { ok: true });
   assert.ok(Date.now() - quietAt >= 1900);
   client.after = 'busy';
+  // A session already running a turn queues the wake; an error then belongs to that turn, not to the wake.
+  client.emit({ type: 'session.status', properties: { sessionID: SES_A, status: { type: 'busy' } } });
+  client.after = 'error';
+  const queuedAt = Date.now();
+  assert.deepEqual(await talk(path, [auth, wake(SES_A)]), { ok: true });
+  assert.ok(Date.now() - queuedAt < 1500, 'no wait on a busy session');
+  client.emit({ type: 'session.idle', properties: { sessionID: SES_A } });
+  assert.equal((await talk(path, [auth, wake(SES_A)])).code, 'prompt_failed', 'idle again: errors count');
+  client.after = 'busy';
+  // Only the newest messages are read.
+  assert.ok(client.limits.length > 0 && client.limits.every(limit => limit === 20), JSON.stringify(client.limits));
   status = 404;
   assert.equal((await talk(path, [auth, wake(SES_A)])).code, 'unknown_session');
   status = 500;
@@ -251,6 +272,12 @@ test('plugin: the wake keeps the session\'s agent and model; without an earlier 
   assert.deepEqual(client.calls[0].body, { ...PLAN_BODY, parts: [{ type: 'text', text: APPROVED }] }, 'the last user turn wins');
   const none = await talk(path, [auth, { type: 'wake', sessionID: SES_B, text: APPROVED }]);
   assert.equal(none.code, 'prompt_failed', 'no stored agent/model: never the default agent');
+  // The last user turn hidden behind more than 20 steps: a second, larger page finds it.
+  const steps = Array.from({ length: 30 }, () => ({ info: { role: 'assistant' } }));
+  client.session.messages = async ({ query }) => ({ data: [PLAN_TURN, ...steps].slice(-query.limit) });
+  assert.deepEqual(await talk(path, [auth, { type: 'wake', sessionID: SES_A, text: APPROVED }]), { ok: true });
+  assert.deepEqual(client.calls[1].body.agent, 'plan');
+  client.calls.pop();
   // A user turn without a model (not what 1.19 stores): refused too.
   client.session.messages = async () => ({ data: [{ info: { role: 'user', agent: 'plan' } }] });
   assert.equal((await talk(path, [auth, { type: 'wake', sessionID: SES_A, text: APPROVED }])).code, 'prompt_failed');
