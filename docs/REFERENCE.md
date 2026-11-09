@@ -571,7 +571,9 @@ browser needs it (Firefox, the exact origin), and the worker, which accepts `inv
 (not the approval window, a page or a content script), sends one `invite` message (`tabId`, `origin`, `level`,
 `sessionId`, `text`) over its paired channel. The daemon creates a request for that tab's exact origin (never a domain
 root), binds it at once as the browser's lease at the chosen level (single tab; it supersedes that browser's other
-lease as any approval does), creates a single-use invite id (`inv-` and 8 characters, 10 minutes), and queues the
+lease as any approval does: when that lease belongs to another agent session, the card first says "This will end
+<host · repo>'s current tab task" and the invite needs a second tap; request views carry their `owner` session for
+this), creates a single-use invite id (`inv-` and 8 characters, 10 minutes), and queues the
 wake. The tab gets the usual `FAI` group mark. The card then shows "Waking …", "Sent to …. It should start in a
 moment" (with "If it does not start, tell it: join FAI invite inv-…" under it: a held message shows in Claude Code
 for you to accept), or, when the wake failed or the session cannot be woken, **Tell your agent: join FAI invite inv-…** with
