@@ -12,9 +12,11 @@ export const TOKEN = 'fake-messaging-token-0123456789ab';
  * A fake Claude Code messaging socket: reads newline-delimited JSON, checks the auth line, records the user lines.
  * `mode`: accept (default), refuse (answers an error line and closes), silent (accepts, never reads or closes).
  */
-export async function startFakeClaudeSocket(t, { mode = 'accept', token = TOKEN } = {}) {
+// `pid`: the socket is named `<pid>.sock`, as Claude Code names it after its own pid; an MCP server accepts it only when
+// that pid is its parent (src/wake.js claudeSocket).
+export async function startFakeClaudeSocket(t, { mode = 'accept', token = TOKEN, pid = process.pid } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'fai-fake-cc-'));
-  const path = join(dir, 's.sock');
+  const path = join(dir, `${pid}.sock`);
   const received = [];
   const connections = [];
   const server = net.createServer(socket => {
@@ -35,6 +37,12 @@ export async function startFakeClaudeSocket(t, { mode = 'accept', token = TOKEN 
         const message = JSON.parse(line);
         if (!authed) {
           authed = message.type === 'auth' && message.token === token;
+          // `echo`, `echo-refuse`: a session that repeats the token back (FAI must never pass it on).
+          if (mode === 'echo') socket.write(`${JSON.stringify({ type: 'note', got: message.token })}\n`);
+          if (mode === 'echo-refuse') {
+            socket.end(`${JSON.stringify({ type: 'error', message: `bad token ${message.token}` })}\n`);
+            return;
+          }
           if (!authed || mode === 'refuse') {
             socket.end(`${JSON.stringify({ type: 'error', message: mode === 'refuse' ? 'crossSessionInbound is refuse' : 'unauthorized' })}\n`);
             return;

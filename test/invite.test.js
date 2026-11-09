@@ -152,7 +152,7 @@ test('invite: one click binds the user\'s tab at the chosen level on its exact o
   assert.equal(reply.invite.session.repo, 'my-repo');
   const bound = ctx.hub.bound.at(-1);
   assert.deepEqual([bound.tabId, bound.origin, bound.level, bound.allowedOrigins], [7, ORIGIN, 'reversible', [ORIGIN]]);
-  const view = (await ctx.api('GET', `/v1/requests/${reply.requestId}`)).body;
+  const view = (await ctx.api('GET', `/v1/requests/${reply.requestId}`, undefined, { headers: session.headers })).body;
   assert.equal(view.state, 'active');
   assert.equal(view.mode, 'reversible');
   assert.equal(view.client, 'invite');
@@ -189,7 +189,7 @@ test('invite: several sessions are listed newest first; a failed or impossible w
   const wake = (await poll(ctx, older)).body.wakes[0];
   await ctx.api('POST', `/v1/sessions/${older.sessionId}/wakes/${wake.wakeId}`,
     { outcome: 'failed', code: 'refused', message: 'crossSessionInbound is refuse' }, { headers: older.headers });
-  const view = (await ctx.api('GET', `/v1/requests/${failing.requestId}`)).body;
+  const view = (await ctx.api('GET', `/v1/requests/${failing.requestId}`, undefined, { headers: older.headers })).body;
   assert.deepEqual([view.invite.wake.state, view.invite.wake.error.code], ['failed', 'refused']);
   const gone = await invite(ctx, { tabId: 10, sessionId: 'ses_unknown' });
   assert.equal(gone.error.code, 'unknown_session');
@@ -225,9 +225,10 @@ test('invite: no client API route creates one, and an agent cannot raise its lev
     assert.equal(response.status, 404, `${method} ${path}`);
   }
   const reply = await invite(ctx, { level: 'read-only' });
-  const joined = await ctx.api('POST', `/v1/invites/${reply.invite.inviteId}/join`, {});
+  const agent = await register(ctx);
+  const joined = await ctx.api('POST', `/v1/invites/${reply.invite.inviteId}/join`, {}, { headers: agent.headers });
   assert.equal(joined.body.request.grant.level, 'read-only');
-  const observe = await ctx.api('POST', '/v1/observe', { requestId: reply.requestId, mode: 'full' });
+  const observe = await ctx.api('POST', '/v1/observe', { requestId: reply.requestId, mode: 'full' }, { headers: agent.headers });
   assert.deepEqual([observe.body.permissions.granted, observe.body.permissions.effective], ['read-only', 'read-only'],
     'every guardrail applies unchanged: an observe that asks for full is clamped to the invited level');
   assert.ok(observe.body.actions.every(action => ['click', 'scroll', 'wait', 'navigate_allowed_url', 'done', 'handoff'].includes(action.type)
@@ -275,7 +276,8 @@ test('invite: leaving the origin, closing the tab or the user\'s cancel revokes 
   // A tab switch only pauses: the invite stays open and the agent can still join (it then asks the user to resume).
   const switched = await invite(ctx, { tabId: 24 });
   await ctx.hub.emit({ type: 'status', leaseId: switched.leaseId, status: 'paused', reason: 'tab_changed' });
-  assert.equal((await ctx.api('POST', `/v1/invites/${switched.invite.inviteId}/join`, {})).status, 200);
+  const agent = await register(ctx);
+  assert.equal((await ctx.api('POST', `/v1/invites/${switched.invite.inviteId}/join`, {}, { headers: agent.headers })).status, 200);
 
   // A second invite on the same tab replaces the first.
   const first = await invite(ctx, { tabId: 25 });
@@ -369,12 +371,128 @@ test('the real hub: an invite over the paired WebSocket, validated, with a lease
     sessionId: session.sessionId, text: 'Check the price' });
   assert.equal(made.ok, true, JSON.stringify(made));
   assert.equal(made.data.grant.level, 'reversible');
-  const view = (await ctx.api('GET', `/v1/requests/${made.data.requestId}`)).body;
+  const view = (await ctx.api('GET', `/v1/requests/${made.data.requestId}`, undefined, { headers: session.headers })).body;
   assert.equal(view.lease.tabId, 7);
   assert.ok(view.lease.browserId, 'the lease belongs to the browser that invited');
   const { wakes } = (await poll(ctx, session)).body;
   assert.equal(wakes[0].userText, 'Check the price');
   const cancelled = await ext.request('invite_cancel', { inviteId: made.data.invite.inviteId });
   assert.equal(cancelled.data.invite.state, 'cancelled');
+});
+
+// --- the invited tab is not a bearer handle (security review of feat/invite) --------------------------------------
+
+test('review: an invite addressed to A cannot be seen or joined by B; one for nobody needs a session to join', async t => {
+  const ctx = await setup(t);
+  const a = await register(ctx, { repo: 'repo-a' });
+  const b = await register(ctx, { repo: 'repo-b' });
+  const reply = await invite(ctx, { sessionId: a.sessionId });
+  const asB = (await ctx.api('GET', '/v1/status', undefined, { headers: b.headers })).body;
+  assert.ok(!asB.invites.some(item => item.inviteId === reply.invite.inviteId), 'B does not see A\'s invite');
+  assert.ok(!asB.requests.some(item => item.requestId === reply.requestId), 'nor its tab');
+  assert.ok(!JSON.stringify(asB).includes(reply.invite.inviteId));
+  const anonymous = (await ctx.api('GET', '/v1/status')).body;
+  assert.ok(!JSON.stringify(anonymous).includes(reply.invite.inviteId), 'a client without a session sees neither');
+  assert.ok(!(await ctx.api('GET', '/v1/requests')).body.requests.some(item => item.requestId === reply.requestId));
+  const asA = (await ctx.api('GET', '/v1/status', undefined, { headers: a.headers })).body;
+  assert.ok(asA.invites.some(item => item.inviteId === reply.invite.inviteId), 'A sees its own invite');
+  const stolen = await ctx.api('POST', `/v1/invites/${reply.invite.inviteId}/join`, {}, { headers: b.headers });
+  assert.deepEqual([stolen.status, stolen.body.error.code], [403, 'invite_for_another_session']);
+  const bare = await ctx.api('POST', `/v1/invites/${reply.invite.inviteId}/join`, {});
+  assert.deepEqual([bare.status, bare.body.error.code], [403, 'session_required']);
+  const own = await ctx.api('POST', `/v1/invites/${reply.invite.inviteId}/join`, {}, { headers: a.headers });
+  assert.equal(own.status, 200);
+  // An invite for nobody in particular (the copy line): any registered session may join it, never a bare token.
+  const open = await invite(ctx, { tabId: 8 });
+  assert.equal((await ctx.api('POST', `/v1/invites/${open.invite.inviteId}/join`, {})).status, 403);
+  assert.equal((await ctx.api('POST', `/v1/invites/${open.invite.inviteId}/join`, {}, { headers: b.headers })).status, 200);
+});
+
+test('review: nobody uses an invited tab before the join, and only its owner after', async t => {
+  const ctx = await setup(t);
+  const a = await register(ctx, { repo: 'repo-a' });
+  const b = await register(ctx, { repo: 'repo-b' });
+  const reply = await invite(ctx, { sessionId: a.sessionId });
+  for (const headers of [undefined, a.headers, b.headers]) {
+    const extra = headers ? { headers } : {};
+    const observe = await ctx.api('POST', '/v1/observe', { requestId: reply.requestId }, extra);
+    assert.deepEqual([observe.status, observe.body.error?.code], [409, 'invite_not_joined']);
+    const act = await ctx.api('POST', '/v1/act', { requestId: reply.requestId, actionId: 'a0' }, extra);
+    assert.equal(act.body.error?.code, 'invite_not_joined');
+    const run = await ctx.api('POST', '/v1/runs', { requestId: reply.requestId, instruction: 'Look' }, extra);
+    assert.equal(run.body.error?.code, 'invite_not_joined');
+    const release = await ctx.api('DELETE', `/v1/requests/${reply.requestId}`, {}, extra);
+    assert.equal(release.body.error?.code, 'invite_not_joined');
+  }
+  // The CLI's resume wait still sees the state, never the personal tab's origin or the invite id.
+  const waited = (await ctx.api('POST', '/v1/wait', { requestId: reply.requestId, maxMs: 0 })).body;
+  assert.equal(waited.state, 'active');
+  assert.deepEqual(Object.keys(waited.request).sort(), ['invited', 'requestId', 'state', 'stateReason']);
+  await ctx.api('POST', `/v1/invites/${reply.invite.inviteId}/join`, {}, { headers: a.headers });
+  for (const extra of [{}, { headers: b.headers }]) {
+    const observe = await ctx.api('POST', '/v1/observe', { requestId: reply.requestId }, extra);
+    assert.deepEqual([observe.status, observe.body.error?.code], [403, 'not_owner']);
+    const release = await ctx.api('DELETE', `/v1/requests/${reply.requestId}`, {}, extra);
+    assert.equal(release.body.error?.code, 'not_owner');
+  }
+  const asB = (await ctx.api('GET', '/v1/status', undefined, { headers: b.headers })).body;
+  assert.ok(!asB.requests.some(item => item.requestId === reply.requestId), 'still hidden from other sessions');
+  const ok = await ctx.api('POST', '/v1/observe', { requestId: reply.requestId }, { headers: a.headers });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  const asA = (await ctx.api('GET', '/v1/status', undefined, { headers: a.headers })).body;
+  assert.ok(asA.requests.some(item => item.requestId === reply.requestId), 'the owner lists its tab');
+  // An ordinary request stays open to any token holder, as before (the CLI, the SDK).
+  const plain = await ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Check' }, { headers: a.headers });
+  await ctx.hub.approve(plain.body.requestId, { tabId: 30 });
+  assert.equal((await ctx.api('POST', '/v1/observe', { requestId: plain.body.requestId })).status, 200);
+});
+
+test('review: a session the daemon dropped comes back as itself with its key; a dead process never', async () => {
+  let t0 = 5_000_000;
+  const registry = createSessionRegistry({ now: () => t0, isAlive: pid => pid !== 99 });
+  const first = registry.register({ host: 'claude', pid: 4242, wake: 'claude-socket' });
+  assert.throws(() => registry.register({ host: 'claude', pid: 4242 }) && registry.register({ host: 'claude', pid: 4242 }),
+    /already registered/, 'at most two entries per process');
+  t0 += 91_000;
+  registry.sweep();
+  const forged = registry.register({ host: 'claude', pid: 7, previous: { sessionId: first.sessionId, key: 'wrong' } });
+  assert.equal(forged.replaced, undefined, 'a wrong key takes nothing over');
+  const back = registry.register({ host: 'claude', pid: 8, previous: { sessionId: first.sessionId, key: first.key } });
+  assert.equal(back.replaced, first.sessionId);
+  const again = registry.register({ host: 'claude', pid: 9, previous: { sessionId: first.sessionId, key: first.key } });
+  assert.equal(again.replaced, undefined, 'used once');
+  const dead = registry.register({ host: 'claude', pid: 99 });
+  registry.sweep();
+  assert.equal(registry.register({ host: 'claude', pid: 10, previous: { sessionId: dead.sessionId, key: dead.key } }).replaced, undefined);
+});
+
+test('review: re-registering with the old key gives the session its requests back (Approve still wakes it)', async t => {
+  const clock = { now: Date.now() };
+  const ctx = await setup(t, { clock });
+  const reg = await ctx.api('POST', '/v1/sessions', { host: 'claude', repo: 'r', pid: process.pid, wake: 'claude-socket' });
+  const old = { sessionId: reg.body.sessionId, key: reg.body.key };
+  const created = await ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Check' },
+    { headers: { 'X-Fai-Session': `${old.sessionId}:${old.key}` } });
+  clock.now += 91_000;
+  (await ctx.api('GET', '/v1/sessions'));
+  const back = await ctx.api('POST', '/v1/sessions', { host: 'claude', repo: 'r', pid: process.pid, wake: 'claude-socket', previous: old });
+  assert.equal(back.status, 201);
+  assert.equal(back.body.replaced, undefined, 'the answer does not echo ids');
+  const headers = { 'X-Fai-Session': `${back.body.sessionId}:${back.body.key}` };
+  const view = (await ctx.api('GET', `/v1/requests/${created.body.requestId}`)).body;
+  assert.equal(view.owner.sessionId, back.body.sessionId);
+  await ctx.hub.approve(created.body.requestId);
+  const { wakes } = (await ctx.api('POST', `/v1/sessions/${back.body.sessionId}/poll`, { maxMs: 0 }, { headers })).body;
+  assert.deepEqual(wakes.map(wake => wake.kind), ['approved']);
+});
+
+test('review: the health answer proves the daemon holds the client token', async t => {
+  const ctx = await setup(t);
+  const challenge = 'abcdefghijklmnopqrstuvwx';
+  const answer = (await call(ctx.daemon.port, 'GET', `/v1/health?challenge=${challenge}`)).body;
+  const { createHmac } = await import('node:crypto');
+  assert.equal(answer.proof, createHmac('sha256', ctx.daemon.token).update(`fai-health:${challenge}`).digest('hex'));
+  assert.equal((await call(ctx.daemon.port, 'GET', '/v1/health')).body.proof, undefined);
+  assert.equal((await call(ctx.daemon.port, 'GET', '/v1/health?challenge=short')).body.proof, undefined);
 });
 

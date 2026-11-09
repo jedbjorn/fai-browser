@@ -49,6 +49,8 @@ export const DEFAULT_APPROVAL_WAIT_MS = 60_000;
 const DAEMON_MARGIN_MS = 2_000;
 // A wake for a request a call of this server saw become active this recently is skipped (the call returned the page).
 const SAW_ACTIVE_MS = 10_000;
+// How long a call that creates a request or joins an invite waits for this session's registration.
+const SESSION_READY_MS = 3_000;
 const DAEMON_MAX_WAIT_MS = 45_000;
 // The longest one call waits for the user (an act for the Approve click; in Agent direct also an open for the tab
 // approval): hosts time a tool call out at 120 s (Codex's tool_timeout_sec, src/install.js), so with the act itself a
@@ -1610,6 +1612,8 @@ class McpServer {
     this.host = 'unknown';
     // When a call of this server last saw each request become active (an approval wait that ended): no wake then.
     this.sawActive = new Map();
+    // Requests the daemon records this session as the owner of: only their relay texts may say "FAI wakes you".
+    this.wakeOwned = new Set();
     // The driver until the daemon names its own (X-Fai-Driver on every answer, noteDriver): config.json as a hint,
     // read without ever throwing, so a malformed file still lets initialize and tools/list answer.
     this.driver = this.driverHint();
@@ -1886,9 +1890,18 @@ class McpServer {
     return Number.isFinite(since) ? seen >= since : Date.now() - seen < SAW_ACTIVE_MS;
   }
 
-  /** The resume wait options (src/resume.js): this server's environment and its wake capability. */
-  resumeOptions() {
-    return { env: this.env, wake: this.wakeMode() };
+  /**
+   * The resume wait options (src/resume.js): this server's environment, and its wake capability when the daemon
+   * records this session as the owner of `requestId` (otherwise nobody would wake it: the wait command instead).
+   */
+  resumeOptions(requestId) {
+    return { env: this.env, wake: requestId && this.wakeOwned.has(requestId) ? this.wakeMode() : null };
+  }
+
+  /** Remember that the daemon's view names this session as the owner of its request. */
+  noteOwner(view) {
+    const mine = this.agentSession?.sessionId;
+    if (mine && view?.requestId && view.owner?.sessionId === mine) this.wakeOwned.add(view.requestId);
   }
 
   /** The wake capability next texts may rely on: a session that will be woken needs no background wait command. */
@@ -2028,7 +2041,7 @@ class McpServer {
       return okResult({
         state: 'pending',
         requestId: call.requestId,
-        next: nextStep('relay', approveHint(call.origin, call.requestId, call.approval, this.driver, this.resumeOptions(), call.browser)),
+        next: nextStep('relay', approveHint(call.origin, call.requestId, call.approval, this.driver, this.resumeOptions(call.requestId), call.browser)),
       });
     }
     return errorResult('timeout', `FAI Browser did not answer within ${this.maxCallMs} ms. Check \`fai-browser `
@@ -2060,6 +2073,8 @@ class McpServer {
         .then(client => {
           // Requests this client creates name this session as their owner (woken on Approve and Resume).
           client.sessionAuth = () => this.agentSession?.auth() ?? null;
+          // This call reached the daemon (perhaps one it just started or replaced): the session loop tries again now.
+          this.agentSession?.kick();
           // The daemon's driver, from every answer (src/client.js request); MCP never decides it on its own.
           client.onDriver = driver => this.noteDriver(driver);
           if (client.driver) this.noteDriver(client.driver);
@@ -2137,9 +2152,9 @@ class McpServer {
       return nextStep('choose', `The user invited you to a browser tab (invite ${invited.inviteId}): call `
         + `${openTool(this.driver)} with {"inviteId": "${invited.inviteId}"}.`);
     }
+    // Only this session's own requests: never another session's tab, nor a tab the user invited another agent to.
     const live = Array.isArray(status?.requests) ? status.requests : [];
-    const owned = live.filter(view => this.ownedRequests.has(view.requestId));
-    const views = owned.length ? owned : live;
+    const views = live.filter(view => this.ownedRequests.has(view.requestId));
     const latest = list => list.find(view => view.requestId === this.lastRequestId) ?? list.at(-1);
     const running = latest(views.filter(view => view.activeRunId));
     if (running) {
@@ -2147,7 +2162,7 @@ class McpServer {
     }
     const waiting = latest(views.filter(view => view.state === 'pending' || view.state === 'paused'));
     if (waiting) {
-      return nextForRequest(waiting.state, waiting, waiting.requestId, this.driver, this.resumeOptions());
+      return nextForRequest(waiting.state, waiting, waiting.requestId, this.driver, this.resumeOptions(waiting.requestId));
     }
     const ready = latest(views.filter(view => view.state === 'active'));
     if (ready) {
@@ -2173,11 +2188,14 @@ class McpServer {
       // The page the extension opens on approval, from what the host wrote; absent, the daemon picks the origin's root.
       url: requestStartUrl(args.origins, args.allowedUrls, [args.instruction, args.steps?.[0]?.instruction]),
     });
+    // Registered first (bounded), so the daemon records this session as the owner and wakes it on Approve and Resume.
+    await this.agentSession?.ready(SESSION_READY_MS);
     const response = await client.requestTab(body, call.signal);
     const requestId = response?.requestId;
     if (!requestId) {
       throw new ToolError('internal', 'The daemon created no tab request');
     }
+    this.noteOwner(response.request);
     this.ownedRequests.add(requestId);
     this.lastRequestId = requestId;
     return { requestId, state: response.state ?? 'pending', extensionConnected: response.extensionConnected,
@@ -2281,6 +2299,7 @@ class McpServer {
         this.noteBudget(requestId, response.budget);
         const state = response.state ?? response.request?.state;
         if (state === 'active') this.sawActive.set(requestId, Date.now());
+        this.noteOwner(response.request);
         // The latest word on how the request is approved (its page may have opened by itself meanwhile).
         if (response.request?.approval) call.approval = response.request.approval;
         if (response.request) call.browser = browserHint(response.request);
@@ -2373,11 +2392,12 @@ class McpServer {
       const view = response.request ?? null;
       const state = response.state ?? view?.state ?? 'ok';
       if (state === 'active') this.sawActive.set(requestId, Date.now());
+      this.noteOwner(view);
       return okResult(withoutUndefined({
         ...response,
         state,
         requestId: view?.requestId ?? requestId,
-        next: nextForRequest(state, view, requestId, this.driver, this.resumeOptions()),
+        next: nextForRequest(state, view, requestId, this.driver, this.resumeOptions(requestId)),
       }));
     } finally {
       clearInterval(ticker);
@@ -2421,9 +2441,12 @@ class McpServer {
    * words from the popup.
    */
   async joinInvite(client, call, inviteId) {
+    // Joining needs this session registered: the invite becomes its own (and only its own) tab.
+    await this.agentSession?.ready(SESSION_READY_MS);
     const joined = await client.joinInvite(inviteId, call.signal);
     const requestId = joined?.requestId;
     if (!requestId) throw new ToolError('internal', 'The daemon joined no invite');
+    this.noteOwner(joined.request);
     this.ownedRequests.add(requestId);
     this.lastRequestId = requestId;
     const level = { 'read-only': 'Read', reversible: 'Use', interactive: 'Use', full: 'Act', testing: 'Test site' }[joined.level]
@@ -2755,7 +2778,7 @@ class McpServer {
   receipt(structured, call, runId) {
     const requestId = structured.requestId;
     const context = { requestId, origin: call.origin, approval: call.approval, driver: this.driver, gateWaitMs: this.gateWaitMs(),
-      env: this.env, wake: this.wakeMode() };
+      env: this.env, wake: this.resumeOptions(requestId).wake };
     if (!requestId || !structured.verdict) {
       structured.next = nextFor(structured, context);
       return;
