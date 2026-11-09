@@ -3594,8 +3594,11 @@ async function showPrompt(arm, win) {
     ? { left: Math.max(0, win.left + win.width - PROMPT_SIZE.width - PROMPT_INSET.right), top: Math.max(0, (win.top ?? 0) + PROMPT_INSET.top) }
     : {};
   try {
-    const created = await chrome.windows.create({ url: chrome.runtime.getURL(`${PROMPT_PAGE}?tab=${arm.tabId}`), type: 'popup',
-      ...PROMPT_SIZE, ...placed, focused: true });
+    const options = { url: chrome.runtime.getURL(`${PROMPT_PAGE}?tab=${arm.tabId}`), type: 'popup', ...PROMPT_SIZE, focused: true };
+    // A page window partly off screen puts the placement outside it too ("Bounds must be at least 50% within visible
+    // screen space"): the browser's own placement then.
+    const created = await chrome.windows.create({ ...options, ...placed })
+      .catch(error => (placed.left === undefined ? Promise.reject(error) : chrome.windows.create(options)));
     if (Number.isInteger(created?.id) && armed.get(arm.tabId) === arm) {
       arm.promptWindowId = created.id;
       saveArms();
@@ -3747,6 +3750,21 @@ async function prepareModalApproval(message, sender) {
   await saveArms();
   return { approval: { token: intent.token, pattern, patterns: [pattern, ...intent.extraPatterns] } };
 }
+// The modal's click can come before the opened page has committed (tab.url still empty, the page in pendingUrl) or
+// while it passes through a redirect: wait for the tab to commit on the approved origin, at most COMMIT_WAIT_MS, before
+// the origin check (validate), which is unchanged. A tab that is not loading is not waited for.
+const COMMIT_WAIT_MS = 15_000;
+async function waitCommitted(tabId, origin, ms = COMMIT_WAIT_MS) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab) return;
+    const there = originOf(tab.url ?? '') === origin && (!tab.pendingUrl || originOf(tab.pendingUrl) === origin);
+    if (there || tab.status !== 'loading' || Date.now() >= deadline) return;
+    await delay(NAV_POLL_MS);
+  }
+}
+
 async function finishModalApproval(message, sender) {
   modalSender(message, sender);
   const intent = modalIntents.get(message.tabId);
@@ -3772,6 +3790,7 @@ async function finishModalApproval(message, sender) {
   };
   try {
     if (message.granted !== true) throw new Error('Browser site access was not granted. You can try again or use the toolbar icon.');
+    if (await hasSitePermission([pattern])) await waitCommitted(arm.tabId, intent.origin);
     const tab = await validate();
     // Focus the exact task tab, never the extension window's active tab.
     await chrome.tabs.update(tab.id, { active: true });

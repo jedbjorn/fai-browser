@@ -2956,6 +2956,32 @@ test('modal re-reads the bound tab after awaiting browser permissions', async ()
   assert.equal(h.sent.some(m => m.type === 'lease'), false);
 });
 
+test('modal approval clicked before the opened page committed waits for it on the approved origin, then leases (one click)', async () => {
+  const { h, message } = await modalPrepared();
+  h.grant(message.pattern);
+  // Chrome before the first commit of a new tab: no committed url yet, the page in pendingUrl, loading.
+  Object.assign(h.openedTabs.get(9), { url: '', pendingUrl: `${SHOP}/cart`, status: 'loading' });
+  const reply = h.send(message, MODAL_SENDER);
+  await sleep(150);
+  assert.equal(h.sent.some(m => m.type === 'lease'), false, 'nothing is leased before the page commits');
+  Object.assign(h.openedTabs.get(9), { url: `${SHOP}/cart`, pendingUrl: undefined, status: 'complete' });
+  const answer = await reply;
+  assert.equal(answer.status, 'active', JSON.stringify(answer));
+  assert.equal(answer.session.tabId, 9);
+  assert.equal(h.sent.filter(m => m.type === 'lease').length, 1);
+});
+
+test('modal approval during a redirect that lands off the approved origin still refuses', async () => {
+  const { h, message } = await modalPrepared();
+  h.grant(message.pattern);
+  Object.assign(h.openedTabs.get(9), { url: '', pendingUrl: `${SHOP}/cart`, status: 'loading' });
+  const reply = h.send(message, MODAL_SENDER);
+  await sleep(100);
+  Object.assign(h.openedTabs.get(9), { url: 'https://unrequested.test/', pendingUrl: undefined, status: 'complete' });
+  assert.match((await reply).error, /page changed/);
+  assert.equal(h.sent.some(m => m.type === 'lease'), false);
+});
+
 // --- several browsers (issue #9) ---------------------------------------------------------------------------------------
 
 test('the browser id is created once and kept: a restarted worker reconnects as the same browser', async () => {
