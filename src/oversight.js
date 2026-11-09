@@ -303,15 +303,19 @@ function errorStatusOf(text, successful = false) {
 
 /**
  * An HTTP error page: `{ status, source }` or null. Sources, strongest first: the document's HTTP status as the page
- * script read it (`http`, Navigation Timing responseStatus; 404, 410, 500, 502, 503, 504 only), the title, the first
- * h1, or (only when the HTTP status is unknown, e.g. after a same-document route change) a tiny page whose first
- * line or block is itself an error line ("Error 500"). Body text that merely mentions a status never counts, so an
- * article about HTTP errors is not an error page. `status` is a number; never page text.
+ * script read it (`http`, Navigation Timing responseStatus; 404, 410, 500, 502, 503, 504 only), the browser's own
+ * error page (`browser`, status null), the title, the first h1, or (only when the HTTP status is unknown, e.g. after
+ * a same-document route change) a tiny page whose first line or block is itself an error line ("Error 500"). Body
+ * text that merely mentions a status never counts, so an article about HTTP errors is not an error page. `status` is a
+ * number (null for `browser`); never page text.
  */
 export function errorPageOf(observation) {
   if (!observation) return null;
   const http = observation.httpStatus;
   if (Number.isInteger(http) && ERROR_STATUSES.has(http)) return { status: http, source: 'http' };
+  // The browser's own error page (the extension's `browserErrorPage`: an HTTP error sent without a page body, or a
+  // network failure). No page script ran there, so the status is unknown.
+  if (observation.browserErrorPage === true) return { status: null, source: 'browser' };
   const successful = Number.isInteger(http) && http >= 200 && http < 400;
   const fromTitle = errorStatusOf(observation.title, successful);
   if (fromTitle) return { status: fromTitle, source: 'title' };

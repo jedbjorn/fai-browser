@@ -111,7 +111,7 @@ Loopback HTTP on `127.0.0.1`. Every route requires the exact `chrome-extension:/
 | `POST /status` | Pause, stop or end the session with a reason code |
 | `POST /validate` | The extension checks that a command is still wanted before acting |
 
-An open long-poll counts as liveness. A dropped long-poll with no re-poll within 3 s marks the lease `disconnected`, and so does 35 s with no request at all. Commands time out after 30 s. Error codes are `stale`, `target_unavailable`, `capture_failed` (all three recoverable), `blocked_risky`, `cross_origin`, `child_tab`, `tab_changed`, `origin_changed`, `session_inactive`, `timeout`, `unsupported`, `disconnected`, `paused` and `stopped`. Only `tab_changed` and `origin_changed` (and user Pause/Stop) end the extension session; everything else fails just that command.
+An open long-poll counts as liveness. A dropped long-poll with no re-poll within 3 s marks the lease `disconnected`, and so does 35 s with no request at all. Commands time out after 30 s. Error codes are `stale`, `target_unavailable`, `capture_failed` (all three recoverable), `blocked_risky`, `cross_origin`, `child_tab`, `tab_changed`, `origin_changed`, `session_inactive`, `timeout`, `unsupported`, `disconnected`, `paused` and `stopped`. Only `tab_changed` and `origin_changed` (and user Pause/Stop) end the extension session; everything else fails just that command. Chrome's own error page on the approved URL (an HTTP error without a page body, a network failure; executeScript fails with "showing error page" or names `chrome-error://`) is not an origin change: observe paths report it as a `browserErrorPage` observation and page actions there fail with `target_unavailable`.
 
 ## Extension lifecycle and security
 

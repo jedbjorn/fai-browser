@@ -25,6 +25,7 @@ import {
 } from './result.js';
 import { lintExpectation, validateExpectation } from './expectation.js';
 import { scrubSecrets } from './secrets.js';
+import { withResumeWait } from './resume.js';
 import { LEVELS, levelRank, normalizeAdditions } from './guardrails.js';
 import { BUDGET_LIMITS, DEFAULT_BUDGET, checkBudget, loadOversightConfig } from './settings.js';
 import {
@@ -1286,11 +1287,13 @@ function waitHint(runId) {
 
 // `approval`: the request view's `approval` (`page` when its page opened by itself, else `window`; see result.js).
 // `driver`: agent (fai_browser_open) or jev (fai_browser_run).
-function approveHint(origin, requestId, approval = null, driver = 'agent') {
+// `env`: the MCP server's environment, whose daemon location the wait command carries (src/resume.js).
+function approveHint(origin, requestId, approval = null, driver = 'agent', env = undefined) {
   const root = siteRoot(origin);
   const site = root ?? (origin ? origin.replace(/^https:\/\//, '') : null);
-  return `Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: ${approvalSteps(approval)}. `
-    + `Then call ${openTool(driver)} again with requestId ${requestId}; no origins needed.`;
+  return withResumeWait(`Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: `
+    + `${approvalSteps(approval)}. Then call ${driver === 'jev' ? 'fai_browser_run again' : 'fai_browser_observe'} with `
+    + `requestId ${requestId}${driver === 'jev' ? '; no origins needed' : ''}.`, requestId, { env });
 }
 
 /**
@@ -1312,7 +1315,7 @@ function openTool(driver) {
   return driver === 'jev' ? 'fai_browser_run' : 'fai_browser_open';
 }
 
-function nextForRequest(state, view, requestId, driver = 'agent') {
+function nextForRequest(state, view, requestId, driver = 'agent', env = undefined) {
   switch (state) {
     case 'active':
       return driver === 'jev'
@@ -1320,11 +1323,11 @@ function nextForRequest(state, view, requestId, driver = 'agent') {
           + 'and an expectation.')
         : nextStep('observe', `The tab is ready. Call fai_browser_observe with requestId ${requestId}, then choose.`);
     case 'pending':
-      return nextStep('relay', approveHint(view?.origins?.[0], requestId, view?.approval, driver));
+      return nextStep('relay', approveHint(view?.origins?.[0], requestId, view?.approval, driver, env));
     case 'paused':
-      return nextStep('relay', `The tab lease is paused${view?.stateReason ? ` (${view.stateReason})` : ''}. Ask the `
-        + `user to return to the tab and press Resume in the extension, then call ${openTool(driver)} again with `
-        + `requestId ${requestId}.`);
+      return nextStep('relay', withResumeWait(`The tab lease is paused${view?.stateReason ? ` (${view.stateReason})` : ''}. `
+        + 'Ask the user to return to the tab and click Resume in the FAI Browser extension, then call '
+        + `${driver === 'jev' ? 'fai_browser_run again' : 'fai_browser_observe'} with requestId ${requestId}.`, requestId, { env }));
     default:
       if (TERMINAL_REQUEST_STATES.has(state)) {
         return nextStep('stop', `This tab request has ended (${state}). Ask the user before requesting a tab again.`);
@@ -1901,7 +1904,7 @@ class McpServer {
       return okResult({
         state: 'pending',
         requestId: call.requestId,
-        next: nextStep('relay', approveHint(call.origin, call.requestId, call.approval, this.driver)),
+        next: nextStep('relay', approveHint(call.origin, call.requestId, call.approval, this.driver, this.env)),
       });
     }
     return errorResult('timeout', `FAI Browser did not answer within ${this.maxCallMs} ms. Check \`fai-browser `
@@ -2005,7 +2008,7 @@ class McpServer {
     }
     const waiting = latest(views.filter(view => view.state === 'pending' || view.state === 'paused'));
     if (waiting) {
-      return nextForRequest(waiting.state, waiting, waiting.requestId, this.driver);
+      return nextForRequest(waiting.state, waiting, waiting.requestId, this.driver, this.env);
     }
     const ready = latest(views.filter(view => view.state === 'active'));
     if (ready) {
@@ -2230,7 +2233,7 @@ class McpServer {
         ...response,
         state,
         requestId: view?.requestId ?? requestId,
-        next: nextForRequest(state, view, requestId, this.driver),
+        next: nextForRequest(state, view, requestId, this.driver, this.env),
       }));
     } finally {
       clearInterval(ticker);
@@ -2577,7 +2580,8 @@ class McpServer {
    */
   receipt(structured, call, runId) {
     const requestId = structured.requestId;
-    const context = { requestId, origin: call.origin, approval: call.approval, driver: this.driver, gateWaitMs: this.gateWaitMs() };
+    const context = { requestId, origin: call.origin, approval: call.approval, driver: this.driver, gateWaitMs: this.gateWaitMs(),
+      env: this.env };
     if (!requestId || !structured.verdict) {
       structured.next = nextFor(structured, context);
       return;

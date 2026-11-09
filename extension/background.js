@@ -53,6 +53,15 @@ const NAV_CAP_MS = 3_000;
 const NAV_MIN_LOAD_MS = 1_000;
 // executeScript failures that mean the document went away under the call (a navigation tore it down).
 const TEARDOWN = /Page returned no result|message port closed|Receiving end does not exist|frame (with id \d+ )?was removed|No frame with id|No document with id|document was unloaded|Frame was removed/i;
+// executeScript failures that mean the tab shows Chrome's own error page (chrome-error://chromewebdata/: an HTTP error
+// sent without a page body, or a network failure) while tab.url keeps the URL it tried. Chromium 156 says "Frame with ID
+// 0 is showing error page"; other versions name the error page's URL ("Cannot access contents of url
+// "chrome-error://chromewebdata/""). Neither is an origin change. Anchored at the start of Chrome's own wording, so
+// page-controlled text (a URL with "chrome-error://" in its query, quoted in some other error) never matches: Chrome
+// percent-encodes a URL's quotes and spaces, so `url "chrome-error://` can only be Chrome naming the page itself.
+const BROWSER_ERROR_PAGE = /^(?:Frame with ID \d+ is showing error page|Cannot access contents of url "chrome-error:\/\/)/i;
+const BROWSER_ERROR_MESSAGE = 'The browser shows its own error page here (the server sent an HTTP error without a page, '
+  + 'or the site could not be reached); nothing on it can be used. Reload it or open another approved URL later.';
 const MAX_TERMS = 30;
 const SETTLE_AFTER_NAVIGATION = { quietMs: 100, capMs: 1_500 };
 const SETTLE_IN_PLACE = { quietMs: 50, capMs: 300 };
@@ -1576,9 +1585,13 @@ async function assertTab() {
   const [active] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
   if (active?.id !== tab.id) throw new ExtensionError('tab_changed', 'Selected tab is no longer active');
   if (session?.status !== 'active') throw inactiveError();
-  // Without a live grant Chrome omits tab.url; treat that as having left the leased origin.
+  // Without a live grant Chrome omits tab.url; treat that as having left the leased origin. A toolbar (activeTab) grant
+  // also ends when Chrome commits its own error page (an opaque origin), on the approved URL: nothing can be read
+  // there either, so the session pauses the same way, with a message that names both causes.
   if (!sessionCovers(tab.url)) {
-    throw new ExtensionError('origin_changed', 'Origin changed; select this tab again');
+    throw new ExtensionError('origin_changed', tab.url ? 'Origin changed; select this tab again'
+      : 'The browser withdrew access to this tab: it left the approved site, or (toolbar approval) the browser '
+        + 'showed its own error page; approve this tab again');
   }
   return tab;
 }
@@ -1723,13 +1736,26 @@ function callPage(tabId, method, args = []) {
   return Promise.race([call, watchdog]).finally(() => clearTimeout(timer));
 }
 
+// chrome.scripting.executeScript for a page call. On the browser's own error page no page script runs: observe paths
+// turn that into an error page observation (observePage); anything else fails that command only, never the session.
+async function scriptPage(details) {
+  try {
+    return await chrome.scripting.executeScript(details);
+  } catch (error) {
+    if (BROWSER_ERROR_PAGE.test(String(error?.message || error))) {
+      throw new ExtensionError('target_unavailable', BROWSER_ERROR_MESSAGE, { browserErrorPage: true });
+    }
+    throw error;
+  }
+}
+
 async function callPageOnce(tabId, method, args = []) {
   const secrets = secretOptions();
-  let [injection] = await chrome.scripting.executeScript({ target: { tabId }, func: pageCall, args: [method, args, secrets] });
+  let [injection] = await scriptPage({ target: { tabId }, func: pageCall, args: [method, args, secrets] });
   if (injection?.result?.missing) {
     const target = injection.documentId ? { tabId, documentIds: [injection.documentId] } : { tabId };
-    await chrome.scripting.executeScript({ target, files: ['input.js', 'page.js'] });
-    [injection] = await chrome.scripting.executeScript({ target, func: pageCall, args: [method, args, secrets] });
+    await scriptPage({ target, files: ['input.js', 'page.js'] });
+    [injection] = await scriptPage({ target, func: pageCall, args: [method, args, secrets] });
   }
   const outcome = injection?.result;
   if (outcome?.error) throw new ExtensionError(outcome.error.code, numberSecrets(outcome.error.message));
@@ -1743,6 +1769,60 @@ async function callPageOnce(tabId, method, args = []) {
     return numbered;
   }
   return numberSecrets(outcome.value);
+}
+
+// A short stable hash (FNV-1a, base 36) for the error page's revision: the same URL reads as the same page.
+function shortHash(text) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193) >>> 0;
+  return hash.toString(36);
+}
+
+// The revision of the browser's error page at `url`: a hash of the reported (redacted) URL, never of the raw one, so a
+// low-entropy secret in the URL cannot be recovered from it.
+function browserErrorRevision(url) {
+  return `browser-error:${shortHash(String(reportedUrl(url)))}`;
+}
+
+// What the worker reports for a tab that shows the browser's own error page: the URL the tab tried (still on the
+// approved site, or the observation is refused as an origin change by checkedObservation), no controls, a fixed text
+// written here (no page text exists), `browserErrorPage: true` and the `browser_error_page` warning. The HTTP status is
+// unknown: Chrome uses this page for an error status with an empty body and for network failures alike.
+async function browserErrorObservation(tabId) {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab) throw new ExtensionError('tab_changed', 'Selected tab was closed');
+  if (!sessionCovers(tab.url)) throw new ExtensionError('origin_changed', 'Origin changed; select this tab again');
+  const url = reportedUrl(tab.url);
+  const text = 'The browser shows its own error page for this address: the server answered with an HTTP error and no '
+    + 'page, or the site could not be reached. Nothing on it can be read or used; reload it later, or report it.';
+  return {
+    revision: browserErrorRevision(tab.url),
+    documentId: 'browser-error',
+    url,
+    title: reportedText(String(tab.title ?? '').slice(0, 300)),
+    text,
+    textTruncated: false,
+    blocks: [{ t: 'h1', text: 'Browser error page' }, { t: 'p', text }],
+    blocksTruncated: false,
+    controls: [],
+    consent: null,
+    warnings: ['browser_error_page'],
+    browserErrorPage: true,
+    viewport: { width: Number(tab.width) || 0, height: Number(tab.height) || 0, dpr: 1 },
+    scroll: { top: 0, height: 0 },
+  };
+}
+
+// observe or settleAndObserve through page.js, or, where the tab shows the browser's own error page, that page as an
+// observation (the session goes on: the agent can report it, wait, or reload once the site is back).
+async function observePage(tabId, method, args) {
+  try {
+    return await callPage(tabId, method, args);
+  } catch (error) {
+    if (!error?.browserErrorPage) throw error;
+    const observation = await browserErrorObservation(tabId);
+    return method === 'settleAndObserve' ? { settle: { reason: 'none', ms: 0 }, observation } : observation;
+  }
 }
 
 // The document was replaced or unloaded while a page call ran.
@@ -2239,7 +2319,7 @@ async function observeCommand(command) {
   if (session) session.expectText = expectText;
   const allow = commandCapabilities(command);
   const sites = sessionSites();
-  const observation = await callPage(tab.id, 'observe', [{ terms: session?.terms ?? [], forbid, allow, sites, expectText }]);
+  const observation = await observePage(tab.id, 'observe', [{ terms: session?.terms ?? [], forbid, allow, sites, expectText }]);
   // Test site: the dialog the page opened since the last read, and the dev logs when the observe asks for them.
   const dev = await devRead(tab.id, command.args?.logs === true);
   return checkedObservation(dev ? { ...observation, ...dev } : observation, tab.id);
@@ -2267,7 +2347,7 @@ async function observeAfterNavigation(tabId, terms, forbid = [], allow = [...CAP
   expectText = []) {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await callPage(tabId, 'settleAndObserve', [SETTLE_AFTER_NAVIGATION, terms, forbid, allow, sites, expectText]);
+      return await observePage(tabId, 'settleAndObserve', [SETTLE_AFTER_NAVIGATION, terms, forbid, allow, sites, expectText]);
     } catch (error) {
       if (attempt >= 2 || !isTeardown(error)) throw error;
       await waitTabComplete(tabId, NAV_START_WINDOW_MS);
@@ -2571,11 +2651,11 @@ async function executeCommand(command) {
     let navigated = false;
     if (action.type === 'copy_secret') {
       await writeClipboard(secret.value);
-      const observation = await callPage(tab.id, 'observe', [{ terms, forbid, allow, sites, expectText }]);
+      const observation = await observePage(tab.id, 'observe', [{ terms, forbid, allow, sites, expectText }]);
       outcome = { observation, settle: { reason: 'none' }, fromUrl: reportedUrl(tab.url), target: null };
     } else if (action.type === 'wait') {
       await delay(WAIT_ACTION_MS);
-      const observation = await callPage(tab.id, 'observe', [{ terms, forbid, allow, sites, expectText }]);
+      const observation = await observePage(tab.id, 'observe', [{ terms, forbid, allow, sites, expectText }]);
       outcome = { observation, settle: { reason: 'none' }, fromUrl: reportedUrl(tab.url), target: null };
     } else if (action.type === 'history') {
       // Navigation (read-only and up), outside the page: the tab's own history.
@@ -2590,12 +2670,12 @@ async function executeCommand(command) {
     } else if (action.type === 'dialog') {
       // Arms the answer for the page's next confirm or prompt (the hook answers it at once when it opens).
       await armDialog(tab.id, action.answer, action.text, approval);
-      const observation = await callPage(tab.id, 'observe', [{ terms, forbid, allow, sites, expectText }]);
+      const observation = await observePage(tab.id, 'observe', [{ terms, forbid, allow, sites, expectText }]);
       outcome = { observation, settle: { reason: 'none' }, fromUrl: reportedUrl(tab.url), target: null };
     } else if (action.type === 'switch_tab' || action.type === 'open_tab') {
       if (!allow.includes('navigate')) throw new ExtensionError('blocked_risky', 'Navigation is not allowed at this level');
       const next = action.type === 'open_tab' ? await openLeaseTab(action.url) : await switchLeaseTab(action.tab);
-      const observation = await callPage(next.id, 'observe', [{ terms, forbid, allow, sites, expectText }]);
+      const observation = await observePage(next.id, 'observe', [{ terms, forbid, allow, sites, expectText }]);
       outcome = { observation, settle: { reason: 'none' }, fromUrl: reportedUrl(tab.url), target: null };
       navigated = true;
     } else {
@@ -2604,11 +2684,20 @@ async function executeCommand(command) {
         outcome = await callPage(tab.id, 'execute', [pageAction, expectedRevision, SETTLE_IN_PLACE, terms, forbid, allow, sites,
           expectText, approval]);
       } catch (error) {
-        // A click that navigates tears the document down under the call ("Page returned no result", "message
-        // port closed", ...). That is success if a navigation shows up within the start window.
-        if (!isTeardown(error)) throw error;
-        if (!navigation.started && !navigation.urlChanged && (await navigation.waitStart(dispatchedAt)) === 'none') {
-          throw error;
+        if (error?.browserErrorPage && action.type === 'navigate_allowed_url') {
+          // From the browser's own error page an approved URL (validateAction checked it) opens through the tab API,
+          // as a history move does: page.js cannot run there. Any other page action fails this command only.
+          if (!allow.includes('navigate')) throw new ExtensionError('blocked_risky', 'Navigation is not allowed at this level');
+          // The action must come from an observation of this error page (its revision), as page.js would check.
+          if (expectedRevision !== browserErrorRevision(tab.url)) throw new ExtensionError('stale', 'Stale observation');
+          await chrome.tabs.update(tab.id, { url: new URL(action.url).href });
+        } else {
+          // A click that navigates tears the document down under the call ("Page returned no result", "message
+          // port closed", ...). That is success if a navigation shows up within the start window.
+          if (!isTeardown(error)) throw error;
+          if (!navigation.started && !navigation.urlChanged && (await navigation.waitStart(dispatchedAt)) === 'none') {
+            throw error;
+          }
         }
         outcome = { expectNavigation: true, fromUrl: reportedUrl(tab.url), target: null };
       }
@@ -2784,7 +2873,10 @@ async function takeScreenshot(observation, details, labelRevision = observation?
     const tab = await assertTab();
     // The single revision check, immediately before capture. If the page changed by itself, annotate what
     // is actually on screen and label it with that revision; the runtime decides whether it is acceptable.
-    const fresh = checkedObservation(await callPage(tab.id, 'observe'), tab.id);
+    const fresh = checkedObservation(await callPage(tab.id, 'observe').catch(error => {
+      // The browser's own error page: no page script to ask for secret boxes, so no image (fail closed).
+      throw error?.browserErrorPage ? new ExtensionError('capture_failed', BROWSER_ERROR_MESSAGE) : error;
+    }), tab.id);
     const shown = observation && fresh.revision === observation.revision ? observation : fresh;
     const { raw, redaction } = await captureRedacted(tab);
     releaseGate();
@@ -2897,6 +2989,8 @@ function wireError(error) {
   const message = String(error?.message || error).slice(0, 500);
   if (!code) {
     if (/No tab with id|Tabs cannot be edited/i.test(message)) code = 'tab_changed';
+    // The browser's own error page on the approved URL is not an origin change (assertTab already checked the URL).
+    else if (BROWSER_ERROR_PAGE.test(message)) code = 'target_unavailable';
     else if (/Cannot access|host permission|chrome:\/\//i.test(message)) code = 'origin_changed';
     else code = 'unsupported';
   }
