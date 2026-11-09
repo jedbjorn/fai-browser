@@ -5587,7 +5587,7 @@
         const prototype = el.tagName === 'INPUT' ? realm.HTMLInputElement.prototype : realm.HTMLTextAreaElement.prototype;
         // Use the native setter so framework-controlled inputs (React etc.) see the change.
         const setValue = () => {
-          Object.getOwnPropertyDescriptor(prototype, 'value').set.call(el, action.text);
+          Object.getOwnPropertyDescriptor(prototype, 'value').set.call(el, withinMaxLength(el, action.text));
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
         };
@@ -5608,7 +5608,7 @@
         refuseLineBreak(el, action.text);
         const realm = el.ownerDocument.defaultView ?? window;
         const setSecret = () => {
-          Object.getOwnPropertyDescriptor(realm.HTMLInputElement.prototype, 'value').set.call(el, action.text);
+          Object.getOwnPropertyDescriptor(realm.HTMLInputElement.prototype, 'value').set.call(el, withinMaxLength(el, action.text));
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
         };
@@ -5821,12 +5821,12 @@
   // submit gate and the request's forbid list. Refused; submit_field is the way to submit.
   function refuseLineBreak(el, text) {
     if (el.tagName === 'INPUT' && /[\r\n]/.test(text)) {
-      throw new PageError('unsupported', "Newlines can't be typed into a single-line field; use submit_field to submit");
+      throw new PageError('line_break_input', "Newlines can't be typed into a single-line field; use submit_field to submit");
     }
   }
 
-  // A plain text field: what it shows is what was typed, no suggestion list completing it (a combobox, autocomplete,
-  // a datalist, a popup) and no picker.
+  // A plain text field: what it shows is what was typed, give or take a formatter; no suggestion list completing it
+  // (a combobox, autocomplete, a datalist, a popup) and no picker.
   function plainTextField(el) {
     if (el.tagName === 'INPUT' ? !['text', 'search', 'email', 'url', 'tel', 'password'].includes(el.type) : el.tagName !== 'TEXTAREA') return false;
     const popup = (el.getAttribute('aria-haspopup') || 'false').toLowerCase();
@@ -5834,23 +5834,50 @@
       && !el.hasAttribute('list') && popup === 'false' && !el.readOnly;
   }
 
+  // `text` as a field with maxlength keeps it: cut to that many UTF-16 units, never half a character.
+  function withinMaxLength(el, text) {
+    if (!(el.maxLength >= 0)) return text;
+    let fit = '';
+    for (const ch of text) {
+      if (fit.length + ch.length > el.maxLength) break;
+      fit += ch;
+    }
+    return fit;
+  }
+
+  // Whether `value` shows `text` once: with whitespace and case ignored, the text occurs exactly once (a formatter's
+  // prefix or suffix, a country code, a currency sign, upper case pass; the text twice, or residue inside it, does
+  // not); for a number-like text, its digits occur exactly once in the value's digits, after the value drops a
+  // decimal part of zeros the text did not have ("1500" in "$1,500.00"). Same rule as input.js containedOnce.
+  function containedOnce(value, text) {
+    const squash = s => String(s ?? '').replace(/\s+/g, '').toLowerCase();
+    const want = squash(text);
+    const have = squash(value);
+    if (!want) return !have;
+    if (have.split(want).length === 2) return true;
+    if (!/\d/.test(want) || !/^[\d()+.,\-$€£¥%]+$/.test(want)) return false;
+    const wantDigits = want.replace(/\D/g, '');
+    const haveDigits = (/[.,]/.test(want) ? have : have.replace(/[.,]0{1,2}(?!\d)/g, '')).replace(/\D/g, '');
+    return haveDigits.split(wantDigits).length === 2;
+  }
+
   // Whether a text field holds the supplied text after a fill, read from the field itself (never from page text):
-  // `kept` when its value is the text (whitespace collapsed, case ignored) in a plain text field, or contains it in a
-  // picker's or combobox's textbox (which completes what was typed); the same digits for a text of digits and
-  // separators (a field that formats numbers); or the same date in another form for an ISO date (a field may add the
-  // weekday). An empty text is kept by an empty field. `empty` when the field holds nothing at all. The value itself
-  // is never returned.
+  // `kept` when, in a plain text field, the value shows the text once (containedOnce: a formatter's additions pass,
+  // the text twice or with residue inside does not), or, in a picker's or combobox's textbox (which completes what was
+  // typed), contains it; the same digits for a text of digits and separators; or the same date in another form for an
+  // ISO date (a field may add the weekday). The text is first cut to the field's maxlength. An empty text is kept by
+  // an empty field. `empty` when the field holds nothing at all. The value itself is never returned.
   function fillKept(el, text) {
     const normalize = value => String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
-    const want = normalize(text);
+    const want = normalize(withinMaxLength(el, text));
     const have = el.isConnected ? normalize(el.value) : '';
     if (!want) return { kept: !have, empty: !have };
-    const exact = plainTextField(el);
-    let kept = exact ? have === want : have.includes(want);
-    if (!kept && /\d/.test(want) && /^[\d\s()+.-]+$/.test(want)) {
-      const digits = have.replace(/\D/g, '');
-      const wanted = want.replace(/\D/g, '');
-      kept = exact ? digits === wanted : digits.includes(wanted);
+    let kept;
+    if (plainTextField(el)) {
+      kept = containedOnce(have, want);
+    } else {
+      kept = have.includes(want);
+      if (!kept && /\d/.test(want) && /^[\d\s()+.-]+$/.test(want)) kept = have.replace(/\D/g, '').includes(want.replace(/\D/g, ''));
     }
     if (!kept) kept = dateForms(want).some(form => have.includes(form));
     return { kept, empty: !have };

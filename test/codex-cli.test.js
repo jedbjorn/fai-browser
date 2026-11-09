@@ -49,7 +49,7 @@ test('codex: every BridgeError code has the expected result status', () => {
     tab_changed: 'needs_user', origin_changed: 'needs_user', session_inactive: 'needs_user',
     disconnected: 'needs_user', paused: 'needs_user',
     no_control: 'needs_host', point_outside: 'needs_host', point_frame: 'needs_host',
-    js_dialog: 'needs_user',
+    js_dialog: 'needs_user', line_break_input: 'needs_host',
   };
   assert.deepEqual(Object.keys(expected).sort(), [...BRIDGE_ERROR_CODES].sort());
   for (const [bridgeCode, status] of Object.entries(expected)) {

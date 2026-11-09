@@ -45,6 +45,10 @@ export function bridgeError(code, message, recoverable = RECOVERABLE_CODES.has(c
   return error;
 }
 
+// What a host does after line_break_input (needs.message and the trusted next text).
+const LINE_BREAK_TEXT = "Newlines can't be typed into a single-line field. Fill without the line break, then use "
+  + 'submit_field (or the submit option) to submit.';
+
 // Outcome for each machine code. `message` tells the host what to do next and never includes page content.
 const OUTCOMES = {
   // Terminal outcomes chosen by the runtime itself.
@@ -139,6 +143,14 @@ const OUTCOMES = {
     reason: 'The field did not keep the supplied value: the page reverted or ignored the typed text',
     message: 'Typing into this field does not work on this page. Do not fill it again; set the value another way: a '
       + 'URL in allowedUrls that carries it, or the page\'s own picker or control.',
+  },
+  // A fill whose text has a line break, aimed at a single-line input (extension/page.js refuseLineBreak): Enter there
+  // would submit the form past the submit gate, so nothing was typed.
+  line_break_input: {
+    status: 'needs_host',
+    who: 'host',
+    reason: 'A line break cannot be typed into a single-line field',
+    message: LINE_BREAK_TEXT,
   },
   low_confidence: {
     status: 'needs_host',
@@ -1422,6 +1434,7 @@ function directNextStep(result, context = {}) {
     return { kind: 'observe', text: 'The field did not keep the value. Do not fill it again: observe, then use the page\'s '
       + 'own picker or control, or open a URL that carries the value (allowedUrls).' };
   }
+  if (code === 'line_break_input') return { kind: 'observe', text: `${LINE_BREAK_TEXT} Observe first for a fresh revision.` };
   if (code === 'step_complete' && offered) {
     const missed = result.verification?.checked === true && result.verification.passed !== true;
     return { kind: 'choose', text: `${missed ? 'The expectation did not pass on this page. ' : ''}${directChooseText(offered.revision)}` };

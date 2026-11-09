@@ -5,7 +5,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BrowserRuntime } from '../src/runtime.js';
-import { agentResult, nextFor } from '../src/result.js';
+import { agentResult, directNext, nextFor } from '../src/result.js';
+import { BridgeError } from '../src/bridge.js';
 import { FakeBridge, ORIGIN } from './runtime-fixtures.js';
 
 const textbox = (id, label, extra = {}) => ({ id, role: 'textbox', label, type: 'text', enabled: true, ...extra });
@@ -132,4 +133,32 @@ test('act: a host-driven fill the field did not keep is fill_not_kept with the n
   const ok = await runtime.act(name.id);
   assert.equal(ok.status, 'checkpoint', ok.code);
   assert.deepEqual(ok.steps[0].fill, { kept: true, empty: false });
+});
+
+// The page script refuses a fill whose text has a line break when the target is a single-line input (Enter there would
+// submit past the submit gate): the bridge reports line_break_input, and the host gets the reason in trusted text.
+class LineBreakBridge extends FakeBridge {
+  async execute(action, revision, options) {
+    if (action.type === 'fill_supplied_text' && /[\r\n]/.test(action.text ?? '')) {
+      throw new BridgeError('line_break_input', "Newlines can't be typed into a single-line field; use submit_field to submit");
+    }
+    return super.execute(action, revision, options);
+  }
+}
+
+test('act: a fill with a line break into a single-line field is line_break_input, with a trusted next naming submit_field', async () => {
+  assert.equal(new BridgeError('line_break_input', 'x').code, 'line_break_input', 'a known bridge code');
+  const bridge = new LineBreakBridge({ pages: pages({ departureKeeps: true }), path: '/search' });
+  const runtime = new BrowserRuntime({ bridge });
+  const { actions } = await runtime.observe({ mode: 'reversible', suppliedText: { query: 'flights to oslo\n' } });
+  const fill = actions.find(action => action.type === 'fill_supplied_text' && action.label === 'Name');
+  const result = await runtime.act(fill.id);
+  assert.equal(result.code, 'line_break_input', result.reason);
+  assert.equal(result.status, 'needs_host');
+  assert.equal(result.reason, 'A line break cannot be typed into a single-line field');
+  assert.equal(result.needs.message, "Newlines can't be typed into a single-line field. Fill without the line break, then use submit_field (or the submit option) to submit.");
+  assert.equal(result.steps.length, 0, 'nothing ran');
+  const next = directNext(result, { requestId: 'req_1' });
+  assert.equal(next.kind, 'observe');
+  assert.match(next.text, /^Newlines can't be typed into a single-line field\. Fill without the line break, then use submit_field/);
 });

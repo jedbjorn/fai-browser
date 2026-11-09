@@ -23,6 +23,9 @@ const TRUSTED_MAX_UNTIL_MS = 10_000;
 const TRUSTED_LATE_RELEASE_MS = 12;
 const TRUSTED_MOUSE = new Set(['mouseMoved', 'mousePressed', 'mouseReleased', 'mouseWheel']);
 const TRUSTED_KEY = new Set(['keyDown', 'keyUp', 'rawKeyDown']);
+// Editing commands a key may carry: Ctrl/Cmd+A's select-all, and Backspace's delete on macOS (where the key alone
+// edits nothing through the debugger). Any other command is dropped.
+const TRUSTED_COMMANDS = new Set(['selectAll', 'deleteBackward']);
 
 let trustedInputSetting = false;
 let trustedAttached = null; // { tabId, timer, ready: Promise }
@@ -71,7 +74,7 @@ function cleanTrustedStep(step, viewport) {
       nativeVirtualKeyCode: finite(step.keyCode, 0, 255) ? step.keyCode : 0,
     };
     if (typeof step.text === 'string' && step.text.length <= 2) Object.assign(params, { text: step.text, unmodifiedText: step.text });
-    if (Array.isArray(step.commands) && step.commands.every(command => command === 'selectAll')) params.commands = step.commands;
+    if (Array.isArray(step.commands) && step.commands.length <= 2 && step.commands.every(command => TRUSTED_COMMANDS.has(command))) params.commands = step.commands;
     return { method: 'Input.dispatchKeyEvent', params };
   }
   if (step.m === 'text') {
