@@ -426,7 +426,7 @@ const RHYTHM_PAGE = `<!doctype html><title>Rhythm</title>
   <textarea id="t" aria-label="Notes"></textarea><input id="i" aria-label="Name"><input id="p" type="password" aria-label="PIN">
   <form id="f"><input id="q" aria-label="Query" name="q"><button>Go</button></form>
   <input id="m" maxlength="5" aria-label="Code"><input id="slow" aria-label="Slow"><input id="ph" aria-label="Phone">
-  <input id="eat" aria-label="Eats Backspace"><input id="pre" aria-label="Prefixed">
+  <input id="eat" aria-label="Eats Backspace"><input id="pre" aria-label="Prefixed"><input id="dbl" aria-label="Doubled">
   <script>
     window.log = [];
     window.submits = 0;
@@ -438,8 +438,29 @@ const RHYTHM_PAGE = `<!doctype html><title>Rhythm</title>
     // A formatter: digits in groups of three.
     document.getElementById('ph').addEventListener('input', e => { const d = e.target.value.replace(/\\D/g, ''); e.target.value = d.replace(/(\\d{3})(?=\\d)/g, '$1 '); });
     document.getElementById('eat').addEventListener('keydown', e => { if (e.key === 'Backspace') e.preventDefault(); });
+    // A broken field that always shows the text twice.
+    document.getElementById('dbl').addEventListener('input', e => { e.target.value = 'abc abc'; });
     // A field that always starts with '#'.
     document.getElementById('pre').addEventListener('input', e => { if (!e.target.value.startsWith('#')) e.target.value = '#' + e.target.value; });
+  </script>`;
+
+// Formatting and completing fields (the review's exp3): an inline-completing combobox that blocks Ctrl+A, a currency
+// formatter, a country-code phone, upper case, an IBAN without spaces, and a field with old text that blocks Ctrl+A.
+const FORMAT_PAGE = `<!doctype html><title>Formats</title>
+  <input id="cb" role="combobox" aria-label="From" aria-autocomplete="list">
+  <input id="cur" aria-label="Amount" inputmode="decimal">
+  <input id="cc" aria-label="Country phone" type="tel">
+  <input id="up" aria-label="Code">
+  <input id="iban" aria-label="IBAN">
+  <input id="noa" aria-label="NoSelectAll" value="old">
+  <script>
+    const field = id => document.getElementById(id);
+    field('cb').addEventListener('input', e => { if (/^oslo$/i.test(e.target.value)) e.target.value = 'Oslo (OSL)'; });
+    for (const id of ['cb', 'noa']) field(id).addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'a') e.preventDefault(); });
+    field('cur').addEventListener('input', e => { const d = e.target.value.replace(/[^\\d]/g, ''); e.target.value = d ? '$' + Number(d).toLocaleString('en-US') + '.00' : ''; });
+    field('cc').addEventListener('input', e => { const d = e.target.value.replace(/\\D/g, '').replace(/^1/, ''); e.target.value = '+1 ' + d; });
+    field('up').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase(); });
+    field('iban').addEventListener('input', e => { e.target.value = e.target.value.replace(/\\s/g, '').toUpperCase(); });
   </script>`;
 
 // input.js's type() on a field, straight from the isolated world (no fallback: what the keys produced is what shows).
@@ -579,27 +600,34 @@ for (const path of PATHS) {
     assert.equal(await page.evaluate(() => window.submits), 0);
     assert.ok(!(await pageLog(page)).some(([type, key]) => type === 'keydown' && key === 'Enter'), 'no Enter pressed');
     const refused = await actOnField(run, 'Query', { type: 'fill_supplied_text', text: 'search\n' });
-    assert.match(refused.error, /^unsupported: Newlines can't be typed into a single-line field; use submit_field to submit/);
+    assert.match(refused.error, /^line_break_input: Newlines can't be typed into a single-line field; use submit_field to submit/);
     assert.equal(await page.evaluate(() => window.submits), 0);
     const notes = await actOnField(run, 'Notes', { type: 'fill_supplied_text', text: 'line one\r\nline two' });
     assert.equal(notes.error, undefined);
     assert.equal(await page.inputValue('#t'), 'line one\nline two');
   });
 
-  test(`limits (${path}): maxlength cuts by code point; slow key handlers stop the keys and the rest goes in; a formatter is corrected once`, async t => {
+  test(`limits (${path}): maxlength cuts by code point; slow key handlers stop the keys and the rest goes in; a formatter's output stands`, async t => {
     const { page, run } = await openRhythm(t, path);
+    // As a keyboard: the emoji does not fit the one unit left, the next letter does; never half an emoji.
     const cut = await typeInto(run, '#m', 'abcd🎉xy');
-    assert.equal(cut.value, 'abcd', 'no half emoji');
+    assert.equal(cut.value, 'abcdx');
+    assert.ok(!/[\uD800-\uDFFF]/.test(cut.value), 'no lone surrogate');
     const slow = await typeInto(run, '#slow', 'the quick brown fox');
     t.diagnostic(`${path} slow page: ${slow.ms} ms, ${slow.typed} keys planned`);
     assert.equal(slow.value, 'the quick brown fox');
     assert.ok(slow.ms < 2600, `slow fill took ${slow.ms} ms`);
+    // A formatter's output holds the value: no select-all and whole-value paste after the keys.
+    await pageLog(page);
     const phone = await typeInto(run, '#ph', '1234567890');
-    assert.equal(phone.corrected, true);
+    assert.equal(phone.corrected, false);
     assert.equal(phone.value, '123 456 789 0');
-    // Through page.js the fill result says so (no value in it), and the digits count as kept.
+    const after = await pageLog(page);
+    assert.ok(!after.some(([type, key]) => type === 'keydown' && (key === 'Control' || key === 'Meta')), 'no Ctrl+A');
+    assert.equal(after.filter(([type]) => type === 'keydown').length, 10, 'one key per digit and nothing else');
+    // Through page.js the digits count as kept.
     const reported = await actOnField(run, 'Phone', { type: 'fill_supplied_text', text: '5551234567' });
-    assert.deepEqual(reported.fill, { kept: true, empty: false, corrected: true });
+    assert.deepEqual(reported.fill, { kept: true, empty: false });
   });
 
   test(`clearing and read-back (${path}): an empty value clears the field and is kept; a field that adds to the value is not`, async t => {
@@ -613,9 +641,47 @@ for (const path of PATHS) {
     assert.equal(reported.error, undefined);
     assert.equal(await page.inputValue('#i'), '');
     assert.deepEqual(reported.fill, { kept: true, empty: true });
+    // A field that adds a prefix keeps the value (a formatter); one that shows it twice does not.
     const prefixed = await actOnField(run, 'Prefixed', { type: 'fill_supplied_text', text: 'abc' });
     assert.equal(await page.inputValue('#pre'), '#abc');
-    assert.equal(prefixed.fill.kept, false, 'a plain field holding more than the value did not keep it');
+    assert.deepEqual(prefixed.fill, { kept: true, empty: false });
+    const doubled = await actOnField(run, 'Doubled', { type: 'fill_supplied_text', text: 'abc' });
+    assert.equal(await page.inputValue('#dbl'), 'abc abc');
+    assert.deepEqual(doubled.fill, { kept: false, empty: false, corrected: true }, 'the value twice: residue, corrected once, still not kept');
+  });
+
+  test(`formatted and completing fields (${path}): kept as the page shows them, a combobox never corrected, Ctrl+A blocked still replaces`, async t => {
+    const { page, run, cdp } = await open(t, FORMAT_PAGE);
+    if (path === 'trusted') await wireTrusted(run, cdp);
+    // A combobox that completes "Oslo" inline and keeps Ctrl+A for itself: no correction, and a second and third fill
+    // replace the value instead of adding to it.
+    const first = await typeInto(run, '#cb', 'Oslo');
+    assert.equal(first.value, 'Oslo (OSL)');
+    assert.equal(first.corrected, false);
+    for (let k = 0; k < 2; k++) {
+      const again = await actOnField(run, 'From', { type: 'fill_supplied_text', text: 'Oslo' });
+      assert.equal(await page.inputValue('#cb'), 'Oslo (OSL)');
+      assert.deepEqual(again.fill, { kept: true, empty: false });
+    }
+    // Formatters: the page's output is kept; only the currency one, whose caret jumps scramble keyed digits, needs a
+    // correction (residue), and ends as the page formats the value.
+    for (const [label, selector, text, shown] of [
+      ['Amount', '#cur', '1500', '$1,500.00'], ['Country phone', '#cc', '5551234567', '+1 5551234567'],
+      ['Code', '#up', 'abc123', 'ABC123'],
+    ]) {
+      const filled = await actOnField(run, label, { type: 'fill_supplied_text', text });
+      assert.equal(await page.inputValue(selector), shown, label);
+      assert.equal(filled.fill.kept, true, `${label}: ${JSON.stringify(filled.fill)}`);
+      if (label !== 'Amount') assert.equal(filled.fill.corrected, undefined, `${label} needed no correction`);
+    }
+    // An IBAN is a payment field page.js keeps fills out of; typed straight in, its formatted value needs no correction.
+    const iban = await typeInto(run, '#iban', 'NO93 8601 1117 947');
+    assert.equal(iban.value, 'NO9386011117947');
+    assert.equal(iban.corrected, false);
+    // Ctrl+A cancelled by the page, old text in the field: the value is selected directly and replaced.
+    const replaced = await actOnField(run, 'NoSelectAll', { type: 'fill_supplied_text', text: 'new text' });
+    assert.equal(await page.inputValue('#noa'), 'new text');
+    assert.deepEqual(replaced.fill, { kept: true, empty: false });
   });
 
   test(`slips (${path}): a neighbouring key, Backspace and the right key as a keyboard sends them; exact afterwards; none in a secret`, async t => {

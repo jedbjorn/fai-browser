@@ -1626,9 +1626,9 @@ const corrected = reported => (reported.corrected === true ? { corrected: true }
 
 /**
  * Whether a fill kept its value: the page script's own read-back of the field after the page settled (`fill: {kept,
- * empty, corrected?}`, extension/page.js fillKept: with whitespace and case ignored, the value is the supplied text in
- * a plain text field and contains it in a picker's or combobox's, or has the same digits, or the same ISO date in
- * another form), else, from a bridge that reports none (an older extension, a custom bridge), the next observation's
+ * empty, corrected?}`, extension/page.js fillKept: with whitespace and case ignored, the value shows the supplied text
+ * exactly once in a plain text field (or its digits once) and contains it in a picker's or combobox's, or holds the
+ * same ISO date in another form), else, from a bridge that reports none (an older extension, a custom bridge), the next observation's
  * `filled` flag on the same control: a field left empty did not keep it. Null for any other action, and when nothing
  * can be read. The field's value itself never reaches the runtime.
  */
