@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PACKAGE_ROOT } from './paths.js';
 import { homePaths, loadConfig } from './home.js';
-import { automaticCheck, isReleaseTag, readCheckState, runCheck, runningUpdate, updatePaths, updateView,
+import { automaticCheck, isReleaseTag, readCheckState, runCheck, runningUpdate, underTest, updatePaths, updateView,
   writeInstallState } from './update.js';
 import { UpdateFailed, UpdateRefused, installUpdate, takeUpdateLock, updateLogger } from './update-install.js';
 
@@ -72,7 +72,9 @@ export async function updateCommand(flags, { home, env = process.env, ...options
     return { value: { state: 'refused', code: 'bad_release', message: '--tag must be a release tag like v1.2.3' }, exitCode: 1 };
   }
   // The user asked: one check now (a result younger than a minute is reused), even with the automatic check off.
-  await runCheck({ paths, currentVersion: current, fetch: options.fetch, force: true });
+  // Under node --test nothing reaches GitHub unless the test supplies its own fetch.
+  const fetchImpl = options.fetch ?? (underTest(env) ? async () => { throw new Error('offline under test'); } : undefined);
+  await runCheck({ paths, currentVersion: current, fetch: fetchImpl, force: true });
   const view = updateView({ paths, currentVersion: current, enabled });
   if (flags.check) return { value: { update: view }, exitCode: view.status === 'error' ? 1 : 0 };
   if (!view.available) {

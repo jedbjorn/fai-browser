@@ -118,7 +118,7 @@ export function createFakeHub({ bridgeOptions = {} } = {}) {
       return new Promise(resolve => {
         const withReply = { ...event, reply: value => resolve(value) };
         for (const listener of [...listeners]) listener(withReply);
-        if (!['lease', 'deny', 'hello', 'lease_level', 'settings', 'driver'].includes(event.type)) resolve(undefined);
+        if (!['lease', 'deny', 'hello', 'lease_level', 'settings', 'driver', 'update'].includes(event.type)) resolve(undefined);
       });
     },
     /** The extension lowered the level of a lease on its own (lease_level). */

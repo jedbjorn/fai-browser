@@ -38,7 +38,7 @@ import { createDomainStore, domainStatsDir, resolveProfiles } from './domains.js
 import { checkOriginEntry, isSiteEntry, leaseOrigins, originCovered, siteRoots, urlCovered } from './origins.js';
 import { scrubSecrets } from './secrets.js';
 import { spawn } from 'node:child_process';
-import { automaticCheck, createUpdateChecker, runningUpdate } from './update.js';
+import { automaticCheck, createUpdateChecker, runningUpdate, underTest } from './update.js';
 
 export const DAEMON_VERSION = readPackageVersion();
 export const SERVICE_NAME = 'fai-browser';
@@ -951,7 +951,7 @@ export function createDaemon(options = {}) {
     const childEnv = { ...env, FAI_DAEMON_PORT: String(port), ...(paths.custom ? { FAI_HOME: paths.home } : {}) };
     const args = [join(PACKAGE_ROOT, 'src', 'cli.js'), 'update', '--tag', view.tag];
     // A test never runs the real updater against the checkout it runs from.
-    if (!options.spawnUpdater && env.NODE_TEST_CONTEXT) return refuse('update_failed', 'No updates under node --test.');
+    if (!options.spawnUpdater && underTest(env)) return refuse('update_failed', 'No updates under node --test.');
     try {
       (options.spawnUpdater ?? defaultSpawnUpdater)(args, childEnv);
     } catch (error) {
