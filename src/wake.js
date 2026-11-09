@@ -11,7 +11,8 @@
 // - OpenCode (1.19+, below 2) runs FAI's own plugin (src/opencode-plugin.js, installed by `install --host opencode`).
 //   It listens on a private unix socket named after OpenCode's pid and tags each FAI tool call with the calling session
 //   (`_faiHostSession`); the MCP server asks it, with the token it minted, to prompt that session
-//   (client.session.promptAsync). The plugin answers once the turn is queued: a real acknowledgement.
+//   (client.session.promptAsync, with the session's own agent and model). The plugin answers once OpenCode accepted the
+//   prompt and reported no error for 2 s: accepted, not yet answered.
 // - Anything else (an unknown host, a session without the env) cannot be woken: the popup shows the copy-text fallback
 //   ("Tell your agent: join FAI invite <id>").
 import { execFile } from 'node:child_process';
@@ -23,6 +24,8 @@ export const WAKE_CAPABILITIES = Object.freeze(['claude-socket', 'codex-queue', 
 export const HOSTS = Object.freeze(['claude', 'codex', 'opencode', 'unknown']);
 export const SOCKET_TIMEOUT_MS = 3_000;
 export const CODEX_TIMEOUT_MS = 15_000;
+// The plugin reads the session's last turn, prompts, then watches OpenCode's events for 2 s before it answers.
+export const OPENCODE_TIMEOUT_MS = 8_000;
 // The longest user text an invite carries (the popup's "What should it do?").
 export const MAX_INVITE_TEXT = 500;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -284,11 +287,11 @@ const PLUGIN_CODES = new Set(['bad_token', 'not_fai_session', 'unknown_session',
 /**
  * Ask FAI's OpenCode plugin to prompt OpenCode session `sessionID` with `text`: one connection, the lines
  * `{"type":"auth","token":…}` and `{"type":"wake","sessionID":…,"text":…}`, then one answer line. Resolves {ok: true}
- * once the plugin says the turn is queued, else {ok: false, code, message}: `no_socket`, `connect_failed`, `timeout`,
+ * once the plugin says OpenCode accepted the prompt (and reported no error for 2 s), else {ok: false, code, message}: `no_socket`, `connect_failed`, `timeout`,
  * `unknown_session` (no id, or OpenCode does not know it), `refused` (any other answer: a wrong token, a session that
  * never used FAI, a text the plugin does not take), with the plugin's own code in `detail`.
  */
-export function deliverOpencodePlugin({ path, token, sessionID, text, timeoutMs = SOCKET_TIMEOUT_MS }) {
+export function deliverOpencodePlugin({ path, token, sessionID, text, timeoutMs = OPENCODE_TIMEOUT_MS }) {
   if (!path || !token) return Promise.resolve({ ok: false, code: 'no_socket', message: 'No FAI plugin channel in this OpenCode.' });
   if (!OPENCODE_SESSION.test(String(sessionID ?? ''))) {
     return Promise.resolve({ ok: false, code: 'unknown_session', message: 'No OpenCode session to wake for this.' });
