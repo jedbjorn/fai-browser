@@ -4,7 +4,7 @@
 import http from 'node:http';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, readFile, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { BrowserRuntime, actionLabels, checkActChoice, redactionMeta, resolveRetry, resolveSlim } from './runtime.js';
 import { checkDeclarative, validateExpectation } from './expectation.js';
@@ -601,9 +601,11 @@ export function createDaemon(options = {}) {
     for (const record of requests.values()) {
       if (record.state !== 'pending') continue;
       if (record.browser?.id && connected.has(record.browser.id)) continue;
-      // A browser the agent named (or the user moved it to) that has been gone longer than the hub's grace period: the
-      // request no longer waits for it, and says so (`browserNote`, in the agent's next text).
+      // A browser the agent named (or the user moved it to) that has been gone for pinGraceMs (a minute; much longer
+      // than the hub's 3 s disconnect grace, so a laptop sleep or a service hiccup moves nothing): the request no
+      // longer waits for it, and says so (`browserNote`, in the agent's next text).
       const gone = record.browserPinned ? record.browser : null;
+      if (gone && now() - (goneSince.get(gone.id) ?? startedAt ?? 0) < pinGraceMs) continue;
       preferred ??= pickBrowser(candidates).browser;
       if (!preferred) return;
       record.browserPinned = false;
@@ -615,6 +617,10 @@ export function createDaemon(options = {}) {
       log('request_browser', { requestId: record.requestId, browserId: preferred.id, reason: gone ? 'unpinned' : 'assigned' });
     }
   }
+
+  // When each browser went away (the hub's `disconnected`, after its grace), for unpinning requests named for it.
+  const goneSince = new Map();
+  const pinGraceMs = options.pinGraceMs ?? 60_000;
 
   // The browser whose settings apply to a request: the one holding its tab, else the one it waits in.
   const browserOf = record => record?.lease?.browserId ?? record?.browser?.id ?? null;
@@ -861,6 +867,7 @@ export function createDaemon(options = {}) {
     record.lease = { leaseId, tabId: event.tabId, origin: event.origin, origins, grantedAt: grant.grantedAt,
       ...(browserId ? { browserId } : {}) };
     if (browserId) record.browser = browserRef(event.browser ?? { id: browserId });
+    delete record.browserNote;
     record.grant = grant;
     record.lastCallAt = now();
     hub.bindLease({
@@ -948,6 +955,8 @@ export function createDaemon(options = {}) {
     }
     record.browser = browserRef(event.browser ?? { id: event.browserId });
     record.browserPinned = true;
+    // The user chose where it waits: an earlier note about a browser that went away no longer applies.
+    delete record.browserNote;
     log('request_browser', { requestId: record.requestId, browserId: event.browserId, reason: 'moved' });
     changed();
     return replyTo(event, { requestId: record.requestId, browser: { ...record.browser } });
@@ -1166,6 +1175,13 @@ export function createDaemon(options = {}) {
   // A browser went away: only the leases it holds pause (every lease when the hub names no browser).
   function onDisconnected(event) {
     const browserId = typeof event?.browserId === 'string' ? event.browserId : null;
+    if (browserId) {
+      goneSince.set(browserId, now());
+      // Look again once a pinned request may move on.
+      setTimeout(() => {
+        if (!shuttingDown) changed();
+      }, pinGraceMs + 50).unref?.();
+    }
     for (const record of requests.values()) {
       if (record.state === 'active' && sameBrowser(record, browserId)) {
         interruptActive(record, 'disconnected');
@@ -1198,6 +1214,7 @@ export function createDaemon(options = {}) {
           onDisconnected(event);
           return changed();
         case 'connected':
+          if (typeof event.browserId === 'string') goneSince.delete(event.browserId);
           return changed();
         case 'move':
           return onMoveEvent(event);
@@ -2424,6 +2441,14 @@ export function createDaemon(options = {}) {
   // new requests still go to the browser used last after a restart or an update. Nothing secret is kept there.
   const knownBrowsersFile = () => join(paths.stateDir, 'browsers.json');
   async function loadKnownBrowsers() {
+    // A write cut short by a crash leaves its temporary file behind.
+    try {
+      for (const name of await readdir(paths.stateDir)) {
+        if (/^browsers\.json\..+\.tmp$/.test(name)) await unlink(join(paths.stateDir, name)).catch(() => {});
+      }
+    } catch {
+      // No state directory yet.
+    }
     try {
       const parsed = JSON.parse(await readFile(knownBrowsersFile(), 'utf8'));
       return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};

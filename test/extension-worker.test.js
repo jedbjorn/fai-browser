@@ -416,6 +416,11 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     const body = options.body ? JSON.parse(options.body) : {};
     if (state.http === 'fail') throw new TypeError('Failed to fetch');
     const respond = value => ({ ok: true, status: 200, async json() { return value; } });
+    // An id the service refuses (bound to another extension Origin).
+    if (state.refusedIds?.has(options.headers?.['X-Fai-Browser'])) {
+      sent.push({ via: 'http', type: pathname === '/commands' ? 'poll' : pathname.slice(1), refusedId: options.headers['X-Fai-Browser'] });
+      return { ok: false, status: 403, async json() { return { error: 'This browser id belongs to another extension', code: 'identity_refused' }; } };
+    }
     if (pathname === '/commands') {
       sent.push({ via: 'http', type: 'poll' });
       if (pollQueue.length) return respond(pollQueue.shift());
@@ -3027,4 +3032,38 @@ test('the long-poll fallback names this browser in every call', async () => {
   const hello = await h.waitFor(m => m.type === 'hello' && m.via === 'http');
   assert.equal(hello.headers['X-Fai-Browser'], h.local.browserId);
   assert.equal(hello.browser.product, 'chromium');
+});
+
+test('a refused browser id (4004) is given up once: a new id, a new connection; a second refusal stops visibly', async () => {
+  const h = harness({ timeScale: 0.01 });
+  await h.waitFor(m => m.type === 'hello');
+  const first = h.local.browserId;
+  h.socket.serverClose(4004);
+  await h.until(() => h.sockets.length === 2);
+  const second = h.local.browserId;
+  assert.notEqual(second, first, 'a new id, saved');
+  assert.equal(h.socket.url, `ws://127.0.0.1:4318/ext/ws?browser=${second}`);
+  await h.until(() => h.sent.filter(m => m.type === 'hello').length === 2);
+  // Refused again: no loop.
+  h.socket.serverClose(4004);
+  await h.until(() => h.session.connection?.conflict === 'identity');
+  await sleep(100);
+  assert.equal(h.sockets.length, 2);
+  assert.equal(h.local.browserId, second);
+  assert.match(h.local.status, /refused this browser's id, even a new one/);
+  h.alarmFire();
+  await sleep(30);
+  assert.equal(h.sockets.length, 2, 'the alarm does not retry it');
+  // Opening the popup tries again.
+  await h.send({ type: 'connect' }, { id: 'ext', url: 'chrome-extension://ext/popup.html' });
+  await h.until(() => h.sockets.length === 3);
+});
+
+test('a refused browser id over the long-poll fallback (403 identity_refused) is given up once too', async () => {
+  const h = harness({ ws: 'fail', timeScale: 0.002, local: { browserId: 'b-stalestale00000001' } });
+  h.state.refusedIds = new Set(['b-stalestale00000001']);
+  const hello = await h.waitFor(m => m.type === 'hello' && m.via === 'http' && !m.refusedId);
+  assert.notEqual(h.local.browserId, 'b-stalestale00000001');
+  assert.equal(hello.headers['X-Fai-Browser'], h.local.browserId);
+  assert.ok(h.sent.some(m => m.refusedId === 'b-stalestale00000001'));
 });

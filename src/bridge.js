@@ -66,6 +66,8 @@ export const BROWSER_ID = /^b-[A-Za-z0-9]{8,40}$/;
 // copied browser profile) shares the identity. Reported as extension_duplicate_identity.
 export const DUPLICATE_AFTER_MS = 10_000;
 const DUPLICATE_WARN_MS = 10 * 60_000;
+// How many browser ids (with their Origin and last use) the hub remembers.
+const KNOWN_MAX = 64;
 const BROWSER_PRODUCT = /^[a-z0-9-]{1,24}$/;
 // A connection that closes more than this many times within FLAP_WINDOW_MS is reported as flapping.
 export const FLAP_LIMIT = 8;
@@ -375,20 +377,35 @@ export function createHub({
     if (identity.legacy) return identity;
     const bound = boundOrigin(identity.id);
     if (bound && bound !== origin) {
-      logEvent('extension_identity_refused', { browserId: identity.id });
+      // Logged once per id; counted for status (the refused extension picks a new id and connects again).
+      if (!refusals.ids.has(identity.id)) logEvent('extension_identity_refused', { browserId: identity.id });
+      refusals.ids.add(identity.id);
+      refusals.count++;
+      refusals.lastAt = Date.now();
       return null;
     }
     return identity;
   }
+  const refusals = { count: 0, lastAt: 0, ids: new Set() };
 
   // Remembers a browser's last use and origin, and tells the daemon (which keeps them in its state directory).
   function noteUsage(browser, used = false) {
     if (browser.legacy) return;
     if (used) browser.usedAt = Date.now();
     const before = known.get(browser.id);
-    if (before && before.usedAt === browser.usedAt && before.origin === browser.origin) return;
+    const same = before && before.usedAt === browser.usedAt && before.origin === browser.origin;
+    // Least recently seen first: every connection moves its browser to the end.
+    known.delete(browser.id);
     known.set(browser.id, { usedAt: browser.usedAt, origin: browser.origin });
-    while (known.size > 64) known.delete(known.keys().next().value);
+    let evicted = false;
+    while (known.size > KNOWN_MAX) {
+      // Browsers that are not connected go first, so a long-lived browser keeps its binding and last use through any
+      // number of reinstalls elsewhere.
+      const idle = [...known.keys()].find(id => !browsers.get(id)?.connected && !browsers.get(id)?.socket?.open);
+      known.delete(idle ?? known.keys().next().value);
+      evicted = true;
+    }
+    if (same && !evicted) return;
     emit({ type: 'usage', browsers: Object.fromEntries(known) });
   }
 
@@ -443,7 +460,10 @@ export function createHub({
     if (!wasConnected) browser.connectedAt = Date.now();
     logEvent('extension_connected', { transport: effective, browserId: browser.id });
     emit({ type: 'connected', transport: effective, browserId: browser.id });
-    if (!wasConnected) publishAll();
+    if (!wasConnected) {
+      noteUsage(browser);
+      publishAll();
+    }
   }
 
   function connectionLost(browser) {
@@ -560,8 +580,18 @@ export function createHub({
   function snapshotFor(browser) {
     const names = displayNames();
     const own = view => !view?.browser?.id || view.browser.id === browser.id;
-    const marked = view => (view?.browser?.id ? { ...view, browser: { product: view.browser.product ?? null,
-      name: names.get(view.browser.id) ?? view.browser.name ?? null, mine: view.browser.id === browser.id } } : view);
+    // The lease (its leaseId and browserId) only for the browser that holds it: another one could claim them.
+    const marked = view => {
+      if (!view || typeof view !== 'object') return view;
+      const out = { ...view };
+      const holder = view.lease?.browserId ?? view.browser?.id ?? null;
+      if (view.lease && holder && holder !== browser.id) delete out.lease;
+      if (view.browser?.id) {
+        out.browser = { product: view.browser.product ?? null, name: names.get(view.browser.id) ?? view.browser.name ?? null,
+          mine: view.browser.id === browser.id };
+      }
+      return out;
+    };
     if (browser.legacy) return { requests: requests.filter(own).map(marked) };
     return { requests: requests.map(marked), browsers: browserList(browser, names) };
   }
@@ -1324,6 +1354,10 @@ export function createHub({
         .map(browser => `extension_duplicate_identity: a second FAI Browser install took over the connection of `
           + `${browserLabel(browser)} (${browser.id}) from a live one; a copied browser profile shares its identity. `
           + 'Remove the extension from one copy, or reinstall it there'),
+      ...(refusals.count && Date.now() - refusals.lastAt < DUPLICATE_WARN_MS
+        ? [`extension_identity_refused: ${refusals.count} connection${refusals.count === 1 ? '' : 's'} claimed a browser id `
+          + `bound to another extension Origin (last ${new Date(refusals.lastAt).toISOString()}); a reinstalled `
+          + 'extension picks a new id by itself, anything else is not that browser'] : []),
     ],
     // The settings a browser last reported (sanitizeSettings), or null.
     settingsOf: browserId => browsers.get(browserId)?.settings ?? null,
