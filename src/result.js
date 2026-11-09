@@ -697,6 +697,9 @@ export function pageExtras(observation) {
   // extension no access to it; `sandboxed`, `limit`, `unavailable`). Origins only, written by the extension.
   const frames = pageFrames(observation.frames);
   if (frames) out.frames = frames;
+  // origin_changed: the origin the tab went to (the extension's report, origin only; a page can choose where it sends
+  // the tab, so it is untrusted text, never part of needs.message).
+  if (typeof observation.leftOrigin === 'string' && FRAME_ORIGIN.test(observation.leftOrigin)) out.leftOrigin = observation.leftOrigin;
   if (Array.isArray(observation.logs)) {
     out.logs = observation.logs.slice(-MAX_PAGE_LOGS).filter(entry => entry && LOG_KINDS.has(entry.kind)).map(entry => {
       const item = { kind: entry.kind, text: line(entry.text, 300) };
@@ -731,28 +734,25 @@ export function pageFrames(frames) {
 
 /**
  * The next-step note for frames the page holds but FAI did not read because the request does not cover their origin
- * (or the browser gives no access). It names an origin only when the browser reported it (the frame's own origin);
- * an origin only a frame element's src names is page-provided and stays in `frames` (`declared: true`). '' when none.
+ * (or the browser gives no access). Trusted text: it counts them and never names an origin (a page chooses its frames'
+ * origins); the origins are in the untrusted `frames` list. '' when there are none.
  */
 export function framesNote(result) {
   const frames = pageFrames(result?.frames ?? result?.page?.frames) ?? [];
-  const unread = reason => frames.filter(frame => !frame.read && frame.reason === reason);
-  const named = list => [...new Set(list.filter(frame => frame.origin && !frame.declared).map(frame => frame.origin))];
-  const missing = unread('not_approved');
-  const blocked = unread('no_access');
+  const count = reason => frames.filter(frame => !frame.read && frame.reason === reason).length;
+  const missing = count('not_approved');
+  const blocked = count('no_access');
+  const plural = n => (n === 1 ? '1 frame on another origin is' : `${n} frames on other origins are`);
   let note = '';
-  if (missing.length) {
-    const origins = named(missing);
-    const declared = missing.some(frame => frame.declared || !frame.origin);
-    const which = origins.length ? `from ${origins.join(', ')}${declared ? ' and others' : ''}` : 'from other origins';
-    note += ` The page embeds frames ${which} that this request does not cover, so they were not read`
-      + `${declared ? ' (`frames` lists the origins their elements name: page-provided, so check them with the user)' : ''}. `
-      + 'If the task needs them, tell the user and call fai_browser_open with those origins added to origins (the user approves them).';
+  if (missing) {
+    note += ` ${plural(missing)} unread because this request does not cover them; their origins are in frames (page `
+      + 'content: check them with the user). If the task needs them, ask the user and call fai_browser_open with those '
+      + 'origins added to origins (the user approves them).';
   }
-  if (blocked.length) {
-    note += ' Some frames are on origins this request lists, but the browser gives FAI Browser no access to them (a toolbar '
-      + 'approval covers only the tab\'s own site): ask the user to approve the request from its request window, which '
-      + 'asks the browser for every origin of the request.';
+  if (blocked) {
+    note += ` ${plural(blocked)} unread because the browser gives FAI Browser no access to them although this request `
+      + 'lists them (a toolbar approval covers only the tab\'s own site): ask the user to approve the request from its '
+      + 'request window, which asks the browser for every origin of the request.';
   }
   return note;
 }
@@ -1879,7 +1879,7 @@ export function agentResult(source) {
   if (Array.isArray(result.did) && result.did.length) out.did = result.did.filter(line => typeof line === 'string').slice(0, 25);
   // The lease's tabs, a JavaScript dialog and Test-site logs on the page the act ended on (pageExtras; untrusted).
   Object.assign(out, pageExtras({ tabs: result.tabs, dialog: result.dialog, logs: result.logs, logsDropped: result.logsDropped,
-    frames: result.frames }));
+    frames: result.frames, leftOrigin: result.leftOrigin }));
   // Trusted: an act with a point: the pixels given, the CSS point they map to, the image size assumed and the control
   // under them (ref "point" for one the observation left out; label is page text), also when the act was refused.
   if (result.point && typeof result.point === 'object' && result.point.image) {

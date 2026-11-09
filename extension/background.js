@@ -2626,7 +2626,8 @@ function approvalSetting(cls) {
 // use shows its handle, its placeholder and the origin it came from).
 function approvalView(entry) {
   return {
-    id: entry.id, requestId: entry.requestId, origin: entry.origin, title: entry.title, cls: entry.cls, label: entry.label,
+    id: entry.id, requestId: entry.requestId, origin: entry.origin, ...(entry.frameOf ? { frameOf: entry.frameOf } : {}),
+    title: entry.title, cls: entry.cls, label: entry.label,
     ...(entry.total ? { total: entry.total } : {}), ...(entry.note ? { note: entry.note } : {}), level: entry.level,
     ...(entry.kind ? { kind: entry.kind, handle: entry.handle, secret: entry.secret } : {}),
     ...(entry.file ? { file: { ...entry.file } } : {}),
@@ -2721,8 +2722,11 @@ async function approveCommand(command) {
   if (info?.cls !== cls || typeof info.labelHash !== 'string') return { decision: 'refused', reason: 'class_mismatch' };
   expireApprovals();
   const upload = uploadUse ? uploadFileInfo(file) : null;
+  // A control in an approved cross-origin frame (frames.js): the card names the frame's own origin, "in a frame of"
+  // the page's, and the approval is bound to that origin too.
+  const inFrame = typeof info.frameOrigin === 'string' && globalThis.faiFrames?.frameApproved(info.frameOrigin) === true;
   const key = [tab.id, session.leaseId, info.revision, target ?? '', cls, info.labelHash, kind ?? 'click', handle ?? '',
-    upload ? `${upload.name}:${upload.size}` : ''].join('|');
+    upload ? `${upload.name}:${upload.size}` : '', inFrame ? info.frameOrigin : ''].join('|');
   let entry = [...approvals.values()].find(item => item.key === key);
   if (entry?.status === 'approved') return { decision: 'approved', approvalId: entry.approvalId };
   if (entry?.status === 'denied') return { decision: 'denied' };
@@ -2731,7 +2735,8 @@ async function approveCommand(command) {
     const now = Date.now();
     entry = {
       id: randomId(), key, tabId: tab.id, leaseId: session.leaseId, requestId: session.requestId ?? null,
-      origin: session.origin, title: reportedText(String(tab.title ?? '')).slice(0, 120), revision: info.revision,
+      origin: inFrame ? info.frameOrigin : session.origin, ...(inFrame ? { frameOf: session.origin } : {}),
+      title: reportedText(String(tab.title ?? '')).slice(0, 120), revision: info.revision,
       documentId: info.documentId, target, cls, label: String(info.label ?? '').slice(0, 200), labelHash: info.labelHash,
       total: typeof info.total === 'string' ? info.total.slice(0, 120) : null,
       note: typeof note === 'string' && note.trim() ? reportedText(note.replace(/\s+/g, ' ').trim()).slice(0, 200) : null,

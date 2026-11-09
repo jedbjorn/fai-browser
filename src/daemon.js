@@ -792,8 +792,12 @@ export function createDaemon(options = {}) {
    */
   function withLeftOrigin(record, result) {
     if (result?.code !== 'origin_changed' || !record.leftOrigin || typeof result.needs?.message !== 'string') return result;
-    result.needs.message = `${result.needs.message} The tab went to ${record.leftOrigin}, an origin this request does `
-      + 'not list. If the task needs that origin, ask the user, then request it in origins (a new fai_browser_open).';
+    // The origin itself goes in `leftOrigin` (untrusted: a page chooses where it sends the tab); the trusted message
+    // only says where to find it.
+    result.leftOrigin = record.leftOrigin;
+    result.needs.message = `${result.needs.message} The tab went to an origin this request does not list (leftOrigin; `
+      + 'page-chosen, check it with the user). If the task needs it, ask the user, then request it in origins (a new '
+      + 'fai_browser_open).';
     return result;
   }
 
