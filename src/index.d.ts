@@ -1703,12 +1703,43 @@ export interface ExtensionSettings {
 }
 
 export interface ExtensionInfo {
+  /** Any browser connected. */
   connected: boolean;
+  /** Of the browser used last. */
   transport: 'websocket' | 'longpoll' | 'none';
   version: string | null;
   lastSeenMs: number | null;
-  /** Null until an extension reported any settings. */
+  /** Null until an extension reported any settings (the last one any browser reported). */
   settings: ExtensionSettings | null;
+  /** Every connected browser (several may be paired at once). */
+  browsers?: BrowserInfo[];
+}
+
+/** A paired browser as requests name it. */
+export interface BrowserRef {
+  /** The extension install's id (stable per browser profile), or `origin-<hash>` for an extension older than 0.6. */
+  id: string;
+  /** firefox, chrome, chromium, edge, brave, opera, vivaldi. */
+  product: string | null;
+  name: string | null;
+}
+
+/** A browser connection as status lists it. */
+export interface BrowserInfo {
+  id: string;
+  product: string | null;
+  name: string;
+  version: string | null;
+  transport: 'websocket' | 'longpoll' | 'none';
+  connected: boolean;
+  connectedAt: string | null;
+  lastSeen: string | null;
+  /** The user's last approval, popup open or toolbar click in this browser; new requests go to the latest. */
+  lastUsedAt: string | null;
+  /** An extension that reports no identity (known by its Origin). */
+  legacy: boolean;
+  closesLastMinute: number;
+  leases: { leaseId: string; requestId: string | null; status: 'active' | 'paused' }[];
 }
 
 /** The budget in effect and where it comes from: the popup setting, config.json `budget`, or the defaults. */
@@ -1795,7 +1826,9 @@ export interface RequestView {
   createdAt: string;
   expiresAt: string | null;
   /** `origin` is the tab's origin at approval; `origins` what the lease covers (a root kept only with `domain` scope). */
-  lease: { leaseId: string; tabId: number; origin: string; origins: string[]; grantedAt: string } | null;
+  lease: { leaseId: string; tabId: number; origin: string; origins: string[]; grantedAt: string; browserId?: string } | null;
+  /** The browser that holds the tab once approved, else the one the request waits in; null while none is connected. */
+  browser?: BrowserRef | null;
   /** The level the user approved in the extension (null until approved). The ceiling for every run. */
   grant: Grant | null;
   activeRunId: string | null;
@@ -1822,6 +1855,12 @@ export interface TabRequestBody {
   instruction?: string;
   /** 60000-3600000; default 600000. */
   ttlMs?: number;
+  /**
+   * Which paired browser the request opens in: a product the extension reports (firefox, chrome, chromium, edge,
+   * brave, ...), its name or a browser id from status. It must be connected (409 browser_not_connected names the
+   * connected ones). Default: the browser the user used FAI in last.
+   */
+  browser?: string;
 }
 
 export interface TabRequestResponse {
@@ -1989,6 +2028,8 @@ export interface RunSummary {
 export interface DaemonStatus {
   daemon: { version: string; pid: number; port: number; uptimeMs: number; home: string; log: string | null };
   extension: ExtensionInfo;
+  /** Every browser the hub knows, connected or recently gone with a lease. */
+  browsers?: BrowserInfo[];
   /** Who chooses each action: `agent` (the host, the default) or `jev` (the experimental autopilot). */
   driver: 'agent' | 'jev';
   provider: { default: string | null; keyConfigured: boolean };

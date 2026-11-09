@@ -217,7 +217,9 @@ function permissionsOf(mode, record) {
   // before approval.
   const scope = record.grant ? (record.grant.scope === 'domain' ? 'domain' : 'origin') : null;
   return { requested: mode, granted, effective, testing: effective === 'testing', scope,
-    tabMode: record.grant?.tabMode ?? 'single' };
+    tabMode: record.grant?.tabMode ?? 'single',
+    // The browser that holds the tab, when several may be paired (issue #9).
+    ...(record.lease?.browserId && record.browser?.name ? { browser: { ...record.browser } } : {}) };
 }
 
 // Refusal text for a lease_level message that would raise the grant (src/bridge.js refuses it the same way).
