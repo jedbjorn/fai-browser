@@ -20,6 +20,39 @@ export function fillLevelSelect(select, options, value) {
   return select.value;
 }
 
+// A re-render that replaces the cards between a press and its click loses the click: the pressed button is gone, so
+// the click goes to an ancestor and the user has to click again. pressGuard(container) returns hold(run): while a
+// pointer is pressed inside `container` it keeps `run` (the latest one wins) and returns true; `run` then runs once the
+// press ends, after the click it makes (pointerup, mouseup and click are dispatched in one task). A press is held at
+// most PRESS_HOLD_MS, so a release outside the window never stops rendering.
+const PRESS_HOLD_MS = 2000;
+export function pressGuard(container) {
+  let pressed = false;
+  let pending = null;
+  let timer = null;
+  const release = () => {
+    if (!pressed) return;
+    pressed = false;
+    clearTimeout(timer);
+    setTimeout(() => {
+      const run = pending;
+      pending = null;
+      run?.();
+    }, 0);
+  };
+  container.addEventListener('pointerdown', () => {
+    pressed = true;
+    clearTimeout(timer);
+    timer = setTimeout(release, PRESS_HOLD_MS);
+  }, true);
+  for (const type of ['pointerup', 'pointercancel', 'blur']) window.addEventListener(type, release, true);
+  return run => {
+    if (!pressed) return false;
+    pending = run;
+    return true;
+  };
+}
+
 export function replaceCardsPreservingFocus(container, cards) {
   const active = document.activeElement;
   const previous = active?.closest?.('.request-card');

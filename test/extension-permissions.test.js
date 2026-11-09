@@ -764,8 +764,9 @@ test('popup: tab access defaults to single, multiple is visible at approval and 
 
 // Loads arm.html?tab=<tabId> with a fake chrome API: `arms` is chrome.storage.session.armedTabs, `requests` the
 // worker's request list, `permissions` chrome.storage.local.permissions.
-async function armPage(t, { arms, requests = [], permissions = null, tabId = 9, pinned = true, holdPrepare = false } = {}) {
-  const page = await browser.newPage({ viewport: { width: 400, height: 250 } });
+async function armPage(t, { arms, requests = [], permissions = null, tabId = 9, pinned = true, holdPrepare = false,
+  viewport = { width: 400, height: 250 } } = {}) {
+  const page = await browser.newPage({ viewport });
   t.after(() => page.close());
   await page.route('https://popup.test/**', async route => {
     const file = new URL(route.request().url()).pathname.slice(1);
@@ -1120,8 +1121,15 @@ test('popup: a press on Approve that spans a re-render still approves (the card 
   await page.mouse.up();
   await page.waitForFunction(() => __sent.some(message => message.type === 'start'), null, { timeout: 2000 }).catch(() => {});
   assert.equal((await page.evaluate(() => __sent)).filter(message => message.type === 'start').length, 1, 'one press, one approval');
-  // The deferred render ran once the press ended: the new request is listed.
-  await page.waitForFunction(() => document.querySelector('[data-request-id="req_9"]') !== null);
+  // A press that clicks nothing: the update waits for its end, then renders.
+  const other = await popup(t, { local: { ...PAIRED }, requests: [request(['http://localhost:3000'], 'read-only')] });
+  const text = await other.locator('.request-reason').boundingBox();
+  await other.mouse.move(text.x + 2, text.y + 2);
+  await other.mouse.down();
+  await emit(other, { requests: { newValue: [request(['http://localhost:3000'], 'read-only'), { ...request(['https://other.test'], 'read-only'), requestId: 'req_9' }] } });
+  assert.equal(await count(other, '[data-request-id="req_9"]'), 0, 'held while pressed');
+  await other.mouse.up();
+  await other.waitForFunction(() => document.querySelector('[data-request-id="req_9"]') !== null);
 });
 
 test('popup: a press on Approve once that spans an approvals update still approves', async t => {
@@ -1136,4 +1144,30 @@ test('popup: a press on Approve once that spans an approvals update still approv
   assert.deepEqual((await page.evaluate(() => __sent)).filter(message => message.type === 'approval_decision'),
     [{ type: 'approval_decision', id: 'approval-1', decision: 'approve' }]);
   await page.waitForFunction(() => document.querySelector('[data-approval-id="approval-2"]') !== null);
+});
+
+test('arm.html: while Chrome asks for site access the window says so in view, and another click changes nothing', async t => {
+  // The prompt window's own size (background.js PROMPT_SIZE, 440 x 430) less the window's title bar.
+  const page = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST], viewport: { width: 440, height: 400 }, pinned: false });
+  await page.waitForFunction(() => !document.querySelector('#approve').disabled && !document.querySelector('#pin-hint').hidden);
+  await page.evaluate(() => {
+    chrome.permissions.request = permission => {
+      __permissionCalls.push({ permission, active: navigator.userActivation.isActive });
+      return new Promise(done => { globalThis.__answerAccess = done; });
+    };
+  });
+  await page.click('#approve');
+  await page.waitForFunction(() => /Waiting for browser site access/.test(document.querySelector('#status').textContent));
+  assert.equal(await page.$eval('#approve', node => node.textContent), 'Approving…');
+  const visible = await page.$eval('#status', node => {
+    const box = node.getBoundingClientRect();
+    return box.top >= 0 && box.bottom <= innerHeight + 1 ? true : JSON.stringify({ top: box.top, bottom: box.bottom, innerHeight });
+  });
+  assert.equal(visible, true, 'the status line is in view (the small window scrolls to it)');
+  // The user clicks again while the browser prompt is open: nothing more is asked or sent.
+  await page.click('#approve', { force: true });
+  assert.equal(await page.evaluate(() => __permissionCalls.length), 1);
+  await page.evaluate(() => __answerAccess(true));
+  await page.waitForFunction(() => __closed > 0);
+  assert.equal(await page.evaluate(() => __sent.filter(message => message.type === 'arm_approve').length), 1);
 });

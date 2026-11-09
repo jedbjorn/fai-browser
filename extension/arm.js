@@ -28,6 +28,13 @@ let arms = [];
 let requests = [];
 let closing = false;
 
+// The status line is below the buttons: with a long request text or the pin hint it is out of the small window's view,
+// so what the click is waiting for is scrolled into view.
+function say(text) {
+  status.textContent = text;
+  status.scrollIntoView?.({ block: 'nearest' });
+}
+
 function close() {
   if (closing) return;
   closing = true;
@@ -147,7 +154,7 @@ approve.addEventListener('click', () => {
   prepared.then(intent => {
     if (intent) chrome.runtime.sendMessage({ type: 'arm_begin', tabId, token: intent.token }).catch(() => {});
   }, () => {});
-  status.textContent = 'Waiting for browser site access…';
+  say('Waiting for browser site access…');
   complete(prepared, pattern, access, level);
 });
 
@@ -158,7 +165,7 @@ async function complete(prepared, pattern, access, level) {
     if (!intent) throw new Error('This request changed. Check it and approve again.');
     // The worker read the tab's own URL: the access it needs is the one asked for, or one the browser already holds.
     if (intent.pattern !== pattern) granted = await chrome.permissions.contains({ origins: [intent.pattern] }).catch(() => false);
-    if (granted === true) status.textContent = 'Approving…';
+    if (granted === true) say('Approving…');
     const reply = await chrome.runtime.sendMessage({ type: 'arm_approve', tabId, ...intent, level, granted });
     if (reply?.error) throw new Error(reply.error);
     if (reply?.status !== 'active' || reply?.session?.requestId !== intent.requestId || reply?.session?.tabId !== tabId) {
@@ -166,7 +173,7 @@ async function complete(prepared, pattern, access, level) {
     }
     close();
   } catch (error) {
-    status.textContent = error.message;
+    say(error.message);
     approval = null;
     restoreApprovalFocus = true;
   } finally {
