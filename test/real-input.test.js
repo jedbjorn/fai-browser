@@ -283,7 +283,7 @@ test('trusted input: the sequences go to the worker as debugger steps, and nothi
   await run(`globalThis.chrome = { runtime: { sendMessage: async message => {
     (globalThis.__steps ||= []).push(message.steps);
     return { ok: true, dispatched: message.steps.filter(step => step.wait === undefined).length };
-  } } }; __faiInput.configure({ trusted: true }); true`);
+  } } }; __faiInput.configure({ trusted: true, typeBudgetMs: 5000 }); true`);
   const steps = () => run('(globalThis.__steps || []).splice(0)');
 
   assert.equal((await act(run, 'Press here', { type: 'click' })).error, undefined);
@@ -357,7 +357,7 @@ test('trusted input end to end: the steps, mapped by trusted-input.js and sent o
       __answers.set(id, resolve);
       __faiTrusted(JSON.stringify({ id, steps: message.steps, viewport: message.viewport }));
     }) } };
-    __faiInput.configure({ trusted: true }); true`);
+    __faiInput.configure({ trusted: true, typeBudgetMs: 5000 }); true`);
   assert.ok(contextId);
 
   assert.equal((await act(run, 'Count me', { type: 'click' })).error, undefined);
@@ -417,4 +417,133 @@ test('a plain-http page (no secure context): realistic click, typing and Enter w
   })()`);
   assert.equal(enter, 'ok');
   assert.deepEqual(await page.evaluate(() => window.log), ['click', 'submit']);
+});
+
+// Symbols, accents, other scripts, emoji (with a skin-tone modifier), a newline: typed key by key in full, typed in
+// part with the rest inserted, and as a secret, the field ends up with exactly the text.
+const TRICKY = 'Ünïcode — 日本 🎉👍🏽 "quotes" <tag> & {x}~ |\\ `tick` 50% off!\nLine 2: Aa1@#$^*()_+=[];\',./?';
+const RHYTHM_PAGE = `<!doctype html><title>Rhythm</title>
+  <textarea id="t" aria-label="Notes"></textarea><input id="i" aria-label="Name"><input id="p" type="password" aria-label="PIN">
+  <script>
+    window.keys = [];
+    for (const type of ['keydown', 'keyup']) addEventListener(type, e => keys.push([type, e.key, e.code, performance.now(), e.isTrusted, e.shiftKey]), true);
+  </script>`;
+
+// input.js's type() on a field, straight from the isolated world (no fallback: what the keys produced is what shows).
+function typeInto(run, selector, text, options = {}) {
+  return run(`(async () => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    const r = await __faiInput.type(el, ${JSON.stringify(text)}, ${JSON.stringify(options)});
+    return { typed: r.typed, chunked: r.chunked, fallback: r.fallback, trusted: r.trusted ?? false, value: el.value };
+  })()`);
+}
+
+// The page's key log since the last call: rollovers (a key down while another non-modifier key is down), the least
+// time from a keydown to the next keyup, the keydown intervals, and the letters that came with the wrong Shift.
+async function keyRhythm(page) {
+  const keys = await page.evaluate(() => window.keys.splice(0));
+  const held = new Map();
+  let rollovers = 0;
+  let lastDown = null;
+  let quickestUp = Infinity;
+  let downs = 0;
+  const wrongShift = [];
+  const intervals = [];
+  for (const [type, key, code, at, , shiftKey] of keys) {
+    if (key === 'Shift' || key === 'Control' || key === 'Meta') continue;
+    const id = code || key;
+    if (type === 'keydown') {
+      downs++;
+      if (held.size) rollovers++;
+      if (lastDown !== null) intervals.push(at - lastDown);
+      lastDown = at;
+      held.set(id, at);
+      if (/^[a-z]$/i.test(key) && shiftKey !== (key !== key.toLowerCase())) wrongShift.push(key);
+    } else {
+      if (lastDown !== null) quickestUp = Math.min(quickestUp, at - lastDown);
+      held.delete(id);
+    }
+  }
+  const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+  const sd = Math.sqrt(intervals.reduce((a, b) => a + (b - mean) ** 2, 0) / intervals.length);
+  return { keys, downs, rollovers, quickestUp, cv: sd / mean, mean, wrongShift };
+}
+
+test('typing rhythm: exact values for symbols, unicode, emoji and newlines, in full, in part and as a secret; keys roll over', async t => {
+  const { page, run } = await open(t, RHYTHM_PAGE);
+  const chars = Array.from(TRICKY);
+  // In full: every character a key, with the page seeing a human rhythm.
+  await run('__faiInput.configure({ typeBudgetMs: 60000, maxTyped: 1000 }); true');
+  await page.evaluate(() => { window.keys.length = 0; });
+  const full = await typeInto(run, '#t', TRICKY);
+  assert.deepEqual({ ...full, value: full.value === TRICKY }, { typed: chars.length, chunked: false, fallback: false, trusted: false, value: true });
+  const rhythm = await keyRhythm(page);
+  t.diagnostic(`full: ${rhythm.downs} keys, mean interval ${rhythm.mean.toFixed(0)} ms, CV ${rhythm.cv.toFixed(2)}, `
+    + `${rhythm.rollovers} rollovers, quickest keyup ${rhythm.quickestUp.toFixed(1)} ms after a keydown`);
+  assert.equal(rhythm.downs, chars.length);
+  assert.deepEqual(rhythm.wrongShift, []);
+  assert.ok(rhythm.rollovers > 0, 'some keys go down before the previous one is up');
+  assert.ok(rhythm.quickestUp >= 5, `a keyup ${rhythm.quickestUp} ms after a keydown`);
+  assert.ok(rhythm.cv > 0.25, `keydown intervals CV ${rhythm.cv}`);
+  // In part: the default budget, the rest in one insertion; a second fill replaces (select-all) the first.
+  await run('__faiInput.configure({ typeBudgetMs: 1000, maxTyped: 40 }); true');
+  const part = await typeInto(run, '#t', TRICKY);
+  assert.equal(part.chunked, true);
+  assert.ok(part.typed >= 3 && part.typed < 40, `typed ${part.typed}`);
+  assert.equal(part.value, TRICKY);
+  // An input takes no line break; a line of the text arrives exactly.
+  const line = TRICKY.split('\n')[1];
+  assert.equal((await typeInto(run, '#i', line)).value, line);
+  // A secret: planned blind, exact.
+  for (const secret of ['Tr0ub4dor&3!', 'pässwörd 🎉 2', 'aB']) {
+    const typed = await typeInto(run, '#p', secret, { secret: true });
+    assert.equal(typed.value, secret);
+    assert.equal(typed.fallback, false);
+  }
+});
+
+test('typing rhythm through trusted input (CDP): exact values, Shift on the right keys, in full, in part and as a secret', async t => {
+  const { page, run, cdp } = await open(t, RHYTHM_PAGE);
+  const worker = vm.createContext({ chrome: {}, setTimeout, clearTimeout });
+  vm.runInContext(await readFile(new URL('extension/trusted-input.js', ROOT), 'utf8'), worker);
+  await cdp.send('Runtime.enable');
+  await cdp.send('Runtime.addBinding', { name: '__faiTrusted', executionContextName: 'fai-test' });
+  cdp.on('Runtime.bindingCalled', async ({ name, payload, executionContextId }) => {
+    if (name !== '__faiTrusted') return;
+    const { id, steps, viewport } = JSON.parse(payload);
+    let dispatched = 0;
+    for (const raw of steps) {
+      const step = worker.cleanTrustedStep(raw, viewport);
+      assert.ok(step, JSON.stringify(raw));
+      if (step.wait !== undefined) await new Promise(resolve => setTimeout(resolve, step.wait));
+      else {
+        await cdp.send(step.method, JSON.parse(JSON.stringify(step.params)));
+        dispatched++;
+      }
+    }
+    await cdp.send('Runtime.evaluate', { contextId: executionContextId, expression: `globalThis.__answer(${id}, ${dispatched})` }).catch(() => {});
+  });
+  await run(`globalThis.__answers = new Map();
+    globalThis.__answer = (id, dispatched) => { __answers.get(id)?.({ ok: true, dispatched }); __answers.delete(id); };
+    globalThis.chrome = { runtime: { sendMessage: message => new Promise(resolve => {
+      const id = __answers.size + Math.floor(Math.random() * 1e9);
+      __answers.set(id, resolve);
+      __faiTrusted(JSON.stringify({ id, steps: message.steps, viewport: message.viewport }));
+    }) } };
+    __faiInput.configure({ trusted: true, typeBudgetMs: 60000, maxTyped: 1000 }); true`);
+  await page.evaluate(() => { window.keys.length = 0; });
+  // 63 keys fit the worker's 400 steps.
+  const text = Array.from(TRICKY).slice(0, 60).join('');
+  const full = await typeInto(run, '#t', text);
+  assert.deepEqual(full, { typed: Array.from(text).length, chunked: false, fallback: false, trusted: true, value: text });
+  const rhythm = await keyRhythm(page);
+  t.diagnostic(`trusted full: ${rhythm.downs} keys, mean interval ${rhythm.mean.toFixed(0)} ms, CV ${rhythm.cv.toFixed(2)}, ${rhythm.rollovers} rollovers`);
+  assert.ok(rhythm.keys.every(entry => entry[4]), 'every key event trusted');
+  assert.deepEqual(rhythm.wrongShift, []);
+  await run('__faiInput.configure({ typeBudgetMs: 1000, maxTyped: 40 }); true');
+  const part = await typeInto(run, '#t', TRICKY);
+  assert.equal(part.chunked, true);
+  assert.equal(part.value, TRICKY, 'select-all, keys, then the rest as insertText');
+  const secret = await typeInto(run, '#p', 'Tr0ub4dor&3! ü', { secret: true });
+  assert.equal(secret.value, 'Tr0ub4dor&3! ü');
 });
