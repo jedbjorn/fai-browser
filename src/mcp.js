@@ -988,6 +988,11 @@ function pageExtraLines(result) {
     lines.push(`log ${entry.kind}${entry.status ? ` ${entry.status}` : ''}${request}: ${oneLine(entry.text, 200)}`);
   }
   if (result.logsDropped) lines.push(`(${result.logsDropped} older log entries dropped)`);
+  // Cross-origin frames: the ones read (their controls carry the id) and the ones not read, with why.
+  if (Array.isArray(result.frames) && result.frames.length) {
+    lines.push(`frames: ${result.frames.map(frame => (frame.read ? `${frame.id} ${frame.origin} (read)`
+      : `${frame.origin ?? 'unknown origin'} (not read: ${frame.reason}${frame.declared ? ', named by its element' : ''})`)).join(' | ')}`);
+  }
   return lines;
 }
 

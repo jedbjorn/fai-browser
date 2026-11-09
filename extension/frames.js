@@ -203,7 +203,8 @@
         const probe = byPath.get(key);
         const origin = probe ? probe.result.origin : slot.declared;
         if (!probe) {
-          unread.push({ origin, reason: origin && frameApproved(origin) ? 'no_access' : 'not_approved' });
+          // Only the frame element's src names this origin (page-provided): `declared`.
+          unread.push({ origin, reason: origin && frameApproved(origin) ? 'no_access' : 'not_approved', declared: true });
         } else if (probe.result.opaque) {
           unread.push({ origin, reason: 'sandboxed' });
         } else if (!frameApproved(origin)) {
@@ -337,10 +338,10 @@
     const named = new Set();
     for (const entry of unread) {
       const origin = cleanOrigin(entry.origin);
-      const key = `${origin}|${entry.reason}`;
+      const key = `${origin}|${entry.reason}|${entry.declared === true}`;
       if (named.has(key) || listed.length >= FRAME_READ_MAX + FRAME_UNREAD_MAX) continue;
       named.add(key);
-      listed.push({ origin, read: false, reason: entry.reason });
+      listed.push({ origin, read: false, reason: entry.reason, ...(entry.declared ? { declared: true } : {}) });
     }
     if (unread.length) warnings.add('cross_origin_frame');
     out.warnings = [...warnings];

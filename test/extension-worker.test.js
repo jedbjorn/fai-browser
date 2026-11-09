@@ -3208,7 +3208,8 @@ test('frames: a frame the request does not cover is never read; the warning and 
   const log = frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
   const observation = await observed(h);
   assert.deepEqual(log, [], 'no script reached any frame');
-  assert.deepEqual(observation.frames, [{ origin: PORTAL, read: false, reason: 'not_approved' }]);
+  assert.deepEqual(observation.frames, [{ origin: PORTAL, read: false, reason: 'not_approved', declared: true }],
+    'only the element names that origin');
   assert.ok(observation.warnings.includes('cross_origin_frame'));
   assert.ok(!observation.controls.some(control => String(control.id).startsWith('f')));
   assert.doesNotMatch(observation.text, /Tenant/);
@@ -3230,7 +3231,7 @@ test('frames: a frame the request does not cover is never read; the warning and 
   const third = await started({ leaseOrigins: [ORIGIN, PORTAL] });
   third.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
   frameWorld(third, []);
-  assert.deepEqual((await observed(third)).frames, [{ origin: PORTAL, read: false, reason: 'no_access' }]);
+  assert.deepEqual((await observed(third)).frames, [{ origin: PORTAL, read: false, reason: 'no_access', declared: true }]);
 });
 
 test('frames: an act on a frame control runs in that frame on the frame revision; the result is the merged page', async () => {

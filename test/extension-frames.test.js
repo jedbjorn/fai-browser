@@ -246,6 +246,6 @@ test('exact-host access only: an approved frame on a host the browser gives no a
   assert.doesNotMatch(observation.text, /Widget text/);
   assert.match(observation.text, /Near frame text/, 'the reachable approved frame is read');
   assert.deepEqual(observation.frames, [{ id: 'f1', origin: nearOrigin, read: true },
-    { origin: frameOrigin, read: false, reason: 'no_access' }]);
+    { origin: frameOrigin, read: false, reason: 'no_access', declared: true }]);
   assert.ok(observation.warnings.includes('cross_origin_frame'));
 });
