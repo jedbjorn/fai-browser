@@ -4,7 +4,7 @@
 // and tab (from the browser), the kind, the control's label in quotes as page text, a total the page shows and the
 // agent's one line (both marked untrusted); Approve once or Deny, neither focused first. Shared with approve.js
 // (KIND_TEXT). Everything a page or an agent wrote is set with textContent only.
-import { replaceCardsPreservingFocus } from './ui.js';
+import { pressGuard, replaceCardsPreservingFocus } from './ui.js';
 
 export const KIND_TEXT = {
   purchase: 'A purchase or payment step: the agent may click this one button once. FAI never fills payment details.',
@@ -140,8 +140,10 @@ async function sendDecision(id, decision) {
  * following storage changes.
  */
 export async function mountApprovals({ list = null, settings = null } = {}) {
+  // A press on Approve once survives an approvals update (ui.js pressGuard): the update renders after the click.
+  const hold = list ? pressGuard(list) : () => false;
   const renderCards = entries => {
-    if (!list) return;
+    if (!list || hold(() => renderCards(entries))) return;
     const pending = (Array.isArray(entries) ? entries : []).filter(entry => entry && typeof entry.id === 'string');
     replaceCardsPreservingFocus(list, pending.map(entry => approvalCard(entry, sendDecision)));
     list.hidden = pending.length === 0;

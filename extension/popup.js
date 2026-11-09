@@ -14,7 +14,7 @@ import { mountUpdate } from './update-card.js';
 import { agentLabel, mountInvite } from './invite-card.js';
 import {
   PIN_HINT, TESTING_WARNING, actionShortcut, allSitesGranted, askSiteAccess, element, fillLevelSelect, iconPinned,
-  orShortcut, removeAllSites, replaceCardsPreservingFocus, requestAllSites,
+  orShortcut, pressGuard, removeAllSites, replaceCardsPreservingFocus, requestAllSites,
 } from './ui.js';
 
 // The approval window the worker opens when an agent asks (popup.html?window=1): it has no current tab of its own,
@@ -56,6 +56,8 @@ const pause = document.getElementById('pause');
 const stop = document.getElementById('stop');
 const controls = document.getElementById('controls');
 const requestList = document.getElementById('request-list');
+// Re-renders wait while Approve (or any control in the list) is pressed, so the press still clicks it (pressGuard).
+const holdRender = pressGuard(requestList);
 const requestsEmpty = document.getElementById('requests-empty');
 const transportLabel = document.getElementById('transport');
 const defaultLevel = document.getElementById('default-level');
@@ -578,6 +580,7 @@ function renderSetup() {
 }
 
 function render() {
+  if (holdRender(render)) return;
   const active = view.status === 'active';
   const servingId = active ? view.session?.requestId ?? null : null;
   const visible = (view.requests ?? []).filter(request => {
