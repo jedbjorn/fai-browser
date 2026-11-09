@@ -19,10 +19,12 @@ import { join, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { headlessEnv } from '../scripts/headless-env.mjs';
 import { createCompanion } from '../bench/companion.js';
+import { loadFakes } from './helpers/secret-fakes.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const SECRET = 'disposable-frames-pairing-token-1234567890';
-const TOKEN = 'ghp_16C7e42F292c6912E7710c838347Ae178B4a';
+// A built fake GitHub token (test/helpers/secret-fakes.js), never a literal.
+const TOKEN = loadFakes().github;
 const sleep = ms => new Promise(done => setTimeout(done, ms));
 
 function serve(pages) {
