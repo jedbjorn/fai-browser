@@ -120,8 +120,9 @@ export function mountInvite({ root, context, onState, say }) {
     busy = true;
     render();
     say(agent ? `Inviting ${agentLabel(agent)}…` : 'Creating the invite…');
+    // The tab and origin shown in this popup: the worker binds nothing if the active tab is no longer that page.
     asked.granted.then(() => chrome.runtime.sendMessage({ type: 'invite', sessionId: agent?.sessionId ?? null, level: chosen,
-      text: text.value.trim() })).then(reply => {
+      text: text.value.trim(), tabId: ctx.currentTabId, origin: ctx.currentOrigin })).then(reply => {
       if (reply?.error) throw new Error(reply.error);
       text.value = '';
       say('');
@@ -266,10 +267,17 @@ export function mountInvite({ root, context, onState, say }) {
       && !(agent && request.owner?.sessionId === agent.sessionId)) ?? null;
   }
 
+  // Started at (so two look-alike sessions of one repo can be told apart), last activity, and how it is reached.
   function hint(agent) {
-    if (agent.host === 'codex' && !agent.ready) return 'not ready: ask it to run any FAI command';
+    if (agent.host === 'codex' && !agent.ready) return `${startedLabel(agent)}not ready: ask it to run any FAI command`;
     const when = since(agent.lastActiveAt);
-    return agent.wake === 'none' ? [when, 'you paste a line'].filter(Boolean).join(' · ') : when;
+    return `${startedLabel(agent)}${[when, agent.wake === 'none' ? 'you paste a line' : ''].filter(Boolean).join(' · ')}`;
+  }
+
+  function startedLabel(agent) {
+    const at = Date.parse(agent.startedAt ?? '');
+    if (!Number.isFinite(at)) return '';
+    return `started ${new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · `;
   }
 
   function render() {

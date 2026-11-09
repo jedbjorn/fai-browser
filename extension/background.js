@@ -1184,6 +1184,7 @@ function cleanAgents(data) {
     .filter(item => typeof item?.sessionId === 'string')
     .map(item => ({ sessionId: text(item.sessionId, 64), host: AGENT_HOSTS.includes(item.host) ? item.host : 'unknown',
       repo: text(item.repo, 60) || 'unknown', lastActiveAt: text(item.lastActiveAt, 40) || null,
+      startedAt: text(item.startedAt, 40) || null,
       wake: ['claude-socket', 'codex-queue'].includes(item.wake) ? item.wake : 'none', ready: item.ready !== false }));
   return { sessions };
 }
@@ -3378,6 +3379,10 @@ async function startSession(message, given = null) {
   if (!tab?.url || !/^https?:/.test(tab.url)) throw new Error('Select an HTTP page');
   if (invite && tab.incognito) throw new Error('Invite works in a normal window, not a private one.');
   const origin = new URL(tab.url).origin;
+  // The invite names the tab and origin the popup showed: a tab that changed since is never bound.
+  if (invite && (invite.tabId !== tab.id || invite.origin !== origin)) {
+    throw new Error('This tab changed since the popup opened. Nothing was shared: open the popup again.');
+  }
   if (!requestId && !invite) requestId = pickRequest(origin);
   // The level the user picked on the request card. Anything unknown or missing is read-only.
   const level = cleanLevel(message.level) ?? 'read-only';
@@ -3877,7 +3882,9 @@ async function inviteAgent(message) {
   if (!connected) throw new Error('Connect to the FAI service first.');
   const sessionId = typeof message.sessionId === 'string' && message.sessionId ? message.sessionId.slice(0, 64) : null;
   const text = typeof message.text === 'string' ? message.text.slice(0, 500) : '';
-  await startSession({ type: 'start', level, invite: { sessionId, text } });
+  // The tab the user saw in the popup, checked against the active tab before anything is bound (startSession).
+  if (!Number.isInteger(message.tabId) || typeof message.origin !== 'string') throw new Error('Open the popup on the tab to invite to.');
+  await startSession({ type: 'start', level, invite: { sessionId, text, tabId: message.tabId, origin: message.origin } });
   return { inviteId: session?.inviteId ?? null, requestId: session?.requestId ?? null };
 }
 

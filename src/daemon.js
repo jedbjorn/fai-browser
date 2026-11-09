@@ -2,7 +2,7 @@
 // else, handled by the hub). It owns tab requests and leases, runs, traces, retention, provider config and the
 // Jev key. See the Phase 2 design, sections 1 and 2.
 import http from 'node:http';
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -105,7 +105,8 @@ export const INVITE_TTL_MS = 10 * 60_000;
 export const INVITES_PER_MINUTE = 6;
 const INVITE_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
 const INVITE_KEEP_MS = 60 * 60_000;
-const SESSION_KEYS = new Set(['host', 'hostSessionId', 'repo', 'pid', 'startedAt', 'wake', 'client']);
+const SESSION_KEYS = new Set(['host', 'hostSessionId', 'repo', 'pid', 'startedAt', 'wake', 'client', 'previous']);
+const CHALLENGE = /^[A-Za-z0-9_-]{16,64}$/;
 const SESSION_UPDATE_KEYS = new Set(['lastToolCallAt', 'hostSessionId', 'wake', 'maxMs']);
 const WAIT_KEYS = new Set(['requestId', 'runId', 'maxMs', 'afterStep', 'while']);
 
@@ -746,6 +747,51 @@ export function createDaemon(options = {}) {
     changed();
   }
 
+  /**
+   * Who may use a request (observe, act, run, release): every request a client made stays open to any holder of the
+   * client token, as before (the CLI's `wait --until active`, an SDK caller). A tab the user invited an agent to is
+   * personal: until an agent joins (`invite_not_joined`) nobody uses it, and after that only the joining session
+   * (`X-Fai-Session`, `not_owner`).
+   */
+  function checkUse(record, caller) {
+    const invite = record.invite ? invites.get(record.invite) : null;
+    if (!invite) return;
+    if (invite.state === 'open') {
+      throw new HttpError(409, 'invite_not_joined', 'This tab was offered by invite and nobody joined it yet: call '
+        + 'fai_browser_open with its inviteId (it is used once, by the agent it was meant for).');
+    }
+    if (!record.ownerSession || caller?.sessionId !== record.ownerSession) {
+      throw new HttpError(403, 'not_owner', 'This tab belongs to the agent session the user invited to it.');
+    }
+  }
+
+  // Whether `caller` may see an invited tab in full: its addressee before the join, its owner after.
+  function seesInvite(record, caller) {
+    const invite = record.invite ? invites.get(record.invite) : null;
+    if (!invite) return true;
+    if (!caller) return false;
+    if (record.ownerSession) return caller.sessionId === record.ownerSession;
+    return invite.state === 'open' && invite.sessionId === caller.sessionId;
+  }
+
+  // A request as `caller` may see it: in full, or for an invited tab that is not theirs only its id and state (the CLI's
+  // resume wait still works; the personal tab's origin and invite id stay hidden).
+  function viewFor(record, caller) {
+    if (seesInvite(record, caller)) return view(record);
+    return { requestId: record.requestId, state: record.state, stateReason: record.stateReason, invited: true };
+  }
+
+  // The requests a client lists: an invited tab only for its addressee or owner.
+  function clientViews(caller) {
+    return [...requests.values()].filter(record => LIVE.has(record.state) && seesInvite(record, caller)).map(view);
+  }
+
+  // Open invites a client may see: those for no session in particular (the user's copy line names one) and its own.
+  function inviteViewsFor(caller) {
+    return [...invites.values()].filter(invite => invite.state === 'open'
+      && (!invite.sessionId || invite.sessionId === caller?.sessionId)).map(inviteView);
+  }
+
   function getRecord(requestId) {
     if (typeof requestId !== 'string' || !requestId) throw badOptions('requestId is required');
     const record = requests.get(requestId);
@@ -965,6 +1011,17 @@ export function createDaemon(options = {}) {
     return owner ? { sessionId: owner.sessionId, host: owner.host, repo: owner.repo } : null;
   }
 
+  // Re-registration after a drop: requests and invites of the old session id move to the new one.
+  function transferOwner(from, to) {
+    for (const record of requests.values()) if (record.ownerSession === from) record.ownerSession = to;
+    for (const invite of invites.values()) {
+      if (invite.sessionId === from) invite.sessionId = to;
+      if (invite.joinedBy === from) invite.joinedBy = to;
+    }
+    log('session_replaced', { from, to });
+    changed();
+  }
+
   const inviteLog = new Map(); // browserId -> invite times (ms), for the rate limit
   function inviteView(invite) {
     const wake = invite.wakeId ? sessions.wake(invite.wakeId) : null;
@@ -1123,7 +1180,7 @@ export function createDaemon(options = {}) {
     sessions.sweep();
     replyTo(event, {
       sessions: sessions.views().map(item => ({ sessionId: item.sessionId, host: item.host, repo: item.repo,
-        lastActiveAt: item.lastActiveAt, wake: item.wake, ready: item.ready })),
+        startedAt: item.startedAt, lastActiveAt: item.lastActiveAt, wake: item.wake, ready: item.ready })),
       invites: [...invites.values()].filter(invite => invite.state === 'open' && (!event.browserId || invite.browserId === event.browserId))
         .map(inviteView),
     });
@@ -1145,6 +1202,13 @@ export function createDaemon(options = {}) {
         cancelled: 'was cancelled by the user' }[invite.state] ?? invite.state;
       throw new HttpError(409, `invite_${invite.state}`, `This invite ${why}. Ask the user to invite you again from the FAI popup.`);
     }
+    if (!session) {
+      throw new HttpError(403, 'session_required', 'Joining an invite needs a registered agent session (the FAI MCP '
+        + 'server registers by itself; set no FAI_MCP_REGISTRY=0).');
+    }
+    if (invite.sessionId && invite.sessionId !== session.sessionId) {
+      throw new HttpError(403, 'invite_for_another_session', 'This invite is for another agent session.');
+    }
     const record = requests.get(invite.requestId);
     if (!record || !LIVE.has(record.state)) {
       endInvite(invite, 'revoked', 'request_ended');
@@ -1152,9 +1216,9 @@ export function createDaemon(options = {}) {
     }
     invite.state = 'joined';
     invite.joinedAt = now();
-    invite.joinedBy = session?.sessionId ?? null;
-    invite.joinedView = session ? sessions.view(session.sessionId) : null;
-    record.ownerSession = session?.sessionId ?? record.ownerSession;
+    invite.joinedBy = session.sessionId;
+    invite.joinedView = sessions.view(session.sessionId);
+    record.ownerSession = session.sessionId;
     record.lastCallAt = now();
     log('invite_joined', { inviteId: invite.inviteId, requestId: record.requestId, sessionId: invite.joinedBy });
     changed();
@@ -1853,11 +1917,19 @@ export function createDaemon(options = {}) {
 
   // --- route handlers ---------------------------------------------------------------------------------------
 
-  function health() {
-    return { ok: true, service: SERVICE_NAME, version, pid: process.pid };
+  /**
+   * The open health answer. With `?challenge=<nonce>` it also proves the daemon holds the client token (an HMAC of the
+   * nonce under it), so an MCP server checks it is talking to the real daemon before it registers (src/mcp-session.js):
+   * a process squatting on the port learns no token and cannot inject wakes.
+   */
+  function health(url) {
+    const challenge = url?.searchParams?.get('challenge');
+    const proof = typeof challenge === 'string' && CHALLENGE.test(challenge) && token
+      ? createHmac('sha256', token).update(`fai-health:${challenge}`).digest('hex') : undefined;
+    return { ok: true, service: SERVICE_NAME, version, pid: process.pid, ...(proof ? { proof } : {}) };
   }
 
-  function statusView() {
+  function statusView(caller = null) {
     const all = [...runs.values()];
     return {
       daemon: {
@@ -1878,10 +1950,11 @@ export function createDaemon(options = {}) {
       budget: effectiveBudget(),
       // Newer release (src/update.js): tell the user; only their popup click or `fai-browser update` installs it.
       update: updates.view(),
-      requests: liveViews(),
-      // The live coding-agent sessions (no keys) and the open invites (docs/REFERENCE.md "Invites and wakes").
+      requests: clientViews(caller),
+      // The live coding-agent sessions (no keys) and the open invites this caller may join (docs/REFERENCE.md
+      // "Invites and wakes").
       sessions: sessions.views(),
-      invites: [...invites.values()].filter(invite => invite.state === 'open').map(inviteView),
+      invites: inviteViewsFor(caller),
       runs: {
         active: all.filter(run => run.state === 'running').map(runSummary),
         recent: all.filter(run => run.state === 'done').sort((a, b) => b.finishedAt - a.finishedAt).slice(0, 10)
@@ -1986,7 +2059,7 @@ export function createDaemon(options = {}) {
     return { requestId: record.requestId, state: record.state };
   }
 
-  async function waitRoute(body, signal) {
+  async function waitRoute(body, signal, caller = null) {
     checkKeys(body, WAIT_KEYS);
     const maxMs = clampWait(body.maxMs, DEFAULT_WAIT_MS, maxWaitMs);
     const started = Date.now();
@@ -1999,6 +2072,7 @@ export function createDaemon(options = {}) {
       }
       const afterStep = optionalInt(body, 'afterStep', 0, 10_000);
       const record = requests.get(run.requestId);
+      if (record) checkUse(record, caller);
       if (record) touch(record);
       await waitUntil(() => run.state === 'done' || (afterStep !== undefined && run.steps > afterStep), maxMs, signal);
       return runResponse(run);
@@ -2015,7 +2089,7 @@ export function createDaemon(options = {}) {
     await waitUntil(() => !watched.includes(record.state), maxMs, signal);
     touch(record);
     // `budget`: the call budget in effect for this request (the MCP server reads its ceiling from here).
-    return { state: record.state, request: view(record), waitedMs: Date.now() - started,
+    return { state: record.state, request: viewFor(record, caller), waitedMs: Date.now() - started,
       budget: effectiveBudget(browserOf(record)) };
   }
 
@@ -2061,9 +2135,10 @@ export function createDaemon(options = {}) {
     };
   }
 
-  async function runsRoute(body, signal) {
+  async function runsRoute(body, signal, caller = null) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'bad_request', 'Body must be a JSON object');
     const record = getRecord(body.requestId);
+    checkUse(record, caller);
     touch(record);
     const operation = body.operation ?? 'run';
     if (operation !== 'run' && operation !== 'step') throw badOptions('operation must be run or step');
@@ -2098,9 +2173,10 @@ export function createDaemon(options = {}) {
     return awaitRun(run, spec.waitMs, signal);
   }
 
-  async function actRoute(body, signal) {
+  async function actRoute(body, signal, caller = null) {
     checkKeys(body, ACT_KEYS);
     const record = getRecord(body.requestId);
+    checkUse(record, caller);
     touch(record);
     // An offered action (actionId), a point (pixels of the screenshot of `revision`, a guarded click on whatever
     // control is there), or a host-composed act (checkActChoice, against the offer below).
@@ -2291,9 +2367,10 @@ export function createDaemon(options = {}) {
     return terms;
   }
 
-  async function observeRoute(body) {
+  async function observeRoute(body, caller = null) {
     checkKeys(body, OBSERVE_KEYS);
     const record = getRecord(body.requestId);
+    checkUse(record, caller);
     touch(record);
     const spec = {
       mode: checkMode(body, record),
@@ -2649,16 +2726,23 @@ export function createDaemon(options = {}) {
   async function dispatch(route, req, url, signal) {
     const body = req.method === 'POST' || req.method === 'DELETE' ? await readJsonBody(req) : {};
     const client = clientName(req.headers['x-fai-client']);
+    // The agent session the call comes from (X-Fai-Session), when it names one that authenticates.
+    const caller = route.open ? null : sessionFrom(req, { optional: true });
     switch (route.name) {
       case 'health':
-        return { body: health() };
+        return { body: health(url) };
       case 'status':
-        return { body: statusView() };
+        return { body: statusView(caller) };
       case 'requests.create':
-        return createRequest(body, client, sessionFrom(req, { optional: true }));
+        return createRequest(body, client, caller);
       case 'sessions.register': {
         checkKeys(body, SESSION_KEYS);
-        return { status: 201, body: sessions.register(body) };
+        const registered = sessionCall(() => sessions.register(body));
+        // A session the daemon dropped (it stopped polling for a while) came back with its old key: its requests and
+        // the invites meant for it are its own again.
+        if (registered.replaced) transferOwner(registered.replaced, registered.sessionId);
+        const { replaced: _replaced, ...answer } = registered;
+        return { status: 201, body: answer };
       }
       case 'sessions.list':
         sessions.sweep();
@@ -2684,29 +2768,31 @@ export function createDaemon(options = {}) {
         return { body: { removed: sessions.unregister(session) } };
       }
       case 'invites.join':
-        return { body: joinInvite(route.param, sessionFrom(req, { optional: true })) };
+        return { body: joinInvite(route.param, caller) };
       case 'requests.list': {
         const cutoff = now() - TERMINAL_KEEP_MS;
         const list = [...requests.values()]
-          .filter(record => LIVE.has(record.state) || record.endedAt >= cutoff)
+          .filter(record => (LIVE.has(record.state) || record.endedAt >= cutoff) && seesInvite(record, caller))
           .sort((a, b) => b.createdAt - a.createdAt)
           .map(view);
         return { body: { requests: list } };
       }
       case 'requests.get': {
         const record = getRecord(route.param);
-        return { body: view(record) };
+        return { body: viewFor(record, caller) };
       }
       case 'requests.delete': {
         if (body.reason !== undefined && (typeof body.reason !== 'string' || body.reason.length > 200)) {
           throw badOptions('reason must be a short string');
         }
-        return { body: await deleteRequest(getRecord(route.param)) };
+        const record = getRecord(route.param);
+        checkUse(record, caller);
+        return { body: await deleteRequest(record) };
       }
       case 'wait':
-        return { body: await waitRoute(body, signal) };
+        return { body: await waitRoute(body, signal, caller) };
       case 'runs.create':
-        return { body: await runsRoute(body, signal) };
+        return { body: await runsRoute(body, signal, caller) };
       case 'runs.list':
         return { body: await listRuns(url) };
       case 'runs.get': {
@@ -2721,9 +2807,9 @@ export function createDaemon(options = {}) {
       case 'runs.evidence':
         return { body: await evidenceRoute(route.param, url) };
       case 'observe':
-        return { body: await observeRoute(body) };
+        return { body: await observeRoute(body, caller) };
       case 'act':
-        return { body: await actRoute(body, signal) };
+        return { body: await actRoute(body, signal, caller) };
       case 'daemon.reload':
         return { body: await reload() };
       case 'daemon.shutdown':
@@ -2867,6 +2953,9 @@ export function createDaemon(options = {}) {
     }
     for (const run of [...runs.values()]) {
       if (run.state === 'done' && t - run.finishedAt >= TERMINAL_KEEP_MS) runs.delete(run.runId);
+    }
+    for (const [browserId, times] of [...inviteLog]) {
+      if (!times.some(at => t - at < 60_000)) inviteLog.delete(browserId);
     }
     for (const invite of [...invites.values()]) {
       if (invite.state === 'open' && t >= invite.expiresAt) expireInvite(invite);

@@ -13,7 +13,7 @@
 import { execFile } from 'node:child_process';
 import { connect } from 'node:net';
 import { accessSync, constants as fsConstants } from 'node:fs';
-import { basename, delimiter, join } from 'node:path';
+import { basename, delimiter, isAbsolute, join } from 'node:path';
 
 export const WAKE_CAPABILITIES = Object.freeze(['claude-socket', 'codex-queue', 'none']);
 export const HOSTS = Object.freeze(['claude', 'codex', 'opencode', 'unknown']);
@@ -22,6 +22,8 @@ export const CODEX_TIMEOUT_MS = 15_000;
 // The longest user text an invite carries (the popup's "What should it do?").
 export const MAX_INVITE_TEXT = 500;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+// Codex thread ids are UUIDs (v7 today: 01a1c03e-9e28-72a2-8cdb-bb6ca9545521).
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LEVEL_NAMES = { 'read-only': 'Read', reversible: 'Use', interactive: 'Use', full: 'Act', testing: 'Test site' };
 
 /**
@@ -46,11 +48,18 @@ export function repoName(env = process.env, cwd = process.cwd()) {
   return name.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 60) || 'unknown';
 }
 
-/** Claude Code's messaging socket for this session, or null (a --bare session, an older Claude Code, another host). */
-export function claudeSocket(env = process.env) {
+/**
+ * Claude Code's messaging socket for this session, or null (a --bare session, an older Claude Code, another host).
+ * The variables are inherited by everything Claude Code starts, a Bash command's children included, so they prove
+ * nothing on their own: the socket is `<dir>/<claude pid>.sock`, and it counts only when that pid is this process's
+ * parent (`ppid`), i.e. Claude Code started this MCP server itself. A wrapper in between (npx, a shell script) fails
+ * closed: no socket, the copy-line fallback. `install --host claude` writes the node command directly.
+ */
+export function claudeSocket(env = process.env, { ppid = process.ppid } = {}) {
   const path = env.CLAUDE_CODE_MESSAGING_SOCKET;
   const token = env.CLAUDE_CODE_MESSAGING_TOKEN ?? env.CLAUDE_CODE_MESSAGING_SOCKET_TOKEN;
   if (typeof path !== 'string' || !path || typeof token !== 'string' || !token) return null;
+  if (!Number.isInteger(ppid) || ppid <= 1 || basename(path) !== `${ppid}.sock`) return null;
   return { path, token };
 }
 
@@ -65,14 +74,15 @@ export function codexThreadId(meta) {
   if (!meta || typeof meta !== 'object') return null;
   const turn = meta['x-codex-turn-metadata'];
   const id = (turn && typeof turn === 'object' ? turn.thread_id : null) ?? meta.threadId;
-  return typeof id === 'string' && ID.test(id) ? id : null;
+  return typeof id === 'string' && UUID.test(id) ? id : null;
 }
 
 /** The codex binary: FAI_CODEX_BIN, else `codex` found on PATH; null when there is none. */
 export function codexBinary(env = process.env) {
   if (typeof env.FAI_CODEX_BIN === 'string' && env.FAI_CODEX_BIN) return env.FAI_CODEX_BIN;
   for (const dir of String(env.PATH ?? '').split(delimiter)) {
-    if (!dir) continue;
+    // A relative PATH entry would resolve against whatever directory the MCP server runs in: never.
+    if (!dir || !isAbsolute(dir)) continue;
     const candidate = join(dir, 'codex');
     try {
       accessSync(candidate, fsConstants.X_OK);
@@ -135,7 +145,7 @@ export function resetCodexSupport() {
  * `timeout`, `codex_failed`.
  */
 export async function deliverCodexQueue({ threadId, text, env = process.env, timeoutMs = CODEX_TIMEOUT_MS }) {
-  if (!ID.test(String(threadId ?? ''))) return { ok: false, code: 'unknown_thread', message: 'No Codex thread id yet.' };
+  if (!UUID.test(String(threadId ?? ''))) return { ok: false, code: 'unknown_thread', message: 'No Codex thread id yet.' };
   const bin = codexBinary(env);
   if (!bin) return { ok: false, code: 'no_codex', message: 'The codex command was not found (set FAI_CODEX_BIN).' };
   const result = await run(bin, ['queue', '--thread', threadId, '--message', String(text)], { env: codexEnv(env), timeoutMs });
@@ -174,22 +184,24 @@ export function deliverClaudeSocket({ path, token, text, timeoutMs = SOCKET_TIME
       socket.destroy();
       resolveDelivery(outcome);
     };
-    // What the session wrote back, if anything (one line, clipped): kept so an ack can be told from silence.
-    const reply = () => answer.replace(/\s+/g, ' ').trim().slice(0, 200);
+    // What the session wrote back, if anything (one line, clipped, the token never echoed): kept so an ack can be told
+    // from silence.
+    const scrub = text => (token ? String(text).split(token).join('[token]') : String(text));
+    const reply = () => scrub(answer).replace(/\s+/g, ' ').trim().slice(0, 200);
     const judge = () => {
-      const refusal = refusalIn(answer);
+      const refusal = refusalIn(scrub(answer));
       if (refusal) return finish({ ok: false, code: 'refused', message: refusal });
       if (!written) return finish({ ok: false, code: 'connect_failed', message: 'The session closed the socket before the message was written.' });
       return finish(reply() ? { ok: true, reply: reply() } : { ok: true });
     };
     const timer = setTimeout(() => {
-      if (written && !refusalIn(answer)) return finish(reply() ? { ok: true, reply: reply() } : { ok: true });
+      if (written && !refusalIn(scrub(answer))) return finish(reply() ? { ok: true, reply: reply() } : { ok: true });
       finish({ ok: false, code: 'timeout', message: `The messaging socket did not answer within ${timeoutMs} ms.` });
     }, timeoutMs);
     socket.setEncoding('utf8');
     socket.on('data', chunk => {
       answer = (answer + chunk).slice(-4000);
-      if (refusalIn(answer)) judge();
+      if (refusalIn(scrub(answer))) judge();
     });
     socket.on('error', error => {
       if (written && ['EPIPE', 'ECONNRESET'].includes(error?.code)) return judge();
@@ -239,7 +251,13 @@ const levelName = level => LEVEL_NAMES[level] ?? 'Read';
 /** The user's own words from the popup's "What should it do?", one line, clipped; '' when none. */
 export function cleanInviteText(text) {
   if (typeof text !== 'string') return '';
-  return text.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_INVITE_TEXT);
+  return text
+    // Zero-width characters and bidi controls (U+200B-200F, U+202A-202E, U+2060-2069, U+FEFF) vanish: they could make
+    // the text read differently from what it says.
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
+    // C0 and C1 controls and line or paragraph separators become spaces: the user's words stay one line.
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ')
+    .replace(/\s+/g, ' ').trim().slice(0, MAX_INVITE_TEXT);
 }
 
 /**
@@ -271,19 +289,19 @@ export function wakeText({ kind, inviteId, requestId, level, userText, driver = 
  * The wake capability of a session: claude-socket (Claude Code with its socket), codex-queue (Codex with a known
  * thread and a `codex queue`), else none. `codexReady` is the cached `codex queue --help` answer.
  */
-export function wakeCapability({ host, env = process.env, threadId = null, codexReady = false }) {
+export function wakeCapability({ host, env = process.env, threadId = null, codexReady = false, ppid = process.ppid }) {
   if (env.FAI_WAKE === '0') return 'none';
-  if (host === 'claude' && claudeSocket(env)) return 'claude-socket';
+  if (host === 'claude' && claudeSocket(env, { ppid })) return 'claude-socket';
   if (host === 'codex' && threadId && codexReady) return 'codex-queue';
   return 'none';
 }
 
 /** Deliver one wake through `capability`; resolves {ok} or {ok: false, code, message}, never throws. */
-export async function deliverWake({ capability, text, env = process.env, threadId = null }) {
+export async function deliverWake({ capability, text, env = process.env, threadId = null, ppid = process.ppid }) {
   try {
     if (env.FAI_WAKE === '0') return { ok: false, code: 'disabled', message: 'Waking is off (FAI_WAKE=0).' };
     if (capability === 'claude-socket') {
-      const socket = claudeSocket(env);
+      const socket = claudeSocket(env, { ppid });
       if (!socket) return { ok: false, code: 'no_socket', message: 'This session has no messaging socket.' };
       return await deliverClaudeSocket({ ...socket, text });
     }

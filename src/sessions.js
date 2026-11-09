@@ -12,6 +12,10 @@ export const SESSION_STALE_MS = 90_000;
 export const WAKE_PICKUP_MS = 10_000;
 export const WAKE_REPORT_MS = 25_000;
 export const MAX_SESSIONS = 32;
+// One MCP server process registers once (again only after the daemon forgot it); two per pid allows that overlap.
+export const MAX_SESSIONS_PER_PID = 2;
+// A dropped session's key is remembered this long, so the same MCP server can come back as itself (`previous`).
+const TOMBSTONE_MS = 60 * 60_000;
 const WAKE_KEEP_MS = 10 * 60_000;
 const HOSTS = new Set(['claude', 'codex', 'opencode', 'unknown']);
 const CAPABILITIES = new Set(['claude-socket', 'codex-queue', 'none']);
@@ -58,6 +62,8 @@ export function createSessionRegistry(options = {}) {
   const reportMs = options.reportMs ?? WAKE_REPORT_MS;
   const sessions = new Map();
   const wakes = new Map();
+  // Dropped or unregistered sessions: {keyDigest, at} by session id (see `previous` in register).
+  const tombstones = new Map();
 
   const changed = () => {
     try {
@@ -102,6 +108,20 @@ export function createSessionRegistry(options = {}) {
     if (sessions.size >= MAX_SESSIONS) {
       throw new SessionError(429, 'too_many_sessions', `At most ${MAX_SESSIONS} agent sessions can register at once`);
     }
+    if ([...sessions.values()].filter(item => item.pid === pid).length >= MAX_SESSIONS_PER_PID) {
+      throw new SessionError(429, 'too_many_sessions', 'This process already registered');
+    }
+    // `previous`: the id and key this MCP server held before the daemon dropped it; proven by the key, it takes its
+    // requests and invites back (the daemon's transferOwner).
+    let replaced = null;
+    const previous = body.previous;
+    if (previous && typeof previous === 'object' && typeof previous.sessionId === 'string' && typeof previous.key === 'string') {
+      const stone = tombstones.get(previous.sessionId);
+      if (stone && timingSafeEqual(digest(previous.key), stone.keyDigest)) {
+        replaced = previous.sessionId;
+        tombstones.delete(previous.sessionId);
+      }
+    }
     const session = {
       sessionId: `ses_${randomBytes(9).toString('base64url')}`,
       keyDigest: null,
@@ -120,9 +140,9 @@ export function createSessionRegistry(options = {}) {
     const key = randomBytes(24).toString('base64url');
     session.keyDigest = digest(key);
     sessions.set(session.sessionId, session);
-    log('session_registered', { sessionId: session.sessionId, host, wake });
+    log('session_registered', { sessionId: session.sessionId, host, wake, replaced });
     changed();
-    return { sessionId: session.sessionId, key, pollMs: SESSION_POLL_MAX_MS, staleMs };
+    return { sessionId: session.sessionId, key, pollMs: SESSION_POLL_MAX_MS, staleMs, ...(replaced ? { replaced } : {}) };
   }
 
   /** The session `sessionId` when `key` is its key; 404 when unknown (re-register), 403 on a wrong key. */
@@ -280,11 +300,14 @@ export function createSessionRegistry(options = {}) {
       if (silent || !isAlive(session.pid)) {
         release(session, { wakes: [], closed: true });
         sessions.delete(session.sessionId);
+        // Only a session that went quiet may come back as itself; a dead process never does.
+        if (silent && isAlive(session.pid)) tombstones.set(session.sessionId, { keyDigest: session.keyDigest, at: t });
         failWakesOf(session.sessionId, 'session_gone', 'The agent session is no longer running.');
         log('session_dropped', { sessionId: session.sessionId, reason: silent ? 'stale' : 'pid' });
         dirty = true;
       }
     }
+    for (const [id, stone] of [...tombstones]) if (t - stone.at >= TOMBSTONE_MS) tombstones.delete(id);
     for (const wake of [...wakes.values()]) {
       if (wake.state === 'queued' && t - wake.createdAt >= pickupMs) {
         wake.state = 'failed';
