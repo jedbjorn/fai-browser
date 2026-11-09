@@ -314,7 +314,8 @@ test('S4/S5: early exits leave a record; an interrupted update is finished by th
   // The checkout moved to 0.5.0, then the updater died before the refresh and the restart.
   r.git(r.checkout, 'fetch', '-q', 'origin');
   r.git(r.checkout, 'merge', '-q', '--ff-only', r.v5);
-  writeInstallState(paths, { pid: 2 ** 22 + 4321, state: 'running', from: '0.4.0', to: '0.5.0', step: 'finish' });
+  writeInstallState(paths, { pid: 2 ** 22 + 4321, state: 'running', from: '0.4.0', to: '0.5.0', step: 'finish',
+    commit: r.v5, previous: r.v4 });
   const steps = fakeSteps();
   const resumed = await updateCommand({}, { ...base, steps, fetch: releases(release('v0.5.0'), { commit: r.v5 }) });
   assert.equal(resumed.value.state, 'succeeded', JSON.stringify(resumed.value));

@@ -12,7 +12,7 @@ import { homePaths } from '../src/home.js';
 import {
   RELEASES_API, UPDATE_REPO, USER_AGENT, automaticCheck, compareVersions, createUpdateChecker, isNewer, notesUrl,
   parseTag, parseVersion, readCheckState, readInstallState, runCheck, runningUpdate, updatePaths, updateView,
-  writeInstallState, writeUpdateLock,
+  writeInstallState, claimUpdateLock,
 } from '../src/update.js';
 import { UpdateFailed, UpdateRefused, gitRunner, installUpdate, preflight, refuseLeases, remoteMatches,
   takeUpdateLock } from '../src/update-install.js';
@@ -250,7 +250,7 @@ test('install records: a running record whose process is gone reads as failed', 
   await assert.rejects(takeUpdateLock(paths, process.ppid), error => error.code === 'update_running', 'another live process');
   await release();
   // The daemon writes the lock for the updater it starts; that updater adopts it.
-  writeUpdateLock(paths, process.pid);
+  assert.equal(claimUpdateLock(paths, process.pid), true);
   await (await takeUpdateLock(paths))();
   assert.equal(runningUpdate(paths), null);
   // A lock (or running record) older than UPDATE_MAX_MS is stale even if its pid is alive again (a reused pid).
@@ -446,7 +446,8 @@ test('install failure after the move rolls back to the previous commit and resta
     });
     assert.equal(r.git(r.checkout, 'rev-parse', 'HEAD'), r.v4, `${failAt}: back at 0.4.0`);
     assert.equal(r.git(r.checkout, 'symbolic-ref', '--short', 'HEAD'), 'main');
-    assert.equal(steps.calls.at(-1), 'restart:0.4.0', 'the old version is started again');
+    // The old daemon is started again only when the update stopped it (a restart failure), never after a refresh failure.
+    assert.deepEqual(steps.calls, failAt === 'restart' ? ['finish', 'restart:0.5.0', 'finish', 'restart:0.4.0'] : ['finish', 'finish']);
   }
 });
 
