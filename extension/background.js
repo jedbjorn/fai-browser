@@ -1185,7 +1185,7 @@ function cleanAgents(data) {
     .map(item => ({ sessionId: text(item.sessionId, 64), host: AGENT_HOSTS.includes(item.host) ? item.host : 'unknown',
       repo: text(item.repo, 60) || 'unknown', lastActiveAt: text(item.lastActiveAt, 40) || null,
       startedAt: text(item.startedAt, 40) || null,
-      wake: ['claude-socket', 'codex-queue'].includes(item.wake) ? item.wake : 'none', ready: item.ready !== false }));
+      wake: ['claude-socket', 'codex-queue', 'opencode-plugin'].includes(item.wake) ? item.wake : 'none', ready: item.ready !== false }));
   return { sessions };
 }
 

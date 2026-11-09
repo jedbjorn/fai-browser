@@ -116,6 +116,15 @@ export function resolveClientPort(paths, { port, env = process.env } = {}) {
   return fromFile ?? (explicitZero ? null : DAEMON_DEFAULT_PORT);
 }
 
+const HOST_WAKE_ENV = ['FAI_OPENCODE_WAKE_SOCKET', 'FAI_OPENCODE_WAKE_TOKEN', 'CLAUDE_CODE_MESSAGING_TOKEN',
+  'CLAUDE_CODE_MESSAGING_SOCKET_TOKEN'];
+function withoutHostWakeEnv(env) {
+  if (!env || !HOST_WAKE_ENV.some(key => Object.hasOwn(env, key))) return env;
+  const out = { ...env };
+  for (const key of HOST_WAKE_ENV) delete out[key];
+  return out;
+}
+
 function spawnDaemon(paths, env, command) {
   ensureDir(paths.logDir);
   const logFd = openSync(paths.logFile, 'a', 0o600);
@@ -124,8 +133,9 @@ function spawnDaemon(paths, env, command) {
     const child = spawn(file, args, {
       detached: true,
       stdio: ['ignore', logFd, logFd],
-      // The default directories need no FAI_HOME: the daemon resolves the same ones (src/paths.js).
-      env: paths.custom ? { ...env, FAI_HOME: paths.home } : env,
+      // The default directories need no FAI_HOME: the daemon resolves the same ones (src/paths.js). The wake channels of
+      // the host that started it (FAI's OpenCode plugin token, Claude Code's messaging token) stay with that host.
+      env: withoutHostWakeEnv(paths.custom ? { ...env, FAI_HOME: paths.home } : env),
     });
     child.unref();
     return child;

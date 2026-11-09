@@ -19,7 +19,7 @@ export const MAX_SESSIONS_PER_PID = 2;
 const TOMBSTONE_MS = 60 * 60_000;
 const WAKE_KEEP_MS = 10 * 60_000;
 const HOSTS = new Set(['claude', 'codex', 'opencode', 'unknown']);
-const CAPABILITIES = new Set(['claude-socket', 'codex-queue', 'none']);
+const CAPABILITIES = new Set(['claude-socket', 'codex-queue', 'opencode-plugin', 'none']);
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export class SessionError extends Error {
@@ -87,8 +87,8 @@ export function createSessionRegistry(options = {}) {
       // The newest sign of use: the last tool call, else registration.
       lastActiveAt: iso(Math.max(session.lastToolCallAt ?? 0, session.registeredAt)),
       wake: session.wake,
-      // A Codex session can be woken only once its thread id is known (its first FAI tool call).
-      ready: session.wake !== 'none' || session.host !== 'codex' || Boolean(session.hostSessionId),
+      // A Codex or OpenCode session can be woken only once its session id is known (its first FAI tool call).
+      ready: session.wake !== 'none' || !['codex', 'opencode'].includes(session.host) || Boolean(session.hostSessionId),
     };
   }
 
