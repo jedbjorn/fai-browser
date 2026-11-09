@@ -85,6 +85,7 @@ input::placeholder { color: var(--muted); }
 .requests-empty { margin: 0; color: var(--muted); font-size: 12px; }
 .request-card { margin-top: 10px; padding: 12px 13px; border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 10px; background: var(--surface); }
 .request-card[data-state="active"] { border-left-color: var(--green); }
+.request-card[data-state="elsewhere"] { border-left-color: var(--line); }
 .request-card .card-topline { margin-bottom: 6px; }
 .request-age { color: var(--muted); font-size: 11px; }
 .agent-says { margin: 0 0 4px; overflow-wrap: anywhere; }

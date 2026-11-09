@@ -612,7 +612,10 @@ test('a paired worker connects on startup with the auth subprotocol and says hel
   const h = harness();
   const hello = await h.waitFor(m => m.type === 'hello');
   assert.equal(h.sockets.length, 1);
-  assert.equal(h.socket.url, 'ws://127.0.0.1:4318/ext/ws');
+  // This install's browser identity: created once, saved, and named in the URL (src/bridge.js connectionIdentity).
+  assert.match(h.local.browserId, /^b-[A-Za-z0-9]{8,24}$/);
+  assert.equal(h.socket.url, `ws://127.0.0.1:4318/ext/ws?browser=${h.local.browserId}`);
+  assert.deepEqual({ ...hello.browser }, { product: 'chromium', name: 'Chromium', version: null });
   assert.deepEqual([...h.socket.protocols], ['fai-browser.v3', `fai-auth.${SECRET}`]);
   assert.equal(hello.via, 'ws');
   assert.equal(hello.v, 3);
@@ -620,7 +623,8 @@ test('a paired worker connects on startup with the auth subprotocol and says hel
   assert.equal(hello.session, null);
   await h.until(() => h.session.connection?.connected);
   // `budget`: the per-request budget the daemon says is in effect (this fake daemon names none).
-  assert.deepEqual(h.session.connection, { connected: true, transport: 'websocket', budget: null, paired: true, native: null });
+  assert.deepEqual(h.session.connection, { connected: true, transport: 'websocket', budget: null, paired: true, native: null,
+    browserId: h.local.browserId });
   assert.deepEqual(hello.settings, { budget: null, openRightAway: true, tabMode: 'single', approvals: ASKS },
     'the hello reports the user\'s budget setting (none set) and that requested pages open right away (the default)');
   assert.deepEqual(h.alarmsCreated, [{ name: 'fai-reconnect', periodInMinutes: 0.5 }]);
