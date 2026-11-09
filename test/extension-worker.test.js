@@ -230,6 +230,13 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       this.readyState = 3;
       setTimeout(() => this.onclose?.({ code: 1000 }), 1);
     }
+
+    // The service closes the socket with `code` (4003: this browser's newer connection took over).
+    serverClose(code) {
+      if (this.readyState === 3) return;
+      this.readyState = 3;
+      setTimeout(() => this.onclose?.({ code }), 1);
+    }
   }
 
   const context = {};
@@ -2918,4 +2925,100 @@ test('modal re-reads the bound tab after awaiting browser permissions', async ()
   const reply = await h.send(message, MODAL_SENDER);
   assert.match(reply.error, /page changed/);
   assert.equal(h.sent.some(m => m.type === 'lease'), false);
+});
+
+// --- several browsers (issue #9) ---------------------------------------------------------------------------------------
+
+test('the browser id is created once and kept: a restarted worker reconnects as the same browser', async () => {
+  const h = harness();
+  await h.waitFor(m => m.type === 'hello');
+  const id = h.local.browserId;
+  const restarted = harness({ local: { browserId: id } });
+  const hello = await restarted.waitFor(m => m.type === 'hello');
+  assert.equal(restarted.local.browserId, id);
+  assert.equal(restarted.socket.url, `ws://127.0.0.1:4318/ext/ws?browser=${id}`);
+  assert.equal(hello.browser.product, 'chromium');
+  // The Firefox build (gecko settings in its manifest) reports itself as Firefox.
+  const firefox = harness({ manifest: { browser_specific_settings: { gecko: { id: 'fai-browser@jedbjorn.github.io' } } } });
+  assert.equal((await firefox.waitFor(m => m.type === 'hello')).browser.product, 'firefox');
+});
+
+test('a 4003 close (this browser\'s newer connection took over) is never answered with a reconnect', async () => {
+  const h = harness({ timeScale: 0.01 });
+  await h.waitFor(m => m.type === 'hello');
+  await h.until(() => h.session.connection?.connected);
+  h.socket.serverClose(4003);
+  await h.until(() => h.session.connection?.conflict === 'superseded');
+  await sleep(200);
+  assert.equal(h.sockets.length, 1, 'no reconnect');
+  assert.equal(h.session.connection.connected, false);
+  assert.match(h.local.status, /another window of this browser/);
+  // The alarm leaves it alone for a while too.
+  h.alarmFire();
+  await sleep(30);
+  assert.equal(h.sockets.length, 1);
+  // Opening the popup is the user's action: it connects here again.
+  await h.send({ type: 'connect' }, { id: 'ext', url: 'chrome-extension://ext/popup.html' });
+  await h.until(() => h.sockets.length === 2 && h.session.connection?.connected);
+  assert.equal(h.session.connection.conflict, undefined);
+});
+
+test('repeated 4000 closes from an older service back off (never a tight loop) and say so', async () => {
+  const h = harness({ timeScale: 0.001 });
+  await h.waitFor(m => m.type === 'hello');
+  const closed = [];
+  for (let round = 0; round < 4; round++) {
+    await h.until(() => h.socket.readyState === 1 && h.sent.filter(m => m.type === 'hello').length === round + 1, 5000);
+    closed.push(h.delays.length);
+    h.socket.serverClose(4000);
+    await h.until(() => h.sockets.length === round + 2, 5000);
+  }
+  // Each reconnect after a 4000 waits at least 4 s, longer each time: 4, 8, 15, 15 s (no reset by a short connection).
+  const waits = h.delays.filter(ms => [500, 1_000, 2_000, 4_000, 8_000, 15_000].includes(ms));
+  assert.deepEqual(waits.slice(0, 4), [4_000, 8_000, 15_000, 15_000]);
+  await h.until(() => h.session.connection?.conflict === 'replaced');
+  await h.until(() => /older FAI service/.test(h.local.status ?? ''));
+});
+
+test('only the browser a request waits in opens its approval UI and badge; others just list it', async () => {
+  const h = harness({ local: WINDOW_ONLY });
+  await h.waitFor(m => m.type === 'hello');
+  const self = h.local.browserId;
+  const elsewhere = pendingRequest('req_other', { browser: { id: 'b-firefox00000000001', product: 'firefox', name: 'Firefox' } });
+  h.push({ type: 'requests', requests: [elsewhere], browsers: [{ id: self, product: 'chromium', name: 'Chromium' },
+    { id: 'b-firefox00000000001', product: 'firefox', name: 'Firefox' }] });
+  await h.until(() => h.session.requests?.length === 1);
+  await sleep(20);
+  assert.deepEqual(h.popupWindows, [], 'no window for another browser\'s request');
+  assert.equal(h.badge, '', 'no ? badge either');
+  assert.deepEqual(h.session.connection.browsers.map(browser => browser.name), ['Chromium', 'Firefox']);
+  // Open here: the worker asks the service to move it; once it names this browser, it shows as usual.
+  const reply = await h.send({ type: 'move', requestId: 'req_other' });
+  assert.equal(reply.error, undefined);
+  const move = await h.waitFor(m => m.type === 'move');
+  assert.equal(move.requestId, 'req_other');
+  await withPending(h, [{ ...elsewhere, browser: { id: self, product: 'chromium', name: 'Chromium' } }]);
+  assert.equal(h.popupWindows.length, 1);
+  assert.equal(h.badge, '?');
+});
+
+test('opening the toolbar popup or clicking the icon reports this browser as used; the approval window does not', async () => {
+  const h = harness();
+  await h.waitFor(m => m.type === 'hello');
+  await h.until(() => h.session.connection?.connected);
+  await h.send({ type: 'connect' }, { id: 'ext', url: 'chrome-extension://ext/popup.html?window=1' });
+  await sleep(20);
+  assert.equal(h.sent.some(m => m.type === 'used'), false);
+  await h.send({ type: 'connect' }, { id: 'ext', url: 'chrome-extension://ext/popup.html' });
+  await h.waitFor(m => m.type === 'used');
+  h.chrome.action.onClicked.emit({ id: 12, url: 'https://elsewhere.test/' });
+  await h.until(() => h.sent.filter(m => m.type === 'used').length === 2);
+  assert.equal(h.sent.find(m => m.type === 'used').ref, undefined, 'fire and forget');
+});
+
+test('the long-poll fallback names this browser in every call', async () => {
+  const h = harness({ ws: 'fail', timeScale: 0.002 });
+  const hello = await h.waitFor(m => m.type === 'hello' && m.via === 'http');
+  assert.equal(hello.headers['X-Fai-Browser'], h.local.browserId);
+  assert.equal(hello.browser.product, 'chromium');
 });
