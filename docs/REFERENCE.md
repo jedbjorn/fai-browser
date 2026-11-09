@@ -4,7 +4,7 @@ The detailed manual for FAI Browser: setup, the daemon, the MCP server and CLI, 
 
 An agent gives an instruction. A decision provider picks one of the browser actions on offer, the extension runs it in a tab the user approved, and the agent gets back a verified outcome, the final page text, annotated screenshots and a trace on disk. `step` runs one action. `run` runs a short bounded sequence. TypeSafe Jev is the default provider; local SystemOne-compatible servers also work.
 
-Requires Node 22+ and Chrome/Chromium 116+. The runtime has no npm dependencies, and everything runs locally except calls to a hosted provider. Commands below run from the package root.
+Requires Node 22+ and Chrome/Chromium 116+. The runtime has no npm dependencies, and everything runs locally except calls to a hosted provider and the daily [update check](#updates) (one GET to GitHub's releases API; `FAI_UPDATE_CHECK=0` turns it off). Commands below run from the package root.
 
 ## Contents
 
@@ -16,6 +16,7 @@ Requires Node 22+ and Chrome/Chromium 116+. The runtime has no npm dependencies,
   - [Dev logs and JavaScript dialogs](#dev-logs-and-javascript-dialogs)
   - [Uploads](#uploads)
 - [The daemon](#the-daemon)
+  - [Updates](#updates)
 - [Coding agents (MCP and skill)](#coding-agents-mcp-and-skill)
 - [Step lists](#step-lists)
 - [Running a task from the shell](#running-a-task-from-the-shell)
@@ -268,7 +269,7 @@ node src/cli.js daemon                   # run in the foreground (what auto-star
 
 With the Jev driver, at start and whenever the user approves a tab, the daemon warms the provider connection in the background (an unauthenticated `GET /v1/models` that sends no key), so the first decision does not pay for DNS, TCP and TLS. Readiness never waits for it, and a missing key or an unreachable network only logs `provider_warm_skipped` or `provider_warm` with `ok: false` (codes and timings, never messages).
 
-State lives outside the checkout, in per-user directories. **Settings** (`.env.local`, the optional `config.json` with driver, retention, provider defaults, request TTL, thresholds, `guardrails`, `retry`, `slim`, `profiles`, and the native host launcher) go to `$XDG_CONFIG_HOME/fai-browser` (default `~/.config/fai-browser`) on Linux, `~/Library/Application Support/fai-browser` on macOS and `%APPDATA%\fai-browser` on Windows. **Runtime state** (`client-token`, created by the daemon on first start and sent by clients as a bearer token, `daemon.json`, `daemon.lock`, `daemon.pid`, `logs/daemon.log`) and `artifacts/` go to `$XDG_STATE_HOME/fai-browser` (default `~/.local/state/fai-browser`) on Linux, the same Application Support directory on macOS and `%LOCALAPPDATA%\fai-browser` on Windows. `$FAI_HOME` puts all of it in that one directory instead; under `node --test` without `FAI_HOME` a per-user temporary directory stands in, so tests never touch the real settings. [Site profiles](#site-profiles-experimental-opt-in) are read from the package's `domains/` (or `$FAI_HOME/domains`, `$FAI_DOMAINS_DIR`). Every CLI command except `install`, `install-native` and `uninstall-native` starts the daemon when it is not running; `--no-auto-start` makes it fail with `daemon_unreachable` instead. `--port N` (or `FAI_DAEMON_PORT`) selects the daemon port everywhere; a port other than 4318 also needs `host_permissions` in `extension/manifest.json` for the HTTP fallback (the native host tells the extension the port). `fai-browser serve` is a deprecated alias for `daemon`.
+State lives outside the checkout, in per-user directories. **Settings** (`.env.local`, the optional `config.json` with driver, retention, provider defaults, request TTL, thresholds, `guardrails`, `retry`, `slim`, `profiles`, `updateCheck`, and the native host launcher) go to `$XDG_CONFIG_HOME/fai-browser` (default `~/.config/fai-browser`) on Linux, `~/Library/Application Support/fai-browser` on macOS and `%APPDATA%\fai-browser` on Windows. **Runtime state** (`client-token`, created by the daemon on first start and sent by clients as a bearer token, `daemon.json`, `daemon.lock`, `daemon.pid`, `logs/daemon.log`) and `artifacts/` go to `$XDG_STATE_HOME/fai-browser` (default `~/.local/state/fai-browser`) on Linux, the same Application Support directory on macOS and `%LOCALAPPDATA%\fai-browser` on Windows. `$FAI_HOME` puts all of it in that one directory instead; under `node --test` without `FAI_HOME` a per-user temporary directory stands in, so tests never touch the real settings. [Site profiles](#site-profiles-experimental-opt-in) are read from the package's `domains/` (or `$FAI_HOME/domains`, `$FAI_DOMAINS_DIR`). Every CLI command except `install`, `install-native` and `uninstall-native` starts the daemon when it is not running; `--no-auto-start` makes it fail with `daemon_unreachable` instead. `--port N` (or `FAI_DAEMON_PORT`) selects the daemon port everywhere; a port other than 4318 also needs `host_permissions` in `extension/manifest.json` for the HTTP fallback (the native host tells the extension the port). `fai-browser serve` is a deprecated alias for `daemon`.
 
 A tab request (`POST /v1/requests`) may carry `url`, the page the extension opens when the user approves: an http(s) URL on one of its `origins` (at most 2048 characters; off the origins is `422 origin_not_granted`). Without it the daemon uses the first exact origin's root, else `https://<root>/` for a request with only domain roots (the site may redirect that apex to www). Every request view (`GET /v1/requests`, `/v1/wait`, the extension's request list) has `url`. The MCP server fills it from the first `allowedUrls` entry on the origins, else the first URL the instruction (or first step) names after a navigation verb ("Open https://...") on the origins, never one a `{{answer:N}}` writes in; the CLI does the same from `--origin` and the instruction (it has no `--url` flag).
 
@@ -286,6 +287,44 @@ A tab request (`POST /v1/requests`) may carry `url`, the page the extension open
 | `FAI_MCP_APPROVAL_WAIT_MS` | How long one MCP call waits for the user to approve its tab request (and, at most 120 s, how long `fai_browser_act` waits for an Approve click: [Approve gate](#approve-gate)), on top of the call deadline (default 60000, or `FAI_MCP_MAX_CALL_MS` when that is set higher; in 45 s daemon waits): a call lasts at most this plus `FAI_MCP_MAX_CALL_MS`, 105 s by default, under the `tool_timeout_sec = 120` that `install --host codex` writes (Codex's own default is 60 s; Claude Code's `MCP_TOOL_TIMEOUT` defaults to about 28 h, OpenCode's to 12 h). Then the result is `needs_user` / `select_tab` |
 | `FAI_LEASE_TIMEOUT_MS` | How long `run`/`step` wait for the user's approval (default 120000) |
 | `FAI_RETENTION_MAX_RUNS`, `_MAX_BYTES`, `_MAX_AGE_MS` | Retention limits (see below) |
+| `FAI_UPDATE_CHECK` | `0` (or `false`, `off`, `no`) turns off the daily check for a newer release ([Updates](#updates)); `update --check` still checks when you run it |
+
+### Updates
+
+FAI Browser tells you when a newer **tagged GitHub release** of [jedbjorn/fai-browser](https://github.com/jedbjorn/fai-browser/releases) is out and installs it only on your click or command; it never tracks `main` and never installs on its own.
+
+```sh
+node src/cli.js update --check   # ask GitHub now and print the update view (installs nothing)
+node src/cli.js update           # install the latest release into this git checkout
+```
+
+**The check.** The daemon asks `GET https://api.github.com/repos/jedbjorn/fai-browser/releases/latest` (GitHub leaves drafts and prereleases out; a draft, prerelease or a tag other than a plain `vX.Y.Z` counts as no release) 30 s after it starts when the last check is more than a day old, then about once a day (after a failure, again after an hour; after a rate limit, after GitHub's reset time). When the release is newer than `package.json`'s version, one more GET (`/repos/jedbjorn/fai-browser/commits/<tag>`) asks which commit its tag names. Both requests are plain https: `User-Agent: fai-browser-update-check`, no token, no cookie, nothing about you or your machine, `If-None-Match` with the cached ETag, a 10 s timeout, no redirects. Nothing of the answer is kept but the tag, its version, the commit and the publish time; the release notes link is built from the tag. A failure only sets `status`. The result is cached in `update-check.json` in the runtime state directory (next to `daemon.json`), so the CLI and the daemon share it. Off: `FAI_UPDATE_CHECK=0` or `"updateCheck": false` in `config.json`; under `node --test` the daemon never checks unless a test asks it to.
+
+**Where it shows.** `node src/cli.js status`, `daemon status` and `fai_browser_status` carry `update`:
+
+| Field | Meaning |
+|---|---|
+| `enabled` | the automatic check is on |
+| `current`, `latest`, `tag` | this version; the latest release's version and tag (null before a check or when there is none) |
+| `available` | `latest` is newer than `current` |
+| `notesUrl` | `https://github.com/jedbjorn/fai-browser/releases/tag/<tag>` when available |
+| `checkedAt`, `status`, `error` | last answered check; `never`, `ok`, `not_found` (no published release, or the repository is not public), `error` (`network`, `timeout`, `http_<status>`, `bad_json`) or `rate_limited` |
+| `install` | the last install: `{state: running\|succeeded\|failed\|rolled_back, from, to, at, step, error, message}`, or null |
+
+The extension popup shows **Update available vX.Y.Z** with a **Release notes** link and an **Update** button; `fai_browser_status` adds one line telling the agent to tell you, never to update itself.
+
+**Installing** (the popup's Update button, or `node src/cli.js update`; the popup's click reaches the daemon only over the extension's paired channel, and there is no client-API route for it, so an agent's MCP call cannot start an update; the daemon then runs `node src/cli.js update --tag <tag>` in its own process, since the update restarts the daemon):
+
+1. **Refusals, before anything changes** (each prints what to do instead, and the popup shows it): a tab lease is active or paused (`lease_active`); the package is not a git clone (`not_git`: an npm install updates with npm); no remote is `github.com/jedbjorn/fai-browser` (`wrong_remote`); tracked files have local modifications (`dirty`; the updater never stashes, resets or discards them); the checkout is on a branch other than `main` (`other_branch`); `main` has commits its upstream lacks (`unpushed`); another update runs (`update_running`).
+2. `git fetch --tags <remote>` (never prompting for credentials), then the tag must name the commit GitHub's release names and its `package.json` must carry the release's version (`tag_mismatch`, `tag_missing`), and the checkout's commit must be inside the release (`not_fast_forward`).
+3. **The move.** On `main`: fast-forward `main` to the tag's commit (`git merge --ff-only`). On a detached HEAD (an earlier update or a clone of a tag): check the tag's commit out, detached. Never any other branch.
+4. `npm ci --ignore-scripts` only when `package-lock.json` changed and `node_modules/` exists (the runtime itself has no npm dependencies).
+5. The new version's refresh, `node src/cli.js update --finish`: the native messaging host launcher and the manifests that already exist, and the skill in each user-level skill directory an earlier `install` wrote (`~/.claude/skills/fai-browser`, `~/.agents/skills/fai-browser`; symlinked or foreign skills are left alone; a project-level install is not discovered, its version marker says to re-run `install`). Settings, keys and the pairing secret are never changed, printed or asked for (the manifest names the extension ID it already names).
+6. The daemon restarts and must come back with the new version. A Chromium-family browser then reloads the extension by itself (`chrome.runtime.reload()`, once per new service version, never during a session), so `extension/` loaded unpacked runs the new files. Restart your coding agent to load the new MCP server and skill.
+
+A failure in steps 4 to 6 rolls back: `main` goes back with `git reset --keep <previous>` (only when `main` is still at the release commit; `--keep` refuses to touch a file with local changes), a detached checkout checks the previous commit out, then npm, the refresh and the restart run again for the old version; the result and the popup say `rolled_back`, or `failed` with the reason when the rollback itself failed. Each step goes to `logs/update.log` (events, versions, step names, first lines of git errors). Every git, npm and node call is `execFile` with an argument list (no shell); the only values from the network that reach one are a tag matching `^v\d+\.\d+\.\d+$` and a 40-hex commit. `update` prints one JSON line and exits 0 (updated, up to date) or 1 (refused, failed, check failed). Windows is untested.
+
+**Firefox.** The signed add-on carries `update_url` (the latest release's `updates.json`), so Firefox updates the add-on itself; the updater updates the clone and the service only. A temporary add-on loaded from `dist/firefox/` needs `npm run build:firefox` and a reload in `about:debugging` after an update.
 
 ## Coding agents (MCP and skill)
 

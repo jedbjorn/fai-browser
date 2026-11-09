@@ -74,7 +74,9 @@ Expectations are checked against redacted text, so they cannot be used to guess 
 ## 8. Local by construction
 
 The service listens on `127.0.0.1`. Clients use a bearer token, the extension a pairing secret handed out by the native
-host to the FAI extension only. In the default mode FAI makes **no** network calls of its own. Traces stay local and are pruned (50 runs, 500 MB, 7 days).
+host to the FAI extension only. In the default mode FAI makes **no** network calls of its own apart from the daily update check: one anonymous GET to
+GitHub's releases API (no token, no identifiers, a generic User-Agent), off with `FAI_UPDATE_CHECK=0`; installing an
+update always takes your click or command. Traces stay local and are pruned (50 runs, 500 MB, 7 days).
 
 ## What is and is not protected
 

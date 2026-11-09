@@ -5,6 +5,17 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## Unreleased
+
+### Added
+
+- Update notice and one-click update from tagged GitHub releases. About once a day the local service checks GitHub's releases API anonymously (`FAI_UPDATE_CHECK=0` or `"updateCheck": false` turns it off). The popup then shows "Update available vX.Y.Z" with release notes and an Update button, and status and `fai_browser_status` carry an `update` field. The update installs only on that click or `node src/cli.js update` (`--check` only looks). It moves the git clone to the release tag, refreshes pairing and installed skills, restarts the service and reloads the unpacked Chromium extension. It refuses while a tab lease is held, on local changes, unpushed commits, another branch or another remote, and rolls back if a step fails after the move.
+
+### Known limits
+
+- The check needs the GitHub repository to be public; until then it reports `not_found`, and `node src/cli.js update` can only check.
+- Project-level skill installs are not refreshed by an update; re-run `node src/cli.js install --host ...` there.
+
 ## 0.4.0 (2026-11-07)
 
 ### Added
