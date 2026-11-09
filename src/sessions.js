@@ -180,8 +180,9 @@ export function createSessionRegistry(options = {}) {
         wake.sentAt = now();
       }
       if (list.length) changed();
-      return { wakes: list.map(wake => ({ wakeId: wake.wakeId, kind: wake.kind, text: wake.text,
-        requestId: wake.requestId ?? null, inviteId: wake.inviteId ?? null })) };
+      // Fields only: the MCP server writes the wake text itself from its fixed template (src/wake.js wakeText).
+      return { wakes: list.map(wake => ({ wakeId: wake.wakeId, kind: wake.kind, requestId: wake.requestId ?? null,
+        inviteId: wake.inviteId ?? null, level: wake.level ?? null, ...(wake.userText ? { userText: wake.userText } : {}) })) };
     };
     if (pendingFor(session).length || maxMs <= 0) return Promise.resolve(deliver());
     return new Promise(resolvePoll => {
@@ -205,14 +206,16 @@ export function createSessionRegistry(options = {}) {
   }
 
   /**
-   * Queue a wake for `sessionId`. Returns the wake view, or null when the session is unknown or cannot be woken (its
+   * Queue a wake for `sessionId`: `kind` (invite, resume, approved), the ids, the level and, for an invite, the user's
+   * own words from the popup. Returns the wake view, or null when the session is unknown or cannot be woken (its
    * capability is none): the caller then shows the copy fallback.
    */
-  function queueWake(sessionId, { kind, text, requestId = null, inviteId = null }) {
+  function queueWake(sessionId, { kind, requestId = null, inviteId = null, level = null, userText = '' }) {
     const session = sessions.get(sessionId);
     if (!session || session.wake === 'none') return null;
-    const wake = { wakeId: `wake_${randomBytes(8).toString('base64url')}`, sessionId, kind, text, requestId, inviteId,
-      state: 'queued', error: null, createdAt: now(), sentAt: null, settledAt: null };
+    const wake = { wakeId: `wake_${randomBytes(8).toString('base64url')}`, sessionId, kind, requestId, inviteId, level,
+      userText: typeof userText === 'string' ? userText : '', state: 'queued', error: null, createdAt: now(), sentAt: null,
+      settledAt: null };
     wakes.set(wake.wakeId, wake);
     log('wake_queued', { sessionId, kind, requestId, inviteId });
     if (session.waiter) {

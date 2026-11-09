@@ -42,7 +42,7 @@ import { spawn } from 'node:child_process';
 import { automaticCheck, createUpdateChecker, runningUpdate, underTest, claimUpdateLock, writeInstallState } from './update.js';
 import { gitReleaseSource, scrubbedEnv } from './update-git.js';
 import { SessionError, SESSION_POLL_MAX_MS, createSessionRegistry } from './sessions.js';
-import { cleanInviteText, wakeText } from './wake.js';
+import { cleanInviteText } from './wake.js';
 
 export const DAEMON_VERSION = readPackageVersion();
 export const SERVICE_NAME = 'fai-browser';
@@ -954,8 +954,7 @@ export function createDaemon(options = {}) {
    */
   function wakeOwner(record, kind) {
     if (!record.ownerSession) return null;
-    const text = wakeText({ kind, requestId: record.requestId, level: record.grant?.level, driver: config.driver });
-    return sessions.queueWake(record.ownerSession, { kind, text, requestId: record.requestId });
+    return sessions.queueWake(record.ownerSession, { kind, requestId: record.requestId, level: record.grant?.level });
   }
 
   const inviteLog = new Map(); // browserId -> invite times (ms), for the rate limit
@@ -1085,7 +1084,7 @@ export function createDaemon(options = {}) {
     invites.set(inviteId, invite);
     if (target) {
       const wake = sessions.queueWake(target.sessionId, { kind: 'invite', inviteId, requestId: record.requestId,
-        text: wakeText({ kind: 'invite', inviteId, level: invite.level, userText: text, driver: config.driver }) });
+        level: invite.level, userText: text });
       invite.wakeId = wake?.wakeId ?? null;
     }
     log('invite_created', { inviteId, requestId: record.requestId, level: invite.level, wake: invite.wakeId ? 'queued' : 'none' });

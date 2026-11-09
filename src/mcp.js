@@ -26,6 +26,8 @@ import {
 import { lintExpectation, validateExpectation } from './expectation.js';
 import { scrubSecrets } from './secrets.js';
 import { withResumeWait } from './resume.js';
+import { AgentSession } from './mcp-session.js';
+import { detectHost } from './wake.js';
 import { LEVELS, levelRank, normalizeAdditions } from './guardrails.js';
 import { browserMatches } from './bridge.js';
 import { BUDGET_LIMITS, DEFAULT_BUDGET, checkBudget, loadOversightConfig } from './settings.js';
@@ -128,7 +130,8 @@ export const INSTRUCTIONS = [
     + 'work in their live browser tab, never for research or scraping.',
   '1. fai_browser_open: origins (exact, only those needed), reason (one line for the user), task, the lowest mode: '
     + 'read-only (links), reversible (buttons, fills), interactive (search, filter), full (save, send, submit, delete). '
-    + 'Values the user gave go in suppliedText. A deep URL in allowedUrls opens on approval. It returns the page.',
+    + 'Values the user gave go in suppliedText. A deep URL in allowedUrls opens on approval. It returns the page. '
+    + 'An inviteId from the user\'s FAI popup replaces origins and reason.',
   '2. If page.digest answers the task, reply. Else fai_browser_act with one actions[].id (revision: single-use, '
     + 'required only for needsApproval, secrets, point); a fill takes text (submit: true presses Enter), fills '
     + 'batches fields; also url, nav back/forward/reload, key. Give the final act an expectation, e.g. '
@@ -178,6 +181,12 @@ const REQUEST_ID = {
   type: 'string',
   minLength: 1,
   description: 'Tab request id. Defaults to the latest request this server created.',
+};
+// The user's invite from the FAI popup (docs/REFERENCE.md "Invites and wakes"): single use, 10 minutes.
+const INVITE_ID = {
+  type: 'string',
+  pattern: '^inv-[0-9a-z]{8}$',
+  description: 'From the user\'s FAI popup invite (or a FAI wake): opens that tab; no origins or reason needed.',
 };
 const ORIGINS = {
   type: 'array',
@@ -261,6 +270,7 @@ const RUN_PROPERTIES = {
   origins: ORIGINS,
   reason: { ...REASON, description: 'One line shown to the user; needed when a new tab request is made.' },
   requestId: REQUEST_ID,
+  inviteId: INVITE_ID,
   browser: BROWSER,
   expectation: {
     ...EXPECTATION,
@@ -462,6 +472,7 @@ export const TOOLS = [
       reason: { ...REASON, description: 'One line shown to the user on the approval.' },
       task: TASK,
       requestId: REQUEST_ID,
+      inviteId: INVITE_ID,
       browser: BROWSER,
       mode: { ...MODE, default: 'read-only' },
       suppliedText: SUPPLIED_TEXT,
@@ -566,8 +577,13 @@ export function toolsFor(driver) {
 }
 
 /** The server instructions for a driver. */
-export function instructionsFor(driver) {
-  return driver === 'jev' ? JEV_INSTRUCTIONS : INSTRUCTIONS;
+// Codex names its thread (the wake address) only on a tool call: one cheap call early lets the user invite the session.
+export const CODEX_INSTRUCTIONS = 'Codex: call fai_browser_status once early in the session, so the user can invite '
+  + 'you to a browser tab from the FAI popup.';
+
+export function instructionsFor(driver, host = 'unknown') {
+  const base = driver === 'jev' ? JEV_INSTRUCTIONS : INSTRUCTIONS;
+  return host === 'codex' ? `${base}\n${CODEX_INSTRUCTIONS}` : base;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -720,6 +736,16 @@ export function controlText(structured) {
   }
   if (result.session) {
     lines.push(`session: last request ${result.session.lastRequestId ?? '-'}; owned requests: ${(result.session.ownedRequests ?? []).join(', ') || '-'}`);
+    const agent = result.session.agent;
+    if (agent) {
+      lines.push(`agent session: ${agent.sessionId ?? 'not registered (no FAI service answering yet)'} (${agent.host}, `
+        + `wake ${agent.wake}${agent.note ? `: ${agent.note}` : ''})`);
+    }
+  }
+  // Invites from the user's FAI popup: for this session, or for any agent (join only that one when the user says so).
+  for (const invite of result.invites ?? []) {
+    lines.push(`invite: ${invite.inviteId} ${invite.session ? 'for this session' : 'for any agent (join it only if the user asks you to)'}, `
+      + `level ${invite.level}, ${invite.origin}, expires ${invite.expiresAt}`);
   }
   for (const warning of result.warnings ?? []) lines.push(`warning: ${oneLine(warning, 200)}`);
   if (result.needs?.message) lines.push(`needs: ${oneLine(result.needs.message, 500)}${result.needs.level ? ` (level ${result.needs.level})` : ''}`);
@@ -1322,7 +1348,7 @@ function waitHint(runId) {
 // `approval`: the request view's `approval` (`page` when its page opened by itself, else `window`; see result.js).
 // `driver`: agent (fai_browser_open) or jev (fai_browser_run).
 // `env`: the MCP server's environment, whose daemon location the wait command carries (src/resume.js).
-function approveHint(origin, requestId, approval = null, driver = 'agent', env = undefined, browser = null) {
+function approveHint(origin, requestId, approval = null, driver = 'agent', resume = undefined, browser = null) {
   const root = siteRoot(origin);
   const site = root ?? (origin ? origin.replace(/^https:\/\//, '') : null);
   // Several paired browsers: the one it waits in, and why it moved there when its own browser went away.
@@ -1330,7 +1356,7 @@ function approveHint(origin, requestId, approval = null, driver = 'agent', env =
   const note = browser?.note ? `${oneLine(browser.note, 200)} ` : '';
   return withResumeWait(`${note}Ask the user to approve the request${site ? ` for ${site}` : ''} ${where}: `
     + `${approvalSteps(approval)}. Then call ${driver === 'jev' ? 'fai_browser_run again' : 'fai_browser_observe'} with `
-    + `requestId ${requestId}${driver === 'jev' ? '; no origins needed' : ''}.`, requestId, { env });
+    + `requestId ${requestId}${driver === 'jev' ? '; no origins needed' : ''}.`, requestId, resume);
 }
 
 /**
@@ -1352,7 +1378,8 @@ function openTool(driver) {
   return driver === 'jev' ? 'fai_browser_run' : 'fai_browser_open';
 }
 
-function nextForRequest(state, view, requestId, driver = 'agent', env = undefined) {
+// `resume`: {env, wake} (src/resume.js): the wait command's daemon location, or the wake that makes it unnecessary.
+function nextForRequest(state, view, requestId, driver = 'agent', resume = undefined) {
   switch (state) {
     case 'active':
       return driver === 'jev'
@@ -1360,11 +1387,11 @@ function nextForRequest(state, view, requestId, driver = 'agent', env = undefine
           + 'and an expectation.')
         : nextStep('observe', `The tab is ready. Call fai_browser_observe with requestId ${requestId}, then choose.`);
     case 'pending':
-      return nextStep('relay', approveHint(view?.origins?.[0], requestId, view?.approval, driver, env, browserHint(view)));
+      return nextStep('relay', approveHint(view?.origins?.[0], requestId, view?.approval, driver, resume, browserHint(view)));
     case 'paused':
       return nextStep('relay', withResumeWait(`The tab lease is paused${view?.stateReason ? ` (${view.stateReason})` : ''}. `
         + 'Ask the user to return to the tab and click Resume in the FAI Browser extension, then call '
-        + `${driver === 'jev' ? 'fai_browser_run again' : 'fai_browser_observe'} with requestId ${requestId}.`, requestId, { env }));
+        + `${driver === 'jev' ? 'fai_browser_run again' : 'fai_browser_observe'} with requestId ${requestId}.`, requestId, resume));
     default:
       if (TERMINAL_REQUEST_STATES.has(state)) {
         return nextStep('stop', `This tab request has ended (${state}). Ask the user before requesting a tab again.`);
@@ -1476,6 +1503,7 @@ export function daemonApi(client) {
     // An observe with waitFor polls the page up to its maxMs first.
     observe: (body, signal) => call('POST', '/v1/observe', body, signal, 20_000 + (body.waitFor ? Math.min(Number(body.maxMs) || 0, MAX_OBSERVE_WAIT_MS) : 0)),
     stop: (runId, signal) => call('POST', `/v1/runs/${id(runId)}/stop`, {}, signal),
+    joinInvite: (inviteId, signal) => call('POST', `/v1/invites/${id(inviteId)}/join`, {}, signal),
     release: (requestId, signal) => call('DELETE', `/v1/requests/${id(requestId)}`, {}, signal),
     evidence: (runId, query, signal) => {
       const search = new URLSearchParams();
@@ -1569,10 +1597,15 @@ function mergeWarnings(codes = [], extra = []) {
 // Server.
 
 class McpServer {
-  constructor({ stdout, stderr, env, connect }) {
+  constructor({ stdout, stderr, env, connect, registry, sessionOptions }) {
     this.stdout = stdout;
     this.stderr = stderr;
     this.env = env;
+    // The agent-session registry entry (src/mcp-session.js): invites and wakes. Off with FAI_MCP_REGISTRY=0.
+    this.registryEnabled = registry ?? env.FAI_MCP_REGISTRY !== '0';
+    this.sessionOptions = sessionOptions ?? {};
+    this.agentSession = null;
+    this.host = 'unknown';
     // The driver until the daemon names its own (X-Fai-Driver on every answer, noteDriver): config.json as a hint,
     // read without ever throwing, so a malformed file still lets initialize and tools/list answer.
     this.driver = this.driverHint();
@@ -1801,6 +1834,7 @@ class McpServer {
     const requested = params?.protocolVersion;
     const protocolVersion = SUPPORTED_PROTOCOL_VERSIONS.includes(requested) ? requested : LATEST_PROTOCOL_VERSION;
     this.clientInfo = params?.clientInfo ?? null;
+    this.host = detectHost(this.clientInfo, this.env);
     this.send({
       jsonrpc: '2.0',
       id,
@@ -1808,9 +1842,42 @@ class McpServer {
         protocolVersion,
         capabilities: { tools: { listChanged: true } },
         serverInfo: { name: 'fai-browser', title: 'FAI Browser', version: VERSION },
-        instructions: instructionsFor(this.driver),
+        instructions: instructionsFor(this.driver, this.host),
       },
     });
+    this.startAgentSession();
+  }
+
+  /**
+   * Register this process with the daemon (when one answers; initialize never starts it), so the user can invite this
+   * session to a tab from the popup and Approve or Resume wakes it (docs/REFERENCE.md "Invites and wakes").
+   */
+  startAgentSession() {
+    if (!this.registryEnabled || this.agentSession || this.closing) return;
+    this.agentSession = new AgentSession({
+      env: this.env,
+      home: faiHome(this.env),
+      connect: this.connect,
+      clientName: clientNameFrom(this.env, this.clientInfo),
+      host: this.host,
+      log: message => this.log(message),
+      driver: () => this.driver,
+      // A resume or approval a call in flight is already waiting for needs no wake: that call returns the page.
+      waiting: wake => [...this.inflight.values()].some(call => call.requestId === wake.requestId && call.waitingOnRequest),
+      ...this.sessionOptions,
+    });
+    this.agentSession.start();
+  }
+
+  /** The resume wait options (src/resume.js): this server's environment and its wake capability. */
+  resumeOptions() {
+    return { env: this.env, wake: this.wakeMode() };
+  }
+
+  /** The wake capability next texts may rely on: a session that will be woken needs no background wait command. */
+  wakeMode() {
+    const capability = this.agentSession?.sessionId && !this.agentSession.disabled ? this.agentSession.capability : 'none';
+    return capability === 'none' ? null : capability;
   }
 
   async callTool(id, params) {
@@ -1824,6 +1891,8 @@ class McpServer {
       return;
     }
     const args = params.arguments ?? {};
+    // The last activity this session reports, and a Codex thread id (its wake address) the first time one is named.
+    this.agentSession?.noteToolCall(params._meta);
     const started = Date.now();
     const call = {
       id,
@@ -1883,6 +1952,7 @@ class McpServer {
     if (call.cancelled) {
       return; // The client cancelled this request: send no response.
     }
+    if (call.inviteNote && result?.content && !result.isError) result.content.unshift({ type: 'text', text: call.inviteNote });
     if (this.driverNotice && result?.content) {
       result.content.unshift({ type: 'text', text: this.driverNotice });
       this.driverNotice = null;
@@ -1941,7 +2011,7 @@ class McpServer {
       return okResult({
         state: 'pending',
         requestId: call.requestId,
-        next: nextStep('relay', approveHint(call.origin, call.requestId, call.approval, this.driver, this.env, call.browser)),
+        next: nextStep('relay', approveHint(call.origin, call.requestId, call.approval, this.driver, this.resumeOptions(), call.browser)),
       });
     }
     return errorResult('timeout', `FAI Browser did not answer within ${this.maxCallMs} ms. Check \`fai-browser `
@@ -1971,6 +2041,8 @@ class McpServer {
       this.clientPromise = Promise.resolve()
         .then(() => this.connect({ home: faiHome(this.env), autoStart: true, clientName, env: this.env }))
         .then(client => {
+          // Requests this client creates name this session as their owner (woken on Approve and Resume).
+          client.sessionAuth = () => this.agentSession?.auth() ?? null;
           // The daemon's driver, from every answer (src/client.js request); MCP never decides it on its own.
           client.onDriver = driver => this.noteDriver(driver);
           if (client.driver) this.noteDriver(client.driver);
@@ -2021,11 +2093,18 @@ class McpServer {
   async status(call) {
     const client = await this.client(call);
     const status = await client.status(call.signal);
+    const mine = this.agentSession?.sessionId ?? null;
+    // Only the invites meant for this session, or for no session in particular (the user's copy text names one).
+    const invites = (Array.isArray(status?.invites) ? status.invites : [])
+      .filter(invite => invite?.state === 'open' && (!invite.session || invite.session.sessionId === mine));
+    const { sessions: _others, invites: _all, ...rest } = status ?? {};
     return okResultWithNext({
       state: 'ok',
-      ...status,
-      session: { lastRequestId: this.lastRequestId, ownedRequests: [...this.ownedRequests] },
-      next: this.nextForStatus(status),
+      ...rest,
+      invites,
+      session: { lastRequestId: this.lastRequestId, ownedRequests: [...this.ownedRequests],
+        agent: this.agentSession ? this.agentSession.view() : null },
+      next: this.nextForStatus({ ...status, invites }, mine),
     });
   }
 
@@ -2034,7 +2113,13 @@ class McpServer {
    * none): wait for a running run, relay a pending approval, otherwise run (the tab is ready or a new request is
    * needed).
    */
-  nextForStatus(status) {
+  nextForStatus(status, mine = null) {
+    // The user invited this session to a tab (the wake may not have reached it): join that first.
+    const invited = (status?.invites ?? []).find(invite => mine && invite.session?.sessionId === mine);
+    if (invited) {
+      return nextStep('choose', `The user invited you to a browser tab (invite ${invited.inviteId}): call `
+        + `${openTool(this.driver)} with {"inviteId": "${invited.inviteId}"}.`);
+    }
     const live = Array.isArray(status?.requests) ? status.requests : [];
     const owned = live.filter(view => this.ownedRequests.has(view.requestId));
     const views = owned.length ? owned : live;
@@ -2045,7 +2130,7 @@ class McpServer {
     }
     const waiting = latest(views.filter(view => view.state === 'pending' || view.state === 'paused'));
     if (waiting) {
-      return nextForRequest(waiting.state, waiting, waiting.requestId, this.driver, this.env);
+      return nextForRequest(waiting.state, waiting, waiting.requestId, this.driver, this.resumeOptions());
     }
     const ready = latest(views.filter(view => view.state === 'active'));
     if (ready) {
@@ -2273,7 +2358,7 @@ class McpServer {
         ...response,
         state,
         requestId: view?.requestId ?? requestId,
-        next: nextForRequest(state, view, requestId, this.driver, this.env),
+        next: nextForRequest(state, view, requestId, this.driver, this.resumeOptions()),
       }));
     } finally {
       clearInterval(ticker);
@@ -2288,6 +2373,10 @@ class McpServer {
    */
   async open(call, args, resolved = null) {
     const client = await this.client(call);
+    if (args.inviteId && !resolved) {
+      resolved = await this.joinInvite(client, call, args.inviteId);
+      args = { ...args, requestId: resolved.requestId, origins: undefined };
+    }
     const task = args.task ?? args.answerQuestion ?? args.instruction;
     const request = resolved ?? await this.resolveRequest(client, call, { ...args, instruction: task, steps: undefined });
     const requestId = request.requestId;
@@ -2307,8 +2396,32 @@ class McpServer {
     }));
   }
 
+  /**
+   * Join the invite the user made in the FAI popup (POST /v1/invites/:id/join; single use): the request becomes this
+   * session's latest and owned one, and the next result starts with a trusted line naming the invite and the user's own
+   * words from the popup.
+   */
+  async joinInvite(client, call, inviteId) {
+    const joined = await client.joinInvite(inviteId, call.signal);
+    const requestId = joined?.requestId;
+    if (!requestId) throw new ToolError('internal', 'The daemon joined no invite');
+    this.ownedRequests.add(requestId);
+    this.lastRequestId = requestId;
+    const level = { 'read-only': 'Read', reversible: 'Use', interactive: 'Use', full: 'Act', testing: 'Test site' }[joined.level]
+      ?? joined.level;
+    const words = typeof joined.userText === 'string' && joined.userText ? oneLine(joined.userText, 500) : '';
+    call.inviteNote = `invite ${inviteId}: the user invited you to this tab at level ${level} (mode ${joined.level}). `
+      + (words ? `What they typed in the FAI popup (the user's own words, not page text): ${JSON.stringify(words)}`
+        : 'They typed no task: read the page, then ask them what to do.');
+    return { requestId, state: joined.state ?? joined.request?.state ?? 'active', view: joined.request ?? null };
+  }
+
   async run(call, args) {
     const client = await this.client(call);
+    if (args.inviteId) {
+      const joined = await this.joinInvite(client, call, args.inviteId);
+      args = { ...args, requestId: joined.requestId, origins: undefined };
+    }
     // The request lookup is the first daemon answer, which names the driver in effect (noteDriver).
     const request = await this.resolveRequest(client, call, args);
     if (this.driver === 'agent') {
@@ -2623,7 +2736,7 @@ class McpServer {
   receipt(structured, call, runId) {
     const requestId = structured.requestId;
     const context = { requestId, origin: call.origin, approval: call.approval, driver: this.driver, gateWaitMs: this.gateWaitMs(),
-      env: this.env };
+      env: this.env, wake: this.wakeMode() };
     if (!requestId || !structured.verdict) {
       structured.next = nextFor(structured, context);
       return;
@@ -2954,6 +3067,7 @@ class McpServer {
         call.cancelled = true;
         call.controller.abort(new Error('shutdown'));
       }
+      const leaving = this.agentSession?.stop().catch(() => {});
       if (this.clientPromise) {
         const client = await this.clientPromise.catch(() => null);
         if (client) {
@@ -2968,6 +3082,7 @@ class McpServer {
           ]);
         }
       }
+      await leaving;
     })();
     return this.closing;
   }
@@ -2987,8 +3102,10 @@ export function startMcpServer({
   stderr = process.stderr,
   env = process.env,
   connect,
+  registry,
+  sessionOptions,
 } = {}) {
-  const server = new McpServer({ stdout, stderr, env, connect });
+  const server = new McpServer({ stdout, stderr, env, connect, registry, sessionOptions });
   const lines = createInterface({ input: stdin, crlfDelay: Infinity });
   lines.on('line', line => {
     try {
