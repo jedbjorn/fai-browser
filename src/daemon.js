@@ -4,7 +4,7 @@
 import http from 'node:http';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { BrowserRuntime, actionLabels, checkActChoice, redactionMeta, resolveRetry, resolveSlim } from './runtime.js';
 import { checkDeclarative, validateExpectation } from './expectation.js';
@@ -34,6 +34,7 @@ import { DEFAULT_BUDGET, checkBudget, envFileMtime, loadDaemonSettings } from '.
 import { DEFAULT_THRESHOLDS, resolveThresholds } from './oversight.js';
 import { LEVELS, clampLevel, isLevel, levelRank, normalizeAdditions } from './guardrails.js';
 import { probeHealth } from './client.js';
+import { pickBrowser } from './bridge.js';
 import { createDomainStore, domainStatsDir, resolveProfiles } from './domains.js';
 import { checkOriginEntry, isSiteEntry, leaseOrigins, originCovered, siteRoots, urlCovered } from './origins.js';
 import { scrubSecrets } from './secrets.js';
@@ -96,7 +97,7 @@ const OBSERVE_WAIT_POLL_MS = 400;
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 // The most page text one observe's digest may carry when the host asks for more (digestChars).
 export const OBSERVE_DIGEST_MAX_CHARS = 6000;
-const REQUEST_KEYS = new Set(['origins', 'mode', 'reason', 'instruction', 'url', 'ttlMs']);
+const REQUEST_KEYS = new Set(['origins', 'mode', 'reason', 'instruction', 'url', 'ttlMs', 'browser']);
 const WAIT_KEYS = new Set(['requestId', 'runId', 'maxMs', 'afterStep', 'while']);
 
 function readPackageVersion() {
@@ -216,7 +217,9 @@ function permissionsOf(mode, record) {
   // before approval.
   const scope = record.grant ? (record.grant.scope === 'domain' ? 'domain' : 'origin') : null;
   return { requested: mode, granted, effective, testing: effective === 'testing', scope,
-    tabMode: record.grant?.tabMode ?? 'single' };
+    tabMode: record.grant?.tabMode ?? 'single',
+    // The browser that holds the tab, when several may be paired (issue #9).
+    ...(record.lease?.browserId && record.browser?.name ? { browser: { ...record.browser } } : {}) };
 }
 
 // Refusal text for a lease_level message that would raise the grant (src/bridge.js refuses it the same way).
@@ -525,14 +528,15 @@ export function createDaemon(options = {}) {
   let settings = null;
   let config = { driver: defaultDriver };
   let driverChanges = Promise.resolve();
-  // The user's per-request call budget from the extension popup ({maxCalls, maxMs}), null until one is reported.
-  let userBudget = null;
-  // Whether the extension opens a request's page by itself (its "Open requested pages right away" setting, reported
-  // with the budget in the hello and settings messages); null until an extension reports it (an older one never does).
-  let openRightAway = null;
-  // The Approve gate's asks the extension reports ({purchase, secret, level}; booleans, never anything sensitive), so
-  // an agent's offer marks "(asks the user)" only what the extension will ask about. All on until reported.
-  let approvalAsks = { purchase: true, secret: true, level: true };
+  // The popup settings each browser reported (hello and settings messages), by browserId: {budget, openRightAway,
+  // approvalAsks}. `budget` is the user's per-request call budget ({maxCalls, maxMs}) or null; `openRightAway` whether
+  // that extension opens a request's page by itself (null when it never said: an older one); `approvalAsks` the
+  // Approve gate's asks ({purchase, secret, level}; all on until reported), so an offer marks "(asks the user)" only
+  // what that browser will ask about. A run, gate or approval wording uses the settings of the browser that holds or
+  // awaits the tab; the browser used last only when none is known (several browsers, issue #9).
+  const browserSettings = new Map();
+  let lastSettingsFrom = null;
+  const DEFAULT_ASKS = { purchase: true, secret: true, level: true };
   let token = null;
   let tokenDigest = null;
   let hub = null;
@@ -568,6 +572,7 @@ export function createDaemon(options = {}) {
   }
 
   function changed() {
+    assignBrowsers();
     wake();
     try {
       hub?.publishRequests(liveViews());
@@ -575,6 +580,64 @@ export function createDaemon(options = {}) {
       log('hub_publish_error', { message: String(error?.message ?? error) });
     }
   }
+
+  // --- browsers (several may be connected; issue #9) ---------------------------------------------------------
+
+  // The connected browsers a request can go to ({id, product, name, usedAt, connectedAt}); an injected hub without
+  // multi-browser support has none, and requests then carry no browser.
+  const browserCandidates = () => hub?.candidates?.() ?? [];
+  const browserRef = browser => (browser ? { id: browser.id, product: browser.product ?? null, name: browser.name ?? null } : null);
+
+  /**
+   * Gives every pending request a browser to wait in: one the agent named keeps it; any other one without a connected
+   * browser goes to the browser the user used FAI in last (pickBrowser). Approved requests keep the browser that
+   * holds their tab.
+   */
+  function assignBrowsers() {
+    const candidates = browserCandidates();
+    if (!candidates.length) return;
+    const connected = new Set(candidates.map(browser => browser.id));
+    let preferred;
+    for (const record of requests.values()) {
+      if (record.state !== 'pending') continue;
+      if (record.browser?.id && connected.has(record.browser.id)) continue;
+      // A browser the agent named (or the user moved it to) that has been gone for pinGraceMs (a minute; much longer
+      // than the hub's 3 s disconnect grace, so a laptop sleep or a service hiccup moves nothing): the request no
+      // longer waits for it, and says so (`browserNote`, in the agent's next text).
+      const gone = record.browserPinned ? record.browser : null;
+      if (gone && now() - (goneSince.get(gone.id) ?? startedAt ?? 0) < pinGraceMs) continue;
+      preferred ??= pickBrowser(candidates).browser;
+      if (!preferred) return;
+      record.browserPinned = false;
+      record.browser = browserRef(preferred);
+      if (gone) {
+        record.browserNote = `${gone.name ?? 'The browser it was meant for'} disconnected; the request now waits in `
+          + `${preferred.name ?? 'the browser used last'}.`;
+      }
+      log('request_browser', { requestId: record.requestId, browserId: preferred.id, reason: gone ? 'unpinned' : 'assigned' });
+    }
+  }
+
+  // When each browser went away (the hub's `disconnected`, after its grace), for unpinning requests named for it.
+  const goneSince = new Map();
+  const pinGraceMs = options.pinGraceMs ?? 60_000;
+
+  // The browser whose settings apply to a request: the one holding its tab, else the one it waits in.
+  const browserOf = record => record?.lease?.browserId ?? record?.browser?.id ?? null;
+
+  // The settings of `browserId`; when it is unknown (or reported none), those of the browser used last, else of the
+  // browser that reported last.
+  function settingsFor(browserId) {
+    if (browserId && browserSettings.has(browserId)) return browserSettings.get(browserId);
+    const latest = pickBrowser(browserCandidates()).browser?.id;
+    if (!browserId && latest && browserSettings.has(latest)) return browserSettings.get(latest);
+    if (!browserId && lastSettingsFrom !== null && browserSettings.has(lastSettingsFrom)) return browserSettings.get(lastSettingsFrom);
+    return null;
+  }
+  const asksFor = record => settingsFor(browserOf(record))?.approvalAsks ?? DEFAULT_ASKS;
+
+  // The lease belongs to `browserId` (null: the event or hub names no browser, as with an older hub: any).
+  const sameBrowser = (record, browserId) => !browserId || !record.lease?.browserId || record.lease.browserId === browserId;
 
   /** Resolve when predicate() holds, at the deadline, or when the signal aborts. Uses real time. */
   async function waitUntil(predicate, maxMs, signal) {
@@ -626,6 +689,11 @@ export function createDaemon(options = {}) {
       createdAt: iso(record.createdAt),
       expiresAt: iso(expiresAt(record)),
       lease: record.lease ? { ...record.lease } : null,
+      // The browser that holds the tab (once approved), else the one the request waits in; null while no browser
+      // with the extension is connected.
+      browser: record.browser ? { ...record.browser } : null,
+      // Set when the browser the request was meant for went away and it moved to another one.
+      ...(record.browserNote ? { browserNote: record.browserNote } : {}),
       activeRunId: record.activeRunId,
       lastRunId: record.lastRunId,
       // How a pending request is approved (`page`: its page opened by itself, the icon click on it approves; `window`:
@@ -737,6 +805,7 @@ export function createDaemon(options = {}) {
     // Re-approval: the user changes the level of the active lease on the same tab (no new lease). A lower level
     // takes effect on the next command (the hub clamps every command to it); a higher one on the next run.
     if (record.state === 'active' && event.requestId && record.lease?.tabId === event.tabId
+      && sameBrowser(record, event.browserId)
       && originCovered(event.origin, record.origins) && event.level !== undefined && event.level !== null) {
       const scope = leaseScope(event, record);
       const grant = grantFor(event.level, record, iso(now()), scope, event.tabMode ?? 'single');
@@ -777,26 +846,41 @@ export function createDaemon(options = {}) {
       return replyTo(event, { error: { code: 'bad_request', message: `level must be one of ${LEVELS.join(', ')}` } });
     }
     const origins = leaseOrigins(record.origins, event.origin, scope);
-    // Phase 2: one active lease at a time. Approving another request supersedes the current one.
+    // One active lease per browser (its extension holds one session): approving another request in the same browser
+    // supersedes the current one there. A lease in another browser is left alone.
+    const browserId = typeof event.browserId === 'string' ? event.browserId : null;
     for (const other of requests.values()) {
-      if (other !== record && LEASED.has(other.state)) {
+      if (other !== record && LEASED.has(other.state) && sameBrowser(other, browserId)) {
         endRequest(other, 'released', 'superseded', { interrupt: 'request_closed' });
       }
     }
+    // A paused request resumed in another browser: the old browser's session for it ends.
+    const previous = record.lease;
+    if (previous?.leaseId && browserId && previous.browserId && previous.browserId !== browserId) {
+      try {
+        hub.updateLease(previous.leaseId, 'released', 'superseded');
+      } catch (error) {
+        log('hub_update_error', { message: String(error?.message ?? error) });
+      }
+    }
     const leaseId = randomBytes(16).toString('hex');
-    record.lease = { leaseId, tabId: event.tabId, origin: event.origin, origins, grantedAt: grant.grantedAt };
+    record.lease = { leaseId, tabId: event.tabId, origin: event.origin, origins, grantedAt: grant.grantedAt,
+      ...(browserId ? { browserId } : {}) };
+    if (browserId) record.browser = browserRef(event.browser ?? { id: browserId });
+    delete record.browserNote;
     record.grant = grant;
     record.lastCallAt = now();
     hub.bindLease({
       leaseId,
       requestId: record.requestId,
+      browserId,
       tabId: event.tabId,
       origin: event.origin,
       allowedOrigins: [...origins],
       level: grant.level,
       tabMode: grant.tabMode,
     });
-    record.runtime = new BrowserRuntime({ bridge: hub.bridgeFor(leaseId), asks: () => approvalAsks });
+    record.runtime = new BrowserRuntime({ bridge: hub.bridgeFor(leaseId), asks: () => asksFor(record) });
     // Password values filled at testing stay redacted in every later result, across leases (a re-approval at another
     // level is a new lease and a new runtime on the same tab, and the page may still echo the value).
     record.runtime.secrets = filledSecrets;
@@ -843,6 +927,10 @@ export function createDaemon(options = {}) {
   function onDenyEvent(event) {
     const record = requests.get(event.requestId);
     if (!record) return replyTo(event, { error: { code: 'no_request', message: 'No such tab request' } });
+    // A tab another browser holds is only released there (a pending request can be denied from any browser).
+    if (LEASED.has(record.state) && !sameBrowser(record, event.browserId)) {
+      return replyTo(event, { error: { code: 'request_not_pending', message: 'Another browser holds this tab' } });
+    }
     // The popup uses its deny control as "Release" for a paused request.
     if (record.state === 'paused') {
       endRequest(record, 'released', 'released', { interrupt: 'cancelled' });
@@ -853,6 +941,25 @@ export function createDaemon(options = {}) {
     }
     setState(record, 'denied', 'denied');
     replyTo(event, { requestId: record.requestId, state: 'denied' });
+  }
+
+  // The popup's "Open here" in another browser: the pending request now waits there (and stays there: the user chose).
+  function onMoveEvent(event) {
+    const record = event.requestId ? requests.get(event.requestId) : null;
+    if (!record) return replyTo(event, { error: { code: 'no_request', message: 'No such tab request' } });
+    if (record.state !== 'pending') {
+      return replyTo(event, { error: { code: 'request_not_pending', message: `This request is ${record.state}` } });
+    }
+    if (typeof event.browserId !== 'string') {
+      return replyTo(event, { error: { code: 'bad_request', message: 'No browser to move the request to' } });
+    }
+    record.browser = browserRef(event.browser ?? { id: event.browserId });
+    record.browserPinned = true;
+    // The user chose where it waits: an earlier note about a browser that went away no longer applies.
+    delete record.browserNote;
+    log('request_browser', { requestId: record.requestId, browserId: event.browserId, reason: 'moved' });
+    changed();
+    return replyTo(event, { requestId: record.requestId, browser: { ...record.browser } });
   }
 
   function onStatusEvent(event) {
@@ -873,30 +980,37 @@ export function createDaemon(options = {}) {
    * The per-request call budget in effect, the ceiling the MCP server enforces: the user's popup setting, else
    * config.json `budget` (validated by loadConfig), else DEFAULT_BUDGET; `source` names which.
    */
-  function effectiveBudget() {
+  function effectiveBudget(browserId = null) {
+    const userBudget = settingsFor(browserId)?.budget ?? null;
     if (userBudget) return { ...userBudget, source: 'extension' };
     const configured = config.budget && typeof config.budget === 'object' ? config.budget : null;
     if (configured && Object.keys(configured).length) return { ...DEFAULT_BUDGET, ...configured, source: 'config' };
     return { ...DEFAULT_BUDGET, source: 'default' };
   }
 
-  /** The extension's popup settings (hello or a settings message): the budget, when valid and complete, else none. */
-  function applySettings(settings) {
-    let next = null;
+  /**
+   * A browser's popup settings (hello or a settings message): the budget, when valid and complete, else none; "open
+   * right away" and the Approve gate's asks when reported (an older extension leaves its earlier ones standing).
+   */
+  function applySettings(settings, browserId = null) {
+    const key = typeof browserId === 'string' ? browserId : '';
+    const before = browserSettings.get(key) ?? { budget: null, openRightAway: null, approvalAsks: DEFAULT_ASKS };
+    let budget = null;
     try {
       const clean = checkBudget(settings?.budget ?? null);
-      if (clean.maxCalls !== undefined && clean.maxMs !== undefined) next = clean;
+      if (clean.maxCalls !== undefined && clean.maxMs !== undefined) budget = clean;
     } catch {
-      next = null;
+      budget = null;
     }
-    const changedBudget = JSON.stringify(next) !== JSON.stringify(userBudget);
-    userBudget = next;
-    if (changedBudget) log('budget_setting', { budget: userBudget });
-    if (typeof settings?.openRightAway === 'boolean') openRightAway = settings.openRightAway;
+    const next = { ...before, budget };
+    if (JSON.stringify(budget) !== JSON.stringify(before.budget)) log('budget_setting', { budget, browserId: key || null });
+    if (typeof settings?.openRightAway === 'boolean') next.openRightAway = settings.openRightAway;
     const asks = settings?.approvals;
     if (asks && typeof asks === 'object') {
-      approvalAsks = { purchase: asks.purchase !== false, secret: asks.secret !== false, level: asks.level !== false };
+      next.approvalAsks = { purchase: asks.purchase !== false, secret: asks.secret !== false, level: asks.level !== false };
     }
+    browserSettings.set(key, next);
+    lastSettingsFrom = key;
   }
 
   // How the user approves a pending request, for the agent's wording (result.js approvalSteps): `page` when the
@@ -904,7 +1018,7 @@ export function createDaemon(options = {}) {
   // and no live session on a tab that already covers it), where the icon click on that page approves; else `window`.
   function approvalOf(record) {
     const extension = hub.extension();
-    if (!extension.connected || openRightAway !== true) return 'window';
+    if (!extension.connected || settingsFor(browserOf(record))?.openRightAway !== true) return 'window';
     const hasPage = Boolean(record.url) || record.origins.some(entry => !isSiteEntry(entry));
     if (!hasPage || levelRank(record.mode) > levelRank('interactive')) return 'window';
     const live = extension.session;
@@ -915,8 +1029,8 @@ export function createDaemon(options = {}) {
   }
 
   function onSettingsEvent(event) {
-    applySettings(event.settings);
-    replyTo(event, { budget: effectiveBudget() });
+    applySettings(event.settings, event.browserId);
+    replyTo(event, { budget: effectiveBudget(event.browserId ?? '') });
   }
 
   function driverView() {
@@ -1008,21 +1122,23 @@ export function createDaemon(options = {}) {
   }
 
   function onHelloEvent(event) {
-    if (event.settings !== undefined) applySettings(event.settings);
+    if (event.settings !== undefined) applySettings(event.settings, event.browserId);
     const reply = endSession => replyTo(event, {
       mode: 'daemon',
       daemonVersion: version,
       endSession,
       requests: liveViews(),
-      budget: effectiveBudget(),
+      budget: effectiveBudget(event.browserId ?? ''),
       control: driverView(),
       update: updates.view(),
     });
     const session = event.session;
+    const browserId = typeof event.browserId === 'string' ? event.browserId : null;
     if (!session) {
-      // The worker restarted and lost its session: any active lease can no longer be served.
+      // The worker restarted and lost its session: the leases of THIS browser can no longer be served. Another
+      // browser's lease is not affected.
       for (const record of requests.values()) {
-        if (record.state === 'active') {
+        if (record.state === 'active' && sameBrowser(record, browserId)) {
           interruptActive(record, 'session_inactive');
           setState(record, 'paused', 'session_inactive');
         }
@@ -1030,7 +1146,8 @@ export function createDaemon(options = {}) {
       return reply(false);
     }
     const record = findByLease(session.leaseId);
-    if (!record) return reply(true);
+    // Unknown, or a lease another browser holds: that session is over.
+    if (!record || !sameBrowser(record, browserId)) return reply(true);
     // The worker may have lowered its level while the lease_level message could not reach us (disconnected): its
     // hello carries the level it holds now. Only a lower level is taken from it.
     if (session.level && record.grant && levelRank(session.level) < levelRank(record.grant.level)) {
@@ -1043,6 +1160,7 @@ export function createDaemon(options = {}) {
         leaseId: record.lease.leaseId,
         requestId: record.requestId,
         tabId: record.lease.tabId,
+        browserId: record.lease.browserId ?? browserId,
         origin: record.lease.origin,
         allowedOrigins: coveredOrigins(record),
         // The grant stays the hub's ceiling for the resumed lease.
@@ -1054,9 +1172,18 @@ export function createDaemon(options = {}) {
     return reply(false);
   }
 
-  function onDisconnected() {
+  // A browser went away: only the leases it holds pause (every lease when the hub names no browser).
+  function onDisconnected(event) {
+    const browserId = typeof event?.browserId === 'string' ? event.browserId : null;
+    if (browserId) {
+      goneSince.set(browserId, now());
+      // Look again once a pinned request may move on.
+      setTimeout(() => {
+        if (!shuttingDown) changed();
+      }, pinGraceMs + 50).unref?.();
+    }
     for (const record of requests.values()) {
-      if (record.state === 'active') {
+      if (record.state === 'active' && sameBrowser(record, browserId)) {
         interruptActive(record, 'disconnected');
         setState(record, 'paused', 'disconnected');
       }
@@ -1084,9 +1211,15 @@ export function createDaemon(options = {}) {
         case 'update':
           return onUpdateEvent(event);
         case 'disconnected':
-          return onDisconnected();
-        case 'connected':
+          onDisconnected(event);
           return changed();
+        case 'connected':
+          if (typeof event.browserId === 'string') goneSince.delete(event.browserId);
+          return changed();
+        case 'move':
+          return onMoveEvent(event);
+        case 'usage':
+          return saveKnownBrowsers(event.browsers);
         default:
           return undefined;
       }
@@ -1453,6 +1586,8 @@ export function createDaemon(options = {}) {
         log: log.path ?? null,
       },
       extension: hub.extension(),
+      // Every browser with the extension the hub knows: connected ones, and recently gone ones that hold a lease.
+      browsers: hub.browsers?.() ?? [],
       driver: config.driver,
       provider: { default: config.driver === 'agent' ? null : config.provider ?? 'typesafe',
         keyConfigured: Boolean(env.TYPESAFE_API_KEY) },
@@ -1466,7 +1601,7 @@ export function createDaemon(options = {}) {
         recent: all.filter(run => run.state === 'done').sort((a, b) => b.finishedAt - a.finishedAt).slice(0, 10)
           .map(runSummary),
       },
-      warnings: [...warnings],
+      warnings: [...warnings, ...(hub.warnings?.() ?? [])],
     };
   }
 
@@ -1498,6 +1633,17 @@ export function createDaemon(options = {}) {
     if (pending >= MAX_PENDING_REQUESTS) {
       throw new HttpError(429, 'too_many_requests', 'Too many pending tab requests; cancel one first', { retryable: true });
     }
+    // The browser the request waits in: the one the agent named (it must be connected), else the one the user used
+    // FAI in last (assigned again when it goes away, or when none is connected yet).
+    let wanted;
+    if (body.browser !== undefined) {
+      if (typeof body.browser !== 'string' || !body.browser.trim() || body.browser.length > 64) {
+        throw badOptions('browser must name a connected browser, such as firefox, chrome, chromium, edge or brave');
+      }
+      const picked = pickBrowser(browserCandidates(), body.browser);
+      if (picked.error) throw new HttpError(409, picked.error.code, picked.error.message);
+      wanted = picked.browser;
+    }
     const record = {
       requestId: newRequestId(),
       state: 'pending',
@@ -1515,6 +1661,8 @@ export function createDaemon(options = {}) {
       pausedAt: null,
       endedAt: null,
       lease: null,
+      browser: browserRef(wanted ?? null),
+      browserPinned: Boolean(wanted),
       activeRunId: null,
       lastRunId: null,
       runtime: null,
@@ -1530,7 +1678,7 @@ export function createDaemon(options = {}) {
         state: 'pending',
         extensionConnected: Boolean(hub.extension().connected),
         expiresAt: iso(expiresAt(record)),
-        message: `Ask the user to approve this request in Chrome: ${approvalSteps(approvalOf(record))}.`,
+        message: `Ask the user to approve this request in ${record.browser?.name ?? 'their browser'}: ${approvalSteps(approvalOf(record))}.`,
         request: view(record),
       },
     };
@@ -1579,7 +1727,8 @@ export function createDaemon(options = {}) {
     await waitUntil(() => !watched.includes(record.state), maxMs, signal);
     touch(record);
     // `budget`: the call budget in effect for this request (the MCP server reads its ceiling from here).
-    return { state: record.state, request: view(record), waitedMs: Date.now() - started, budget: effectiveBudget() };
+    return { state: record.state, request: view(record), waitedMs: Date.now() - started,
+      budget: effectiveBudget(browserOf(record)) };
   }
 
   function runSpec(body, record, operation) {
@@ -2288,6 +2437,39 @@ export function createDaemon(options = {}) {
 
   // --- lifecycle --------------------------------------------------------------------------------------------
 
+  // Each browser's last use and extension Origin ({id: {usedAt, origin}}), in browsers.json in the state directory, so
+  // new requests still go to the browser used last after a restart or an update. Nothing secret is kept there.
+  const knownBrowsersFile = () => join(paths.stateDir, 'browsers.json');
+  async function loadKnownBrowsers() {
+    // A write cut short by a crash leaves its temporary file behind.
+    try {
+      for (const name of await readdir(paths.stateDir)) {
+        if (/^browsers\.json\..+\.tmp$/.test(name)) await unlink(join(paths.stateDir, name)).catch(() => {});
+      }
+    } catch {
+      // No state directory yet.
+    }
+    try {
+      const parsed = JSON.parse(await readFile(knownBrowsersFile(), 'utf8'));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  let savingBrowsers = Promise.resolve();
+  function saveKnownBrowsers(browsers) {
+    if (!browsers || typeof browsers !== 'object') return savingBrowsers;
+    const text = `${JSON.stringify(browsers)}\n`;
+    savingBrowsers = savingBrowsers.then(async () => {
+      const file = knownBrowsersFile();
+      const temp = `${file}.${process.pid}.tmp`;
+      await mkdir(paths.stateDir, { recursive: true });
+      await writeFile(temp, text, { mode: 0o600 });
+      await rename(temp, file);
+    }).catch(error => log('browsers_save_error', { message: String(error?.message ?? error).slice(0, 200) }));
+    return savingBrowsers;
+  }
+
   async function resolveHub() {
     const hubOptions = {
       secret: settings.secret,
@@ -2295,6 +2477,8 @@ export function createDaemon(options = {}) {
       mode: 'daemon',
       log,
       version,
+      // Each browser's last use and extension Origin, kept across restarts and updates (browsers.json).
+      knownBrowsers: await loadKnownBrowsers(),
     };
     if (options.hub) return options.hub;
     if (options.hubFactory) return options.hubFactory(hubOptions);
@@ -2406,6 +2590,7 @@ export function createDaemon(options = {}) {
       wake();
       try {
         await hub?.close();
+        await savingBrowsers;
       } catch (error) {
         log('hub_close_error', { message: String(error?.message ?? error) });
       }

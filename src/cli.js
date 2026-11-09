@@ -26,7 +26,9 @@ const RUN_OPTION_KEYS = ['maxActions', 'maxDecisions', 'timeoutMs', 'capture', '
 const TERMINAL_REQUEST_STATES = new Set(['denied', 'expired', 'cancelled', 'released']);
 
 const USAGE = `Usage (your agent chooses each action; the default driver):
-  fai-browser request-tab --origin O [--origin O2] --reason TEXT [--mode M] [--instruction TEXT]
+  fai-browser request-tab --origin O [--origin O2] --reason TEXT [--mode M] [--instruction TEXT] [--browser B]
+                           --browser: which paired browser (firefox, chrome, chromium, edge, brave, or an id from
+                           status); default: the one the user used FAI in last
   fai-browser wait (<requestId> | --run <runId>) [--max-ms N]
   fai-browser wait <requestId> --until active [--timeout 30m]
                            block until the user resumes or approves the tab (run it in the background: it exits 0
@@ -58,6 +60,7 @@ Both:
 step/run flags (experimental Jev driver):
   --request ID             Reuse an approved tab request (no new click)
   --origin O, --reason T   Request a tab without an options file
+  --browser B              Which paired browser a new tab request opens in (default: the one used last)
   --release                Release the tab when the run ends (default: keep it for the next command)
   --expect-url-includes S, --expect-text-includes S, --expect-title-includes S
   --capture each|last|none --max-actions N --timeout-ms N
@@ -678,6 +681,7 @@ async function executeThin(operation, flags, instruction, options, optionsPath) 
         origins,
         mode: body.mode ?? 'read-only',
         reason: flags.reason ?? `CLI: ${label.slice(0, 80)}`,
+        ...(flags.browser ? { browser: flags.browser } : {}),
         instruction: label.slice(0, 300),
         url: requestStartUrl(origins, body.allowedUrls, [label]),
       });
@@ -796,6 +800,8 @@ async function commandRequestTab(flags) {
   if (flags.instruction) {
     body.instruction = flags.instruction;
   }
+  // Several paired browsers: the one to open the request in (the daemon names the connected ones if it is not).
+  if (flags.browser) body.browser = flags.browser;
   const url = requestStartUrl(flags.origin, [], [flags.instruction]);
   if (url) body.url = url;
   const created = await client.requestTab(body);

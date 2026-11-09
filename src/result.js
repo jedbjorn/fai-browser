@@ -1437,7 +1437,7 @@ export function directResult(source) {
   }
   const permissions = cleanPermissions(result.permissions);
   if (permissions) out.granted = { level: permissions.effective, asked: permissions.requested,
-    ...(permissions.tabMode ? { tabMode: permissions.tabMode } : {}) };
+    ...(permissions.tabMode ? { tabMode: permissions.tabMode } : {}), ...(permissions.browser ? { browser: permissions.browser.name } : {}) };
   if (typeof result.revision === 'string') out.revision = result.revision;
   if (Array.isArray(result.actions)) out.actions = result.actions;
   if (Number.isInteger(result.moreActions) && result.moreActions > 0) out.moreActions = result.moreActions;
@@ -1867,6 +1867,12 @@ export function cleanPermissions(value) {
   // `origin` (exact origins) or `domain` (the request's domain roots, approved by the user); left out when unknown.
   if (value.scope === 'origin' || value.scope === 'domain') out.scope = value.scope;
   if (value.tabMode === 'single' || value.tabMode === 'multiple') out.tabMode = value.tabMode;
+  // The browser that holds the tab: {id, product, name}, plain strings only.
+  const browser = value.browser;
+  if (browser && typeof browser.id === 'string' && typeof browser.name === 'string') {
+    out.browser = { id: browser.id.slice(0, 64), product: typeof browser.product === 'string' ? browser.product.slice(0, 24) : null,
+      name: browser.name.slice(0, 40) };
+  }
   return out;
 }
 

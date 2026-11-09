@@ -250,7 +250,9 @@ test('extension status reports end the lease and emit a status event', async t =
   await rejected;
   await rejectsWithCode(bridge.observe(), 'tab_changed');
   const event = setup.events.find(e => e.type === 'status');
-  assert.deepEqual({ ...event }, { type: 'status', leaseId: 'lease-1', requestId: 'req_1', status: 'paused', reason: 'tab_changed' });
+  const { browserId, ...rest } = event;
+  assert.deepEqual(rest, { type: 'status', leaseId: 'lease-1', requestId: 'req_1', status: 'paused', reason: 'tab_changed' });
+  assert.match(browserId, /^origin-[0-9a-f]{16}$/, 'an extension that reports no identity is known by its Origin');
 });
 
 test('updateLease pushes lease_update, fails pending commands with the code, and can reactivate', async t => {
@@ -326,14 +328,14 @@ test('hello semantics: the daemon decides endSession; without listeners a stale 
   assert.equal(wrongVersion.error.code, 'unsupported_protocol');
 });
 
-test('a newer connection replaces the older one with close code 4000; setSecret closes with 4001', async t => {
+test('a newer connection of the same browser supersedes the older one with 4003; setSecret closes with 4001', async t => {
   const setup = await daemon(t);
   const older = await setup.extension();
   await older.hello();
   const newer = await setup.extension();
   await newer.hello();
   const close = await older.client.next(event => event.type === 'close');
-  assert.equal(close.code, 4000);
+  assert.equal(close.code, 4003, 'the same identity (here: the same extension Origin) is a restarted worker');
   assert.equal(setup.hub.extension().transport, 'websocket');
   setup.hub.setSecret('another-pairing-secret-1234567890');
   assert.equal((await newer.client.next(event => event.type === 'close')).code, 4001);

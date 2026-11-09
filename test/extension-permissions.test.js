@@ -160,7 +160,7 @@ async function popup(t, { local = {}, requests = [], state = {}, tabUrl = 'http:
           async get(keys) { return Object.fromEntries(keys.filter(key => key in __local).map(key => [key, structuredClone(__local[key])])); },
           async set(values) { Object.assign(__local, structuredClone(values)); },
         },
-        session: { async get() { return { requests, approvals: __state.approvals ?? [], connection: { connected, transport: connected ? 'websocket' : 'none', paired: connected, native: __state.native ?? null } }; } },
+        session: { async get() { return { requests, approvals: __state.approvals ?? [], connection: { connected, transport: connected ? 'websocket' : 'none', paired: connected, native: __state.native ?? null, ...(__state.connection ?? {}) } }; } },
         onChanged: { addListener(listener) { listeners.push(listener); } },
       },
       tabs: { async query() { __tabQueries++; return [{ id: 7, url: tabUrl, title: 'App' }]; } },
@@ -194,7 +194,7 @@ async function popup(t, { local = {}, requests = [], state = {}, tabUrl = 'http:
           const live = connected || (message.type === 'pair' && !__state.pairError);
           return { status: __state.status ?? null, session: __state.session ?? null, requests,
             connection: { connected: live, transport: live ? 'websocket' : 'none', paired: live, native: __state.native ?? null,
-              ...(__state.control ? { control: __state.control } : {}) } };
+              ...(__state.control ? { control: __state.control } : {}), ...(__state.connection ?? {}) } };
         },
       },
     };
@@ -965,6 +965,28 @@ test('popup: connected collapses setup to one line; the saved secret never reach
   await page.dispatchEvent('#secret', 'change');
   await page.waitForFunction(() => __local.secret === 'y'.repeat(32));
   assert.equal(await page.$eval('#secret', node => node.value), '');
+});
+
+test('popup: with two browsers paired, a request waiting in the other one is listed with Open here, which moves it', async t => {
+  // Several browsers (issue #9): this popup is Chromium's; the request waits in Firefox, the browser used last.
+  // As the service sends them: names and `self`/`mine` only, never another browser's id.
+  const browsers = [{ product: 'chromium', name: 'Chromium', self: true }, { product: 'firefox', name: 'Firefox', self: false }];
+  const elsewhere = { ...request(['https://example.com'], 'read-only'), browser: { product: 'firefox', name: 'Firefox', mine: false } };
+  const mine = { ...request(['https://example.org'], 'read-only'), requestId: 'req_2', browser: { product: 'chromium', name: 'Chromium', mine: true } };
+  const page = await popup(t, { local: { ...PAIRED }, requests: [elsewhere, mine],
+    state: { connection: { browserId: 'b-chromium-self', browsers } } });
+  await page.waitForSelector('.elsewhere-request');
+  assert.match(await page.textContent('#connection-line'), /Connected to the FAI service, with Firefox/);
+  assert.equal(await count(page, '.elsewhere-request'), 1);
+  assert.equal(await page.textContent('.elsewhere-request .card-label'), 'IN ANOTHER BROWSER');
+  assert.match(await page.textContent('.elsewhere-request .request-meta'), /waiting in Firefox/);
+  assert.equal(await count(page, '.elsewhere-request .level-select'), 0, 'no approval controls for another browser\'s request');
+  // This browser's own request keeps its usual card.
+  assert.equal(await count(page, '.request-card:not(.elsewhere-request) .level-select'), 1);
+  await page.click('.elsewhere-request .move-request');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'move'));
+  const moved = await page.evaluate(() => __sent.find(message => message.type === 'move'));
+  assert.deepEqual(moved, { type: 'move', requestId: 'req_1' });
 });
 
 test('popup: unpaired shows the setup card; Pair asks the worker and the card goes once connected', async t => {
