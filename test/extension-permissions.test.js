@@ -1081,6 +1081,17 @@ test('arm.html: a click before the worker has prepared the approval is kept and 
   await page.waitForFunction(() => __closed > 0);
 });
 
+test('arm.html: an early click asks for the request\'s other exact origins in the same prompt, as the prepared approval would', async t => {
+  const twoSites = { ...ARM_REQUEST, origins: ['https://shop.example.com', 'https://login.example.com', 'https://*.example.org'] };
+  const page = await armPage(t, { arms: [ARM], requests: [twoSites], holdPrepare: true });
+  await page.waitForFunction(() => __sent.some(message => message.type === 'arm_prepare'));
+  await page.click('#approve', { force: true });
+  await page.evaluate(() => globalThis.__releasePrepare?.());
+  await page.waitForFunction(() => __closed > 0);
+  assert.deepEqual(await page.evaluate(() => __permissionCalls.map(call => call.permission.origins)),
+    [['https://shop.example.com/*', 'https://login.example.com/*']], 'exact origins only, the task origin first');
+});
+
 test('arm.html: a re-arm of the same request or a requests update between prepare and click keeps the prepared approval', async t => {
   for (const change of ['rearm', 'requests', 'both']) {
     const page = await armPage(t, { arms: [ARM], requests: [ARM_REQUEST] });
