@@ -11,7 +11,8 @@ import { join } from 'node:path';
 import { homePaths } from '../src/home.js';
 import {
   RELEASES_API, UPDATE_REPO, USER_AGENT, automaticCheck, compareVersions, createUpdateChecker, isNewer, notesUrl,
-  parseTag, parseVersion, readCheckState, readInstallState, runCheck, updatePaths, updateView, writeInstallState,
+  parseTag, parseVersion, readCheckState, readInstallState, runCheck, runningUpdate, updatePaths, updateView,
+  writeInstallState, writeUpdateLock,
 } from '../src/update.js';
 import { UpdateFailed, UpdateRefused, gitRunner, installUpdate, preflight, refuseLeases, remoteMatches,
   takeUpdateLock } from '../src/update-install.js';
@@ -246,9 +247,19 @@ test('install records: a running record whose process is gone reads as failed', 
   writeInstallState(paths, { pid: process.pid, state: 'running', from: '0.4.0', to: '0.5.0', step: 'npm' });
   assert.equal(readInstallState(paths).state, 'running');
   const release = await takeUpdateLock(paths);
-  await assert.rejects(takeUpdateLock(paths), error => error.code === 'update_running');
+  await assert.rejects(takeUpdateLock(paths, process.ppid), error => error.code === 'update_running', 'another live process');
   await release();
+  // The daemon writes the lock for the updater it starts; that updater adopts it.
+  writeUpdateLock(paths, process.pid);
   await (await takeUpdateLock(paths))();
+  assert.equal(runningUpdate(paths), null);
+  // A lock (or running record) older than UPDATE_MAX_MS is stale even if its pid is alive again (a reused pid).
+  await writeFile(updatePaths(paths).lock, JSON.stringify({ pid: process.ppid, startedAt: new Date(Date.now() - 2 * HOUR).toISOString() }));
+  assert.equal(runningUpdate(paths), null);
+  await (await takeUpdateLock(paths))();
+  await writeFile(updatePaths(paths).install, JSON.stringify({ pid: process.ppid, state: 'running', from: '0.4.0', to: '0.5.0',
+    at: new Date(Date.now() - 2 * HOUR).toISOString() }));
+  assert.equal(readInstallState(paths).error, 'interrupted');
 });
 
 // --- refusals and the install against local git repos -----------------------------------------------------------

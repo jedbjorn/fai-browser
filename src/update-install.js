@@ -4,19 +4,26 @@
 //
 // Order: refuse unless the checkout is safe to move (a git clone of UPDATE_REPO, no local modifications, on main with
 // nothing unpushed or on a detached HEAD, no tab lease active or paused), `git fetch --tags` from that remote, check
-// the tag names the commit GitHub's release names and its package.json the release's version, then move:
+// the tag names the commit the release names (GitHub's API, or `git ls-remote` for a private repository) and its
+// package.json the release's version, then move:
+//   - HEAD already at the release commit: nothing to move (the CLI finishes an interrupted update instead);
 //   - on main: fast-forward main to the tag's commit (`git merge --ff-only`); refused when main has commits the tag
 //     does not contain;
 //   - on a detached HEAD (an earlier update, or a clone of a tag): check out the tag's commit, detached;
 //   - on any other branch: refused (switch to main or check the tag out yourself).
-// Then `npm ci --ignore-scripts` when package-lock.json changed and node_modules exists, the refresh steps of the
-// new version (`fai-browser update --finish`: browser pairing and already installed user-level skills; never a secret
-// or a key), and a daemon restart that must come back with the new version. A failure after the move rolls the
-// checkout back to the previous commit (main: `git reset --keep`, which refuses to touch local changes; detached:
-// checkout), repeats the refresh and restart from the old version, and reports `rolled_back`.
+// Then, best effort, `npm ci --include=dev --ignore-scripts` when package-lock.json changed and node_modules exists
+// (the runtime has no npm dependencies, so a failure is a warning, never a rollback); the refresh steps of the new
+// version (`fai-browser update --finish`: browser pairing and already installed user-level skills; never a secret or a
+// key); and a daemon restart that must come back with the new version. The restart looks at the leases once more
+// right before it stops the daemon: a tab held by then (the daemon refuses new requests and approvals while an update
+// runs, so only a race gets there) rolls the update back without stopping the daemon, rather than killing that task.
+// A failure after the move rolls the checkout back to the previous commit (main: `git reset --keep`, which refuses to
+// touch local changes; detached: checkout), repeats the refresh and, when the daemon was stopped, the restart from
+// the old version, and reports `rolled_back`. node_modules is left as it is.
 //
-// Every git, npm and node call is execFile with an argv array (no shell); the only network-derived values that reach
-// an argv are a tag matching parseTag() and a 40-hex commit.
+// Every git, npm and node call is execFile with an argv array (no shell) and an environment without FAI's secrets
+// (src/update-git.js); the only network-derived values that reach an argv are a tag matching parseTag() and a
+// 40-hex commit.
 import { execFile } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { appendFile, mkdir, unlink, writeFile } from 'node:fs/promises';
@@ -24,10 +31,12 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { PACKAGE_ROOT } from './paths.js';
 import { scrubSecrets } from './secrets.js';
-import { UPDATE_REPO, clearStaleLock, isCommitSha, parseTag, parseVersion, updatePaths, writeInstallState } from './update.js';
+import { UPDATE_REPO, clearStaleLock, isCommitSha, parseTag, parseVersion, runningUpdate, updatePaths, writeInstallState } from './update.js';
+import { findVerifiedRemote, gitRunner, remoteMatches, scrubbedEnv, toolEnv } from './update-git.js';
+
+export { gitRunner, remoteMatches } from './update-git.js';
 
 const execFileAsync = promisify(execFile);
-const GIT_TIMEOUT_MS = 120_000;
 const NPM_TIMEOUT_MS = 600_000;
 const FINISH_TIMEOUT_MS = 120_000;
 const RESTART_TIMEOUT_MS = 20_000;
@@ -43,39 +52,15 @@ export class UpdateRefused extends Error {
 }
 
 export class UpdateFailed extends Error {
-  constructor(step, message, { rolledBack = false, rollbackError = null } = {}) {
+  /** `moved`: the checkout had moved to the release (then `rolledBack` says whether it is back). */
+  constructor(step, message, { moved = false, rolledBack = false, rollbackError = null } = {}) {
     super(message);
     this.code = 'update_failed';
     this.step = step;
+    this.moved = moved;
     this.rolledBack = rolledBack;
     this.rollbackError = rollbackError;
   }
-}
-
-/** True for an https, ssh or scp-style URL of github.com/<repo> (case-insensitive, optional .git and slash). */
-export function remoteMatches(url, repo = UPDATE_REPO) {
-  if (typeof url !== 'string') return false;
-  const escaped = repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const forms = [
-    `https://(?:[^@/]+@)?github\\.com/${escaped}`,
-    `ssh://git@github\\.com(?::22)?/${escaped}`,
-    `git@github\\.com:${escaped}`,
-  ];
-  return new RegExp(`^(?:${forms.join('|')})(?:\\.git)?/?$`, 'i').test(url.trim());
-}
-
-/**
- * A git runner for `cwd`: `git(args)` resolves trimmed stdout, rejects with the git error. Never prompts: no terminal
- * prompt, no askpass, ssh in batch mode (unless the user set GIT_SSH_COMMAND).
- */
-export function gitRunner({ cwd, env = process.env, timeoutMs = GIT_TIMEOUT_MS } = {}) {
-  const gitEnv = { ...env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', LC_ALL: 'C', LANG: 'C' };
-  if (!env.GIT_SSH_COMMAND) gitEnv.GIT_SSH_COMMAND = 'ssh -o BatchMode=yes';
-  return async (args, options = {}) => {
-    const { stdout } = await execFileAsync('git', args, { cwd, env: gitEnv, timeout: options.timeoutMs ?? timeoutMs,
-      maxBuffer: 4 * 1024 * 1024, windowsHide: true });
-    return stdout.trim();
-  };
 }
 
 async function gitOk(git, args) {
@@ -114,16 +99,7 @@ export async function preflight({ root, git, remoteOk = url => remoteMatches(url
       'Update the way you installed it (npm install -g fai-browser@latest, or a fresh git clone).');
   }
   const branch = await gitOrNull(git, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
-  const remotes = (await gitOrNull(git, ['remote']))?.split('\n').filter(Boolean) ?? [];
-  const tracked = branch ? await gitOrNull(git, ['config', '--get', `branch.${branch}.remote`]) : null;
-  const ordered = [...new Set([tracked, 'origin', ...remotes].filter(name => name && remotes.includes(name)))];
-  let remote = null;
-  for (const name of ordered) {
-    if (remoteOk(await gitOrNull(git, ['remote', 'get-url', name]))) {
-      remote = name;
-      break;
-    }
-  }
+  const remote = await findVerifiedRemote({ git, branch, remoteOk });
   if (!remote) {
     throw new UpdateRefused('wrong_remote', `No git remote of this checkout is github.com/${UPDATE_REPO}.`,
       `Update by hand from the remote you use (git fetch --tags, then check out the release tag), or add github.com/${UPDATE_REPO} as origin.`);
@@ -204,7 +180,7 @@ export async function verifyTarget({ git, remote, target }) {
 }
 
 /** The first line of a git or npm error, without credentials a remote URL may carry (it goes to the log and status). */
-function firstLine(error) {
+export function firstLine(error) {
   const text = String(error?.stderr || error?.message || error).trim().split('\n').find(Boolean) ?? 'error';
   return scrubSecrets(text.replace(/\/\/[^/@\s]+@/g, '//[redacted]@')).slice(0, 200);
 }
@@ -215,33 +191,57 @@ export function npmCommand(execPath = process.execPath) {
   return existsSync(sibling) ? sibling : 'npm';
 }
 
-/** Default step implementations (each replaceable in tests). */
+/**
+ * Default step implementations (each replaceable in tests). npm gets toolEnv(), `update --finish` and the restarted
+ * daemon scrubbedEnv(): no FAI secret reaches any of them (`steps.env` shows both, for tests).
+ */
 export function defaultSteps({ root = PACKAGE_ROOT, env = process.env, home, execPath = process.execPath } = {}) {
+  const child = scrubbedEnv(env);
+  const tool = toolEnv(env);
   return {
+    env: { child, tool },
     async npmCi() {
-      await execFileAsync(npmCommand(execPath), ['ci', '--ignore-scripts', '--no-audit', '--no-fund'],
-        { cwd: root, env, timeout: NPM_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+      await execFileAsync(npmCommand(execPath), ['ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'],
+        { cwd: root, env: tool, timeout: NPM_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
     },
     // The refresh steps of the version now on disk, in a fresh process, so the new code does them.
     async finish() {
       const { stdout } = await execFileAsync(execPath, [join(root, 'src', 'cli.js'), 'update', '--finish'],
-        { cwd: root, env, timeout: FINISH_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+        { cwd: root, env: child, timeout: FINISH_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
       return stdout.trim().split('\n').at(-1) ?? '';
     },
     async restart(version) {
-      return restartDaemon({ home, env, version });
+      return restartDaemon({ home, env: child, version });
     },
   };
 }
 
+/** The restart found a tab lease held: nothing was stopped. */
+export class LeaseHeld extends UpdateRefused {
+  constructor(requests) {
+    super('lease_active', `A browser tab was approved while the update ran (${requests.map(view => view.requestId).join(', ')}).`,
+      'The update was undone so that task keeps running; update again when it is done.');
+    this.daemonUntouched = true;
+  }
+}
+
 /**
  * Stop the running daemon (if any) and start the one on disk; resolves its health and fails unless it reports
- * `version` (null: any).
+ * `version` (null: any). Right before the stop it reads the leases again and throws LeaseHeld (stopping nothing)
+ * when a tab is active or paused.
  */
 export async function restartDaemon({ home, env = process.env, version, timeoutMs = RESTART_TIMEOUT_MS } = {}) {
   const { FaiBrowserClient, ensureDaemon } = await import('./client.js');
+  let client = null;
   try {
-    const client = await FaiBrowserClient.connect({ home, env, autoStart: false, clientName: 'update' });
+    client = await FaiBrowserClient.connect({ home, env, autoStart: false, clientName: 'update' });
+  } catch {
+    // Not running.
+  }
+  if (client) {
+    const status = await client.status();
+    const leased = (status?.requests ?? []).filter(view => LEASED.has(view?.state));
+    if (leased.length) throw new LeaseHeld(leased);
     await client.shutdown().catch(() => {});
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -252,8 +252,6 @@ export async function restartDaemon({ home, env = process.env, version, timeoutM
       }
       await new Promise(resolveDelay => setTimeout(resolveDelay, 100));
     }
-  } catch {
-    // Not running.
   }
   const daemon = await ensureDaemon({ home, env, autoStart: true, version: version ?? undefined, startTimeoutMs: timeoutMs });
   if (version && daemon.health?.version !== version) {
@@ -275,16 +273,21 @@ export function updateLogger(paths) {
   };
 }
 
-/** Take update.lock (exclusive, with this pid); throws UpdateRefused `update_running` when a live process holds it. */
+/**
+ * Take update.lock (exclusive, with this pid); a lock the daemon wrote for this very process (its pid) is adopted.
+ * Throws UpdateRefused `update_running` when another live process holds it.
+ */
 export async function takeUpdateLock(paths, pid = process.pid) {
   const { lock } = updatePaths(paths);
   await mkdir(dirname(lock), { recursive: true, mode: 0o700 });
+  const release = async () => unlink(lock).catch(() => {});
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       await writeFile(lock, JSON.stringify({ pid, startedAt: new Date().toISOString() }), { flag: 'wx', mode: 0o600 });
-      return async () => unlink(lock).catch(() => {});
+      return release;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
+      if (runningUpdate(paths) === pid) return release;
       if (!clearStaleLock(paths)) break;
     }
   }
@@ -293,22 +296,36 @@ export async function takeUpdateLock(paths, pid = process.pid) {
 
 /**
  * Install `target` ({tag, version, commit}) into the checkout at `root`. Resolves
- * `{ state: 'succeeded', from, to, moved: 'fast_forward'|'checkout', previous, commit, npm, finish, daemon }`;
- * throws UpdateRefused before anything moved, or UpdateFailed (rolledBack true/false) after.
+ * `{ state: 'succeeded', from, to, moved: 'fast_forward'|'checkout'|'none', previous, commit, npm, finish, daemon,
+ * warnings }`; throws UpdateRefused before anything moved, or UpdateFailed (with `moved`, `rolledBack`).
  * `steps` = { npmCi, finish, restart(version) }; `paths` (optional) receives the install record for the popup.
  */
-export async function installUpdate({ root = PACKAGE_ROOT, target, currentVersion, git = gitRunner({ cwd: root }),
-  steps = defaultSteps({ root }), remoteOk, requests = [], log = async () => {}, paths = null }) {
+export async function installUpdate({ root = PACKAGE_ROOT, target, currentVersion, git, steps,
+  remoteOk, requests = [], log = async () => {}, paths = null, env = process.env }) {
+  git ??= gitRunner({ cwd: root, env });
+  steps ??= defaultSteps({ root, env });
   const record = fields => {
     if (paths) writeInstallState(paths, { pid: process.pid, from: currentVersion, to: target?.version ?? null, ...fields });
   };
   refuseLeases(requests);
   if (!parseVersion(currentVersion)) throw new UpdateRefused('bad_version', 'This checkout has no valid version.', 'Run git status.');
-  const where = await preflight({ root, git, remoteOk });
-  await log('update_preflight', { branch: where.branch ?? 'detached', remote: where.remote, from: currentVersion, to: target?.version });
-  const commit = await verifyTarget({ git, remote: where.remote, target });
-  // After the fetch: main must still be pushed, and HEAD must be inside the release (nothing of the user's left behind).
-  if (where.upstream) await refuseUnpushed(git, where.upstream);
+  let where;
+  let commit;
+  try {
+    where = await preflight({ root, git, remoteOk });
+    await log('update_preflight', { branch: where.branch ?? 'detached', remote: where.remote, from: currentVersion, to: target?.version });
+    commit = await verifyTarget({ git, remote: where.remote, target });
+    // After the fetch: main must still be pushed, and HEAD must be inside the release (nothing of the user's left behind).
+    if (where.upstream) await refuseUnpushed(git, where.upstream);
+  } catch (error) {
+    if (error instanceof UpdateRefused) throw error;
+    throw new UpdateFailed('check', firstLine(error));
+  }
+  const base = { from: currentVersion, to: target.version, tag: target.tag, previous: where.head, commit, warnings: [] };
+  if (where.head === commit) {
+    await log('update_already_current', { commit });
+    return { state: 'succeeded', moved: 'none', npm: 'skipped', finish: null, daemon: null, ...base };
+  }
   if (!(await gitOk(git, ['merge-base', '--is-ancestor', where.head, commit]))) {
     throw new UpdateRefused('not_fast_forward', `The checkout has commits that ${target.tag} does not contain.`,
       `Check the release out yourself (git checkout ${target.tag}) or keep your version.`);
@@ -327,14 +344,20 @@ export async function installUpdate({ root = PACKAGE_ROOT, target, currentVersio
     throw new UpdateRefused('move_failed', `git could not move to ${target.tag}: ${firstLine(error)}`,
       'Check git status for files in the way, then update again.');
   }
-  let step = 'npm';
   const outcome = { npm: runNpm ? 'ran' : 'skipped', finish: null, daemon: null };
-  try {
-    if (runNpm) {
-      record({ state: 'running', step: 'npm', message: `Installing ${target.version}: npm ci.` });
+  if (runNpm) {
+    // Best effort: the runtime has no npm dependencies; the dev tools can be installed again by hand.
+    record({ state: 'running', step: 'npm', message: `Installing ${target.version}: npm ci.` });
+    try {
       await steps.npmCi();
+    } catch (error) {
+      outcome.npm = 'failed';
+      base.warnings.push(`npm_failed: ${firstLine(error)}; run npm ci in the fai-browser folder for the development tools`);
+      await log('update_npm_failed', { message: firstLine(error) });
     }
-    step = 'finish';
+  }
+  let step = 'finish';
+  try {
     record({ state: 'running', step: 'finish', message: `Installing ${target.version}: refreshing pairing and skills.` });
     outcome.finish = await steps.finish();
     step = 'restart';
@@ -342,16 +365,16 @@ export async function installUpdate({ root = PACKAGE_ROOT, target, currentVersio
     outcome.daemon = await steps.restart(target.version);
   } catch (error) {
     await log('update_step_failed', { step, message: firstLine(error) });
-    const rollbackError = await rollback({ git, branch: where.branch, previous, commit, runNpm, steps, currentVersion, log });
-    const message = `${step} failed: ${firstLine(error)}`;
-    throw new UpdateFailed(step, message, { rolledBack: !rollbackError, rollbackError });
+    const restartOld = !error?.daemonUntouched;
+    const rollbackError = await rollback({ git, branch: where.branch, previous, commit, steps, currentVersion, log, restartOld });
+    throw new UpdateFailed(step, `${step} failed: ${firstLine(error)}`, { moved: true, rolledBack: !rollbackError, rollbackError });
   }
-  await log('update_done', { from: currentVersion, to: target.version, commit });
-  return { state: 'succeeded', from: currentVersion, to: target.version, tag: target.tag, moved, previous, commit, ...outcome };
+  await log('update_done', { from: currentVersion, to: target.version, commit, npm: outcome.npm });
+  return { state: 'succeeded', moved, ...outcome, ...base };
 }
 
-/** Back to `previous`; resolves null when the old version runs again, else the error text. */
-async function rollback({ git, branch, previous, commit, runNpm, steps, currentVersion, log }) {
+/** Back to `previous`; resolves null when the old version runs again, else the error text. node_modules stays. */
+async function rollback({ git, branch, previous, commit, steps, currentVersion, log, restartOld }) {
   try {
     if (branch) {
       // Only our own fast-forward is undone: main must still be at the release commit, and --keep refuses to touch a
@@ -362,11 +385,11 @@ async function rollback({ git, branch, previous, commit, runNpm, steps, currentV
     } else {
       await git(['checkout', '--quiet', '--detach', previous]);
     }
-    if (runNpm) await steps.npmCi();
     // An older version may not have `update --finish`; its own files were left as they were.
     await steps.finish().catch(() => null);
-    await steps.restart(currentVersion);
-    await log('update_rolled_back', { previous });
+    // A daemon that was never stopped still runs the old version.
+    if (restartOld) await steps.restart(currentVersion);
+    await log('update_rolled_back', { previous, restarted: restartOld });
     return null;
   } catch (error) {
     const text = firstLine(error);

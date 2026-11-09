@@ -673,6 +673,7 @@ function cleanUpdate(value) {
     message: typeof value.install.message === 'string' ? value.install.message.slice(0, 400) : '',
   } : null;
   return { current: value.current, latest, available: value.available === true && Boolean(latest),
+    installable: value.installable !== false,
     notesUrl: latest && value.notesUrl === `${RELEASE_NOTES}${latest}` ? value.notesUrl : null, install };
 }
 

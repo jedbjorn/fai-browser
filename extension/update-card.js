@@ -31,6 +31,12 @@ export function updateCard(update, { installing = false, now = Date.now() } = {}
       button: available ? `Try again: update to ${update.latest}` : null,
       text: `${what}: ${install.message || 'see the update log.'}` };
   }
+  if (available && update.installable === false) {
+    // Not a git clone (an npm install): no button, the way to update by hand.
+    return { hidden: false, state: 'available', label: 'UPDATE AVAILABLE', notesUrl: update.notesUrl, button: null,
+      text: `FAI Browser ${update.latest} is available (you have ${update.current}). This copy is not a git clone: `
+        + 'update it the way you installed it (npm install -g fai-browser@latest).' };
+  }
   if (available) {
     return { hidden: false, state: 'available', label: 'UPDATE AVAILABLE', notesUrl: update.notesUrl,
       button: `Update to ${update.latest}`,
