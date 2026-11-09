@@ -10,6 +10,7 @@ import { createDaemon, INVITES_PER_MINUTE } from '../src/daemon.js';
 import { createSessionRegistry } from '../src/sessions.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { ORIGIN } from './runtime-fixtures.js';
+import { EXTENSION_ID, FakeExtension, SECRET } from './helpers/fake-extension.js';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const SECRET_TITLE = 'Quarterly payroll - TOP SECRET title 7731';
@@ -339,3 +340,39 @@ test('sessions are not client activity: polls never keep an idle daemon up', asy
   }
   assert.ok(shutdowns > 0, 'the idle shutdown fired although the session kept polling');
 });
+
+test('the real hub: an invite over the paired WebSocket, validated, with a lease bound to that browser', async t => {
+  const home = await mkdtemp(join(tmpdir(), 'fai-invite-hub-'));
+  const daemon = createDaemon({ driver: 'agent', home, env: { FAI_BRIDGE_SECRET: SECRET, FAI_EXTENSION_ID: EXTENSION_ID },
+    port: 0, sweepIntervalMs: 60_000, providerFactory: () => { throw new Error('no provider'); } });
+  await daemon.listen();
+  const ext = await FakeExtension.connect({ port: daemon.port });
+  t.after(async () => {
+    ext.close();
+    await daemon.close();
+    await rm(home, { recursive: true, force: true });
+  });
+  assert.equal((await ext.hello()).ok, true);
+  const ctx = { api: (method, path, body, extra = {}) => call(daemon.port, method, path, body, { token: daemon.token, ...extra }) };
+  const session = await register(ctx);
+  const listed = await ext.request('agents', {});
+  assert.deepEqual(listed.data.sessions.map(item => [item.sessionId, item.repo, item.wake]), [[session.sessionId, 'my-repo', 'claude-socket']]);
+  for (const bad of [{ tabId: 'x', origin: ORIGIN, level: 'full' }, { tabId: 7, origin: ORIGIN, level: 'root' },
+    { tabId: 7, origin: ORIGIN, level: 'full', sessionId: 42 }, { tabId: 7, origin: ORIGIN, level: 'full', tabMode: 'all' }]) {
+    const refused = await ext.request('invite', bad);
+    assert.equal(refused.ok, false, JSON.stringify(bad));
+    assert.equal(refused.error.code, 'bad_request');
+  }
+  const made = await ext.request('invite', { tabId: 7, origin: ORIGIN, title: SECRET_TITLE, level: 'reversible',
+    sessionId: session.sessionId, text: 'Check the price' });
+  assert.equal(made.ok, true, JSON.stringify(made));
+  assert.equal(made.data.grant.level, 'reversible');
+  const view = (await ctx.api('GET', `/v1/requests/${made.data.requestId}`)).body;
+  assert.equal(view.lease.tabId, 7);
+  assert.ok(view.lease.browserId, 'the lease belongs to the browser that invited');
+  const { wakes } = (await poll(ctx, session)).body;
+  assert.equal(wakes[0].userText, 'Check the price');
+  const cancelled = await ext.request('invite_cancel', { inviteId: made.data.invite.inviteId });
+  assert.equal(cancelled.data.invite.state, 'cancelled');
+});
+
