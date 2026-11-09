@@ -5582,6 +5582,7 @@
         if (action.typed === true && (el.type === 'password' || paymentField(el) || secretTarget(el))) {
           throw new PageError('blocked_risky', 'Typed text never goes into a password, payment or secret field');
         }
+        refuseLineBreak(el, action.text);
         const realm = el.ownerDocument.defaultView ?? window;
         const prototype = el.tagName === 'INPUT' ? realm.HTMLInputElement.prototype : realm.HTMLTextAreaElement.prototype;
         // Use the native setter so framework-controlled inputs (React etc.) see the change.
@@ -5590,19 +5591,21 @@
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
         };
-        // Typed key by key (input.js); the plain set when the field does not show the text afterwards.
-        if (realInput()) await realInput().type(el, action.text, { kept: () => fillKept(el, action.text).kept, fallback: setValue });
-        else setValue();
+        // Typed key by key (input.js, which reads the value back and corrects it once); the plain set when the field
+        // does not show the text afterwards.
+        const typed = realInput() ? await realInput().type(el, action.text, { kept: () => fillKept(el, action.text).kept, fallback: setValue }) : null;
+        if (!typed) setValue();
         // Read back after the page settles (execute): a controlled input or a picker's textbox may revert or ignore
         // the value, and a fill the field did not keep is no progress (a live Google Flights run reported the
         // Departure fill done while the field stayed empty).
-        result.fillCheck = () => fillKept(el, action.text);
+        result.fillCheck = () => ({ ...fillKept(el, action.text), ...(typed?.corrected ? { corrected: true } : {}) });
         break;
       }
       case 'fill_secret': {
         // A secret handle's value (the worker resolves it; nothing else ever sees it) into a field that takes secrets
         // (secretTarget). The field is a secret field from now on: never reported, boxed on every screenshot.
         if (!secretTarget(el) || typeof action.text !== 'string' || !action.text) throw new PageError('unsupported', 'Unsupported secret target');
+        refuseLineBreak(el, action.text);
         const realm = el.ownerDocument.defaultView ?? window;
         const setSecret = () => {
           Object.getOwnPropertyDescriptor(realm.HTMLInputElement.prototype, 'value').set.call(el, action.text);
@@ -5611,10 +5614,10 @@
         };
         // Typed like any fill (input.js; sign-in pages watch their key events most), the plain set as the fallback. The
         // rhythm is planned blind (`secret`): its timing, and so inputMs, depend on the value's length only.
-        if (realInput()) await realInput().type(el, action.text, { kept: () => fillKept(el, action.text).kept, fallback: setSecret, secret: true });
-        else setSecret();
+        const typed = realInput() ? await realInput().type(el, action.text, { kept: () => fillKept(el, action.text).kept, fallback: setSecret, secret: true }) : null;
+        if (!typed) setSecret();
         rememberFilledSecret(el, action.text);
-        result.fillCheck = () => fillKept(el, action.text);
+        result.fillCheck = () => ({ ...fillKept(el, action.text), ...(typed?.corrected ? { corrected: true } : {}) });
         break;
       }
       case 'submit_field': {
@@ -5818,13 +5821,36 @@
   // `kept` when its value contains the text (whitespace collapsed, case ignored), the same digits for a text of
   // digits and separators (a field that formats numbers), or the same date in another form for an ISO date;
   // `empty` when the field holds nothing at all. The value itself is never returned.
+  // A line break typed into a single-line input is Enter, and Enter there submits the form: a fill would get past the
+  // submit gate and the request's forbid list. Refused; submit_field is the way to submit.
+  function refuseLineBreak(el, text) {
+    if (el.tagName === 'INPUT' && /[\r\n]/.test(text)) {
+      throw new PageError('unsupported', "Newlines can't be typed into a single-line field; use submit_field to submit");
+    }
+  }
+
+  // A plain text field: what it shows is what was typed, no suggestion list completing it (a combobox, autocomplete,
+  // a datalist, a popup) and no picker.
+  function plainTextField(el) {
+    if (el.tagName === 'INPUT' ? !['text', 'search', 'email', 'url', 'tel', 'password'].includes(el.type) : el.tagName !== 'TEXTAREA') return false;
+    const popup = (el.getAttribute('aria-haspopup') || 'false').toLowerCase();
+    return el.getAttribute('role') !== 'combobox' && (el.getAttribute('aria-autocomplete') || 'none').toLowerCase() === 'none'
+      && !el.hasAttribute('list') && popup === 'false' && !el.readOnly;
+  }
+
+  // Whether the field shows the text (whitespace and case aside): exactly it in a plain text field (not the text with
+  // something left over before or after it), else containing it (a picker's textbox completes what was typed); the
+  // same digits, or the same ISO date in another form. An empty text is kept by an empty field.
   function fillKept(el, text) {
     const normalize = value => String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
     const want = normalize(text);
     const have = el.isConnected ? normalize(el.value) : '';
-    let kept = !want || have.includes(want);
-    if (!kept && /\d/.test(want) && /^[\d\s()+.-]+$/.test(want)) kept = have.replace(/\D/g, '').includes(want.replace(/\D/g, ''));
-    if (!kept) kept = dateForms(want).some(form => have.includes(form));
+    if (!want) return { kept: !have, empty: !have };
+    const exact = plainTextField(el);
+    const match = (value, wanted) => (exact ? value === wanted : value.includes(wanted));
+    let kept = match(have, want);
+    if (!kept && /\d/.test(want) && /^[\d\s()+.-]+$/.test(want)) kept = match(have.replace(/\D/g, ''), want.replace(/\D/g, ''));
+    if (!kept) kept = dateForms(want).some(form => match(have, form));
     return { kept, empty: !have };
   }
 
