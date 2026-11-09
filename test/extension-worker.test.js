@@ -3697,11 +3697,11 @@ test('invite: only the toolbar popup can invite; a page, a content script or the
     { id: 'ext', url: 'chrome-extension://ext/popup.html?window=1' },
     { id: 'ext', url: 'chrome-extension://ext/arm.html?tab=7' },
   ]) {
-    const reply = await h.send({ type: 'invite', level: 'full', sessionId: 'ses_1' }, sender);
+    const reply = await h.send({ type: 'invite', tabId: 7, origin: ORIGIN, level: 'full', sessionId: 'ses_1' }, sender);
     assert.match(reply?.error ?? '', /popup/, JSON.stringify(sender));
   }
   // Another extension's message is not answered at all.
-  h.chrome.runtime.onMessage.emit({ type: 'invite', level: 'full' }, { id: 'other-extension', url: 'chrome-extension://other-extension/popup.html' }, () => {});
+  h.chrome.runtime.onMessage.emit({ type: 'invite', tabId: 7, origin: ORIGIN, level: 'full' }, { id: 'other-extension', url: 'chrome-extension://other-extension/popup.html' }, () => {});
   const cancel = await h.send({ type: 'invite_cancel', inviteId: 'inv-abcd2345' }, { id: 'ext', url: ORIGIN });
   assert.match(cancel.error, /popup/);
   await sleep(20);
@@ -3716,7 +3716,7 @@ test('invite: the popup click binds the current tab at the chosen level, for the
   assert.deepEqual(agents.agents.sessions.map(item => [item.sessionId, item.host, item.repo, item.wake]),
     [['ses_1', 'claude', 'fai-browser', 'claude-socket'], ['ses_2', 'unknown', 'rx', 'none']]);
   assert.ok(!JSON.stringify(agents).includes('NEVER-SHOWN') && !JSON.stringify(agents).includes('4242'), 'no key or pid reaches the popup');
-  const reply = await h.send({ type: 'invite', level: 'reversible', sessionId: 'ses_1', text: 'Look at the plans' }, POPUP);
+  const reply = await h.send({ type: 'invite', tabId: 7, origin: ORIGIN, level: 'reversible', sessionId: 'ses_1', text: 'Look at the plans' }, POPUP);
   assert.equal(reply.error, undefined, JSON.stringify(reply));
   assert.equal(reply.status, 'active');
   assert.deepEqual(reply.invited, { inviteId: 'inv-abcd2345', requestId: 'req_inv' });
@@ -3737,10 +3737,10 @@ test('invite: the popup click binds the current tab at the chosen level, for the
 test('invite: Test site only on a listed test site; closing the invited tab revokes the invite', async () => {
   const h = harness();
   await h.waitFor(m => m.type === 'hello');
-  const refused = await h.send({ type: 'invite', level: 'testing', sessionId: null }, POPUP);
+  const refused = await h.send({ type: 'invite', tabId: 7, origin: ORIGIN, level: 'testing', sessionId: null }, POPUP);
   assert.match(refused.error, /Testing mode needs/);
   assert.ok(!h.sent.some(message => message.type === 'invite'));
-  const reply = await h.send({ type: 'invite', level: 'read-only', sessionId: null }, POPUP);
+  const reply = await h.send({ type: 'invite', tabId: 7, origin: ORIGIN, level: 'read-only', sessionId: null }, POPUP);
   assert.equal(reply.status, 'active', JSON.stringify(reply));
   h.chrome.tabs.onRemoved.emit(7);
   const cancel = await h.waitFor(m => m.type === 'invite_cancel');
@@ -3750,7 +3750,7 @@ test('invite: Test site only on a listed test site; closing the invited tab revo
 test('invite: Test site works on an origin listed under Test sites', async () => {
   const h = harness({ permissions: { defaultLevel: 'full', testingOrigins: [ORIGIN] } });
   await h.waitFor(m => m.type === 'hello');
-  const reply = await h.send({ type: 'invite', level: 'testing', sessionId: 'ses_1' }, POPUP);
+  const reply = await h.send({ type: 'invite', tabId: 7, origin: ORIGIN, level: 'testing', sessionId: 'ses_1' }, POPUP);
   assert.equal(reply.status, 'active', JSON.stringify(reply));
   assert.equal(h.sent.find(message => message.type === 'invite').level, 'testing');
 });
@@ -3758,10 +3758,27 @@ test('invite: Test site works on an origin listed under Test sites', async () =>
 test('invite: the popup cancels its invite and the session stops', async () => {
   const h = harness();
   await h.waitFor(m => m.type === 'hello');
-  await h.send({ type: 'invite', level: 'reversible', sessionId: 'ses_1' }, POPUP);
+  await h.send({ type: 'invite', tabId: 7, origin: ORIGIN, level: 'reversible', sessionId: 'ses_1' }, POPUP);
   const reply = await h.send({ type: 'invite_cancel', inviteId: 'inv-abcd2345', requestId: 'req_inv' }, POPUP);
   assert.equal(reply.error, undefined, JSON.stringify(reply));
   assert.equal(reply.status, 'stopped');
   assert.ok(h.sent.some(message => message.type === 'invite_cancel' && message.inviteId === 'inv-abcd2345'));
+});
+
+test('invite: the worker binds only the tab and origin the popup showed', async () => {
+  const h = harness();
+  await h.waitFor(m => m.type === 'hello');
+  await h.until(() => h.session.connection?.connected);
+  const otherTab = await h.send({ type: 'invite', tabId: 8, origin: ORIGIN, level: 'reversible', sessionId: 'ses_1' }, POPUP);
+  assert.match(otherTab.error, /tab changed/);
+  const otherOrigin = await h.send({ type: 'invite', tabId: 7, origin: 'https://bank.example', level: 'reversible', sessionId: 'ses_1' }, POPUP);
+  assert.match(otherOrigin.error, /tab changed/);
+  // The page navigated after the popup opened: what the popup showed is no longer what the tab holds.
+  h.tab.url = 'https://elsewhere.example/account';
+  const navigated = await h.send({ type: 'invite', tabId: 7, origin: ORIGIN, level: 'reversible', sessionId: 'ses_1' }, POPUP);
+  assert.match(navigated.error, /tab changed/);
+  const missing = await h.send({ type: 'invite', level: 'reversible', sessionId: 'ses_1' }, POPUP);
+  assert.match(missing.error, /Open the popup on the tab/);
+  assert.ok(!h.sent.some(message => message.type === 'invite'), 'nothing was bound');
 });
 

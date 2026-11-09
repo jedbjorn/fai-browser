@@ -61,6 +61,8 @@ async function setup(t, { clientName = 'claude-code', env = {}, socket = true } 
 }
 
 const text = result => result.content.map(block => block.text ?? '').join('\n');
+// The invite and its wake as the popup sees them (a client without the owner's session sees only id and state).
+const inviteOf = (ctx, requestId) => ctx.hub.published.at(-1)?.find(view => view.requestId === requestId)?.invite;
 
 test('MCP: registers after initialize as Claude Code with its socket; the repo is the folder name only', async t => {
   const ctx = await setup(t);
@@ -92,7 +94,7 @@ test('MCP: an invite wakes the session through its own socket with the FAI text 
   for (const secret of [SECRET_TITLE, 'TOP SECRET', SECRET_TEXT, 'Lovelace', ORIGIN, 'example.com']) {
     assert.ok(!wake.includes(secret), `the wake must not contain ${secret}`);
   }
-  await until(async () => (await ctx.api('GET', `/v1/requests/${reply.requestId}`)).body.invite.wake.state === 'delivered',
+  await until(async () => inviteOf(ctx, reply.requestId)?.wake.state === 'delivered',
     'the delivered report');
   const opened = await ctx.mcp.callTool('fai_browser_open', { inviteId });
   assert.ok(!opened.isError, text(opened));
@@ -170,7 +172,7 @@ test('MCP: Codex registers not ready, learns its thread from _meta, and is woken
   assert.match(queued.argv[4], new RegExp(`inviteId": "${reply.invite.inviteId}"`));
   assert.ok(!queued.argv[4].includes(SECRET_TITLE));
   assert.deepEqual(queued.fai, [], 'no FAI_ variable reaches codex');
-  await until(async () => (await ctx.api('GET', `/v1/requests/${reply.requestId}`)).body.invite.wake.state === 'delivered',
+  await until(async () => inviteOf(ctx, reply.requestId)?.wake.state === 'delivered',
     'the delivered report');
 });
 
@@ -178,12 +180,12 @@ test('MCP: a Codex thread codex does not know is reported as a failed wake (the 
   const codex = await fakeCodex(t, { mode: 'unknown' });
   const ctx = await setup(t, { clientName: 'codex-mcp-client', socket: false,
     env: { FAI_CODEX_BIN: codex.bin, FAKE_CODEX_LOG: join(codex.dir, 'argv.log'), FAKE_CODEX_MODE: 'unknown' } });
-  await ctx.mcp.callTool('fai_browser_status', {}, { meta: { threadId: 'thread-gone' } });
+  await ctx.mcp.callTool('fai_browser_status', {}, { meta: { threadId: '01a1c03e-0000-7000-8000-00000000dead' } });
   await until(async () => (await ctx.api('GET', '/v1/status')).body.sessions[0]?.wake === 'codex-queue', 'capability');
   const reply = await ctx.hub.emit({ type: 'invite', tabId: 7, origin: ORIGIN, level: 'reversible', sessionId: ctx.session.sessionId });
   const failed = await until(async () => {
-    const view = (await ctx.api('GET', `/v1/requests/${reply.requestId}`)).body.invite.wake;
-    return view.state === 'failed' ? view : null;
+    const view = inviteOf(ctx, reply.requestId)?.wake;
+    return view?.state === 'failed' ? view : null;
   }, 'the failed report');
   assert.equal(failed.error.code, 'unknown_thread');
 });
