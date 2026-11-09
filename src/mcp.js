@@ -47,6 +47,8 @@ export const DEFAULT_MAX_CALL_MS = 45_000;
 export const DEFAULT_APPROVAL_WAIT_MS = 60_000;
 
 const DAEMON_MARGIN_MS = 2_000;
+// A wake for a request a call of this server saw become active this recently is skipped (the call returned the page).
+const SAW_ACTIVE_MS = 10_000;
 const DAEMON_MAX_WAIT_MS = 45_000;
 // The longest one call waits for the user (an act for the Approve click; in Agent direct also an open for the tab
 // approval): hosts time a tool call out at 120 s (Codex's tool_timeout_sec, src/install.js), so with the act itself a
@@ -1606,6 +1608,8 @@ class McpServer {
     this.sessionOptions = sessionOptions ?? {};
     this.agentSession = null;
     this.host = 'unknown';
+    // When a call of this server last saw each request become active (an approval wait that ended): no wake then.
+    this.sawActive = new Map();
     // The driver until the daemon names its own (X-Fai-Driver on every answer, noteDriver): config.json as a hint,
     // read without ever throwing, so a malformed file still lets initialize and tools/list answer.
     this.driver = this.driverHint();
@@ -1862,11 +1866,24 @@ class McpServer {
       host: this.host,
       log: message => this.log(message),
       driver: () => this.driver,
-      // A resume or approval a call in flight is already waiting for needs no wake: that call returns the page.
-      waiting: wake => [...this.inflight.values()].some(call => call.requestId === wake.requestId && call.waitingOnRequest),
+      // A resume or approval a call in flight is already waiting for (or one that just saw it) needs no wake: that call
+      // returns the page.
+      waiting: wake => [...this.inflight.values()].some(call => call.requestId === wake.requestId && call.waitingOnRequest)
+        || this.sawSince(wake.requestId, wake.at),
       ...this.sessionOptions,
     });
     this.agentSession.start();
+  }
+
+  /**
+   * Whether a call of this server saw `requestId` active at or after `at` (the wake's time): the approval or resume the
+   * wake is about already reached the agent in that call's result. Without a time, within SAW_ACTIVE_MS.
+   */
+  sawSince(requestId, at) {
+    const seen = this.sawActive.get(requestId);
+    if (seen === undefined) return false;
+    const since = Date.parse(at ?? '');
+    return Number.isFinite(since) ? seen >= since : Date.now() - seen < SAW_ACTIVE_MS;
   }
 
   /** The resume wait options (src/resume.js): this server's environment and its wake capability. */
@@ -2263,6 +2280,7 @@ class McpServer {
         const response = await client.wait({ requestId, maxMs }, call.signal);
         this.noteBudget(requestId, response.budget);
         const state = response.state ?? response.request?.state;
+        if (state === 'active') this.sawActive.set(requestId, Date.now());
         // The latest word on how the request is approved (its page may have opened by itself meanwhile).
         if (response.request?.approval) call.approval = response.request.approval;
         if (response.request) call.browser = browserHint(response.request);
@@ -2354,6 +2372,7 @@ class McpServer {
       this.noteBudget(requestId, response.budget);
       const view = response.request ?? null;
       const state = response.state ?? view?.state ?? 'ok';
+      if (state === 'active') this.sawActive.set(requestId, Date.now());
       return okResult(withoutUndefined({
         ...response,
         state,
