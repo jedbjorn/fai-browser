@@ -5,7 +5,7 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
-## Unreleased
+## 0.5.1 (2026-11-09)
 
 ### Added
 
