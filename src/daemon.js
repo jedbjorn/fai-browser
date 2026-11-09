@@ -462,6 +462,12 @@ function digest(value) {
   return createHash('sha256').update(String(value)).digest();
 }
 
+// The client instance: the whole X-Fai-Client header, "<name>/<instance id>" (FaiBrowserClient adds a random id per
+// client, so one MCP server, SDK client or CLI run), else null. Used only to recognise a repeated request.
+function clientInstance(header) {
+  return typeof header === 'string' && /^[A-Za-z0-9_.-]{1,40}\/[A-Za-z0-9-]{1,64}$/.test(header) ? header : null;
+}
+
 function clientName(header) {
   if (typeof header !== 'string' || !header) return null;
   const name = header.split('/')[0];
@@ -2004,7 +2010,7 @@ export function createDaemon(options = {}) {
     };
   }
 
-  function createRequest(body, client, session = null) {
+  function createRequest(body, client, session = null, instance = null) {
     checkKeys(body, REQUEST_KEYS);
     if (runningUpdate(paths)) {
       throw new HttpError(503, 'update_running', 'An FAI Browser update is installing and restarts the service; '
@@ -2039,11 +2045,15 @@ export function createDaemon(options = {}) {
       if (picked.error) throw new HttpError(409, picked.error.code, picked.error.message);
       wanted = picked.browser;
     }
-    // The same client asking again, with the same arguments, while its request still waits for the user (a retried
-    // call, a CLI request-tab run twice, a restarted MCP session): that pending request is the answer. A second one
-    // would open a second task tab and request window, and the user's click would approve only one of them.
+    // The same client instance (one MCP server, SDK client or CLI run: the whole X-Fai-Client header) asking again
+    // with the same arguments while its request still waits for the user (a retried call): that pending request is the
+    // answer. A second one would open a second task tab and request window, and the user's click would approve only
+    // one of them. Another instance (another agent session, another CLI run) always gets its own request.
+    // TODO(feat/invite): when record.ownerSession lands, add
+    // `(record.ownerSession ?? null) === (session?.sessionId ?? null)` to this predicate (whichever merges second).
     const unique = [...new Set(origins)];
-    const repeat = [...requests.values()].find(record => record.state === 'pending' && record.client === client
+    const repeat = instance && [...requests.values()].find(record => record.state === 'pending'
+      && record.clientInstance === instance && now() < record.createdAt + record.ttlMs
       && record.mode === mode && record.reason === reason && record.instruction === instruction && record.url === url
       && record.ttlMs === ttlMs && record.origins.length === unique.length
       && unique.every(origin => record.origins.includes(origin))
@@ -2067,6 +2077,7 @@ export function createDaemon(options = {}) {
       instruction,
       url,
       client,
+      clientInstance: instance,
       ttlMs,
       createdAt: now(),
       lastCallAt: now(),
@@ -2802,13 +2813,14 @@ export function createDaemon(options = {}) {
     const client = clientName(req.headers['x-fai-client']);
     // The agent session the call comes from (X-Fai-Session), when it names one that authenticates.
     const caller = route.open ? null : sessionFrom(req, { optional: true });
+    const instance = clientInstance(req.headers['x-fai-client']);
     switch (route.name) {
       case 'health':
         return { body: health(url) };
       case 'status':
         return { body: statusView(caller) };
       case 'requests.create':
-        return createRequest(body, client, caller);
+        return createRequest(body, client, caller, instance);
       case 'sessions.register': {
         checkKeys(body, SESSION_KEYS);
         const registered = sessionCall(() => sessions.register(body));

@@ -174,35 +174,47 @@ test('request validation and the pending limit', async t => {
   assert.match(unknown.body.error.message, /Request a tab again/);
 });
 
-test('an identical repeat while the request waits returns that pending request; any difference is a new request', async t => {
-  const ctx = await setup(t);
+test('an identical repeat from the same client instance while the request waits returns it; any difference is a new request', async t => {
+  let clock = Date.now();
+  const ctx = await setup(t, { now: () => clock });
   const body = { origins: [ORIGIN, 'https://other.example'], reason: 'Check members', instruction: 'Open Members', mode: 'reversible' };
-  const headers = { headers: { 'X-Fai-Client': 'claude-code/1234' } };
-  const first = await ctx.api('POST', '/v1/requests', body, headers);
+  const session = { headers: { 'X-Fai-Client': 'claude-code/0f6c1d2e-aaaa-4bbb-8ccc-123456789abc' } };
+  const first = await ctx.api('POST', '/v1/requests', body, session);
   assert.equal(first.status, 201);
   const published = ctx.hub.published.length;
-  // The agent calls again (a retry, a second CLI run, a restarted MCP session).
-  const again = await ctx.api('POST', '/v1/requests', { ...body, origins: [ORIGIN, 'https://other.example', ORIGIN] }, headers);
+  // The same MCP server (one instance id) retries: the same pending request, nothing new reaches the extension.
+  const again = await ctx.api('POST', '/v1/requests', { ...body, origins: [ORIGIN, 'https://other.example', ORIGIN] }, session);
   assert.equal(again.status, 200);
   assert.equal(again.body.requestId, first.body.requestId);
   assert.equal(again.body.repeated, true);
   assert.equal(again.body.state, 'pending');
   assert.equal(again.body.expiresAt, first.body.expiresAt, 'a repeat does not extend the wait');
+  assert.equal(again.body.request.clientInstance, undefined, 'the instance id is never shown');
   assert.equal(ctx.hub.published.length, published, 'the extension sees no new request');
   assert.equal((await ctx.api('GET', '/v1/requests')).body.requests.length, 1);
-  // Anything else asks for something else: a new request. So does another client.
-  for (const [variant, extra] of [[{ mode: 'interactive' }], [{ reason: 'Check members again' }], [{ instruction: 'Open Settings' }],
-    [{ origins: [ORIGIN] }], [{}, { headers: { 'X-Fai-Client': 'codex' } }]]) {
-    const created = await ctx.api('POST', '/v1/requests', { ...body, ...variant }, extra ?? headers);
-    assert.equal(created.status, 201, JSON.stringify(variant));
+  // Another session of the same agent (same name, another instance id), a client without an instance id, or any
+  // other argument: a new request.
+  const cases = [
+    [{}, { headers: { 'X-Fai-Client': 'claude-code/11111111-2222-4333-8444-555555555555' } }],
+    [{}, { headers: { 'X-Fai-Client': 'claude-code' } }],
+    [{ mode: 'interactive' }], [{ reason: 'Check members again' }], [{ instruction: 'Open Settings' }], [{ origins: [ORIGIN] }],
+  ];
+  for (const [variant, headers] of cases) {
+    const created = await ctx.api('POST', '/v1/requests', { ...body, ...variant }, headers ?? session);
+    assert.equal(created.status, 201, JSON.stringify([variant, headers]));
     assert.notEqual(created.body.requestId, first.body.requestId);
     await ctx.api('DELETE', `/v1/requests/${created.body.requestId}`);
   }
+  // Past its time (not yet swept), the request is not handed out again.
+  clock += 10 * 60_000 + 1;
+  const late = await ctx.api('POST', '/v1/requests', body, session);
+  assert.equal(late.status, 201);
+  assert.notEqual(late.body.requestId, first.body.requestId);
   // Once the request no longer waits (approved, denied, cancelled), the same call is a new request.
-  await ctx.api('DELETE', `/v1/requests/${first.body.requestId}`);
-  const after = await ctx.api('POST', '/v1/requests', body, headers);
+  await ctx.api('DELETE', `/v1/requests/${late.body.requestId}`);
+  const after = await ctx.api('POST', '/v1/requests', body, session);
   assert.equal(after.status, 201);
-  assert.notEqual(after.body.requestId, first.body.requestId);
+  assert.notEqual(after.body.requestId, late.body.requestId);
 });
 
 test('request url: the start page on the origins, else a default; on the view and the pushed list', async t => {
