@@ -94,7 +94,8 @@ test('popup: one live session is one tap; the level defaults to Use and the text
   await page.click('#invite .invite-agent');
   await page.waitForSelector('#invite .invite-status');
   const sent = await page.evaluate(() => __sent.filter(message => message.type === 'invite'));
-  assert.deepEqual(sent, [{ type: 'invite', sessionId: 'ses_1', level: 'interactive', text: 'Compare the two plans' }]);
+  assert.deepEqual(sent, [{ type: 'invite', sessionId: 'ses_1', level: 'interactive', text: 'Compare the two plans',
+    tabId: 7, origin: 'https://shop.example' }], 'the tab and origin the popup showed go along');
   assert.match(await page.textContent('#invite .invite-line'), /^Sent to Claude Code · fai-browser\. It should start in a moment\.$/);
   assert.match(await page.textContent('#invite .invite-copy-text'), /^If it does not start, tell it: join FAI invite inv-abcd2345$/,
     'sent is not received: the copy line stays, softly');
