@@ -36,7 +36,7 @@ function since(at) {
 }
 
 /**
- * What the invite's wake did, in a line, and whether the copy fallback is needed. `invite` is the request view's
+ * What the invite's wake did, in a line, and whether the copy fallback is needed (true; `soft` after a sent wake). `invite` is the request view's
  * `invite` ({state, wake: {state, error}, session, joinedBy}).
  */
 export function wakeLine(invite) {
@@ -46,7 +46,9 @@ export function wakeLine(invite) {
   }
   const wake = invite?.wake?.state ?? 'none';
   if (wake === 'queued' || wake === 'sent') return { text: `Waking ${who}…`, fallback: false };
-  if (wake === 'delivered' || wake === 'skipped') return { text: `${who} got the invite and starts in a moment.`, fallback: false };
+  // "Sent", not "received": Claude Code's socket answers nothing, not even to a refused or held message (checked on
+  // 2.1.319), so a delivered wake only means the message was written. The copy line stays one tap away.
+  if (wake === 'delivered' || wake === 'skipped') return { text: `Sent to ${who}. It should start in a moment.`, fallback: 'soft' };
   if (wake === 'failed') {
     const why = invite.wake.error?.message ? ` (${String(invite.wake.error.message).slice(0, 120)})` : '';
     return { text: `Could not wake ${who}${why}.`, fallback: true };
@@ -171,7 +173,9 @@ export function mountInvite({ root, context, onState, say }) {
     if (fallback && invite.state === 'open') {
       const row = element('div', 'invite-copy');
       const label = element('p', 'invite-copy-text');
-      label.append(element('span', '', 'Tell your agent: '), element('code', 'invite-join', joinLine(invite.inviteId)));
+      // `soft`: the wake was sent, but a held or refused message cannot be told from a taken one.
+      label.append(element('span', '', fallback === 'soft' ? 'If it does not start, tell it: ' : 'Tell your agent: '),
+        element('code', 'invite-join', joinLine(invite.inviteId)));
       const button = element('button', 'secondary-button invite-copy-button', copiedFor === invite.inviteId ? 'Copied' : 'Copy');
       button.type = 'button';
       button.addEventListener('click', () => copy(invite.inviteId, button));
