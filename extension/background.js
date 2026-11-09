@@ -80,13 +80,14 @@ const KNOWN_CODES = new Set([
 ]);
 const RECOVERABLE = new Set(['stale', 'target_unavailable', 'capture_failed']);
 // Message types that get exactly one reply, and their HTTP fallback paths.
-const REPLY_TYPES = new Set(['hello', 'lease', 'lease_level', 'deny', 'validate', 'settings', 'driver']);
+const REPLY_TYPES = new Set(['hello', 'lease', 'lease_level', 'deny', 'validate', 'settings', 'driver', 'update']);
 const HTTP_PATHS = {
   hello: '/hello',
   lease: '/lease',
   lease_level: '/lease-level',
   settings: '/settings',
   driver: '/driver',
+  update: '/update',
   deny: '/deny',
   status: '/status',
   validate: '/validate',
@@ -536,6 +537,8 @@ let budget = null;
 let budgetLoaded = false;
 let effectiveBudget = null;
 let driverControl = null; // Daemon-owned choice; never replayed from extension storage.
+// The FAI service's update state (docs/REFERENCE.md "Updates"): a newer release, the last install. Shown by the popup.
+let updateInfo = null;
 // "Open requested pages right away" (chrome.storage.local.openRightAway): on unless the user turned it off (an absent
 // value is on). Reported with the budget, so the daemon can tell the agent whether the page opened by itself.
 let openRightAway = true;
@@ -650,7 +653,54 @@ function storeSession(values) {
 
 function connectionView() {
   return { connected, transport: connected ? transportName : 'none', budget: effectiveBudget, paired: Boolean(pairing),
-    native: nativeState, ...(driverControl ? { control: driverControl } : {}) };
+    native: nativeState, ...(driverControl ? { control: driverControl } : {}), ...(updateInfo ? { update: updateInfo } : {}) };
+}
+
+// --- updates ---------------------------------------------------------------------------------------------------
+
+const PLAIN_VERSION = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
+const RELEASE_NOTES = 'https://github.com/jedbjorn/fai-browser/releases/tag/v';
+const INSTALL_STATES = ['running', 'succeeded', 'failed', 'rolled_back'];
+
+/** The daemon's update view, reduced to what the popup shows: versions, a release-notes link, the last install. */
+function cleanUpdate(value) {
+  if (!value || typeof value !== 'object' || !PLAIN_VERSION.test(String(value.current))) return null;
+  const latest = PLAIN_VERSION.test(String(value.latest)) ? value.latest : null;
+  const install = value.install && INSTALL_STATES.includes(value.install.state) ? {
+    state: value.install.state,
+    to: PLAIN_VERSION.test(String(value.install.to)) ? value.install.to : null,
+    at: typeof value.install.at === 'string' && Number.isFinite(Date.parse(value.install.at)) ? value.install.at : null,
+    message: typeof value.install.message === 'string' ? value.install.message.slice(0, 400) : '',
+  } : null;
+  return { current: value.current, latest, available: value.available === true && Boolean(latest),
+    notesUrl: latest && value.notesUrl === `${RELEASE_NOTES}${latest}` ? value.notesUrl : null, install };
+}
+
+function newerVersion(a, b) {
+  if (!PLAIN_VERSION.test(String(a)) || !PLAIN_VERSION.test(String(b))) return false;
+  const [x, y] = [a, b].map(text => text.split('.').map(Number));
+  for (let index = 0; index < 3; index++) if (x[index] !== y[index]) return x[index] > y[index];
+  return false;
+}
+
+async function readUpdate(action = 'status') {
+  const data = await send('update', { action });
+  updateInfo = cleanUpdate(data?.update) ?? updateInfo;
+  publishConnection();
+  return data;
+}
+
+// After an update the new FAI service answers with a newer version than the files this extension loaded. A
+// Chromium-family browser loads extension/ unpacked from the checkout, so a reload picks up the new files; the signed
+// Firefox add-on updates itself (update_url) and never reloads here. Once per service version, never during a session.
+async function reloadForUpdate(daemonVersion) {
+  const manifest = chrome.runtime.getManifest?.() ?? {};
+  if (manifest.browser_specific_settings?.gecko || typeof chrome.runtime.reload !== 'function') return;
+  if (session || !newerVersion(daemonVersion, manifest.version)) return;
+  const { updateReloadedFor } = await chrome.storage.local.get('updateReloadedFor');
+  if (updateReloadedFor === daemonVersion) return;
+  await chrome.storage.local.set({ updateReloadedFor: daemonVersion });
+  chrome.runtime.reload();
 }
 
 function cleanDriverControl(value) {
@@ -1194,6 +1244,8 @@ function handleHello(data, via) {
   // The budget the daemon applies (the user's, else config.json, else its default); an older daemon names none.
   effectiveBudget = cleanBudget(data?.budget);
   driverControl = cleanDriverControl(data?.control);
+  updateInfo = cleanUpdate(data?.update);
+  ignore(reloadForUpdate(data?.daemonVersion));
   if (data?.endSession && session) {
     releaseSites(session);
     const ended = session;
@@ -3499,6 +3551,16 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       }
       // A failed driver read never fails the connect: the popup keeps the last known choice.
       if (connected && driverControl) await readDriver().catch(() => {});
+      // The daily check may have found a release since the hello (a service that knows updates said so in it).
+      if (connected && updateInfo) await readUpdate().catch(() => {});
+    } else if (message.type === 'update_install' || message.type === 'update_check') {
+      // The popup's update card only: Update (the user's click installs the release) or Check now.
+      const popupUrl = chrome.runtime.getURL('popup.html');
+      if (typeof sender.url !== 'string' || sender.url.split('?')[0] !== popupUrl) {
+        throw new Error('Update FAI Browser from its popup.');
+      }
+      if (!connected) throw new Error('Connect to the FAI service first.');
+      await readUpdate(message.type === 'update_install' ? 'install' : 'check');
     } else if (message.type === 'pair') {
       // The popup's "Pair automatically": ask the native host now, whatever the last attempt said.
       const outcome = await nativePair({ force: true });
