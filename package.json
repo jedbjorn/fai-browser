@@ -18,6 +18,7 @@
     "claude-code",
     "codex",
     "opencode",
+    "pi",
     "browser-automation",
     "chrome-extension",
     "firefox-addon",
@@ -36,6 +37,7 @@
   },
   "files": [
     "src/",
+    "integrations/",
     "extension/",
     "skills/",
     "tasks/",
