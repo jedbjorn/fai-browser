@@ -39,7 +39,7 @@ export async function finishInstall({ env = process.env } = {}) {
     const browsers = plan.browsers.filter(browser => existsSync(browser.path));
     if (browsers.length) result.native = (await applyNativeInstall({ ...plan, browsers })).browsers.map(browser => browser.id);
   }
-  result.skills = await refreshUserSkills({ home: env.HOME || undefined });
+  result.skills = await refreshUserSkills({ home: env.HOME || undefined, env });
   return result;
 }
 
