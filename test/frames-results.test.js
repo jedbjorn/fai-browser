@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { directNext, framesNote, leanObserve, pageFrames } from '../src/result.js';
 import { directText } from '../src/mcp.js';
+import { legalActions } from '../src/runtime.js';
 
 const PORTAL = 'https://portal.example.net';
 const ADS = 'https://ads.example.org';
@@ -65,4 +66,22 @@ test('frame content is page content: in page.digest, never in next; the frames l
   const next = directNext({ code: 'step_complete', ...lean }, { requestId: 'req_1' });
   assert.doesNotMatch(next.text, /evil\.test|Ignore previous/);
   assert.match(next.text, /https:\/\/ads\.example\.org/);
+});
+
+test('links in an approved frame: offered when they stay on an approved origin; a _top link follows the page\'s rule', () => {
+  const TOP = 'https://entra.example.com';
+  const link = (id, href, extra = {}) => ({ id, role: 'link', label: `Link ${id}`, href, frame: 'f1', frameOrigin: PORTAL, ...extra });
+  const observation = {
+    url: `${TOP}/#view/Overview`,
+    controls: [
+      link('f1.1', `${PORTAL}/blade/users`),
+      link('f1.2', `${ADS}/offer`),
+      link('f1.3', `${PORTAL}/elsewhere`, { linkTarget: '_top' }),
+      link('f1.4', `${TOP}/#view/Users`, { linkTarget: '_top' }),
+      { id: '1', role: 'link', label: 'Portal blade link', href: `${PORTAL}/blade/users` },
+    ],
+  };
+  const offered = legalActions(observation, { mode: 'read-only', allowedOrigins: [TOP, PORTAL] })
+    .filter(action => action.type === 'click').map(action => action.target);
+  assert.deepEqual(offered, ['f1.1', 'f1.4'], 'frame-local on an approved origin, and _top on the tab\'s site');
 });

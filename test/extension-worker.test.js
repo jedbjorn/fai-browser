@@ -3283,16 +3283,26 @@ test('frames: an act is refused when the frame moved to another origin, and stal
 
 test('frames: one page context for the tab: a purchase or password frame restricts the top document and every frame', async () => {
   const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
-  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT], pageFacts: NO_FACTS };
+  const second = { ...SLOT, path: [1], box: { ...SLOT.box, y: 95 }, clip: { ...SLOT.clip, top: 95, bottom: 100 } };
+  h.observationExtra = { warnings: ['cross_origin_frame'], frameSlots: [SLOT, second], pageFacts: NO_FACTS };
   const page = framePage({ facts: { purchase: true, sensitive: true } });
-  const log = frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }]);
+  const plain = framePage({ doc: 'plaindoc' });
+  const log = frameWorld(h, [{ frameId: 5, documentId: 'D5', path: [0], page }, { frameId: 6, documentId: 'D6', path: [1], page: plain }]);
+  const topReads = h.pageArgs.filter(call => call.method === 'observe').length;
   const observation = await observed(h);
-  // The top document was read again with the frame's facts, and so was the frame.
+  // The top document was read again with the checkout frame's facts, and so was the other frame; the checkout frame
+  // itself had them already.
+  assert.equal(h.pageArgs.filter(call => call.method === 'observe').length, topReads + 2);
   assert.deepEqual(clone(h.secretCalls.at(-1).context), { purchase: true, sensitive: true, secretPage: false });
-  const frameContexts = log.filter(entry => entry.kind === 'call' && entry.method === 'observe').map(entry => entry.context);
-  assert.equal(frameContexts.length, 2, 'the frame was read again with the tab context');
-  assert.equal(frameContexts.at(-1).purchase, true);
-  assert.equal(frameContexts.at(-1).frame, true);
+  const reads = frameId => log.filter(entry => entry.kind === 'call' && entry.method === 'observe' && entry.frameId === frameId);
+  assert.equal(reads(5).length, 1);
+  assert.equal(reads(6).length, 2, 'the plain frame was read again with the tab context');
+  assert.equal(reads(6).at(-1).context.purchase, true);
+  assert.equal(reads(6).at(-1).context.frame, true);
+  // A second observe of the same page reads every document once: the context is known now.
+  await observed(h);
+  assert.equal(reads(6).length, 3);
+  assert.equal(h.pageArgs.filter(call => call.method === 'observe').length, topReads + 3);
   // Every later page call carries it: the top execute too.
   const top = await executed(h, { type: 'click', target: '1' }, observation.revision);
   assert.equal(top.error, undefined, JSON.stringify(top.error));
