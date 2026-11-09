@@ -7,10 +7,10 @@
 // the release is newer, one more GET asks which commit its tag names. Failures only set `status`. The result is cached
 // in the state directory (update-check.json), so a CLI check and the daemon share it and a restart does not re-ask.
 //
-// A private repository answers the anonymous API with 404. Then, when the caller gives a `gitSource` (the daemon and
-// the CLI do for a git clone), the check falls back to `git ls-remote --tags` on the clone's verified remote with the
-// user's own git credentials (src/update-git.js; FAI stores and reads no token): the highest plain vX.Y.Z tag, its
-// peeled commit. That path cannot see drafts or prereleases, so only final releases may get a vX.Y.Z tag. `source`
+// When the anonymous API answers 404 (a fork without releases, a repository it cannot see) and the caller gives a
+// `gitSource` (the daemon and the CLI do for a git clone), the check falls back to `git ls-remote --tags` on the
+// clone's verified remote with the user's own git credentials (src/update-git.js; FAI stores and reads no token): the
+// highest plain vX.Y.Z tag, its peeled commit. That path cannot see drafts or prereleases, so only final releases may get a vX.Y.Z tag. `source`
 // says which path found the release (api or git).
 //
 // Off switch: FAI_UPDATE_CHECK=0 (or false/off/no) or config.json "updateCheck": false stops the automatic checks;
@@ -415,7 +415,8 @@ export async function runCheck({ paths, currentVersion, fetch: fetchImpl, now = 
       next.latest = { ...next.latest, commit: await fetchTagCommit({ fetch: fetchImpl, tag: next.latest.tag, signal, timeoutMs }) };
     }
   } else if (result.status === 'not_found' && gitSource) {
-    // A private repository (or none published): the clone's own remote, with the user's git credentials.
+    // The API found nothing (a fork, a repository it cannot see): fall back to the clone's own remote, with the
+    // user's git credentials.
     try {
       const release = cleanRelease(await gitSource());
       Object.assign(next, release ? { status: 'ok', checkedAt: attemptAt, latest: release, etag: null, source: 'git' }

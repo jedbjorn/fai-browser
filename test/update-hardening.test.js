@@ -1,5 +1,5 @@
 // The updater's review fixes: no FAI secret in any child, ssh batch mode only without the user's own ssh command,
-// the git ls-remote fallback for a private repository, best-effort npm, rollbacks (detached, lease approved during
+// the git ls-remote fallback after an API 404, best-effort npm, rollbacks (detached, lease approved during
 // the update), move_failed, errors before the move, early-exit records, finishing an interrupted update, the 403 and
 // retry rules, the commit lookup, a stopped check, and `update --finish`. Local git repos only; no network.
 import test from 'node:test';
@@ -183,9 +183,9 @@ test('S1: ssh batch mode only when the user configured no ssh command for git', 
   assert.equal((await gitRunner({ cwd: r.checkout, env: r.env }).env()).GIT_TERMINAL_PROMPT, '0');
 });
 
-// --- private repository --------------------------------------------------------------------------------------------
+// --- API 404: git ls-remote fallback --------------------------------------------------------------------------------
 
-test('private repository: git ls-remote finds the highest plain tag with its peeled commit, on the verified remote only', async t => {
+test('API 404 fallback: git ls-remote finds the highest plain tag with its peeled commit, on the verified remote only', async t => {
   const r = await repos(t);
   r.git(r.source, 'tag', 'v0.10.0-rc.1');
   r.git(r.source, 'tag', 'nightly');
@@ -202,7 +202,7 @@ test('private repository: git ls-remote finds the highest plain tag with its pee
     'a remote that is not github.com/<repo> is never asked');
 });
 
-test('private repository: a 404 falls back to git, records source git, and the install checks that commit', async t => {
+test('API 404 fallback: a 404 falls back to git, records source git, and the install checks that commit', async t => {
   const r = await repos(t);
   const { home, env, paths } = await faiHome(r);
   const fetch = mockFetch(() => json(404, { message: 'Not Found' }));

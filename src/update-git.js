@@ -200,8 +200,8 @@ export async function lsRemoteLatest({ git, remote }) {
 }
 
 /**
- * The check's fallback for a repository the anonymous API cannot see (404): ls-remote on the verified remote of the
- * clone at `root`. Resolves a release, null (no tag), or throws (not a clone, no verified remote, git failed).
+ * The check's fallback after an anonymous API 404 (a fork without releases, a repository it cannot see): ls-remote
+ * on the verified remote of the clone at `root`. Resolves a release, null (no tag), or throws (not a clone, no verified remote, git failed).
  */
 export function gitReleaseSource({ root, env = process.env, remoteOk } = {}) {
   return async () => {
