@@ -17,10 +17,10 @@ The Imports column shows `import` relationships inside `src/`. Leaf modules impo
 | **Page model** | `digest.js`, `relevance.js`, `oversight.js`, `expectation.js` | `digest` <- `expectation`; `relevance` -> `guardrails`, `oversight` -> `guardrails` | Task-ranked digest (`buildDigest`), action ranking and capping, consent/login/error-page detection, `verifyExpectation` |
 | **Results** | `result.js`, `trace.js`, `retention.js` | `result` -> `digest`, `origins`, `oversight`, `relevance`; `trace` -> `result`, `secrets` | The receipt shapes (`directResult`, `agentResult`, `leanObserve`), trace files with redaction, pruning |
 | **Bridge (hub)** | `bridge.js`, `ws.js` | `bridge` -> `guardrails`, `ws` | The server side of the extension protocol: WebSocket + long-poll hub, leases, `BridgeError`, `PINNED_EXTENSION_ID` |
-| **Runtime** | `runtime.js` | digest, domains, expectation, facts, guardrails, origins, overlay, oversight, relevance, result, secrets, steps | `BrowserRuntime`: observe/offer/act loop over a `BrowserBridge`; `legalActions`. Today mixes the direct loop with the Jev-specific parts (provider payloads, retries, fact memory, step lists) |
-| **Jev (experimental)** | `typesafe.js`, `steps.js`, `facts.js`, `domains.js`, `shortcuts.js`, `dates.js` | guardrails, relevance, secrets, domains, digest, expectation, oversight | Provider client, step lists, answer aggregation, site profiles |
+| **Runtime** | `runtime.js` | digest, expectation, facts, guardrails, origins, overlay, oversight, relevance, result, secrets | `BrowserRuntime`: observe/offer/act loop over a `BrowserBridge`; `legalActions` |
+| **Facts** | `facts.js` | digest | Answer candidates and aggregation across the pages an act visited |
 | **Service** | `daemon.js`, `client.js`, `cli.js`, `home.js`, `settings.js`, `paths.js`, `install.js`, `native.js`, `native-host.js`, `migrate.js` | most of the above | HTTP API, SDK client, CLI, setup, state directories, native messaging |
-| **MCP** | `mcp.js`, `mcp-main.js` | expectation, guardrails, home, origins, paths, result, secrets, settings, steps | Tool schemas, server instructions, a dependency-free stdio JSON-RPC server |
+| **MCP** | `mcp.js`, `mcp-main.js` | expectation, guardrails, home, origins, paths, result, secrets, settings | Tool schemas, server instructions, a dependency-free stdio JSON-RPC server |
 | **Extension** | `extension/*` | none (browser only) | `background.js`, `page.js` (content script), `offscreen.js`, popup and approval UI, `compat.js` |
 
 The extension cannot import from `src/`, so **three blocks are byte-copied** into it (`<secret-rules>` from `secrets.js`,
@@ -81,5 +81,5 @@ the protocol in `src/bridge.js` (`PROTOCOL_VERSION`) and authenticates the pairi
 - Pre-1.0: module APIs can change between minor versions. Pin a version or commit.
 - The guardrail and redaction rules are tuned for this project's threat model (an agent in the user's browser). Read
   [SECURITY.md](../../SECURITY.md) for what they do not cover.
-- `runtime.js` is large and entangled with the Jev loop. Prefer the leaf modules until the split.
+- `runtime.js` is large. Prefer the leaf modules until the split.
 - License: MIT. The Public Suffix List in `vendor/` is MPL-2.0: keep its notice if you copy `psl-data.js`.

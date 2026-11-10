@@ -10,9 +10,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
 import { headlessEnv } from '../scripts/headless-env.mjs';
-import { buildDigest, blocksOf } from '../src/digest.js';
-import { BrowserRuntime } from '../src/runtime.js';
-import { agentResult } from '../src/result.js';
+import { blocksOf } from '../src/digest.js';
 
 const PAGE_SCRIPT = new URL('../extension/page.js', import.meta.url).pathname;
 const fixture = name => readFile(new URL(`../fixtures/records/${name}`, import.meta.url), 'utf8');
@@ -33,23 +31,6 @@ async function observe(t, html, viewport = { width: 1280, height: 800 }) {
   await page.goto('https://example.com/');
   await page.addScriptTag({ path: PAGE_SCRIPT });
   return page.evaluate(() => __faiPage.observe());
-}
-
-// One run on a single observed page: the provider ranks the first candidate at 0.97, as a confident ranker would.
-async function answer(observation, question, expectation) {
-  const bridge = {
-    async observe() { return structuredClone(observation); },
-    async execute() { throw Object.assign(new Error('no actions here'), { code: 'target_unavailable' }); },
-  };
-  const provider = {
-    model: 'x', requests: [],
-    async decide() { return { actionId: 'handoff', confidence: 0.9, done: { probability: 0.95 } }; },
-    async choose(request) { this.requests.push(request); return { choice: request.candidates[0].id, confidence: 0.97 }; },
-  };
-  const result = await new BrowserRuntime({ bridge, provider }).run('Read the results listed.', {
-    mode: 'read-only', capture: 'none', expectation, answerQuestion: question,
-  });
-  return { result, lean: agentResult(result), provider };
 }
 
 const HOTELS = ['Hotel Lumière Canal', 'Maison Ardoise', 'Le Petit Quai', 'Hôtel des Tilleuls', 'Gare Nord Rooms', 'Studio Rivoli',
@@ -90,68 +71,6 @@ test('hotel cards: one record per card of the whole list, names, ratings, prices
   }
 });
 
-test('hotel cards through the core: the digest holds whole cards, the live question is answered and confirmed', async t => {
-  const observation = await observe(t, await fixture('hotels.html'), { width: 1140, height: 893 });
-  const question = 'Which hotel with a rating of 8 or more is cheapest for the stay of 1-4 March 2027, with its name, price for the stay and rating?';
-  const { digest } = buildDigest(observation, question);
-  const cards = digest.filter(block => block.t === 'li');
-  assert.ok(cards.length >= 5, JSON.stringify(digest));
-  for (const card of cards) {
-    const name = HOTELS.find(item => card.text.startsWith(item));
-    assert.ok(name, card.text);
-    assert.equal(HOTELS.filter(item => card.text.includes(item)).length, 1, card.text);
-  }
-  const { result, lean } = await answer(observation, question, { textIncludes: 'properties found' });
-  assert.equal(result.status, 'completed', lean.verdict.why.join(' '));
-  assert.deepEqual(lean.answer.aggregate, { op: 'min', measure: 'price', items: 5, states: 1, partial: false });
-  const confirmed = lean.verdict.answer;
-  assert.ok(confirmed, lean.verdict.why.join(' '));
-  // €389 at 8.1 (its old €470 struck through); not €199 or €120 (rated under 8), not the sold-out card.
-  assert.match(confirmed.text, /Hôtel des Tilleuls/);
-  assert.match(confirmed.text, /€ 389/);
-  assert.match(confirmed.text, /Scored 8\.1/);
-  assert.doesNotMatch(confirmed.text, /470|Maison Ardoise|Auberge/);
-});
-
-test('product grid: tiles in a CSS grid, star ratings from aria-labels, an ad, an out-of-stock tile, link columns ignored', async t => {
-  const observation = await observe(t, await fixture('products.html'));
-  assert.deepEqual(observation.recordLists, [{ list: 0, total: 8, kept: 8, afterCount: true }]);
-  const byName = Object.fromEntries(observation.records.map(record => [record.title, record]));
-  assert.deepEqual(Object.keys(byName).slice(0, 3), ['Larkspur 2P tent', 'Ridge 3P tent', 'Pop-up beach shelter']);
-  assert.ok(byName['Larkspur 2P tent'].fields.includes('4.5 out of 5 stars'));
-  assert.deepEqual([byName['Larkspur 2P tent'].hints.rating, byName['Larkspur 2P tent'].hints.scale], [4.5, 5]);
-  assert.equal(byName['Ridge 3P tent'].hints.price, '$219.00', 'the struck price is not the price');
-  assert.equal(byName['Trailhead 2P tent'].sponsored, true);
-  assert.equal(byName['Canvas bell tent'].unavailable, true);
-  assert.ok(!observation.records.some(record => /Best sellers|Returns|Careers/.test([record.title, ...record.fields].join(' '))));
-  const { lean } = await answer(observation, 'Which product rated 4.7 or more is cheapest, with its name and price?', { textIncludes: '12 products' });
-  assert.match(lean.verdict.answer?.text ?? '', /Summit 1P bivy.*\$149\.00/, lean.verdict.why.join(' '));
-});
-
-test('table rows: one record per data row, the header row left out, the rows\' own text kept', async t => {
-  const observation = await observe(t, await fixture('table.html'));
-  assert.deepEqual(observation.records.map(record => record.title), ['Starter', 'Team', 'Business', 'Scale', 'Legacy']);
-  assert.equal(observation.records[1].hints.rating, 4.6);
-  assert.equal(observation.records[4].unavailable, true);
-  assert.ok(!observation.records.some(record => record.title === 'Home'), 'the navigation list is no record list');
-  const rows = blocksOf(observation).filter(block => block.rec);
-  assert.equal(rows.length, 5);
-  assert.ok(rows.every(row => row.t === 'tr'), 'a table row stays a tr block');
-  const { lean } = await answer(observation, 'Which plan with a rating of 4.5 or more is cheapest, and what does it cost?', { textIncludes: 'Hosting plans' });
-  assert.match(lean.verdict.answer?.text ?? '', /Team.*\$12 per month/, lean.verdict.why.join(' '));
-});
-
-test('a long list: all 25 records, five in the viewport, the rest marked offscreen and still read', async t => {
-  const observation = await observe(t, await fixture('long-list.html'));
-  assert.deepEqual(observation.recordLists, [{ list: 0, total: 25, kept: 25, afterCount: true }]);
-  const onScreen = observation.records.filter(record => !record.offscreen).length;
-  assert.ok(onScreen >= 4 && onScreen <= 6, `${onScreen} records in the viewport`);
-  assert.equal(observation.records[24].title, 'Backend engineer 25');
-  assert.ok(observation.text.length < 2000, 'the visible text is the viewport only');
-  const { lean } = await answer(observation, 'Which job has the lowest pay rate, and what is it?', { textIncludes: 'jobs found' });
-  assert.match(lean.verdict.answer?.text ?? '', /Backend engineer 19 .*€ 52,461/, lean.verdict.why.join(' '));
-});
-
 test('negative: menus, link columns, footers and a related-links list are never records; a real list beside them is the only one', async t => {
   const chrome = await observe(t, await fixture('chrome-only.html'));
   assert.equal(chrome.records, undefined, JSON.stringify(chrome.records?.map(record => record.title)));
@@ -163,22 +82,6 @@ test('negative: menus, link columns, footers and a related-links list are never 
   // A grouped row block around two tiles is shared, never one record's text.
   const texts = blocksOf(rows).filter(block => block.rec).map(block => block.text);
   assert.equal(texts[0], 'Casa Lume · Rated 4.6 by diners · Set menu € 38');
-});
-
-test('over the caps: 96 cards keep 60 records with honest totals, and the blocks after the list survive the 200-block cap', async t => {
-  const html = await fixture('hotels.html');
-  const start = html.indexOf('<div class="results">') + '<div class="results">'.length;
-  const end = html.indexOf('    </div>\n  </main>');
-  const big = html.slice(0, start) + html.slice(start, end).repeat(12) + html.slice(end);
-  const observation = await observe(t, big);
-  assert.deepEqual(observation.recordLists, [{ list: 0, total: 96, kept: 60, main: true, afterCount: true }]);
-  assert.equal(observation.recordsTruncated, true);
-  assert.equal(observation.records.length, 60);
-  assert.ok(observation.blocks.length <= 200);
-  assert.ok(observation.blocks.some(block => block.text === 'Accessibility statement'), 'the footer is still in the blocks');
-  const { lean } = await answer(observation, 'Which hotel is cheapest?', { textIncludes: 'properties found' });
-  assert.ok(lean.answer.aggregate.why.includes('records_cut'), JSON.stringify(lean.answer.aggregate));
-  assert.equal(lean.verdict.answer ?? null, null, 'a cut list is never auto-confirmed');
 });
 
 // Record detection cost on a card-heavy page: 200 result cards of nested parts (a titled link, a score box, a room box

@@ -3,12 +3,12 @@
 // ASSUMED PHASE 2 INTERFACE (match this, or adjust only this file):
 //   1. A stdio MCP server started as `fai-browser-mcp` (on PATH, node_modules/.bin, or package.json "bin"), or the
 //      command given with --fai-mcp-command / FAI_BENCH_MCP_COMMAND. It lists the tools in FAI_TOOLS below;
-//      `fai_browser_run` with `origins` requests the tab itself (no separate request_tab call).
+//      `fai_browser_open` with `origins` requests the tab itself (no separate request_tab call).
 //   2. The server reaches or auto-starts the daemon. Codex passes it only the env set here:
 //        FAI_BRIDGE_PORT    extension-facing port (random per run, so a real daemon on 4318 is untouched)
 //        FAI_BRIDGE_SECRET  disposable pairing secret; must take precedence over .env.local
 //        FAI_DAEMON_DIR     per-run state dir for the daemon's lock / socket / pid file (isolation from a user daemon)
-//      FAI_HOME is isolated unless explicitly supplied; Jev benchmarks must supply their own FAI_HOME;
+//      FAI_HOME is isolated unless explicitly supplied;
 //      the harness never reads that file.
 //   3. The extension popup (popup.html) keeps #endpoint and #secret (under Advanced; the secret is saved on change and
 //      never shown back) and a pending request card per request. The harness pairs the popup during setup, before the
@@ -17,8 +17,8 @@
 //      the card does not offer (above the asked one, or Testing off the listed origins) is refused. Without a level
 //      the card's preset (the level the agent asked for) is approved. #status then matches APPROVED_RE. While a
 //      request is pending the badge text is "?", which the harness polls every 250 ms.
-//   4. fai_browser_run / step / act / wait return the v1 result (docs/design/PROPOSAL.md section 5) as structuredContent or
-//      as JSON text; `cost.decisions`, `cost.elapsedMs` and `trace` (absolute trace.json path) are read from it.
+//   4. fai_browser_open / observe / act / wait return the lean direct result as readable text; the receipt fields
+//      (status, code, verification, requestId) are read from it.
 //   5. Daemon cleanup: processes whose environment carries this run's FAI_DAEMON_DIR are sent SIGTERM at the end,
 //      as is the pid in $FAI_DAEMON_DIR/daemon.pid if present.
 // Env overrides: FAI_BENCH_APPROVED_RE, FAI_BENCH_POPUP_PATH, FAI_BENCH_PENDING_BADGES.
@@ -33,10 +33,10 @@ import { faiResultFrom } from './lib/metrics.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..');
 export const FAI_TOOLS = [
-  'fai_browser_status', 'fai_browser_open', 'fai_browser_run', 'fai_browser_wait', 'fai_browser_observe', 'fai_browser_act',
-  'fai_browser_stop', 'fai_browser_evidence',
+  'fai_browser_open', 'fai_browser_act', 'fai_browser_observe', 'fai_browser_wait', 'fai_browser_status',
+  'fai_browser_release', 'fai_browser_evidence',
 ];
-const REQUIRED_TOOLS = ['fai_browser_wait', 'fai_browser_observe', 'fai_browser_act'];
+const REQUIRED_TOOLS = ['fai_browser_open', 'fai_browser_wait', 'fai_browser_observe', 'fai_browser_act'];
 const APPROVED_RE = new RegExp(process.env.FAI_BENCH_APPROVED_RE || 'available to the agent|approved|tab is ready|agent is using its tab', 'i');
 const POPUP_PATH = process.env.FAI_BENCH_POPUP_PATH || 'popup.html';
 const PENDING_BADGES = (process.env.FAI_BENCH_PENDING_BADGES ?? '?').split(',').filter(Boolean);
@@ -188,17 +188,15 @@ export async function preflightFai({ mcpCommand } = {}) {
     return { ok: false, reason: `fai-browser-mcp did not answer tools/list: ${probe.error}${probe.stderr ? `\n${probe.stderr}` : ''}` };
   }
   const missing = REQUIRED_TOOLS.filter(name => !probe.tools.includes(name));
-  if (!probe.tools.includes('fai_browser_open') && !probe.tools.includes('fai_browser_run')) missing.push('fai_browser_open or fai_browser_run');
   if (missing.length) {
     return { ok: false, reason: `fai-browser-mcp lacks required tools: ${missing.join(', ')} (has: ${probe.tools.join(', ')})` };
   }
-  const envFile = join(process.env.FAI_HOME ? resolve(process.env.FAI_HOME) : ROOT, '.env.local');
   return {
     ok: true,
     server,
     tools: probe.tools,
     missingOptionalTools: FAI_TOOLS.filter(name => !probe.tools.includes(name)),
-    warning: probe.tools.includes('fai_browser_open') || existsSync(envFile) ? null : 'No .env.local found: fai_browser_run/step need the Jev key (npm run setup).',
+    warning: null,
   };
 }
 
@@ -642,8 +640,7 @@ export async function faiEvidence(calls) {
     const result = faiResultFrom(call.result);
     // Direct receipts have a requestId, not a runId. Track the actual last task receipt separately
     // from per-run cost aggregation; an unreadable task result must not reuse earlier success.
-    if (['fai_browser_open', 'fai_browser_act', 'fai_browser_observe', 'fai_browser_run',
-      'fai_browser_step', 'fai_browser_wait', 'fai_browser_stop'].includes(call.tool)) {
+    if (['fai_browser_open', 'fai_browser_act', 'fai_browser_observe', 'fai_browser_wait'].includes(call.tool)) {
       final = result ? { runId: result.runId ?? null, requestId: result.requestId ?? null, tool: call.tool,
         status: result.status, code: result.code,
         verified: typeof result.verification?.passed === 'boolean' ? result.verification.passed : null } : null;

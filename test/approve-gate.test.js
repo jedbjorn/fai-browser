@@ -11,7 +11,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDaemon } from '../src/daemon.js';
-import { homePaths, saveDriver } from '../src/home.js';
 import { createFakeHub } from './helpers/fake-hub.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
 import { mcpData } from './helpers/mcp-result.js';
@@ -251,10 +250,9 @@ test('act: stop() during the wait ends the act stopped; the wait sits outside th
 
 test('MCP: act on a gated action waits for the extension and returns approved, denied or pending (approve) results', async t => {
   const home = await mkdtemp(join(tmpdir(), 'fai-approve-'));
-  saveDriver('agent', homePaths({ home, env: {} }));
   const pages = Object.fromEntries(Object.entries(PAGES).map(([key, page]) => [key, { ...page, url: ORIGIN + key }]));
   const hub = createFakeHub({ bridgeOptions: { pages, path: '/settings' } });
-  const daemon = createDaemon({ home, env: {}, port: 0, hub, providerFactory: () => { throw new Error('no provider in Agent direct'); } });
+  const daemon = createDaemon({ home, env: {}, port: 0, hub });
   await daemon.listen();
   const mcp = spawnMcp({ FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port), FAI_MCP_APPROVAL_WAIT_MS: '1500' });
   t.after(async () => {

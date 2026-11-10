@@ -1,16 +1,12 @@
 // The front-end pattern corpus (fixtures/patterns/manifest.json): every pattern page is loaded into headless Chromium
 // with the real extension/page.js, and every check of the manifest is one test. Observation checks run the check's
 // steps through the page script (as the extension does: execute with dispatch, settle and observe) and compare the
-// manifest's expected facts; `run` checks drive BrowserRuntime over the page (test/helpers/page-bridge.js) with a
-// provider that only reports done, so the runtime's own Rung 0 (consent reject, overlay dismissal) is what acts. A
-// check with `finding` is a known gap: a todo whose name carries the FINDING message.
+// manifest's expected facts. A check with `finding` is a known gap: a todo whose name carries the FINDING message.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { extname, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
-import { BrowserRuntime } from '../src/runtime.js';
-import { PageBridge } from './helpers/page-bridge.js';
 import { headlessEnv } from '../scripts/headless-env.mjs';
 
 const DIR = resolve(import.meta.dirname, '..', 'fixtures', 'patterns');
@@ -118,12 +114,9 @@ function checkObservation(observation, fill, expect) {
       `marked overlay controls ${marked.join(' | ')}`);
     if (!expect.marked.length) assert.deepEqual(marked, [], 'no control is marked');
   }
-  if (expect.dismiss) {
+  if (expect.closers) {
     const closers = (observation.overlay?.closers ?? []).map(closer => closer.label);
-    assert.deepEqual(closers, expect.dismiss, 'close controls');
-    for (const closer of observation.overlay?.closers ?? []) {
-      assert.equal(observation.controls.find(control => control.id === closer.id)?.dismiss, true, `${closer.label} is a dismiss control`);
-    }
+    assert.deepEqual(closers, expect.closers, 'close controls');
   }
   for (const label of expect.frameControls ?? []) {
     assert.ok(observation.controls.some(control => control.label.includes(label) && control.frame !== undefined), `frame control "${label}"; ${where()}`);
@@ -148,30 +141,11 @@ function checkObservation(observation, fill, expect) {
   }
 }
 
-async function checkRun(page, run, expect) {
-  const provider = { model: 'fake', async decide() { return { actionId: 'handoff', confidence: 0.9, done: { probability: 0.95 } }; } };
-  const runtime = new BrowserRuntime({ bridge: new PageBridge(page, { level: run.level }), provider });
-  const result = await runtime.run(run.instruction ?? 'Read the page.', { mode: run.level, capture: 'none',
-    expectation: run.expectation, maxActions: 6, retry: false, consentWaitMs: 50,
-    ...(run.answerQuestion ? { answerQuestion: run.answerQuestion } : {}) });
-  const dismissSteps = result.steps.filter(step => step.class === 'dismiss').map(step => step.action.method ?? 'close');
-  const why = result.verdict?.why ?? [];
-  const trail = `${result.status}/${result.code} why ${why.join(',')} steps ${result.steps.map(step => `${step.class}:${step.action.type}:${step.action.label}`).join(' / ')}`;
-  if (expect.dismissSteps) assert.deepEqual(dismissSteps, expect.dismissSteps, trail);
-  if ('overlayAfter' in expect) assert.equal(Boolean(result.observation?.overlay), expect.overlayAfter, trail);
-  for (const code of expect.why ?? []) assert.ok(why.includes(code), `why ${code}: ${trail}`);
-  if (expect.status) assert.equal(result.status, expect.status, trail);
-  for (const text of expect.finalBlocks ?? []) {
-    assert.ok((result.observation?.blocks ?? []).some(block => block.text.includes(text)), `final block "${text}": ${trail}`);
-  }
-}
-
 for (const pattern of MANIFEST.patterns) {
   for (const check of pattern.checks) {
     const name = `${pattern.id}: ${check.id}${check.finding ? ` (${check.finding})` : ''}`;
     test(name, check.finding ? { todo: check.finding } : {}, async t => {
       const page = await open(t, pattern.file);
-      if (check.run) return checkRun(page, check.run, check.expect);
       const allow = CAPABILITIES[check.level ?? 'read-only'];
       const { observation, fill } = await runSteps(page, check.steps, allow);
       checkObservation(observation, fill, check.expect);

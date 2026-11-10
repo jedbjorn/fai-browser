@@ -1,5 +1,7 @@
 # FAI Browser oversight system: skill + receipts + mechanical processing
 
+> Note: the experimental Jev autopilot (TypeSafe provider, `fai_browser_run`, step lists, site profiles) this document describes was removed in Unreleased (after 0.6.2). Kept as history.
+
 Status: design, 2026-10-04. Grounded in 35 Sol runs (sets 23-01-52, 23-28-57, 23-35-50; 74 scored Jev clicks, 25 verified finals), the 22-35-28 Playwright baseline, and the 9 real-site probe runs under `bench/real/results/` (pass1 + mdn-diag + smoke). No file under the repo is changed by this document.
 
 Objective as a budget: a task costs the host **one tool call and two model requests** (today's median for 7 of 8 bench tasks: 15-18 s, ~35k tokens) and a third request only when a receipt says exactly what to decide. A host turn is ~2.5 s plus a ~17k-token prefix; a Jev decision ~0.4 s and ~2k tokens; a browser action ~0.5 s. Preference order: mechanical (free) > Jev (cents) > host (dollars) > user (minutes).

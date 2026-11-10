@@ -38,15 +38,15 @@ const lines = [
   { type: 'thread.started', thread_id: 't1' },
   { type: 'item.started', item: { id: 'i1', type: 'mcp_tool_call', server: 'playwright', tool: 'browser_navigate' } },
   { type: 'item.completed', item: { id: 'i1', type: 'mcp_tool_call', server: 'playwright', tool: 'browser_navigate', status: 'completed', result: { content: [] } } },
-  { type: 'item.started', item: { id: 'i2', type: 'mcp_tool_call', server: 'fai_browser', tool: 'fai_browser_run' } },
-  { type: 'item.completed', item: { id: 'i2', type: 'mcp_tool_call', server: 'fai_browser', tool: 'fai_browser_run', status: 'completed',
+  { type: 'item.started', item: { id: 'i2', type: 'mcp_tool_call', server: 'fai_browser', tool: 'fai_browser_open' } },
+  { type: 'item.completed', item: { id: 'i2', type: 'mcp_tool_call', server: 'fai_browser', tool: 'fai_browser_open', status: 'completed',
     result: { content: [{ type: 'text', text: JSON.stringify({ v: 1, runId: 'r1', status: 'completed', cost: { decisions: 3, elapsedMs: 1900 } }) }] } } },
   { type: 'item.completed', item: { id: 'i3', type: 'agent_message', text: 'ANSWER: x' } },
   { type: 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 40, output_tokens: 10, reasoning_output_tokens: 4 } },
 ].map((event, i) => ({ at: i * 100, text: JSON.stringify(event) }));
 const parsed = parseEvents(lines);
 assert.equal(parsed.toolCalls, 2);
-assert.deepEqual(parsed.toolCallsByName, { 'playwright.browser_navigate': 1, 'fai_browser.fai_browser_run': 1 });
+assert.deepEqual(parsed.toolCallsByName, { 'playwright.browser_navigate': 1, 'fai_browser.fai_browser_open': 1 });
 assert.deepEqual(parsed.usage, { input: 100, cachedInput: 40, output: 10, reasoning: 4, turns: 1, total: 110 });
 assert.equal(parsed.calls[0].ms, 100);
 assert.equal(parsed.lastMessage, 'ANSWER: x');

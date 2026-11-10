@@ -1,5 +1,7 @@
 # QA/QC corpus
 
+> Note: the runner this page describes (`bench/qa/run.mjs`, `bench/qa/session.mjs`, `--sim-jev`) drove the experimental Jev autopilot and was removed with it after 0.6.2. The pages (`fixtures/qa`), `tasks.json`, `serve.mjs` and `lib.mjs` remain; run the corpus through a host with `npm run bench:compare -- --tasks-file bench/qa/tasks.json`. The rest of this page is history.
+
 A local, deterministic corpus of the page types that break browser agents, and a runner that drives FAI Browser with
 the TypeSafe Jev provider directly (no coding agent, no Codex quota) against it. Where `bench/real/probe.mjs` shows
 what live sites do today, this corpus gives the same failure classes as a repeatable regression suite: consent
@@ -33,7 +35,7 @@ see below), `--sim-jev [latencyMs]` (see below), `--thresholds JSON` (the run bo
 `domains/_templates/qa-fixture.json` for the session's origin into a scratch `FAI_DOMAINS_DIR` and sends the run body's
 `profiles` switch, so `on` and `off` differ only in the switch; without the flag no profile exists and nothing
 changes; the profile's `stats.json` is copied to `profile-stats.json` and the summary counts fast steps and fallbacks,
-see [Site profiles](../../docs/REFERENCE.md#site-profiles-experimental-opt-in)). Compare `--sim-jev --profile off` with
+site profiles, removed after 0.6.2). Compare `--sim-jev --profile off` with
 `--sim-jev --profile on` for decisions per run and run time.
 
 `--sim-jev` swaps Jev for `bench/qa/sim-jev.mjs`, a loopback SystemOne-compatible server sent as `provider: "local"`
@@ -184,7 +186,7 @@ on several pages uses `oracle.pages: [{steps, text}, ...]`, each checked from `s
 | `/spa/app`, `/spa/app/*` | the single-page app (pushState routes survive a reload) |
 | `/links/term/<slug>` | glossary term page |
 | `/errors/billing` | the 500 page with status 500; every unknown path gets the HTML 404 page |
-| `/long/*` | `fixtures/long/`, the long-horizon corpus ([bench/long](../long/README.md)), same file rules |
+| `/long/*` | `fixtures/long/`, the long-horizon corpus (its runner was removed with the Jev autopilot), same file rules |
 
 `startQaSite()` returns `{origin, stats, mark(), since(mark), close()}`; the runner takes a mark before each task and
 attaches `since(mark)` to the record.

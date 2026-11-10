@@ -89,12 +89,11 @@ const SETTLE_AFTER_NAVIGATION = { quietMs: 100, capMs: 1_500 };
 const SETTLE_IN_PLACE = { quietMs: 50, capMs: 300 };
 const WAIT_ACTION_MS = 500;
 
-// dismiss_overlay: the runtime's Escape or backdrop click on a nag overlay page.js itself detected (no target).
 // fill_secret / copy_secret: a secret handle's value into one field, or onto the clipboard, each approved by the user.
 // press / hover: a key (src/runtime.js pressKey) and a pointer rest, both from reversible (page.js checks); history:
 // back, forward or reload of the leased tab (same-origin entries only where the page can tell); switch_tab: another tab
 // of this lease (a popup or new tab it followed); dialog: a JavaScript dialog's answer (Test site, the main-world hook).
-const ACTION_TYPES = new Set(['click', 'fill_supplied_text', 'select', 'scroll', 'navigate_allowed_url', 'wait', 'dismiss_overlay',
+const ACTION_TYPES = new Set(['click', 'fill_supplied_text', 'select', 'scroll', 'navigate_allowed_url', 'wait',
   'submit_field', 'fill_secret', 'copy_secret', 'press', 'hover', 'history', 'switch_tab', 'open_tab', 'dialog', 'upload']);
 const HISTORY_MOVES = new Set(['back', 'forward', 'reload']);
 // Errors that mean the grant no longer covers what the user selected; they end the session.
@@ -113,14 +112,13 @@ const KNOWN_CODES = new Set([
 ]);
 const RECOVERABLE = new Set(['stale', 'target_unavailable', 'capture_failed']);
 // Message types that get exactly one reply, and their HTTP fallback paths.
-const REPLY_TYPES = new Set(['hello', 'lease', 'lease_level', 'deny', 'validate', 'settings', 'driver', 'update', 'move',
+const REPLY_TYPES = new Set(['hello', 'lease', 'lease_level', 'deny', 'validate', 'settings', 'update', 'move',
   'invite', 'invite_cancel', 'agents']);
 const HTTP_PATHS = {
   hello: '/hello',
   lease: '/lease',
   lease_level: '/lease-level',
   settings: '/settings',
-  driver: '/driver',
   update: '/update',
   deny: '/deny',
   status: '/status',
@@ -577,7 +575,6 @@ let testingOrigins = [];
 let budget = null;
 let budgetLoaded = false;
 let effectiveBudget = null;
-let driverControl = null; // Daemon-owned choice; never replayed from extension storage.
 // This install's browser identity ({id, product, name, version}; browserIdentity()), the browsers the service has
 // connected ([{id, product, name}]), and why the connection is held back: 'superseded' (this browser's newer
 // connection took over), 'replaced' (an older service keeps replacing this browser with another), or null.
@@ -704,7 +701,7 @@ function storeSession(values) {
 
 function connectionView() {
   return { connected, transport: connected ? transportName : 'none', budget: effectiveBudget, paired: Boolean(pairing),
-    native: nativeState, ...(driverControl ? { control: driverControl } : {}), ...(updateInfo ? { update: updateInfo } : {}),
+    native: nativeState, ...(updateInfo ? { update: updateInfo } : {}),
     ...(identity ? { browserId: identity.id } : {}), ...(connectedBrowsers.length ? { browsers: connectedBrowsers } : {}),
     ...(conflict ? { conflict } : {}) };
 }
@@ -810,17 +807,6 @@ async function reloadForUpdate(daemonVersion) {
   if (updateReloadedFor === daemonVersion) return;
   await chrome.storage.local.set({ updateReloadedFor: daemonVersion });
   chrome.runtime.reload();
-}
-
-function cleanDriverControl(value) {
-  return value && ['jev', 'agent'].includes(value.driver) && typeof value.jevAvailable === 'boolean'
-    ? { driver: value.driver, jevAvailable: value.jevAvailable } : null;
-}
-
-async function readDriver() {
-  const data = await send('driver');
-  driverControl = cleanDriverControl(data?.control);
-  publishConnection();
 }
 
 function publishConnection() {
@@ -1392,7 +1378,6 @@ function handleHello(data, via) {
   transportName = via;
   // The budget the daemon applies (the user's, else config.json, else its default); an older daemon names none.
   effectiveBudget = cleanBudget(data?.budget);
-  driverControl = cleanDriverControl(data?.control);
   updateInfo = cleanUpdate(data?.update);
   ignore(reloadForUpdate(data?.daemonVersion));
   if (data?.endSession && session) {
@@ -2523,17 +2508,10 @@ function validateAction(action) {
   if (action.point !== undefined && (action.type !== 'click' || action.target !== undefined || !validPoint(action.point))) {
     throw new ExtensionError('unsupported', 'Invalid point');
   }
-  // A click the runtime cleared with Jev: the capability its class needs, on a target (page.js runs it only on a
-  // control it marked ambiguous itself, and only when `allow` holds that capability).
-  if (action.intentCleared !== undefined && (action.type !== 'click' || action.target === undefined
-    || !['controls', 'submit'].includes(action.intentCleared))) {
-    throw new ExtensionError('unsupported', 'Invalid cleared click');
-  }
+  // No command can lift a page-script block (the removed Jev intent clearance included).
+  if (action.intentCleared !== undefined) throw new ExtensionError('unsupported', 'Invalid cleared click');
   if (['navigate_allowed_url', 'open_tab'].includes(action.type) && !sameSessionSite(action.url)) {
     throw new ExtensionError('cross_origin', 'Navigation outside selected origin');
-  }
-  if (action.type === 'dismiss_overlay' && (action.target !== undefined || !['escape', 'backdrop'].includes(action.method))) {
-    throw new ExtensionError('unsupported', 'Invalid overlay dismissal');
   }
   // An approved action (the Approve gate): bound to a target, never a point (copy_secret names a handle instead).
   if (action.approvalId !== undefined && (!['click', 'fill_secret', 'copy_secret', 'upload'].includes(action.type) || action.point !== undefined
@@ -4110,8 +4088,6 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         await waitForAttempt(1_000);
       }
       if (toolbarPopup) reportUsed();
-      // A failed driver read never fails the connect: the popup keeps the last known choice.
-      if (connected && driverControl) await readDriver().catch(() => {});
       // The daily check may have found a release since the hello (a service that knows updates said so in it).
       if (connected && updateInfo) await readUpdate().catch(() => {});
     } else if (message.type === 'invite') {
@@ -4151,26 +4127,6 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
           : 'Automatic pairing failed. Run npm run setup in the fai-browser folder.');
       }
       if (!connected) await waitForAttempt(CONNECT_WAIT_MS);
-    } else if (message.type === 'set_driver') {
-      const popupUrl = chrome.runtime.getURL('popup.html');
-      if (typeof sender.url !== 'string' || sender.url.split('?')[0] !== popupUrl) {
-        throw new Error('Change browser control from the FAI Browser popup.');
-      }
-      if (!['jev', 'agent'].includes(message.driver)) throw new Error('Choose your agent or Jev autopilot.');
-      if (!connected || !driverControl) {
-        throw new Error('Connect to an updated FAI service before switching browser control.');
-      }
-      try {
-        const data = await send('driver', { driver: message.driver });
-        const control = cleanDriverControl(data?.control);
-        if (!control || control.driver !== message.driver) throw new Error('The FAI service did not confirm the switch.');
-        driverControl = control;
-        publishConnection();
-      } catch (error) {
-        // A lost acknowledgement may still have saved the change. Read the actual state before reporting failure.
-        await readDriver().catch(() => {});
-        throw error;
-      }
     } else {
       throw new Error('Unsupported control');
     }

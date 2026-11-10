@@ -189,7 +189,7 @@ function lean({ status = 'completed', code = 'expectation_passed', passed = stat
   return {
     v: 2, status, code, verification: { checked: true, passed, expectation: null },
     verdict: { kind: passed ? 'verified' : 'needs_user', oversight: 'confirm', answer: answer ? { text: answer } : null, why: [code], decide: null, suggested, budget: null },
-    page: { url: 'http://x/', title: 't', digest, truncated: false }, answer: { method: 'jev', candidates: candidates.map(text => ({ text, confidence: 0.5 })) },
+    page: { url: 'http://x/', title: 't', digest, truncated: false }, answer: { method: 'heuristic', candidates: candidates.map(text => ({ text, confidence: 0.5 })) },
     steps: [], cost: { decisions: 2, inputTokens: 2000, outputTokens: 40, elapsedMs: 900 }, next: { kind: next, text: '' },
   };
 }

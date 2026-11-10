@@ -3,7 +3,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { lintExpectation, validateExpectation } from '../../src/expectation.js';
-import { validateSteps } from '../../src/steps.js';
 
 export const HERE = import.meta.dirname;
 export const ROOT = resolve(HERE, '..', '..');
@@ -352,11 +351,7 @@ export function validateTask(task, { fixtures = QA_FIXTURES } = {}) {
   // top-level instruction is the user's task for host benches. It carries no top-level expectation or question.
   const listTask = task.steps !== undefined;
   if (listTask) {
-    try {
-      validateSteps(task.steps, { path: 'steps' });
-    } catch (error) {
-      errors.push(error.message);
-    }
+    need(Array.isArray(task.steps) && task.steps.length > 0, 'steps must be a non-empty array');
     need(task.expectation === undefined && task.answerQuestion === undefined, 'a steps task keeps expectation and answerQuestion in its steps');
     for (const [index, step] of (Array.isArray(task.steps) ? task.steps : []).entries()) {
       const lint = step?.expectation && typeof step.expectation === 'object' ? lintExpectation(step.expectation) : null;

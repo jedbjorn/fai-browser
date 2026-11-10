@@ -6,7 +6,6 @@ import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright-core';
 import { createDaemon } from '../../src/daemon.js';
-import { homePaths, saveDriver } from '../../src/home.js';
 import { headlessEnv } from '../../scripts/headless-env.mjs';
 import { startStaticSite } from '../lib/qa.mjs';
 import { createFakeHub } from '../../test/helpers/fake-hub.js';
@@ -110,7 +109,6 @@ async function measurePage(browser, site, definition, tokenizers) {
   let daemon;
   let mcp;
   try {
-    saveDriver('agent', homePaths({ home, env: {} }));
     const page = await context.newPage();
     await context.route('**/*', route => {
       const url = route.request().url();

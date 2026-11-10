@@ -186,10 +186,6 @@ async function popup(t, { local = {}, requests = [], state = {}, tabUrl = 'http:
       runtime: {
         async sendMessage(message) {
           __sent.push(message);
-          if (message.type === 'set_driver') {
-            if (__state.driverError) return { error: __state.driverError };
-            __state.control = { ...__state.control, driver: message.driver };
-          }
           if (message.type === 'pair' && __state.pairError) return { error: __state.pairError };
           const live = connected || (message.type === 'pair' && !__state.pairError);
           return { status: __state.status ?? null, session: __state.session ?? null, requests,
@@ -223,58 +219,6 @@ async function computedDescription(page, selector) {
     await session.detach();
   }
 }
-
-test('popup: browser control toggles both ways, sends the choice and reflects confirmation', async t => {
-  const page = await popup(t, { local: PAIRED, state: { control: { driver: 'jev', jevAvailable: true } } });
-  await page.click('#advanced summary');
-  assert.equal(await page.getAttribute('#driver-jev', 'aria-pressed'), 'true');
-  // Your agent first and recommended; Jev labelled experimental; the Jev key row shows only while Jev is selected.
-  assert.deepEqual(await page.$$eval('.driver-toggle button', nodes => nodes.map(node => node.id)), ['driver-agent', 'driver-jev']);
-  assert.match(await page.textContent('#driver-agent'), /Your agent\s*recommended/);
-  assert.match(await page.textContent('#driver-jev'), /Jev autopilot\s*experimental/);
-  assert.equal(await page.$eval('#key-row', node => node.hidden), false);
-  await page.click('#driver-agent');
-  await page.waitForFunction(() => document.querySelector('#driver-agent').getAttribute('aria-pressed') === 'true');
-  assert.equal(await page.$eval('#key-row', node => node.hidden), true);
-  assert.deepEqual(await page.evaluate(() => __sent.filter(message => message.type === 'set_driver')),
-    [{ type: 'set_driver', driver: 'agent' }]);
-  assert.match(await page.textContent('#driver-saved'), /No restart needed/);
-  assert.equal(await page.evaluate(() => __local.driver), undefined);
-  await page.click('#driver-jev');
-  await page.waitForFunction(() => document.querySelector('#driver-jev').getAttribute('aria-pressed') === 'true');
-  assert.equal(await page.evaluate(() => __sent.filter(message => message.type === 'set_driver').at(-1).driver), 'jev');
-  assert.ok(await page.$eval('.driver-toggle', node => node.scrollWidth <= node.clientWidth), 'toggle fits the popup');
-});
-
-test('popup: driver save errors leave the confirmed choice selected and allow retry', async t => {
-  const page = await popup(t, { local: PAIRED,
-    state: { control: { driver: 'jev', jevAvailable: true }, driverError: 'Could not save browser control.' } });
-  await page.click('#advanced summary');
-  await page.click('#driver-agent');
-  await page.waitForFunction(() => document.querySelector('#driver-error').textContent.includes('Could not save'));
-  assert.equal(await page.getAttribute('#driver-jev', 'aria-pressed'), 'true');
-  assert.equal(await page.getAttribute('#driver-agent', 'aria-pressed'), 'false');
-  assert.equal(await page.isDisabled('#driver-agent'), false);
-  // The service reports the asked-for choice in effect after all (a lost acknowledgement): the error clears.
-  await page.evaluate(() => __listeners.forEach(listener => listener({ connection: { newValue: {
-    connected: true, transport: 'websocket', mode: 'daemon', control: { driver: 'agent', jevAvailable: true },
-  } } }, 'session')));
-  await page.waitForFunction(() => document.querySelector('#driver-error').textContent === '');
-  assert.equal(await page.getAttribute('#driver-agent', 'aria-pressed'), 'true');
-});
-
-test('popup: unavailable Jev, disconnected service and an older daemon cannot be toggled', async t => {
-  const page = await popup(t, { local: PAIRED, state: { control: { driver: 'agent', jevAvailable: false } } });
-  assert.equal(await page.isDisabled('#driver-jev'), true);
-  assert.match(await page.textContent('#driver-help'), /needs its key: add it during setup/);
-  await page.evaluate(() => __listeners.forEach(listener => listener({ connection: { newValue: {
-    connected: false, mode: 'daemon', control: { driver: 'agent', jevAvailable: false },
-  } } }, 'session')));
-  assert.equal(await page.isDisabled('#driver-agent'), true);
-  const old = await popup(t, { local: PAIRED });
-  assert.equal(await old.isDisabled('#driver-agent'), true);
-  assert.equal(await old.isDisabled('#driver-jev'), true);
-});
 
 test('popup: works with empty storage; Advanced preselects up to Act and no testing environments', async t => {
   const page = await popup(t, { requests: [request(['http://localhost:3000'], 'full')] });
@@ -408,10 +352,8 @@ test('popup: normal-text color pairs meet WCAG AA contrast', async t => {
     const style = (selector, pseudo = null) => getComputedStyle(document.querySelector(selector), pseudo);
     return [
       ['muted text on a card', style('.request-meta').color, style('.request-card').backgroundColor],
-      ['muted text on the deepest surface', style('.driver-toggle small').color, style('.driver-toggle').backgroundColor],
       ['primary button text', style('.primary-button').color, style('.primary-button').backgroundColor],
       ['placeholder text', style('#testing-origin', '::placeholder').color, style('#testing-origin').backgroundColor],
-      ['green badge text', style('.key-badge').color, style('.key-badge').backgroundColor],
     ].map(([name, foreground, background]) => ({ name, ratio: ratio(foreground, background) }));
   });
   for (const pair of pairs) assert.ok(pair.ratio >= 4.5, `${pair.name}: ${pair.ratio.toFixed(2)}:1`);
@@ -1138,11 +1080,9 @@ test('popup and arm.html: an unpinned icon shows how to pin it; the shortcut com
   assert.match(await arm.textContent('#pin-hint'), /Or press Ctrl\+Shift\+Y\./);
 });
 
-test('popup: the privacy note names where page text goes for the current driver', async t => {
-  const agent = await popup(t, { local: { ...PAIRED }, state: { control: { driver: 'agent', jevAvailable: false } } });
-  await agent.waitForFunction(() => /coding agent\.$/.test(document.querySelector('#privacy-note').textContent));
-  const jev = await popup(t, { local: { ...PAIRED }, state: { control: { driver: 'jev', jevAvailable: true } } });
-  await jev.waitForFunction(() => /Jev provider/.test(document.querySelector('#privacy-note').textContent));
+test('popup: the privacy note names where page text goes', async t => {
+  const page = await popup(t, { local: { ...PAIRED } });
+  await page.waitForFunction(() => /coding agent\.$/.test(document.querySelector('#privacy-note').textContent));
 });
 
 

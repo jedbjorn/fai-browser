@@ -3,9 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BLOCK_TYPES, blocksOf, buildDigest, pickAnswerCandidates } from '../src/digest.js';
-import { BrowserRuntime, unreadableWarnings } from '../src/runtime.js';
-import { agentResult } from '../src/result.js';
-import { FakeBridge, clickProvider } from './runtime-fixtures.js';
+import { unreadableWarnings } from '../src/runtime.js';
 
 const CHART = 'Price graph: 14 bars read from their heights, lowest Oct 10 ≈€87, highest Oct 12 ≈€150: Oct 6 ≈€121, Oct 7 ≈€98';
 const FLIGHTS = {
@@ -58,14 +56,3 @@ test('unreadableWarnings: one fixed code per known kind, in first-seen order; ne
   assert.deepEqual(unreadableWarnings({}), ['unreadable_region']);
 });
 
-test('the page script unreadable_region warning reaches the run receipt by kind', async () => {
-  const pages = { '/': {
-    title: 'Flights', text: 'Date grid', controls: [], warnings: ['unreadable_region'],
-    unreadable: [{ kind: 'canvas', label: 'Date grid', reason: 'pixels_only', bounds: { x: 0, y: 0, width: 900, height: 130 } }],
-  } };
-  const bridge = new FakeBridge({ pages, path: '/' });
-  const result = await new BrowserRuntime({ bridge, provider: clickProvider([], { fallback: 'done' }) })
-    .run('Read the date grid.', { expectation: { textIncludes: 'Date grid' } });
-  assert.ok(result.warnings.includes('unreadable_region:canvas'), JSON.stringify(result.warnings));
-  assert.ok(agentResult(result).warnings.includes('unreadable_region:canvas'));
-});

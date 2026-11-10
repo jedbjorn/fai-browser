@@ -39,14 +39,14 @@ before proposing one.
 | `src/guardrails.js`, `src/oversight.js`, `src/origins.js` | Permission levels, label rules, origin matching (Public Suffix List based) |
 | `src/secrets.js` | Secret redaction rules |
 | `src/native.js`, `src/native-host.js`, `src/install.js`, `src/home.js`, `src/settings.js` | Native messaging pairing, agent registration, per-user state and settings |
-| `src/typesafe.js`, `src/steps.js`, `src/facts.js`, `src/domains.js` | The experimental Jev autopilot, step lists, fact memory and site profiles |
+| `src/facts.js` | Fact memory: answer candidates across the pages an act visited |
 | `extension/` | The browser extension: `background.js` (service worker / Firefox event page), `page.js` (the content script that reads the page and acts), `offscreen.js` (screenshot redaction, clipboard), popup and approval UI, `compat.js` (Firefox shim) |
 | `skills/fai-browser/`, `tasks/` | The host-facing skill and task sub-skills (flight and hotel search) |
 | `fixtures/`, `test/` | Local fake sites and the test suite |
 | `bench/` | The benchmark and QA harnesses (maintainer tools) |
 | `docs/` | `REFERENCE.md` (exhaustive), `guide/` (task-oriented), `design/` |
 
-Site-specific logic does not belong in `src/`. A new site gets a profile under `domains/` or a sub-skill under `tasks/`.
+Site-specific logic does not belong in `src/`. A new site gets a sub-skill under `tasks/<name>/`: a short `SKILL.md` guide and, when needed, the task's vocabulary in `index.js`.
 
 ## Running the tests
 
@@ -116,7 +116,7 @@ Rules of thumb for these files:
 ## Changing the agent loop
 
 For changes to observation, ranking or the result shape, measure before and after with the harness in
-[bench/](bench/README.md), one change per run; `npm run bench` uses a fake provider and needs no key. Tool schemas and
+[bench/](bench/README.md), one change per run; `npm run bench` uses an in-memory bridge and needs no browser. Tool schemas and
 server instructions are re-sent to the host model on every request, so every byte counts: `test/mcp.test.js` and
 `test/agent-direct.test.js` bound their size.
 

@@ -1,30 +1,22 @@
 // Configurable guardrails (docs/proposals/configurable-guardrails.md), host side: levels and capabilities, the
 // PURCHASE / COMMIT_OTHER split, purchases never offered below testing, the clamp of a run's mode to the user's grant
-// and the receipt's `permissions` block, the purchase guard (Jev nouls), level requests instead of plain refusals,
+// and the receipt's `permissions` block, level requests instead of plain refusals,
 // lease `level` validation, and that no config, policy, MCP or CLI input can grant `testing`.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  CAPABILITIES, CAPABILITY_NAMES, COMMIT_OTHER, DELETE_WORDS, LEVELS, PAYMENT_AUTOCOMPLETE, PAYMENT_FIELD, PURCHASE,
-  SAFE_SUBMIT, SIGN_IN_WORDS, SUBMIT_WORDS, capabilitiesOf, clampLevel, guardrailPolicy, jevPolicy, normalizeAdditions,
-  DANGEROUS, labelClasses, paymentField,
-} from '../src/guardrails.js';
-import { BrowserRuntime, legalActions } from '../src/runtime.js';
-import { agentResult } from '../src/result.js';
-import { writeRun } from '../src/trace.js';
+import { CAPABILITIES, CAPABILITY_NAMES, COMMIT_OTHER, DELETE_WORDS, LEVELS, PAYMENT_AUTOCOMPLETE, PAYMENT_FIELD, PURCHASE, SAFE_SUBMIT, SIGN_IN_WORDS, SUBMIT_WORDS, capabilitiesOf, clampLevel, guardrailPolicy, DANGEROUS, labelClasses, normalizeAdditions, paymentField } from '../src/guardrails.js';
+import { legalActions } from '../src/runtime.js';
 import { createHub } from '../src/bridge.js';
 import { createDaemon } from '../src/daemon.js';
 import { createLogger, homePaths, loadConfig } from '../src/home.js';
-import { JEV_TOOLS, TOOLS } from '../src/mcp.js';
-import { FakeBridge, ORIGIN, clickProvider, link } from './runtime-fixtures.js';
+import { TOOLS } from '../src/mcp.js';
+import { ORIGIN, link } from './runtime-fixtures.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { EXTENSION_ID, EXTENSION_ORIGIN, SECRET } from './helpers/fake-extension.js';
-
-const grant = level => ({ grant: { level } });
 
 // ---------------------------------------------------------------------------------------------------------------
 // Levels and capabilities
@@ -242,311 +234,6 @@ test('sign_in: password fields are fill targets only at testing, and marked sens
 // The runtime: clamp, permissions, purchase guard, level requests, consent, login, redaction
 // ---------------------------------------------------------------------------------------------------------------
 
-test('the runtime clamps the mode to the grant; testing needs a grant; the receipt reports permissions', async () => {
-  const run = async options => {
-    const bridge = new FakeBridge();
-    const result = await new BrowserRuntime({ bridge, provider: clickProvider(['About']) }).step('Open About', options);
-    return { result, bridge };
-  };
-  let { result, bridge } = await run({ mode: 'full', ...grant('reversible') });
-  assert.deepEqual(result.permissions, { requested: 'full', granted: 'reversible', effective: 'reversible', testing: false, scope: 'origin', tabMode: 'single' });
-  assert.equal(bridge.observeOptions[0].level, 'reversible', 'the effective level goes to the extension');
-  assert.equal(bridge.executions[0] !== undefined, true);
-  ({ result } = await run({ mode: 'testing' }));
-  assert.deepEqual(result.permissions, { requested: 'testing', granted: null, effective: 'full', testing: false, scope: 'origin', tabMode: 'single' },
-    'without a grant testing is never effective');
-  ({ result } = await run({ mode: 'testing', ...grant('testing') }));
-  assert.deepEqual(result.permissions, { requested: 'testing', granted: 'testing', effective: 'testing', testing: true, scope: 'origin', tabMode: 'single' });
-  assert.deepEqual(agentResult(result).permissions, result.permissions);
-  ({ result } = await run({ mode: 'reversible', ...grant('full') }));
-  assert.equal(result.permissions.effective, 'reversible', 'the grant is a ceiling, never a floor');
-});
-
-function guardProvider(label, guards) {
-  const calls = [];
-  return {
-    calls,
-    async decide(observation, actions, context) {
-      calls.push({ actions, context });
-      const action = actions.find(item => item.label === label) ?? actions.find(item => item.type === 'handoff');
-      return { actionId: action.id, confidence: 0.95, guards, done: { probability: 0.05 } };
-    },
-  };
-}
-
-const CHECKOUT = {
-  '/review': {
-    title: 'Review', text: 'Card charged when you continue',
-    controls: [{ id: '1', role: 'button', label: 'Continue', enabled: true, risk: 'reversible' }, link('2', 'Help', '/help')],
-  },
-  '/help': { title: 'Help', text: 'Help', controls: [] },
-};
-
-test('purchase guard: a chosen control with purchase_control or purchase_page at the veto is refused below testing', async () => {
-  for (const level of ['reversible', 'interactive', 'full']) {
-    for (const guards of [{ purchase_control: 0.9 }, { purchase_page: 0.7 }]) {
-      const bridge = new FakeBridge({ pages: CHECKOUT, path: '/review' });
-      const provider = guardProvider('Continue', guards);
-      const result = await new BrowserRuntime({ bridge, provider }).run('Continue the checkout review.', { mode: level, ...grant(level) });
-      assert.equal(result.code, 'refused_action', `${level} ${JSON.stringify(guards)}`);
-      assert.equal(bridge.executions.length, 0, 'nothing executed');
-      assert.ok(result.verdict.why.includes('guard:purchase_veto'));
-      assert.equal(result.next.kind, 'stop');
-      assert.equal(result.needs.message, 'FAI never purchases outside testing mode. Tell the user what to do in the tab.');
-      assert.deepEqual(result.needs.control, { ref: '1', label: 'Continue' });
-      assert.equal(result.needs.level, undefined);
-      assert.equal(provider.calls[0].context.level, level);
-      assert.ok(provider.calls[0].context.capabilities.includes('controls'));
-    }
-  }
-  // Below the threshold, or at testing, the control runs; a link proceeds whatever the guard says.
-  const below = new FakeBridge({ pages: CHECKOUT, path: '/review' });
-  await new BrowserRuntime({ bridge: below, provider: guardProvider('Continue', { purchase_control: 0.69 }) })
-    .step('Continue.', { mode: 'full', ...grant('full') });
-  assert.equal(below.executions.length, 1);
-  const testing = new FakeBridge({ pages: CHECKOUT, path: '/review' });
-  await new BrowserRuntime({ bridge: testing, provider: guardProvider('Continue', { purchase_control: 0.99, purchase_page: 0.99 }) })
-    .step('Continue.', { mode: 'testing', ...grant('testing') });
-  assert.equal(testing.executions.length, 1, 'no purchase veto at testing');
-  const linked = new FakeBridge({ pages: CHECKOUT, path: '/review' });
-  await new BrowserRuntime({ bridge: linked, provider: guardProvider('Help', { purchase_page: 0.99 }) })
-    .step('Open Help.', { mode: 'full', ...grant('full') });
-  assert.equal(linked.executions.length, 1);
-  // A handoff while the purchase guard is high and a control is offered stops too.
-  const handoff = new FakeBridge({ pages: CHECKOUT, path: '/review' });
-  const stopped = await new BrowserRuntime({ bridge: handoff, provider: guardProvider('nothing', { purchase_page: 0.95 }) })
-    .run('Finish the review.', { mode: 'full', ...grant('full') });
-  assert.equal(stopped.code, 'refused_action');
-  assert.ok(stopped.verdict.why.includes('guard:purchase_veto'));
-  // A run may lower the veto threshold.
-  const lowered = new FakeBridge({ pages: CHECKOUT, path: '/review' });
-  const strict = await new BrowserRuntime({ bridge: lowered, provider: guardProvider('Continue', { purchase_control: 0.5 }) })
-    .run('Continue.', { mode: 'full', ...grant('full'), thresholds: { commitVeto: 0.4 } });
-  assert.equal(strict.code, 'refused_action');
-});
-
-const WORKSPACE = {
-  '/settings': {
-    title: 'Workspace settings', text: 'Danger zone',
-    controls: [{ id: '1', role: 'button', label: 'Delete workspace', enabled: true, risk: 'delete' }],
-  },
-};
-
-test('a refusal a higher level would lift relays a level request (needs.level); purchases still stop', async () => {
-  const bridge = new FakeBridge({ pages: WORKSPACE, path: '/settings' });
-  const provider = clickProvider([]);
-  const result = await new BrowserRuntime({ bridge, provider }).run('Delete this workspace.', { mode: 'reversible', ...grant('reversible') });
-  assert.equal(result.code, 'refused_action');
-  assert.equal(provider.calls.length, 0);
-  assert.equal(result.status, 'needs_user');
-  assert.equal(result.needs.level, 'full');
-  assert.equal(result.needs.who, 'user');
-  assert.equal(result.needs.message, 'The user approved Use (no submit) for this tab; this task needs Act. Ask them to '
-    + 'approve the new request at Act in FAI Browser (it is preselected).');
-  assert.equal(result.verdict.kind, 'needs_user');
-  assert.equal(result.next.kind, 'relay');
-  assert.match(result.next.text, /mode "full"/);
-  assert.ok(result.verdict.why.includes('refused:delete') && result.verdict.why.includes('level:full'));
-  const lean = agentResult(result);
-  assert.equal(lean.needs.level, 'full');
-  assert.equal(lean.next.kind, 'relay');
-
-  // The grant already covers it: the host runs again with that mode.
-  const covered = await new BrowserRuntime({ bridge: new FakeBridge({ pages: WORKSPACE, path: '/settings' }), provider })
-    .run('Delete this workspace.', { mode: 'reversible', ...grant('full') });
-  assert.equal(covered.needs.who, 'host');
-  assert.equal(covered.next.kind, 'rerun');
-  assert.match(covered.next.text, /mode "full"/);
-
-  // At full the control is offered and the task is not refused.
-  const runs = await new BrowserRuntime({ bridge: new FakeBridge({ pages: WORKSPACE, path: '/settings' }), provider: clickProvider(['Delete workspace']) })
-    .step('Delete this workspace.', { mode: 'full', ...grant('full') });
-  assert.notEqual(runs.code, 'refused_action');
-
-  // Sign-in needs testing: relayed with the test-environment note.
-  const login = { '/': { title: 'Account', text: 'Account', controls: [{ id: '1', role: 'button', label: 'Log in', enabled: true, risk: 'reversible' }] } };
-  const signIn = await new BrowserRuntime({ bridge: new FakeBridge({ pages: login }), provider })
-    .run('Log in to my account.', { mode: 'full', ...grant('full') });
-  assert.equal(signIn.needs.level, 'testing');
-  assert.match(signIn.needs.message, /only on origins the user listed as test sites/);
-
-  // A purchase below testing stops, at every level.
-  const cart = { '/': { title: 'Cart', text: 'Cart', controls: [{ id: '1', role: 'button', label: 'Place order', enabled: true, risk: 'purchase' }] } };
-  for (const level of ['read-only', 'reversible', 'interactive', 'full']) {
-    const stop = await new BrowserRuntime({ bridge: new FakeBridge({ pages: cart }), provider }).run('Place my order.', { mode: level, ...grant(level) });
-    assert.equal(stop.code, 'refused_action', level);
-    assert.equal(stop.next.kind, 'stop', level);
-    assert.equal(stop.needs.level, undefined, level);
-    assert.equal(stop.next.text, 'FAI never purchases outside testing mode. Tell the user what to do in the tab.');
-  }
-  // A control the user forbade stops at every level, testing included.
-  const forbidden = await new BrowserRuntime({ bridge: new FakeBridge({ pages: WORKSPACE, path: '/settings' }), provider })
-    .run('Delete this workspace.', { mode: 'testing', ...grant('testing'), policy: ['Delete workspace'] });
-  assert.equal(forbidden.code, 'refused_action');
-  assert.equal(forbidden.next.kind, 'stop');
-  assert.equal(forbidden.needs.message, 'The user reserved this control for themselves. Tell the user what to do in the tab.');
-});
-
-test('all controls blocked at reversible names the level that would allow one', async () => {
-  const pages = { '/': { title: 'Form', text: 'Contact form', controls: [{ id: '1', role: 'button', label: 'Send', type: 'submit', enabled: true, risk: 'submit' }] } };
-  const result = await new BrowserRuntime({ bridge: new FakeBridge({ pages }), provider: clickProvider([], { fallback: 'handoff' }) })
-    .run('Read the form.', { mode: 'reversible', ...grant('reversible') });
-  assert.equal(result.code, 'refused_action');
-  assert.ok(result.verdict.why.includes('refused:all_controls_blocked'));
-  assert.equal(result.needs.level, 'full');
-  assert.equal(result.next.kind, 'relay');
-});
-
-const CONSENT_PAGE = {
-  '/': {
-    title: 'News', text: 'Headlines',
-    consent: { text: 'We use cookies', buttons: [{ id: '9', label: 'Accept all', kind: 'accept' }] },
-    controls: [{ id: '9', role: 'button', label: 'Accept all', enabled: true, risk: 'consent_accept', consent: true, dismissesConsent: true }, link('2', 'About', '/about')],
-  },
-  '/about': { title: 'About', text: 'About us', controls: [] },
-};
-
-test('consent: an accept-only dialog stops below full; at full the accept button is offered to the provider', async () => {
-  const blocked = await new BrowserRuntime({ bridge: new FakeBridge({ pages: CONSENT_PAGE }), provider: clickProvider(['Accept all']) })
-    .run('Read the headlines.', { mode: 'reversible', ...grant('reversible') });
-  assert.equal(blocked.code, 'consent_banner');
-  const bridge = new FakeBridge({ pages: CONSENT_PAGE });
-  const provider = clickProvider(['Accept all'], { fallback: 'done' });
-  await new BrowserRuntime({ bridge, provider }).run('Read the headlines.', { mode: 'full', ...grant('full') });
-  const offered = provider.calls[0].actions.filter(action => action.consent);
-  assert.deepEqual(offered.map(action => action.label), ['Accept all']);
-  assert.equal(bridge.executions[0].action.target, '9');
-  // With a reject button the reject is still clicked mechanically at full.
-  const both = structuredClone(CONSENT_PAGE);
-  both['/'].consent.buttons.push({ id: '8', label: 'Reject all', kind: 'reject' });
-  both['/'].controls.push({ id: '8', role: 'button', label: 'Reject all', enabled: true, risk: 'reversible', consent: true, dismissesConsent: true });
-  const mech = new FakeBridge({ pages: both });
-  await new BrowserRuntime({ bridge: mech, provider: clickProvider([], { fallback: 'done' }) }).run('Read the headlines.', { mode: 'full', ...grant('full') });
-  assert.equal(mech.executions[0].action.target, '8');
-});
-
-class EchoBridge extends FakeBridge {
-  async execute(action, ...rest) {
-    const out = await super.execute(action, ...rest);
-    if (action.type === 'fill_supplied_text') {
-      this.pages[this.path].text = `Signed in as ada with ${action.text} (debug echo)`;
-      this.pages[this.path].title = `Welcome ${action.text}`;
-      this.version++;
-      return { ...out, observation: this.observation };
-    }
-    return out;
-  }
-}
-
-test('sign_in at testing: no login stop; the password value is redacted from steps, receipt and trace', async t => {
-  const secret = 'hunter2-Secret!';
-  const pages = { '/login': { title: 'Sign in', text: 'Sign in to continue', controls: [
-    { id: '1', role: 'textbox', type: 'password', label: 'Password', enabled: true, risk: 'reversible' },
-  ] } };
-  // Below testing a login wall stops before any decision.
-  const stopped = await new BrowserRuntime({ bridge: new FakeBridge({ pages, path: '/login' }), provider: clickProvider([]) })
-    .run('Read the dashboard.', { mode: 'full', ...grant('full'), suppliedText: { pw: secret } });
-  assert.equal(stopped.code, 'login');
-  const bridge = new EchoBridge({ pages, path: '/login' });
-  const provider = {
-    calls: [],
-    async decide(observation, actions) {
-      this.calls.push(JSON.stringify({ observation, actions }));
-      const fill = actions.find(action => action.type === 'fill_supplied_text');
-      return { actionId: fill && this.calls.length === 1 ? fill.id : 'done', confidence: 0.9 };
-    },
-  };
-  const result = await new BrowserRuntime({ bridge, provider }).run('Sign in with the test password and read the greeting.', {
-    mode: 'testing', ...grant('testing'), suppliedText: { pw: secret }, expectation: { textIncludes: 'Signed in' },
-  });
-  assert.equal(bridge.lastText, secret, 'the extension received the real value');
-  assert.equal(result.steps[0].action.sensitive, true);
-  assert.equal(result.steps[0].action.text, undefined, 'the step never records the value');
-  assert.equal(result.steps[0].action.label, 'Password');
-  const serialized = JSON.stringify(result);
-  assert.ok(!serialized.includes(secret), 'receipt redacted');
-  assert.ok(!JSON.stringify(result.observation).includes(secret), 'diagnostic observation redacted');
-  assert.match(result.page.title, /\[redacted\]/);
-  const lean = agentResult(result);
-  assert.ok(!JSON.stringify(lean).includes(secret));
-  const dir = await mkdtemp(join(tmpdir(), 'fai-levels-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const written = await writeRun(result, { dir, instruction: 'x', operation: 'run', options: { suppliedText: { pw: secret } } });
-  const trace = await readFile(written.trace, 'utf8');
-  assert.ok(!trace.includes(secret), 'trace redacted');
-  assert.ok(!JSON.stringify(written.result).includes(secret));
-  for (const payload of provider.calls) assert.ok(!payload.includes(secret), 'provider payloads never carry it');
-});
-
-test('secret supplied values: password fields take only them; a text field only when meant for one or asked for', async t => {
-  const login = { url: `${ORIGIN}/login`, revision: 'r1', title: 'Test app', controls: [
-    { id: '1', role: 'textbox', type: 'text', label: 'Username', enabled: true, risk: 'reversible' },
-    { id: '2', role: 'textbox', type: 'password', label: 'Password', enabled: true, risk: 'reversible' },
-    { id: '3', role: 'textbox', type: 'text', label: 'API key', enabled: true, risk: 'reversible' },
-  ] };
-  const fills = (instruction, suppliedText = { username: 'tester', password: 'synthetic-pass-9' }) => legalActions(login,
-    { mode: 'testing', suppliedText, instruction })
-    .filter(action => action.type === 'fill_supplied_text')
-    .map(action => `${action.target}:${action.suppliedName}${action.sensitive ? ':sensitive' : ''}`).sort();
-  assert.deepEqual(fills('Sign in: fill Username with the supplied username and Password with the supplied password.'),
-    ['1:username', '2:password:sensitive', '3:password:sensitive', '3:username'],
-    'the password goes to the password field (and a field meant for a secret), never to Username');
-  assert.deepEqual(fills('Fill the Username field with the supplied password.').filter(f => f.startsWith('1:')),
-    ['1:password:sensitive', '1:username'], 'asked for explicitly: offered, and still treated as a secret');
-  assert.deepEqual(fills('Put the password into the Username field.').filter(f => f.startsWith('1:')),
-    ['1:password:sensitive', '1:username']);
-  assert.deepEqual(fills(undefined, { first: 'a-value', second: 'b-value' }).filter(f => f.startsWith('2:')),
-    ['2:first:sensitive', '2:second:sensitive'], 'no secret names: every value is offered, a password fill is a secret');
-
-  // A secret filled into a text field (asked for) is never recorded and is redacted from receipt and trace.
-  const secret = 'synthetic-pass-9';
-  const pages = { '/': { title: 'Test app', text: 'Account', controls: [login.controls[0]] } };
-  const bridge = new FakeBridge({ pages, path: '/' });
-  const provider = { async decide(_observation, actions) {
-    const fill = actions.find(action => action.type === 'fill_supplied_text' && action.suppliedName === 'password');
-    return { actionId: fill && !bridge.lastText ? fill.id : 'done', confidence: 0.9 };
-  } };
-  const result = await new BrowserRuntime({ bridge, provider }).run('Fill the Username field with the supplied password.', {
-    mode: 'testing', ...grant('testing'), suppliedText: { password: secret }, maxActions: 1 });
-  assert.equal(bridge.lastText, secret);
-  assert.equal(result.steps[0].action.sensitive, true);
-  assert.equal(result.steps[0].action.text, undefined);
-  assert.ok(!JSON.stringify(result).includes(secret));
-  const dir = await mkdtemp(join(tmpdir(), 'fai-levels-secret-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const written = await writeRun(result, { dir, instruction: 'x', operation: 'run', options: {} });
-  assert.ok(!(await readFile(written.trace, 'utf8')).includes(secret));
-});
-
-test('at testing a high blocked guard on a sign-in page is ignored but logged in the receipt and the trace', async t => {
-  const pages = { '/login': { title: 'Sign in', text: 'Sign in to the test app', controls: [
-    { id: '1', role: 'textbox', type: 'password', label: 'Password', enabled: true, risk: 'reversible' }] } };
-  const bridge = new FakeBridge({ pages, path: '/login' });
-  const provider = { async decide(_observation, actions) {
-    const fill = actions.find(action => action.type === 'fill_supplied_text');
-    return { actionId: fill && !bridge.lastText ? fill.id : 'handoff', confidence: 0.9, guards: { blocked: 0.78 } };
-  } };
-  const result = await new BrowserRuntime({ bridge, provider }).run('Fill the password.', {
-    mode: 'testing', ...grant('testing'), suppliedText: { password: 'synthetic-pass-9' } });
-  assert.equal(bridge.executions.length, 1, 'the run went on');
-  assert.ok(result.verdict.why.includes('guard:blocked:0.78'), JSON.stringify(result.verdict.why));
-  const dir = await mkdtemp(join(tmpdir(), 'fai-levels-blocked-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const written = await writeRun(result, { dir, instruction: 'x', operation: 'run', options: {} });
-  const trace = JSON.parse(await readFile(written.trace, 'utf8'));
-  assert.equal(trace.steps[0].decision.guards.blocked, 0.78);
-});
-
-// ---------------------------------------------------------------------------------------------------------------
-// Jev policy per level
-// ---------------------------------------------------------------------------------------------------------------
-
-test('jevPolicy: a mode line per level; level-specific user_actions', () => {
-  assert.match(jevPolicy({ mode: 'interactive' }).mode, /search, filter, sort and paging submits/);
-  assert.match(jevPolicy({ mode: 'full' }).user_actions, /^Buying, paying, subscribing and logging in belong to the user/);
-  assert.match(jevPolicy({ mode: 'testing' }).user_actions, /^This is a test environment the user controls/);
-  assert.equal(guardrailPolicy({ level: 'full' }).jev(), jevPolicy({ mode: 'full' }));
-});
 
 // ---------------------------------------------------------------------------------------------------------------
 // The daemon and the hub: lease level, grant, clamp, command args
@@ -556,9 +243,9 @@ async function daemonSetup(t, { config } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-levels-daemon-'));
   if (config) await writeFile(join(home, 'config.json'), JSON.stringify(config));
   const hub = createFakeHub();
-  const env = { TYPESAFE_API_KEY: 'jev-test-key' };
+  const env = {};
   const log = createLogger(homePaths({ home, env }));
-  const daemon = createDaemon({ driver: 'jev', home, env, port: 0, hub, log, sweepIntervalMs: 60_000, providerFactory: () => clickProvider(['About']) });
+  const daemon = createDaemon({ home, env, port: 0, hub, log, sweepIntervalMs: 60_000 });
   await daemon.listen();
   t.after(async () => {
     await daemon.close();
@@ -594,8 +281,8 @@ test('daemon: lease level is validated and stored as the grant; missing level ke
   const view = (await ctx.api('GET', `/v1/requests/${full}`)).body;
   assert.equal((view.request ?? view).grant.level, 'full');
   assert.equal(ctx.hub.bound.at(-1).level, 'full', 'the hub lease carries the grant');
-  const run = await ctx.api('POST', '/v1/runs', { requestId: full, instruction: 'Open About', operation: 'step', waitMs: 5000 });
-  assert.deepEqual(run.body.result.permissions, { requested: 'testing', granted: 'full', effective: 'full', testing: false, scope: 'origin', tabMode: 'single' });
+  const run = await ctx.api('POST', '/v1/observe', { requestId: full });
+  assert.deepEqual(run.body.permissions, { requested: 'testing', granted: 'full', effective: 'full', testing: false, scope: 'origin', tabMode: 'single' });
 
   // An older extension (no level): reversible for a reversible-or-higher request, else read-only.
   const legacy = await ctx.request('interactive');
@@ -606,8 +293,8 @@ test('daemon: lease level is validated and stored as the grant; missing level ke
   // Testing is granted only by the lease message (the user's choice in the popup).
   const testing = await ctx.request('testing');
   assert.equal((await ctx.hub.approve(testing, { level: 'testing' })).grant.testing, true);
-  const ran = await ctx.api('POST', '/v1/runs', { requestId: testing, instruction: 'Open About', operation: 'step', mode: 'testing', waitMs: 5000 });
-  assert.equal(ran.body.result.permissions.effective, 'testing');
+  const ran = await ctx.api('POST', '/v1/observe', { requestId: testing, mode: 'testing' });
+  assert.equal(ran.body.permissions.effective, 'testing');
 
   // Re-approval of the active lease on the same tab changes the grant without a new lease.
   const before = ctx.daemon.request(testing).lease.leaseId;
@@ -663,13 +350,7 @@ test('daemon: the extension lowers a testing grant (lease_level); raising is ref
   const after = (await ctx.api('POST', '/v1/observe', { requestId: again, mode: 'testing', capture: false,
     suppliedText: signIn.suppliedText })).body;
   assert.ok(!after.actions.some(action => action.target === '3' || action.target === '2'), 'no sign-in actions offered');
-  const run = await ctx.api('POST', '/v1/runs', { ...signIn, requestId: again, operation: 'run' });
-  const result = run.body.result;
-  assert.deepEqual(result.permissions, { requested: 'testing', granted: 'full', effective: 'full', testing: false, scope: 'origin', tabMode: 'single' });
-  assert.equal(result.code, 'refused_action');
-  assert.equal(result.needs.level, 'testing');
-  assert.equal(result.next.kind, 'relay');
-  assert.match(result.needs.message, /approved Act.*needs Test site/s);
+  assert.deepEqual(after.permissions, { requested: 'testing', granted: 'full', effective: 'full', testing: false, scope: 'origin', tabMode: 'single' });
   assert.equal(bridge.executions.length, 0, 'nothing was clicked or filled');
   // A repeat at the same level is a no-op; raising back is refused.
   assert.equal((await ctx.hub.lowerLevel(testingLease, 'full')).grant.level, 'full');
@@ -690,55 +371,19 @@ test('daemon: a hello carrying a lower session level lowers the grant; a higher 
   assert.equal(ctx.daemon.request(id).grant.level, 'full', 'a hello never raises');
 });
 
-test('runtime: a grant lowered mid-run takes effect on the next decision and in the receipt', async () => {
-  // Not a login wall (no sign-in title or heading), so the run goes on to a second decision.
-  const bridge = new FakeBridge({ pages: { '/': { ...LOGIN_PAGE, title: 'Test app', text: 'Account details' } }, path: '/' });
-  let runtime;
-  const offeredTargets = [];
-  const provider = {
-    async decide(_observation, actions) {
-      offeredTargets.push(actions.map(action => action.target).filter(Boolean));
-      if (offeredTargets.length === 1) {
-        runtime.lowerGrant('full');
-        return { actionId: actions.find(action => action.target === '1').id, confidence: 0.9 };
-      }
-      return { actionId: 'handoff', confidence: 0.9 };
-    },
-  };
-  runtime = new BrowserRuntime({ bridge, provider });
-  const result = await runtime.run('Fill the username field with the supplied username.', {
-    mode: 'testing', ...grant('testing'), suppliedText: { username: 'tester' } });
-  assert.ok(offeredTargets[0].includes('3'), 'Sign in offered before the revocation');
-  assert.ok(!offeredTargets[1].includes('3') && !offeredTargets[1].includes('2'), 'not after it');
-  assert.deepEqual(result.permissions, { requested: 'testing', granted: 'full', effective: 'full', testing: false, scope: 'origin', tabMode: 'single' });
-  assert.ok(result.verdict.why.includes('grant:lowered:full'), JSON.stringify(result.verdict.why));
-  assert.throws(() => runtime.lowerGrant('admin'), /level/);
-
-  // On a login wall the lowered run stops before any decision; asked for testing, it names the level.
-  const wall = await new BrowserRuntime({ bridge: new FakeBridge({ pages: { '/': LOGIN_PAGE }, path: '/' }), provider })
-    .run('Read the account page.', { mode: 'testing', ...grant('full') });
-  assert.equal(wall.code, 'login');
-  assert.equal(wall.needs.level, 'testing');
-  assert.equal(wall.next.kind, 'relay');
-  assert.match(wall.needs.message, /approved Act.*needs Test site/s);
-  assert.match(wall.next.text, /mode "testing"/);
-  const plain = await new BrowserRuntime({ bridge: new FakeBridge({ pages: { '/': LOGIN_PAGE }, path: '/' }), provider })
-    .run('Read the account page.', { mode: 'full', ...grant('full') });
-  assert.equal(plain.code, 'login');
-  assert.equal(plain.needs.level, undefined, 'a run that did not ask for testing is told to let the user sign in');
-});
-
-test('no run field, config key, policy, CLI flag or MCP argument grants a level', async t => {
+test('no act or observe field, config key, policy, CLI flag or MCP argument grants a level', async t => {
   const ctx = await daemonSetup(t);
   const requestId = await ctx.request('testing');
   await ctx.hub.approve(requestId, { level: 'reversible' });
-  for (const field of [{ grant: { level: 'testing' } }, { level: 'testing' }, { permissions: { granted: 'testing' } }]) {
-    const response = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', ...field });
-    assert.equal(response.status, 400, JSON.stringify(field));
-    assert.equal(response.body.error.code, 'invalid_options');
+  for (const route of ['/v1/act', '/v1/observe']) {
+    for (const field of [{ grant: { level: 'testing' } }, { level: 'testing' }, { permissions: { granted: 'testing' } }]) {
+      const response = await ctx.api('POST', route, { requestId, ...(route === '/v1/act' ? { actionId: 'a0' } : {}), ...field });
+      assert.equal(response.status, 400, `${route} ${JSON.stringify(field)}`);
+      assert.equal(response.body.error.code, 'invalid_options');
+    }
   }
-  const asked = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', mode: 'testing', operation: 'step', waitMs: 5000 });
-  assert.equal(asked.body.result.permissions.effective, 'reversible');
+  const asked = await ctx.api('POST', '/v1/observe', { requestId, mode: 'testing' });
+  assert.equal(asked.body.permissions.effective, 'reversible');
   // A policy is restrict-only: no level or allow keys.
   for (const policy of [{ level: 'testing' }, { allow: ['Place order'] }, { testing: true }]) {
     assert.throws(() => normalizeAdditions(policy), /unknown key/);
@@ -751,10 +396,10 @@ test('no run field, config key, policy, CLI flag or MCP argument grants a level'
     assert.throws(() => loadConfig(homePaths({ home, env: {} })), /Unknown|unknown/, JSON.stringify(config));
   }
   // MCP: `mode` states a need (five levels); there is no grant argument.
-  const run = JEV_TOOLS.find(tool => tool.name === 'fai_browser_run').inputSchema;
-  assert.deepEqual(run.properties.mode.enum, LEVELS);
-  assert.match(run.properties.mode.description, /testing: user-granted on test origins only/);
-  for (const tool of [...JEV_TOOLS, ...TOOLS]) {
+  const open = TOOLS.find(tool => tool.name === 'fai_browser_open').inputSchema;
+  assert.deepEqual(open.properties.mode.enum, LEVELS);
+  assert.match(open.properties.mode.description, /testing: user-granted on test origins only/);
+  for (const tool of TOOLS) {
     for (const name of ['grant', 'level', 'permissions', 'testing']) assert.equal(tool.inputSchema.properties?.[name], undefined, `${tool.name}.${name}`);
   }
 });
@@ -857,27 +502,3 @@ test('hub: lease_level is validated like lease.level, only lowers, and clamps la
   await observe;
 });
 
-test('the Jev purchase guard fails closed: asked but unanswered purchase questions read 1 and veto a control', async () => {
-  const { TypeSafeProvider } = await import('../src/typesafe.js');
-  const answers = [
-    { action: { type: 'choice', choice: 'a0' } },
-    { action: { type: 'choice', choice: 'a0' }, purchase_control: { noul: 0.02 }, purchase_page: { noul: Number.NaN } },
-  ];
-  for (const answer of answers) {
-    const provider = new TypeSafeProvider({ requireKey: false, keyEnv: 'FAI_UNUSED_TEST_KEY',
-      fetchImpl: async () => new Response(JSON.stringify({ answers: answer }), { status: 200 }) });
-    const page = { url: 'https://shop.example/checkout', title: 'Checkout', text: 'Continue charges your card.', controls: [
-      { id: '1', role: 'button', label: 'Continue', enabled: true, visible: true, risk: 'reversible' }] };
-    const offered = [{ id: 'a0', type: 'click', target: '1', role: 'button', label: 'Continue', description: 'Click Continue' },
-      { id: 'handoff', type: 'handoff', description: 'None of these' }];
-    const decision = await provider.decide(page, offered, { instruction: 'Continue', level: 'full' });
-    assert.equal(decision.guards.purchase_page, 1);
-    if (!answer.purchase_control) assert.equal(decision.guards.purchase_control, 1);
-  }
-  // Not asked at testing: nothing is filled in.
-  const provider = new TypeSafeProvider({ requireKey: false, keyEnv: 'FAI_UNUSED_TEST_KEY',
-    fetchImpl: async () => new Response(JSON.stringify({ answers: answers[0] }), { status: 200 }) });
-  const decision = await provider.decide({ url: 'https://t.example/', title: 'T', text: '', controls: [] },
-    [{ id: 'a0', type: 'click', target: '1', role: 'button', label: 'Pay', description: 'Click Pay' }], { instruction: 'Pay', level: 'testing' });
-  assert.equal(decision.guards?.purchase_control, undefined);
-});

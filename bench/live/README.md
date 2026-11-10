@@ -1,5 +1,7 @@
 # Live bench
 
+> Note: the experimental Jev autopilot was removed after 0.6.2. The live tasks below were written for hosts calling `fai_browser_run`; hosts now drive with `fai_browser_open` / `fai_browser_act`, so treat the Jev-specific measurements here as history.
+
 How does FAI Browser do as close to real use as we can get? `bench/live/run.mjs --live` runs a real Claude Code host (`claude -p`, Sonnet 5.5 at low effort by default) with the real installed MCP entry against the owner's long-running daemon on `127.0.0.1:4318`. That daemon is connected to the owner's headed Chrome (profile "Public"), and the owner approves each tab request in the extension popup. The tasks run on live public websites and on the owner's own signed-in web app, not fixtures. Prompts are written the way a user would type them to Claude Code, so the host picks every `fai_browser_run` parameter itself.
 
 `--private` runs the same pipeline against a private daemon, headless Chromium and the fixture site, with auto-approval. It works like `bench/compare.mjs` condition R and is how the runner itself is verified.

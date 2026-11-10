@@ -36,9 +36,6 @@ logs/
 # Git metadata must also be excluded by the offline publication scanner.
 .git/
 
-# Site profiles: local hit/miss counters written next to each profile, never shared.
-/domains/*/stats.json
-/domains/*/stats.json.*.tmp
 
 # bench/live: only the summaries are published; runs, traces, receipts, answers and grades stay local.
 /bench/live/results/*/*

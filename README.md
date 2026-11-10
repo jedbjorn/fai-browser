@@ -15,15 +15,11 @@ action approvals and verified outcomes.**
 [Website](https://jedbjorn.github.io/fai-browser/) · [Install](docs/guide/install.md) · [Measured comparisons](#benchmarks)
 
 FAI Browser lets a coding agent work in one Chrome or Firefox tab you approved, in your own signed-in browser.
-By default **your agent drives**: `fai_browser_open` asks for your approval and returns a compact
+**Your agent drives**: `fai_browser_open` asks for your approval and returns a compact
 page digest with the actions your granted level allows; your agent picks one with `fai_browser_act`
 and gets the next page back, until an expectation verifies the outcome. No key, no provider calls,
 and every action passes the same guardrails: levels, origins, forbidden labels, and explicit
 approval for payments. Login is restricted to your configured test environments.
-
-**Experimental: Jev autopilot.** Opt in with `npm run setup -- --driver jev` and a TypeSafe Jev key
-to delegate a whole task in one `fai_browser_run`: a fast decision provider picks each step and a
-verified receipt comes back. Autopilot benchmarks are reported separately below.
 
 ## Why
 
@@ -39,8 +35,8 @@ verified receipt comes back. Autopilot benchmarks are reported separately below.
   You can pause or stop at any time. Screenshots on either browser may still need the toolbar click;
   modal approval requests host access, which does not itself grant screenshot access.
 - **Results are receipts, not guesses.** `completed` means an independent expectation passed. Each
-  result carries a trusted `verdict` and `next {kind, text}`: answer, choose, rerun, relay to the
-  user or stop.
+  result carries a trusted `verdict` and `next {kind, text}`: answer, choose, observe, relay to the
+  user, approve or stop.
 - **Invite an agent to a tab you are on.** The toolbar popup's **Invite an agent to this tab** hands the current
   tab to a live Claude Code, Codex or OpenCode session at the level you pick. Approve and Resume wake that session,
   so it continues without you typing "done" (other hosts get a copy-paste line).
@@ -49,7 +45,7 @@ verified receipt comes back. Autopilot benchmarks are reported separately below.
 - **Frames you approved are readable.** A cross-origin frame inside the page (an admin portal's content blade, say) is
   read and acted on when its own origin is one you approved; other frames are never read and are boxed in screenshots.
 - **Everything is local.** The FAI service, extension and traces stay on your machine, outside the
-  checkout; only provider calls leave it.
+  checkout; FAI makes no model or provider calls.
 
 ## Demo
 
@@ -63,9 +59,8 @@ The demo shows payment approval, verified confirmation, secret redaction, and ap
 
 ## Benchmarks
 
-Three measurements answer different questions: how much page text reaches the agent, how the
-default **Agent direct** driver completes a workflow, and how the experimental Jev autopilot
-compares across host models. All figures are local fixture runs with their limits stated next
+Two measurements answer different questions: how much page text reaches the agent, and how
+**Agent direct** (your agent driving) completes a workflow compared with Playwright MCP. All figures are local fixture runs with their limits stated next
 to the numbers.
 
 ### Page output size
@@ -86,35 +81,24 @@ references; the task benchmark below includes the contents actually read.
 
 Measured 2026-11-06 on local fixtures, two repeats per task. Values are per-task averages of
 per-task medians. Wall time is host spawn to exit. Host tokens are full vendor usage; cost is
-host-only pricing from `bench/prices.json`, not a subscription invoice. Bars are labeled directly;
-lower time, token and cost bars are better, while higher pass counts are better.
+host-only pricing from `bench/prices.json`, not a subscription invoice. Lower time, token and cost
+are better; higher pass counts are better. Text workflows ran on Sol 6.1 medium, visual workflows on
+Claude Sonnet 5.5 medium.
 
-#### Text workflows · Sol 6.1 medium
+| Workflow set | Metric | Playwright MCP | FAI Agent direct |
+|---|---|---:|---:|
+| Sol 6.1, 6 text tasks | Task checks passed | 12/12 | 12/12 |
+| | Wall time | 27.1 s | 42.3 s |
+| | Raw host tokens | 109.7k | 227.2k |
+| | Host-only cost | $0.0419 | $0.0788 |
+| Claude Sonnet 5.5, 2 visual tasks | Task checks passed | 4/4 | 4/4 |
+| | Wall time | 29.8 s | 20.0 s |
+| | Raw host tokens | 115.9k | 104.9k |
+| | Host-only cost | $0.0542 | $0.0604 |
 
-![Text workflow benchmark: Playwright MCP, FAI Agent direct and FAI Jev autopilot compared on passes, wall time, raw host tokens and host-only cost](site/media/benchmark-text.svg)
-
-#### Visual workflows · Claude Sonnet 5.5 medium
-
-![Visual workflow benchmark: Playwright MCP, FAI Agent direct and FAI Jev autopilot compared on passes, wall time, raw host tokens and host-only cost](site/media/benchmark-visual.svg)
-
-| Workflow set | Metric | Playwright MCP | FAI Agent direct | FAI Jev autopilot |
-|---|---|---:|---:|---:|
-| Sol 6.1, 6 text tasks | Task checks passed | 12/12 | 12/12 | 8/12 |
-| | Wall time | 27.1 s | 42.3 s | 59.0 s |
-| | Raw host tokens | 109.7k | 227.2k | 361.0k |
-| | Host-only cost | $0.0419 | $0.0788 | $0.1079 |
-| | Jev provider tokens | — | — | 24.5k |
-| Claude Sonnet 5.5, 2 visual tasks | Task checks passed | 4/4 | 4/4 | 4/4 |
-| | Wall time | 29.8 s | 20.0 s | 35.8 s |
-| | Raw host tokens | 115.9k | 104.9k | 179.9k |
-| | Host-only cost | $0.0542 | $0.0604 | $0.1063 |
-| | Jev provider tokens | — | — | 31.5k |
-
-Jev provider tokens are additional to raw host tokens and are not included in host-only cost.
 Two safety scenarios are excluded from performance figures; all runs had zero safety flags.
 Sources: Agent-direct [text](bench/results/site-agentdirect-optimized-2026-11-06/summary.json) and
-[visual](bench/results/site-agentdirect-optimized-visual-2026-11-06/summary.json) summaries;
-[Jev comparison](bench/results/jev-comparison-2026-11-06.json).
+[visual](bench/results/site-agentdirect-optimized-visual-2026-11-06/summary.json) summaries.
 
 The earlier native-relay pass (`bench/showcase/results-native-2026-11-06.md`) reports the
 same four workflows with protocol-level detail (MCP calls, snapshot-file reads, observed
@@ -144,7 +128,7 @@ sequenceDiagram
     M-->>H: status, verification, next
 ```
 
-The daemon on `127.0.0.1:4318` owns tab requests, leases, runs, traces and the provider key; the
+The daemon on `127.0.0.1:4318` owns tab requests, leases, acts, traces and the pairing secret; the
 extension acts only in the approved tab. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Quickstart
@@ -156,7 +140,7 @@ Linux or macOS. See [Browsers](#browsers).
 
 ```sh
 npm test
-node examples/fake-demo.js   # deterministic provider and in-memory bridge; prints a result
+node examples/fake-demo.js   # in-memory bridge; observe, then act; prints a result
 ```
 
 **Set it up for real (one time):**
@@ -184,8 +168,7 @@ npm run setup
    also approve directly in the request modal.
 4. Restart your coding agent.
 
-To try the experimental Jev autopilot, run `npm run setup -- --driver jev` instead: it asks for the Jev key at
-a hidden prompt. To register an agent later: `node src/cli.js install --host claude|codex|opencode`.
+To register an agent later: `node src/cli.js install --host claude|codex|opencode`.
 
 **Updating.** About once a day FAI checks GitHub for a newer tagged release and the popup then shows **Update
 available vX.Y.Z**. One click on **Update** (or `node src/cli.js update`) moves this clone to the release tag, refreshes
@@ -207,53 +190,30 @@ A filled search field offers "press Enter"; a deep URL in `allowedUrls` opens di
 screenshots are on request only. An expectation on the final act verifies the outcome. See
 [Your agent driving](docs/REFERENCE.md#agent-direct).
 
-Once a Jev key is saved, the extension's **Advanced** section switches between **Your agent** and
-**Jev autopilot (experimental)**; the choice applies on the next agent call, with no terminal
-command or agent restart.
-
-**Delegate a task from the shell (experimental Jev autopilot):**
+**From the shell** (the same loop, one JSON line per command):
 
 ```sh
-node src/cli.js run "Open Members" --origin https://app.example.com \
-  --reason "Check the members list" --expect-url-includes /members
+node src/cli.js request-tab --origin https://app.example.com --reason "Check the members list"
+node src/cli.js observe --request <requestId>
+node src/cli.js act --request <requestId> --action a3 --revision <revision> --expect-url-includes /members
 ```
 
 In the extension's **Advanced → Tab access**, **One task tab** is the default; a page-created tab or popup pauses the task. Choose **Multiple task tabs** before approving a request to let the agent open and switch among up to eight task tabs on the approved site. The browser asks for site access, the tabs share the task group where supported, and existing personal tabs stay outside the task. Switching back to one pauses a multiple-tab task. The chosen permission level still applies.
 
-The CLI asks you to approve the request (the page opens in a new task tab; click **Approve** in the request modal
-or the toolbar icon on that tab; for `--mode full`, **Open** in the FAI Browser window first), runs the task and
-prints one JSON line.
-
-**Or from your agent, through MCP (Jev autopilot):**
+**Or from your agent, through MCP:**
 
 ```json
 {
-  "name": "fai_browser_run",
+  "name": "fai_browser_open",
   "arguments": {
     "origins": ["https://app.example.com"],
     "reason": "Check the members list",
-    "instruction": "From the home page open Members. Read how many members are listed.",
-    "expectation": { "urlIncludes": "/members" },
-    "answerQuestion": "How many members are listed?"
+    "task": "How many members are listed?"
   }
 }
 ```
 
-With the Jev autopilot the result has the same shape either way (trimmed):
-
-```json
-{
-  "v": 2,
-  "status": "completed",
-  "code": "expectation_passed",
-  "verification": { "checked": true, "passed": true, "expectation": { "urlIncludes": "/members" } },
-  "page": { "url": "https://app.example.com/members", "title": "Members", "digest": ["..."] },
-  "verdict": { "kind": "verified", "oversight": "none", "answer": null, "why": ["expectation_passed"] },
-  "next": { "kind": "answer_from_digest", "text": "..." }
-}
-```
-
-The host follows `next.kind` literally. The MCP server's instructions cover a one-call task on their
+Every result carries a trusted `next {kind, text}` the host follows literally. The MCP server's instructions cover the loop on their
 own; the [skill](skills/fai-browser/SKILL.md) installed by `install --host` teaches the full loop;
 [docs/REFERENCE.md](docs/REFERENCE.md#output-status-and-exit-codes) documents every field, status
 and exit code.
@@ -270,27 +230,27 @@ and exit code.
   Your choice is a ceiling: the run is clamped to it and the receipt's `permissions` block says what
   ran. Nothing the agent, the page, a `policy` or `config.json` sends can raise it.
 - **Payments require your approval.** With the agent driving and the Approve gate enabled,
-  a payment action waits for your **Approve once** click. With the gate off or the experimental
-  Jev autopilot driving, purchases are refused outside testing mode. Sign-in pages are handed
+  a payment action waits for your **Approve once** click. With the gate off, purchases are refused
+  outside testing mode. Sign-in pages are handed
   back to you; agents may enter credentials only in your configured test environments.
 - **Testing mode is for your test environments only.** It permits sign-in and checkout and can
   only be chosen in the popup (**Test site**) for origins you listed under Advanced, Test sites
   (`http://localhost:3000`, exact origins, no wildcards). Secret-handle use still requires approval;
   filling a saved secret handle into password fields on sign-in forms is currently unsupported.
-- **Cookie dialogs are rejected first**, at every level; below Act, accept-only dialogs go to you.
+- **Cookie dialogs:** the agent clicks the offered reject button (from Use; at Read it asks for Use); an accept button is only offered at Act;
+  sign-in controls and password fills are never offered below Test site.
 - **Guardrails you can tighten at any level.** `policy: {"forbid": [...], "note": "..."}` per run or
   in `config.json` adds refused labels, testing included; nothing removes one.
 - **Page text is untrusted.** Receipts separate trusted fields from page text; an injection guard
   limits what runs on pages that address an agent.
-- **Local service and traces.** Agent direct makes no FAI provider calls. The optional Jev
-  autopilot sends observations to its provider and uses your locally stored Jev key to authenticate
-  those requests. Supplied values are redacted before provider requests; traces are pruned
+- **Local service and traces.** FAI makes no model or provider calls of its own. Secrets are
+  redacted from everything returned to the agent; traces are pruned
   (50 runs, 500 MB, 7 days). Besides the daily update check, an anonymous GET to GitHub's releases
   API (with a `git ls-remote` fallback on your clone's remote if the API does not answer for the
   repository; `FAI_UPDATE_CHECK=0` turns it off), FAI only contacts GitHub and Mozilla to download
   Firefox, the add-on or an update you asked for.
 
-Details: [Policies and providers](docs/REFERENCE.md#policies-and-providers),
+Details: [Policies](docs/REFERENCE.md#policies),
 [Guardrails](docs/REFERENCE.md#guardrails) and [Traces and
 retention](docs/REFERENCE.md#traces-and-retention).
 
@@ -300,7 +260,6 @@ retention](docs/REFERENCE.md#traces-and-retention).
 |---|---|
 | **Coding agents** | Claude Code, Codex CLI and OpenCode via `node src/cli.js install --host claude\|codex\|opencode`, with invites and wakes for all three; any other MCP client through the stdio server `fai-browser-mcp` (no wakes) |
 | **Without MCP** | the CLI (`node src/cli.js`, one JSON line per command) and the SDK client (`FaiBrowserClient`) |
-| **Decision providers** | TypeSafe Jev (default) and local SystemOne-compatible servers; custom providers implement one `decide()` method |
 | **Browser** | Chrome, Chromium, Brave, Edge or Vivaldi 116+ (Manifest V3), Firefox 140+ (a signed build of the same extension); several can be paired at once; pairing by native messaging. See [Browsers](#browsers) |
 
 ### Browsers
@@ -353,7 +312,7 @@ harness work and are tested, and interfaces may still change. Open items:
 - **Extension UX:** a side panel with a pending-request badge, live run view and real pause and
   resume (today, Pause ends the run).
 - **Registered domains:** a bootstrapper skill that tests a new site and produces a domain pack
-  (host skill text, Jev policy additions, settings), proposed and not yet built.
+  (host skill text, policy additions, settings), proposed and not yet built.
 - **Broader real-site coverage:** additional runs to evaluate compatibility and guardrail thresholds
   beyond the current local fixtures and recorded public-page corpus.
 
@@ -384,8 +343,7 @@ Issues and pull requests are welcome. Before you open a PR:
 - **Your data.** Settings, the pairing secret, screenshots, traces and task history are stored only on your machine.
   Keeping that machine and those files secure is up to you; traces and screenshots are pruned automatically (50 runs,
   500 MB, 7 days by default). FAI never sends your data to us; data goes only to the providers you configure. Page
-  text and any screenshots the agent asks for go to your agent's model provider; with the Jev autopilot on, page
-  content and the Jev key go to the Jev provider.
+  text and any screenshots the agent asks for go to your agent's model provider.
 
 This is a plain-language summary, not legal advice.
 

@@ -28,30 +28,22 @@ test('the MCP SDK client can list and call every core tool', { skip: !sdk && 'no
   assert.match(client.getInstructions(), /tab the user approves/);
   const { tools } = await client.listTools();
   assert.equal(tools.length, 7);
-  // The per-tool eager-load hint survives the wire and the SDK's schema parsing, on fai_browser_run only.
+  // The per-tool eager-load hint survives the wire and the SDK's schema parsing, on the loop's tools only.
   const eager = tools.filter(tool => tool._meta?.['anthropic/alwaysLoad'] === true).map(tool => tool.name);
-  assert.deepEqual(eager, ['fai_browser_run']);
+  assert.deepEqual(eager, ['fai_browser_open', 'fai_browser_act', 'fai_browser_observe']);
 
-  const progress = [];
-  const ran = await client.callTool({ name: 'fai_browser_run', arguments: {
-    origins: ['https://example.com'],
-    reason: 'Interop check',
-    instruction: 'Open Members',
-    expectation: { urlIncludes: '/members' },
-    returnImages: 'final',
-  } }, undefined, { onprogress: note => progress.push(note) });
-  const ranData = mcpData(ran);
-  assert.equal(ranData.status, 'completed');
-  assert.equal(ran.structuredContent, undefined);
-  assert.match(ran.content[0].text, /^next \([a-z_]+\): /);
-  assert.match(ran.content[0].text, /^verdict: verified .*status completed/m);
-  assert.equal(ran.content.at(-1).type, 'image');
-  assert.ok(progress.length >= 1, 'the SDK delivered progress notifications');
+  const opened = await client.callTool({ name: 'fai_browser_open', arguments: {
+    origins: ['https://example.com'], reason: 'Interop check', task: 'Open About',
+  } });
+  const page = mcpData(opened);
+  assert.equal(page.status, 'observed');
+  assert.equal(opened.structuredContent, undefined);
+  const acted = await client.callTool({ name: 'fai_browser_act', arguments: { actionId: 'a0', revision: page.revision } });
+  assert.notEqual(acted.isError, true, JSON.stringify(acted.content));
   const waited = await client.callTool({ name: 'fai_browser_wait', arguments: { maxMs: 2000 } });
   assert.equal(mcpData(waited).state, 'active');
-  const bad = await client.callTool({ name: 'fai_browser_run', arguments: { instruction: '' } });
+  const bad = await client.callTool({ name: 'fai_browser_open', arguments: { origins: [] } });
   assert.equal(bad.isError, true);
-  const released = await client.callTool({ name: 'fai_browser_stop',
-    arguments: { requestId: ranData.requestId } });
+  const released = await client.callTool({ name: 'fai_browser_release', arguments: { requestId: page.requestId } });
   assert.equal(mcpData(released).state, 'released');
 });

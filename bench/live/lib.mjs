@@ -509,9 +509,6 @@ export function evaluateChecklist({ port = 4318, health, status, statusError = n
     add('fail', 'extension never connected to this daemon: open the Public Chrome profile, reload FAI Browser at '
       + 'chrome://extensions, check Setup & connection');
   }
-  if (status.provider && !status.provider.keyConfigured) {
-    add('fail', 'the daemon has no Jev key configured (npm run setup)');
-  }
   const pending = status.requests?.length ?? 0;
   const active = status.runs?.active?.length ?? 0;
   if (pending || active) {

@@ -9,7 +9,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createDaemon } from '../src/daemon.js';
-import { homePaths, saveDriver } from '../src/home.js';
 import { FaiBrowserWake } from '../src/opencode-plugin.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
@@ -32,9 +31,8 @@ async function until(predicate, what, ms = 8000) {
 
 async function setup(t, { clientInfo = { name: 'opencode', version: '1.19.5' }, plugin = true, parents = {} } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-oc-mcp-'));
-  saveDriver('agent', homePaths({ home, env: {} }));
   const hub = createFakeHub({ bridgeOptions: { pages: PAGES } });
-  const daemon = createDaemon({ home, env: {}, port: 0, hub, providerFactory: () => { throw new Error('no provider'); } });
+  const daemon = createDaemon({ home, env: {}, port: 0, hub });
   await daemon.listen();
   const prompts = [];
   const client = {

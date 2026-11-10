@@ -38,13 +38,10 @@ test('codex oversight: a mixed accept/reject consent label is never clicked mech
     + `<button>${label}</button><button>Accept all</button></div>`);
   const mixed = observation.consent.buttons.find(b => b.label === label);
   assert.equal(mixed.kind, 'accept');
-  let calls = 0;
   const bridge = new FakeBridge({ pages: { '/': { ...observation } } });
-  const runtime = new BrowserRuntime({ bridge, provider: { async decide() { calls++; return { actionId: 'handoff' }; } } });
-  const result = await runtime.run('Read the page', { capture: 'none' });
-  assert.equal(result.code, 'consent_banner');
+  const offered = await new BrowserRuntime({ bridge }).observe({ capture: 'none' });
+  assert.ok(!offered.actions.some(action => action.label === label && action.type !== 'consent'), 'never a plain click');
   assert.equal(bridge.executions.length, 0);
-  assert.equal(calls, 0);
   }
 });
 

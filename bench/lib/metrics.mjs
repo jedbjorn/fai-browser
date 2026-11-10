@@ -253,7 +253,7 @@ export function parseEvents(lines) {
 }
 
 /**
- * How a host used fai_browser_run in one run: `faiRunCalls` (every fai_browser_run call, either server alias) and
+ * Legacy (bench/live history, written for the removed autopilot): how a host used fai_browser_run in one run: `faiRunCalls` (every fai_browser_run call, either server alias) and
  * `faiStepCalls` (those that sent a non-empty `steps` list), plus `faiListSteps` (steps sent in total). Arguments may
  * arrive as an object or a JSON string.
  */
@@ -483,9 +483,6 @@ export function aggregate(records, taskIds, conditions, { weights = DEFAULT_PRIC
         autoAnswers: sum(done.map(r => r.oversight?.autoAnswers ?? null)),
         falseAutomation: sum(done.map(r => r.oversight?.falseAutomation ?? null)),
         hopAutoAnswers: sum(done.map(r => r.oversight?.hopAutoAnswers ?? null)),
-        // fai_browser_run calls, and those that sent a step list (summed over runs, not medians).
-        faiRunCalls: sum(done.map(r => r.faiRunCalls ?? null)),
-        faiStepCalls: sum(done.map(r => r.faiStepCalls ?? null)),
         faiElapsedS: median(done.map(r => (r.fai?.elapsedMs != null ? r.fai.elapsedMs / 1000 : null))),
       };
     }
@@ -626,7 +623,7 @@ export function cacheStats(records, conditions, { weights = DEFAULT_PRICE_WEIGHT
   return out;
 }
 
-const OVERSIGHT_KEYS = ['receipts', 'oversightReceipts', 'autoAnswers', 'falseAutomation', 'hopAutoAnswers', 'faiRunCalls', 'faiStepCalls'];
+const OVERSIGHT_KEYS = ['receipts', 'oversightReceipts', 'autoAnswers', 'falseAutomation', 'hopAutoAnswers'];
 const TOTAL_KEYS = ['wallS', 'toolCalls', 'requests', 'requestsAdjusted', 'tokens', 'cachedInput', 'uncachedInput', 'outputTokens', 'priced',
   'cacheWrite', 'costUsd', 'reportedCostUsd', 'dangerClicks'];
 const RATIO_KEYS = { wall: 'wallS', toolCalls: 'toolCalls', requests: 'requests', requestsAdjusted: 'requestsAdjusted', tokens: 'tokens', priced: 'priced',
@@ -735,14 +732,6 @@ export function markdownTable({ cells, totals, ratios, ratiosWarm = null, cache 
       + `(${total.oversightReceipts} with verdict.oversight other than none); auto-confirmed answers ${total.autoAnswers}`
       + `${total.hopAutoAnswers ? ` (${total.hopAutoAnswers} on intermediate hops)` : ''}, `
       + `false automation ${total.falseAutomation}.`);
-  }
-  for (const condition of conditions) {
-    const total = totals[condition];
-    if (!total?.faiRunCalls) {
-      continue;
-    }
-    out.push('');
-    out.push(`${label(condition)} fai_browser_run calls: ${total.faiRunCalls}, of which with steps: ${total.faiStepCalls ?? 0}.`);
   }
   out.push(...cacheTable(cache, conditions));
   const ratioLine = (ratio, scope) => `${label(ratio.over)} / ${label(ratio.under)} over ${ratio.tasks.length} `
