@@ -72,7 +72,6 @@ test('wake texts are fixed FAI templates: ids, level and the user\'s own words o
   assert.match(invite, /the user's own words\): "Find the cheapest flight"/);
   assert.equal(invite.split('\n').length, 2, 'the user text is one labelled line');
   assert.match(wakeText({ kind: 'invite', inviteId: 'inv-abc12345', level: 'full' }), /typed no task/);
-  assert.match(wakeText({ kind: 'invite', inviteId: 'inv-abc12345', level: 'full', driver: 'jev' }), /fai_browser_run/);
   assert.match(wakeText({ kind: 'resume', requestId: 'req_9' }), /resumed tab request req_9.*fai_browser_observe with requestId req_9/);
   assert.match(wakeText({ kind: 'approved', requestId: 'req_9', level: 'interactive' }), /approved tab request req_9 at level Use/);
   assert.match(wakeText({ kind: 'resume', requestId: 'req 9; evil' }), /request unknown/, 'an id that is not one is never echoed');

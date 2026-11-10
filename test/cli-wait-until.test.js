@@ -13,8 +13,6 @@ import { directNext, nextFor } from '../src/result.js';
 import { CLI_PATH, resumeWaitCommand, resumeWaitText, withResumeWait } from '../src/resume.js';
 import { ORIGIN, clickProvider } from './runtime-fixtures.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
-import { spawnMcp } from './helpers/mcp-harness.js';
-import { mcpData } from './helpers/mcp-result.js';
 
 const CLI = resolve(import.meta.dirname, '..', 'src', 'cli.js');
 const delay = ms => new Promise(resolveDelay => setTimeout(resolveDelay, ms));
@@ -178,23 +176,6 @@ test('the timeout exits 2 with the last state and a relay next', async t => {
   result = oneLine(run.stdout);
   assert.equal(result.lastState, 'pending');
   assert.match(result.next.text, /approve it in the FAI Browser extension/);
-});
-
-test('on the Jev driver the wait\'s next continues with fai_browser_run (kind rerun)', async t => {
-  const { stub, cli } = await stubbed(t, { driver: 'jev' });
-  const requestId = addRequest(stub, 'active');
-  let run = await cli(['wait', requestId, '--until', 'active']);
-  assert.equal(run.code, 0, run.stderr);
-  let result = oneLine(run.stdout);
-  assert.equal(result.next.kind, 'rerun');
-  assert.match(result.next.text, new RegExp(`call fai_browser_run again with requestId ${requestId}`));
-  assert.doesNotMatch(result.next.text, /fai_browser_observe/);
-  const paused = addRequest(stub, 'paused', 'paused');
-  run = await cli(['wait', paused, '--until', 'active', '--timeout', '200ms']);
-  assert.equal(run.code, 2);
-  result = oneLine(run.stdout);
-  assert.equal(result.next.kind, 'relay');
-  assert.match(result.next.text, /then call fai_browser_run again with requestId/);
 });
 
 test('a daemon outage mid-wait is retried with backoff; the wait still ends when the user resumes', async t => {
@@ -410,36 +391,6 @@ test('Jev receipts name the same wait for paused and pending requests', () => {
   assert.equal(pending.kind, 'relay');
   assert.match(pending.text, /Then call fai_browser_run again with requestId req_7; no origins needed\. If you can/);
   assert.ok(pending.text.includes(command));
-});
-
-test('MCP: fai_browser_wait on a paused request names the wait command (observe for your agent, run for Jev)', async t => {
-  for (const driver of ['agent', 'jev']) {
-    const stub = await startStubDaemon({ driver, requestWaitCapMs: 100 });
-    const env = stub.env();
-    const mcp = spawnMcp(env);
-    t.after(async () => {
-      mcp.child.kill('SIGKILL');
-      await stub.close();
-    });
-    await mcp.initialize();
-    const requestId = addRequest(stub, 'paused', 'tab_changed');
-    const data = mcpData(await mcp.callTool('fai_browser_wait', { requestId, maxMs: 100 }));
-    assert.equal(data.state, 'paused');
-    assert.equal(data.next.kind, 'relay');
-    assert.match(data.next.text, /The tab lease is paused \(tab_changed\)\. Ask the user to return to the tab and click Resume/);
-    assert.match(data.next.text, driver === 'jev' ? /call fai_browser_run again with requestId/
-      : /call fai_browser_observe with requestId/);
-    // The MCP server's own node, CLI path and daemon location, so the host's shell reaches the same daemon.
-    assert.ok(data.next.text.includes(resumeWaitCommand(requestId, { env, execPath: process.execPath })), data.next.text);
-    assert.ok(!data.next.text.includes(stub.token), 'the client token never goes into a command');
-    // A pending request names the same wait; Agent direct continues with observe.
-    const pending = addRequest(stub, 'pending');
-    const waiting = mcpData(await mcp.callTool('fai_browser_wait', { requestId: pending, maxMs: 100 }));
-    assert.equal(waiting.next.kind, 'relay');
-    assert.ok(waiting.next.text.includes(resumeWaitCommand(pending, { env, execPath: process.execPath })));
-    assert.match(waiting.next.text, driver === 'jev' ? /Then call fai_browser_run again with requestId/
-      : /Then call fai_browser_observe with requestId/);
-  }
 });
 
 test('the command runs as written in a POSIX shell: prefix assignments reach the CLI, a node path with = works', async t => {

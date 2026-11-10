@@ -1,5 +1,6 @@
 // Pass 7: all browser requests are intercepted local fixtures; no live service or credential files.
 import test from 'node:test';
+import { TOOLS, validateSchema } from '../src/mcp.js';
 import { headlessEnv } from '../scripts/headless-env.mjs';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -9,14 +10,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { BrowserRuntime, legalActions } from '../src/runtime.js';
-import { CAPABILITIES, LEVELS, clampLevel, guardrailPolicy, paymentField } from '../src/guardrails.js';
+import { CAPABILITIES, LEVELS, clampLevel, paymentField } from '../src/guardrails.js';
 import { redactSecrets, agentResult } from '../src/result.js';
 import { normalizePermissions, testingAllowed } from '../extension/permissions.js';
 import { FakeBridge } from './runtime-fixtures.js';
 import { createDaemon } from '../src/daemon.js';
 import { createLogger, homePaths, loadConfig } from '../src/home.js';
 import { createHub } from '../src/bridge.js';
-import { JEV_TOOLS, validateSchema } from '../src/mcp.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { EXTENSION_ID, EXTENSION_ORIGIN } from './helpers/fake-extension.js';
 import { writeRun } from '../src/trace.js';
@@ -702,14 +702,6 @@ test('hub clamps forged command levels independently', async t => {
     await pending;
   }
 });
-test('MCP accepts testing only as a requested mode and rejects permission-grant keys', () => {
-  const tool = JEV_TOOLS.find(t => t.name === 'fai_browser_run');
-  assert.equal(validateSchema(tool.inputSchema, { instruction: 'Continue', mode: 'testing' }), null);
-  for (const extra of [{ grant: { level: 'testing' } }, { permissions: { effective: 'testing' } }]) {
-    assert.match(validateSchema(tool.inputSchema, { instruction: 'Continue', mode: 'testing', ...extra }), /not a supported parameter/);
-  }
-});
-
 class PasswordEchoBridge extends FakeBridge {
   constructor(echo) { super({ pages: { '/': { title: 'Fixture', text: 'Test login', controls:
     [{ id: '1', role: 'textbox', type: 'password', label: 'Password', enabled: true }] } } }); this.echo = echo; }
@@ -862,4 +854,12 @@ test('password redaction survives later run and a new daemon lease on the same t
   const newId = await req();
   const observed = await api('POST', '/v1/observe', { requestId: newId, mode: 'testing', capture: false });
   assert.equal(observed.status, 200); assert.ok(!JSON.stringify(observed.body).includes(secret));
+});
+
+test('MCP accepts testing only as a requested mode and rejects permission-grant keys', () => {
+  const tool = TOOLS.find(t => t.name === 'fai_browser_open');
+  assert.equal(validateSchema(tool.inputSchema, { task: 'Continue', mode: 'testing' }), null);
+  for (const extra of [{ grant: { level: 'testing' } }, { permissions: { effective: 'testing' } }]) {
+    assert.match(validateSchema(tool.inputSchema, { task: 'Continue', mode: 'testing', ...extra }), /not a supported parameter/);
+  }
 });

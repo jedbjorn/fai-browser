@@ -8,14 +8,12 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 import { headlessEnv } from '../scripts/headless-env.mjs';
 import { startQaSite } from '../bench/qa/serve.mjs';
-import { loadLongSuite, materialize } from '../bench/long/lib.mjs';
 import {
   FACT_RUN_LINES, FACT_RUN_LINES_MAX, FACT_STATE_ITEMS, FACT_STATE_LINES, aggregateIntent, aggregateItems, answerScope, buildMemory,
   categoryCell, countValue, coverage, datesIn, itemValue, pageDate, sameDay, moneyCurrencies, moneyValues, passesFilters, priceUnit,
   runLineBudget, timeValues, traceFacts, valueNotes,
 } from '../src/facts.js';
-import { BrowserRuntime, GUARD_VETO, INJECTION_NOTE } from '../src/runtime.js';
-import { placeholderValue } from '../src/steps.js';
+import { BrowserRuntime } from '../src/runtime.js';
 import { agentResult, bridgeError } from '../src/result.js';
 import { FakeBridge, ORIGIN } from './runtime-fixtures.js';
 
@@ -797,54 +795,6 @@ test('injection guard: when a page of the run was flagged, an earlier-state answ
   assert.equal(lean.answer.candidates[0].state, 0);
   assert.equal(lean.verdict.answer, null);
   assert.ok(lean.verdict.why.includes('answer:from_state_guarded'), lean.verdict.why.join(' '));
-});
-
-test('injection note at 0.8: a 0.6 page adds no note, no guarded answer, no fill refusal; 0.85 still vetoes', async () => {
-  assert.equal(INJECTION_NOTE, 0.8);
-  assert.equal(GUARD_VETO, 0.85);
-  // Ordinary article text scores about 0.5-0.76 on injection (owner app, jev-eval): the remembered answer is auto-confirmed as usual.
-  const observations = [
-    shop('/a', ['Deploy log', 'Rollback token issued for deploy #318: RB-7Q2K'], { t: 'p' }),
-    shop('/b', ['Settings', 'Webhook endpoints', 'https://hooks.example/deploys (active)'], { t: 'p' }),
-  ];
-  const bridge = new ReplayBridge(observations);
-  const provider = {
-    model: 'benign',
-    async decide(observation, actions) {
-      const last = bridge.index === bridge.observations.length - 1;
-      const action = actions.find(a => !['done', 'handoff', 'scroll', 'wait'].includes(a.type));
-      return { actionId: last || !action ? 'handoff' : action.id, confidence: 0.9, done: { probability: last ? 0.95 : 0.05 },
-        guards: { injection: 0.6 } };
-    },
-    async choose(request) {
-      return { choice: request.candidates.find(candidate => candidate.text.includes('RB-7Q2K')).id, confidence: 0.97 };
-    },
-  };
-  const result = await new BrowserRuntime({ bridge, provider }).run('Open the deploy log, then Settings', {
-    mode: 'reversible', capture: 'none', expectation: { changedSinceStart: true },
-    answerQuestion: 'What rollback token was issued for deploy #318?' });
-  const lean = agentResult(result);
-  assert.equal(lean.status, 'completed', lean.verdict.why.join(' '));
-  assert.ok(!lean.verdict.why.some(code => code.startsWith('guard:injection')), lean.verdict.why.join(' '));
-  assert.ok(!lean.verdict.why.includes('answer:from_state_guarded'), lean.verdict.why.join(' '));
-  assert.match(lean.verdict.answer?.text ?? '', /RB-7Q2K/);
-  assert.notEqual(placeholderValue(result).why, 'answer_injection');
-  assert.match(placeholderValue(result).value ?? '', /RB-7Q2K/);
-
-  // At the veto a control on the page never runs: it becomes a handoff (guard:injection_veto).
-  const form = new FakeBridge();
-  form.path = '/form';
-  const vetoed = await new BrowserRuntime({ bridge: form, provider: {
-    model: 'injected',
-    async decide(observation, actions) {
-      const tick = actions.find(a => a.label === 'Subscribe');
-      return { actionId: tick?.id ?? 'handoff', confidence: 0.9, done: { probability: 0.05 }, guards: { injection: GUARD_VETO } };
-    },
-  } }).run('Tick Subscribe', { mode: 'reversible' });
-  assert.equal(vetoed.code, 'handoff');
-  assert.equal(form.executions.length, 0);
-  assert.ok(vetoed.verdict.why.includes('guard:injection_veto'));
-  assert.ok(vetoed.verdict.why.includes('guard:injection:0.85'));
 });
 
 test('redaction end to end: supplied values (raw and URL-encoded) never reach facts, trail, candidates or choose()', async () => {

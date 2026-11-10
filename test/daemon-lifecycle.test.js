@@ -6,15 +6,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  acquireLock,
-  configuredPort,
-  ensureClientToken,
-  homePaths,
-  readClientToken,
-  readDaemonInfo,
-  releaseLock,
-} from '../src/home.js';
+import { acquireLock, configuredPort, ensureClientToken, homePaths, readClientToken, readDaemonInfo, releaseLock } from '../src/home.js';
 import { CLIENT_VERSION, FaiClientError, ensureDaemon, probeHealth } from '../src/client.js';
 import { runDaemon } from '../src/daemon.js';
 import { PACKAGE_ROOT } from '../src/paths.js';

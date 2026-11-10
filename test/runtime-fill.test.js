@@ -5,9 +5,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BrowserRuntime } from '../src/runtime.js';
-import { agentResult, directNext, nextFor } from '../src/result.js';
+import { agentResult, directNext } from '../src/result.js';
 import { BridgeError } from '../src/bridge.js';
-import { FakeBridge, ORIGIN } from './runtime-fixtures.js';
+import { FakeBridge } from './runtime-fixtures.js';
 
 const textbox = (id, label, extra = {}) => ({ id, role: 'textbox', label, type: 'text', enabled: true, ...extra });
 
@@ -50,70 +50,6 @@ class FormBridge extends FakeBridge {
     return this.reportFill ? { ...out, observation: this.observation, fill: { kept, empty: !kept } } : { ...out, observation: this.observation };
   }
 }
-
-/** A provider that fills Departure with the supplied date, then (if asked again) says done. */
-function fillProvider() {
-  let fills = 0;
-  return {
-    async decide(observation, actions) {
-      const fill = actions.find(action => action.type === 'fill_supplied_text' && action.label === 'Departure');
-      if (fill && !fills++) return { actionId: fill.id, confidence: 0.9, done: { probability: 0.05 } };
-      return { actionId: 'done', confidence: 0.9, done: { probability: 0.9 } };
-    },
-  };
-}
-
-const run = (bridge, provider = fillProvider()) => new BrowserRuntime({ bridge, provider }).run(
-  'Set the Departure field to the supplied date, then read the page.', {
-    expectation: { changedSinceStart: true }, mode: 'reversible', grant: { level: 'reversible' },
-    suppliedText: { departure: '2027-01-12' }, allowedOrigins: [ORIGIN], maxActions: 4,
-  },
-);
-
-test('run: a fill the page script reports not kept ends needs_host / fill_not_kept, unverified, with the field named in next', async () => {
-  const bridge = new FormBridge({ pages: pages(), path: '/search' });
-  const result = await run(bridge);
-  assert.equal(result.status, 'needs_host', result.reason);
-  assert.equal(result.code, 'fill_not_kept');
-  assert.equal(bridge.lastText, '2027-01-12', 'the fill ran');
-  assert.equal(result.steps.length, 1, 'the run ends on the fill: the provider never types again');
-  assert.deepEqual(result.steps[0].fill, { kept: false, empty: true });
-  assert.equal(result.steps[0].changed, false, 'a re-render without the value is no progress');
-  assert.equal(result.verification.passed, false, 'the page changed, yet nothing was set');
-  assert.ok(result.verdict.why.includes('fill:not_kept'), result.verdict.why.join(','));
-  assert.match(result.reason, /did not keep the supplied value/);
-  assert.match(result.needs.message, /Do not fill it again/);
-  assert.equal(result.next.kind, 'rerun');
-  assert.match(result.next.text, /for supplied text "departure" did not keep the supplied value \(fill_not_kept\)/);
-  assert.match(result.next.text, /allowedUrls/);
-  assert.ok(!result.next.text.includes('Departure'), 'the page label stays out of the trusted text');
-  const lean = agentResult(result);
-  assert.equal(lean.steps[0].fill, 'not_kept');
-  assert.equal(lean.verification.passed, false);
-  assert.equal(lean.steps[0].action.suppliedName, 'departure');
-  assert.equal(nextFor(lean, { requestId: 'req_1' }).text, result.next.text.replace('requestId from this result', 'requestId req_1'));
-});
-
-test('run: a fill the field keeps is progress as before; a reporting bridge says so on the step', async () => {
-  const bridge = new FormBridge({ pages: pages({ departureKeeps: true }), path: '/search' });
-  const result = await run(bridge);
-  assert.equal(result.status, 'completed', `${result.code}: ${result.reason}`);
-  assert.deepEqual(result.steps[0].fill, { kept: true, empty: false });
-  assert.equal(result.steps[0].changed, true);
-  assert.equal(agentResult(result).steps[0].fill, undefined);
-});
-
-test('run: without a page-script verdict, an empty field on the next observation is read as not kept', async () => {
-  const bridge = new FormBridge({ pages: pages(), path: '/search' }, { reportFill: false });
-  const result = await run(bridge);
-  assert.equal(result.code, 'fill_not_kept', result.reason);
-  assert.deepEqual(result.steps[0].fill, { kept: false, empty: true });
-  // The same older bridge with a field that keeps the value: nothing to say, the run goes on.
-  const kept = new FormBridge({ pages: pages({ departureKeeps: true }), path: '/search' }, { reportFill: false });
-  const fine = await run(kept);
-  assert.equal(fine.status, 'completed', fine.code);
-  assert.equal(fine.steps[0].fill, undefined, 'an older bridge reports nothing about a kept fill');
-});
 
 test('act: a host-driven fill the field did not keep is fill_not_kept with the next offer, not a checkpoint', async () => {
   const bridge = new FormBridge({ pages: pages(), path: '/search' });

@@ -9,8 +9,6 @@ import assert from 'node:assert/strict';
 import { blocksOf, buildDigest, pickAnswerCandidates, recordsOf, recordText } from '../src/digest.js';
 import { aggregateIntent, buildMemory, coverage, moneyValues, passesFilters, ratingBound, ratingFor, ratingsOf, ratingValue,
   valueNotes } from '../src/facts.js';
-import { BrowserRuntime } from '../src/runtime.js';
-import { agentResult } from '../src/result.js';
 
 const ORIGIN = 'https://example.com';
 const QUESTION = 'Which hotel with a rating of 8 or more is cheapest for the stay of 1-4 March 2027, with its name, price for the stay and rating?';
@@ -218,59 +216,6 @@ test('the fact memory reads each record as one named item; a sold-out record off
   assert.deepEqual(coverage([{ observation: resultsPage({ truncated: true }) }]).why, ['records_cut']);
 });
 
-// The runtime on one page: a stub bridge that only observes, a provider that ranks the first candidate at 0.97.
-async function runOn(observation, question = QUESTION) {
-  const bridge = {
-    async observe() { return { ...structuredClone(observation), revision: 'rev-1' }; },
-    async execute() { throw Object.assign(new Error('no actions here'), { code: 'target_unavailable' }); },
-  };
-  const provider = {
-    model: 'x', requests: [],
-    async decide() { return { actionId: 'handoff', confidence: 0.9, done: { probability: 0.95 } }; },
-    async choose(request) { this.requests.push(request); return { choice: request.candidates[0].id, confidence: 0.97 }; },
-  };
-  const runtime = new BrowserRuntime({ bridge, provider });
-  const result = await runtime.run('Open the results and read the properties listed.', {
-    mode: 'read-only', capture: 'none', expectation: { textIncludes: 'properties found' }, answerQuestion: question,
-  });
-  return { result, lean: agentResult(result), provider };
-}
-
-test('the live question: the cheapest card rated 8 or more, with its name, price and rating, auto-confirmed from record text', async () => {
-  const { result, lean, provider } = await runOn(resultsPage());
-  assert.equal(result.status, 'completed', lean.verdict.why.join(' '));
-  assert.match(provider.requests.at(-1).candidates[0].text, /^(?:.* › )?Angleterre Hotel · /, 'the aggregation leads the ranking');
-  assert.deepEqual(lean.answer.aggregate, { op: 'min', measure: 'price', items: 3, states: 1, partial: false });
-  const answer = lean.verdict.answer;
-  assert.ok(answer, `auto-confirmed: ${lean.verdict.why.join(' ')}`);
-  // The whole record: the name, the price for the stay and the rating, all page text.
-  assert.match(answer.text, /Angleterre Hotel/);
-  assert.match(answer.text, /€ 299/);
-  assert.match(answer.text, /Scored 8\.2/);
-  assert.equal(answer.exact, false);
-  assert.ok(answer.basis.includes('value:aggregate_item'), answer.basis.join(' '));
-  assert.ok(!/Hotel Mimosa|€ 176/.test(answer.text), 'the cheaper card rated 7.5 is filtered out');
-  assert.ok(lean.verdict.why.includes('aggregate:min_price:3'), lean.verdict.why.join(' '));
-});
-
-test('the same page with its list cut by the page script, or more results offered, is never auto-confirmed', async () => {
-  const cut = await runOn(resultsPage({ truncated: true }));
-  assert.equal(cut.lean.answer.aggregate.partial, true);
-  assert.ok(cut.lean.answer.aggregate.why.includes('records_cut'));
-  assert.equal(cut.lean.verdict.answer ?? null, null);
-  assert.ok(cut.lean.verdict.why.includes('answer:aggregate_partial'), cut.lean.verdict.why.join(' '));
-  assert.match(cut.lean.answer.candidates[0].text, /Angleterre Hotel/, 'the best item read still leads, unconfirmed');
-  const more = await runOn(resultsPage({ more: true }));
-  assert.ok(more.lean.answer.aggregate.why.includes('more_offered'));
-  assert.equal(more.lean.verdict.answer ?? null, null);
-});
-
-test('fallback: the same page without records keeps the old block path (no record aggregation)', async () => {
-  const { lean } = await runOn(resultsPage({ records: false }));
-  assert.equal(lean.status, 'completed');
-  assert.ok(!(lean.answer?.candidates ?? []).some(candidate => candidate.text.includes(' · Scored ')), 'no record lines without records');
-});
-
 test('ratings as review sites print them: a grade before or glued to its score, a decimal before its review count', () => {
   assert.deepEqual(ratingValue('Scored 8.4'), { value: 8.4 });
   assert.deepEqual(ratingValue('Review score 8.4'), { value: 8.4 });
@@ -301,31 +246,3 @@ test('a price per stay stated twice ("4 nights, 2 adults € 344" and "Price €
   assert.deepEqual(moneyValues('4.7 out of 5 $ 45'), [45], 'the scale before a currency sign is no amount');
 });
 
-// Two record lists: the page's results and a strip of cheaper extras (or, as the live page once ranked them, the
-// extras first).
-function withExtras({ extrasFirst = false } = {}) {
-  const observation = resultsPage();
-  const extras = [['Seine evening cruise', '4.31', '5,760', '€ 18'], ['Museum pass', '4.6', '3,741', '€ 17'], ['Bus tour', '4.4', '2,297', '€ 33.15']]
-    .map(([name, score, reviews, price], i) => ({
-      id: `x${i + 1}`, list: 1, title: name, fields: [`${score} (${reviews} reviews)`, price],
-      hints: { price, rating: Number(score), scale: 5, reviews: Number(reviews.replace(/\D/g, '')) }, blocks: [],
-    }));
-  observation.records.push(...extras);
-  observation.recordLists.push({ list: 1, total: 3, kept: 3 });
-  if (extrasFirst) for (const record of observation.records) record.list = record.list === 0 ? 1 : 0;
-  return observation;
-}
-
-test('the main results first: a carousel of cheaper extras is no item while the best list has items; else the other lists are read', async () => {
-  const main = await runOn(withExtras());
-  assert.deepEqual(main.lean.answer.aggregate, { op: 'min', measure: 'price', items: 3, states: 1, partial: false });
-  assert.match(main.lean.verdict.answer?.text ?? '', /Angleterre Hotel.*€ 299/, main.lean.verdict.why.join(' '));
-  // The live failure's order: the extras as the best list. Rated out of 5, none passes "a rating of 8 or more", so the
-  // hotels (list 1) are the items.
-  const swapped = await runOn(withExtras({ extrasFirst: true }));
-  assert.equal(swapped.lean.answer.aggregate.items, 3);
-  assert.match(swapped.lean.verdict.answer?.text ?? '', /Angleterre Hotel.*€ 299/, swapped.lean.verdict.why.join(' '));
-  // A question the extras answer still finds them, as the best list.
-  const cheapest = await runOn(withExtras({ extrasFirst: true }), 'Which is the cheapest, and what does it cost?');
-  assert.match(cheapest.lean.answer.candidates[0].text, /Museum pass.*€ 17/, JSON.stringify(cheapest.lean.answer.candidates[0]));
-});

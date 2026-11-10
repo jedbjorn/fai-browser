@@ -13,10 +13,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright-core';
 import { headlessEnv } from '../scripts/headless-env.mjs';
 import { createDaemon } from '../src/daemon.js';
-import { homePaths, saveDriver } from '../src/home.js';
-import { BrowserRuntime } from '../src/runtime.js';
-import { TypeSafeProvider } from '../src/typesafe.js';
-import { writeRun } from '../src/trace.js';
+import { homePaths } from '../src/home.js';
 import { createFakeHub } from './helpers/fake-hub.js';
 import { ORIGIN, link } from './runtime-fixtures.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
@@ -64,7 +61,6 @@ async function pendingRequest(hub) {
 test('Agent direct over MCP: no fake secret in any MCP message, trace or daemon log; stable placeholders', async t => {
   const home = await mkdtemp(join(tmpdir(), 'fai-secrets-'));
   const paths = homePaths({ home, env: {} });
-  saveDriver('agent', paths);
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   await page.goto(`${site.origin}/api-keys/?token=${F.jwt}`);
   // Real screenshots: every fake painted pure green, boxed by page.js, filled by extension/offscreen.js.
@@ -135,42 +131,10 @@ test('Agent direct over MCP: no fake secret in any MCP message, trace or daemon 
   assert.deepEqual(leaks(mcp.stderr), [], 'MCP stderr');
 });
 
-test('Jev delegation: provider request bodies, the result and the trace carry no fake secret', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'fai-secrets-jev-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const bodies = [];
-  const provider = new TypeSafeProvider({ requireKey: false, keyEnv: 'FAI_UNUSED_TEST_KEY', endpoint: 'http://127.0.0.1:9/v1',
-    fetchImpl: async (url, { body }) => {
-      bodies.push(body);
-      return new Response(JSON.stringify({ answers: {
-        action: { choice: 'handoff' }, done: { noul: 0.9 }, blocked: { noul: 0.01 }, injection: { noul: 0.01 },
-        commit: { noul: 0.01 }, answer: { choice: 'none' },
-      } }));
-    } });
-  for (const path of ['/keys.html', '/env/', '/account.html', '/embedded.html', `/api-keys/?token=${F.jwt}`]) {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-    t.after(() => page.close());
-    await page.goto(site.origin + path);
-    await page.waitForTimeout(120);
-    const bridge = new SecretBridge(page, { level: 'read-only' });
-    const runtime = new BrowserRuntime({ bridge, provider });
-    const raw = await runtime.run('Read the key names on this page', {
-      mode: 'read-only', capture: 'none', allowedOrigins: [site.origin], answerQuestion: 'Which keys are listed?',
-    });
-    const written = await writeRun(raw, { dir, instruction: 'Read the key names on this page', operation: 'run' });
-    assert.deepEqual(leaks(written.result), [], `${path}: result`);
-    assert.deepEqual(leaks(await readFile(written.trace, 'utf8')), [], `${path}: trace`);
-  }
-  assert.ok(bodies.length >= 5, `${bodies.length} provider requests`);
-  assert.deepEqual(leaks(bodies.join('\n')), [], 'provider request bodies');
-  assert.ok(bodies.some(body => body.includes('[secret:')), 'the provider saw placeholders');
-});
-
 test('defense in depth: an extension that sent raw secrets (an older page script) still yields redacted MCP results', async t => {
   const pages = { '/': { title: `Keys ${F.github}`, text: `API key: ${F.genericKey}\nToken ${F.openai}\nCard ${F.card}`,
     controls: [link('1', `Copy ${F.stripe}`, `/copy?token=${F.jwt}`)] } };
   const home = await mkdtemp(join(tmpdir(), 'fai-secrets-raw-'));
-  saveDriver('agent', homePaths({ home, env: {} }));
   const hub = createFakeHub({ bridgeOptions: { pages } });
   const daemon = createDaemon({ home, env: {}, port: 0, hub,
     providerFactory: () => { throw new Error('Agent direct never constructs a provider'); } });

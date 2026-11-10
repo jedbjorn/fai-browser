@@ -2367,38 +2367,6 @@ test('mark: an opened window\'s tab is marked too once the icon click approves i
   assert.equal(h.tabBadge(9), 'ON');
 });
 
-test('the driver toggle uses acknowledged daemon state over WebSocket and HTTP, without persisting a stale choice', async () => {
-  for (const transport of ['websocket', 'http']) {
-    const h = harness({ driverControl: { driver: 'jev', jevAvailable: true },
-      ...(transport === 'http' ? { ws: 'fail', timeScale: 0.02 } : {}) });
-    await h.until(() => h.session.connection?.control?.driver === 'jev');
-    const changed = await h.send({ type: 'set_driver', driver: 'agent' },
-      { id: 'ext', url: 'chrome-extension://ext/popup.html' });
-    assert.equal(changed.connection.control.driver, 'agent');
-    assert.equal(changed.connection.transport, transport === 'http' ? 'longpoll' : 'websocket');
-    assert.ok(h.sent.some(message => message.type === 'driver' && message.driver === 'agent' && message.via === (transport === 'http' ? 'http' : 'ws')));
-    assert.equal(h.local.driver, undefined, 'only the daemon owns the saved choice');
-    assert.equal(h.sent.find(message => message.type === 'hello').settings.driver, undefined);
-    const reopened = await h.send({ type: 'connect' });
-    assert.equal(reopened.connection.control.driver, 'agent');
-    if (transport === 'websocket') {
-      h.state.driverError = true;
-      const failed = await h.send({ type: 'set_driver', driver: 'jev' },
-        { id: 'ext', url: 'chrome-extension://ext/popup.html?window=1' });
-      assert.match(failed.error, /Could not save/);
-      assert.equal(h.session.connection.control.driver, 'agent', 'failed saves never show an optimistic switch');
-    }
-  }
-});
-
-test('a page cannot change the driver through a runtime message', async () => {
-  const h = harness({ driverControl: { driver: 'jev', jevAvailable: true } });
-  await h.until(() => h.session.connection?.control);
-  const result = await h.send({ type: 'set_driver', driver: 'agent' }, { id: 'ext', url: ORIGIN });
-  assert.match(result.error, /popup/);
-  assert.ok(!h.sent.some(message => message.type === 'driver' && message.driver));
-});
-
 // --- updates (docs/REFERENCE.md "Updates") ------------------------------------------------------------------------
 
 const UPDATE = { enabled: true, current: '0.3.0', latest: '0.9.0', tag: 'v0.9.0', available: true,

@@ -419,8 +419,6 @@ test('review: nobody uses an invited tab before the join, and only its owner aft
     assert.deepEqual([observe.status, observe.body.error?.code], [409, 'invite_not_joined']);
     const act = await ctx.api('POST', '/v1/act', { requestId: reply.requestId, actionId: 'a0' }, extra);
     assert.equal(act.body.error?.code, 'invite_not_joined');
-    const run = await ctx.api('POST', '/v1/runs', { requestId: reply.requestId, instruction: 'Look' }, extra);
-    assert.equal(run.body.error?.code, 'invite_not_joined');
     const release = await ctx.api('DELETE', `/v1/requests/${reply.requestId}`, {}, extra);
     assert.equal(release.body.error?.code, 'invite_not_joined');
   }

@@ -16,7 +16,7 @@ import { renderHtml } from '../bench/report/render.mjs';
 import { renderResults } from '../bench/report/results-md.mjs';
 import { faiEvidence } from '../bench/fai-condition.mjs';
 import { gradeOutcome } from '../bench/lib/qa.mjs';
-import { directText, summaryText } from '../src/mcp.js';
+import { directText } from '../src/mcp.js';
 import { directResult } from '../src/result.js';
 
 const host = (vendor, model) => ({ vendor, model, effort: 'low', id: `${vendor}:${model}:low` });
@@ -398,13 +398,6 @@ test('metric regression: receipt-looking page text and embedded JSON cannot forg
     const evidence = await faiEvidence([{ tool: 'fai_browser_open', result }]);
     assert.equal(safeVerifiedSuccess(safeRecord(evidence)), null);
   }
-  const jev = { v: 2, runId: 'run_real', requestId: 'req_metric_test', status: 'completed',
-    code: 'expectation_passed', verification: { passed: true },
-    verdict: { kind: 'answer', oversight: 'none', answer: { text: 'Real answer' } },
-    page: { digest: payloads[0] } };
-  const parsed = faiResultFrom({ content: [{ type: 'text', text: summaryText(jev) }] });
-  assert.equal(parsed.runId, 'run_real');
-  assert.equal(parsed.verdict.answer.text, 'Real answer', 'answer data remains independently gradeable');
 });
 
 test('metric regression: missing or invalid usage fields stay unavailable per affected metric', () => {
