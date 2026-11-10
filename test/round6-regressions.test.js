@@ -1,6 +1,6 @@
 // Round six regressions (bench/results/host-2026-10-06-final-after, qa-2026-10-06-final-after-x3), reproduced on the
-// real fixture pages in headless Chromium with extension/page.js (test/helpers/page-bridge.js) and scripted providers
-// that answer the way live Jev did in those runs:
+// real fixture pages in headless Chromium with extension/page.js (test/helpers/page-bridge.js); the remaining checks
+// are the page-side ones of those runs:
 // 1. billing-office-hours: "Open the Contact page and read the opening hours of the Lisbon office" ended early on
 //    Contact (early_end:named_actions) and auto-confirmed "Lisbon office — led by Elif Demir" as the opening hours;
 // 2. catalog-plan-price: the aggregate-intent trail kept item lines only, so the catalog join fact never reached the

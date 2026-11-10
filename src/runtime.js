@@ -438,7 +438,7 @@ export function legalActions(observation, options = {}) {
  * answerQuestion and expectation), never just the first ones; page actions always stay.
  */
 /**
- * Controls inside a popup over the page that is not a task dialog (page.js marks them `overlay: true`, src/overlay.js)
+ * Controls inside a popup over the page that is not a task dialog (page.js marks them `overlay: true`)
  * are offered after the main content's controls, described as such, so a decision prefers the page under the popup.
  * In place; the order within each group is kept.
  */
@@ -742,12 +742,10 @@ export function actionKey(action) {
 }
 
 /**
- * The gate class of an action: link (navigation), control (button/select/fill), page (scroll/wait), consent or
- * dismiss (the runtime closing a nag overlay, src/overlay.js).
+ * The gate class of an action: link (navigation), control (button/select/fill), page (scroll/wait) or consent.
  */
 export function actionClass(action) {
   if (action?.consent) return 'consent';
-  if (action?.overlayDismiss) return 'dismiss';
   if (['navigate_allowed_url', 'open_tab'].includes(action?.type)) return 'link';
   if (['scroll', 'wait', 'history', 'switch_tab'].includes(action?.type)) return 'page';
   if (action?.type === 'click' && action.role === 'link') return 'link';

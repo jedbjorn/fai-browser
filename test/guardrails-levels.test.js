@@ -1,6 +1,6 @@
 // Configurable guardrails (docs/proposals/configurable-guardrails.md), host side: levels and capabilities, the
 // PURCHASE / COMMIT_OTHER split, purchases never offered below testing, the clamp of a run's mode to the user's grant
-// and the receipt's `permissions` block, the purchase guard (Jev nouls), level requests instead of plain refusals,
+// and the receipt's `permissions` block, level requests instead of plain refusals,
 // lease `level` validation, and that no config, policy, MCP or CLI input can grant `testing`.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,7 +14,7 @@ import { createHub } from '../src/bridge.js';
 import { createDaemon } from '../src/daemon.js';
 import { createLogger, homePaths, loadConfig } from '../src/home.js';
 import { TOOLS } from '../src/mcp.js';
-import { ORIGIN, clickProvider, link } from './runtime-fixtures.js';
+import { ORIGIN, link } from './runtime-fixtures.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { EXTENSION_ID, EXTENSION_ORIGIN, SECRET } from './helpers/fake-extension.js';
 
@@ -234,9 +234,6 @@ test('sign_in: password fields are fill targets only at testing, and marked sens
 // The runtime: clamp, permissions, purchase guard, level requests, consent, login, redaction
 // ---------------------------------------------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------------------------------------------
-// Jev policy per level
-// ---------------------------------------------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------------------------------------------
 // The daemon and the hub: lease level, grant, clamp, command args
@@ -246,9 +243,9 @@ async function daemonSetup(t, { config } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-levels-daemon-'));
   if (config) await writeFile(join(home, 'config.json'), JSON.stringify(config));
   const hub = createFakeHub();
-  const env = { TYPESAFE_API_KEY: 'jev-test-key' };
+  const env = {};
   const log = createLogger(homePaths({ home, env }));
-  const daemon = createDaemon({ driver: 'jev', home, env, port: 0, hub, log, sweepIntervalMs: 60_000, providerFactory: () => clickProvider(['About']) });
+  const daemon = createDaemon({ home, env, port: 0, hub, log, sweepIntervalMs: 60_000 });
   await daemon.listen();
   t.after(async () => {
     await daemon.close();

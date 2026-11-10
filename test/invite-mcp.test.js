@@ -35,7 +35,7 @@ async function until(predicate, what, ms = 8000) {
 async function setup(t, { clientName = 'claude-code', env = {}, socket = true } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-invite-mcp-'));
   const hub = createFakeHub({ bridgeOptions: { pages: PAGES } });
-  const daemon = createDaemon({ home, env: {}, port: 0, hub, providerFactory: () => { throw new Error('no provider'); } });
+  const daemon = createDaemon({ home, env: {}, port: 0, hub });
   await daemon.listen();
   const fake = socket ? await startFakeClaudeSocket(t) : null;
   // Built from scratch: never the test runner's own environment (which may be a real Claude Code session's).

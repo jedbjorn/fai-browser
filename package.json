@@ -39,7 +39,6 @@
     "extension/",
     "skills/",
     "tasks/",
-    "domains/",
     "scripts/setup.mjs",
     "scripts/build-firefox.mjs",
     "examples/",

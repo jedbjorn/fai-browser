@@ -252,7 +252,7 @@ test('MCP: act on a gated action waits for the extension and returns approved, d
   const home = await mkdtemp(join(tmpdir(), 'fai-approve-'));
   const pages = Object.fromEntries(Object.entries(PAGES).map(([key, page]) => [key, { ...page, url: ORIGIN + key }]));
   const hub = createFakeHub({ bridgeOptions: { pages, path: '/settings' } });
-  const daemon = createDaemon({ home, env: {}, port: 0, hub, providerFactory: () => { throw new Error('no provider in Agent direct'); } });
+  const daemon = createDaemon({ home, env: {}, port: 0, hub });
   await daemon.listen();
   const mcp = spawnMcp({ FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port), FAI_MCP_APPROVAL_WAIT_MS: '1500' });
   t.after(async () => {

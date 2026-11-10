@@ -527,7 +527,7 @@ export function controlText(structured) {
   if (result.next) lines.push(`next (${result.next.kind}): ${result.next.text}`);
   if (result.state) lines.push(`state: ${result.state}`);
   if (result.status) lines.push(`status: ${result.status}`);
-  for (const key of ['driver', 'requestId', 'runId', 'revision', 'kind', 'step', 'bytes', 'truncated', 'stopped', 'path', 'trace']) {
+  for (const key of ['requestId', 'runId', 'revision', 'kind', 'step', 'bytes', 'truncated', 'stopped', 'path', 'trace']) {
     if (result[key] !== undefined && result[key] !== null) lines.push(`${key}: ${oneLine(result[key], 1000)}`);
   }
   if (result.daemon) {
@@ -1224,7 +1224,7 @@ class McpServer {
     const result = outcomeResult('task_budget', { lease: { requestId, state: 'active' } });
     const { lease: _lease, ...lean } = result;
     const structured = { state: 'done', ...lean, requestId };
-    applyBudget(structured, budgetView(entry), { requestId, driver: 'agent' });
+    applyBudget(structured, budgetView(entry), { requestId });
     const direct = directResult(structured);
     return okResult(direct, [], directText(direct));
   }
@@ -2151,7 +2151,7 @@ class McpServer {
    */
   receipt(structured, call, runId) {
     const requestId = structured.requestId;
-    const context = { requestId, origin: call.origin, approval: call.approval, driver: 'agent', gateWaitMs: this.gateWaitMs(),
+    const context = { requestId, origin: call.origin, approval: call.approval, gateWaitMs: this.gateWaitMs(),
       env: this.env, wake: this.resumeOptions(requestId).wake };
     if (!requestId || !structured.verdict) {
       structured.next = nextFor(structured, context);

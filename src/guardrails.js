@@ -472,16 +472,15 @@ export function labelClasses(label) {
  *
  * `level` (or its alias `mode`) must be one of LEVELS; `request` and `config` are raw additions, validated here.
  */
-export function guardrailPolicy({ level, mode, request, config, merged, site } = {}) {
+export function guardrailPolicy({ level, mode, request, config, merged } = {}) {
   const name = level ?? mode ?? DEFAULT_LEVEL;
   if (!isLevel(name)) throw new TypeError('Unknown action policy');
   // `merged`: the additions of an existing policy (config and request already merged, so possibly more phrases than
-  // one source may carry), re-cleaned phrase by phrase. `site`: site-profile phrases (src/domains.js), merged last so
-  // the cap drops them before any config or request phrase.
+  // one source may carry), re-cleaned phrase by phrase.
   const base = merged
     ? mergeAdditions(readditions(merged))
     : mergeAdditions(normalizeAdditions(config, 'config.json guardrails'), normalizeAdditions(request, 'policy'));
-  const additions = site?.length ? mergeAdditions(base, normalizeAdditions({ forbid: site }, 'site profile')) : base;
+  const additions = base;
   const pattern = forbidPattern(additions.forbid);
   const capabilities = CAPABILITIES[name];
   const allows = capability => capabilities.includes(capability);

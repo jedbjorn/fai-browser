@@ -97,7 +97,7 @@ test('review: a daemon without the proof (an older one) turns invites and wakes 
 async function realSetup(t, { socketPid = process.pid } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-review-mcp-'));
   const hub = createFakeHub();
-  const daemon = createDaemon({ home, env: {}, port: 0, hub, providerFactory: () => { throw new Error('no provider'); } });
+  const daemon = createDaemon({ home, env: {}, port: 0, hub });
   await daemon.listen();
   const fake = await startFakeClaudeSocket(t, { pid: socketPid });
   const mcp = spawnMcp({ PATH: process.env.PATH, HOME: home, FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port),
@@ -310,7 +310,7 @@ test('final: the daemon hands out at most 4 wakes a poll; the rest come on the n
 test('final: a failed Approve wake shows in the request (the popup\'s "tell it to continue") and the MCP relay names the wait command again', async t => {
   const home = await mkdtemp(join(tmpdir(), 'fai-review-final-'));
   const hub = createFakeHub();
-  const daemon = createDaemon({ home, env: {}, port: 0, hub, providerFactory: () => { throw new Error('no provider'); } });
+  const daemon = createDaemon({ home, env: {}, port: 0, hub });
   await daemon.listen();
   const fake = await startFakeClaudeSocket(t, { mode: 'refuse' });
   const mcp = spawnMcp({ PATH: process.env.PATH, HOME: home, FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port),

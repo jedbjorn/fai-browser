@@ -16,7 +16,7 @@ const JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP/////////
 async function setup(t) {
   const home = await mkdtemp(join(tmpdir(), 'fai-manual-smoke-'));
   const daemon = createDaemon({ home, env: { FAI_BRIDGE_SECRET: SECRET, FAI_EXTENSION_ID: EXTENSION_ID }, port: 0,
-    sweepIntervalMs: 60_000, providerFactory: () => { throw new Error('the smoke never needs a provider'); } });
+    sweepIntervalMs: 60_000 });
   await daemon.listen();
   const ext = await FakeExtension.connect({ port: daemon.port });
   assert.equal((await ext.hello()).ok, true);

@@ -394,9 +394,6 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
 const grant = level => ({ mode: level, grant: { level }, capture: 'none' });
 const checkout = () => new FakeBridge({ pages: { '/': { title: 'Checkout', text: 'Continue charges your saved card $49.',
   controls: [{ id: '1', role: 'button', label: 'Continue', enabled: true, risk: 'reversible' }] } } });
-const provider = guards => ({ async decide(_page, actions) {
-  return { actionId: actions.find(a => a.target === '1').id, confidence: 0.99, guards };
-} });
 let browser;
 test.before(async () => {
   try { browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
@@ -593,9 +590,9 @@ test('page-controlled attributes and main-world globals cannot forge isolated-wo
 async function daemonFixture(t) {
   const home = await mkdtemp(join(tmpdir(), 'pass7-daemon-'));
   const hub = createFakeHub();
-  const env = { TYPESAFE_API_KEY: 'synthetic-fixture-value' };
+  const env = {};
   const log = createLogger(homePaths({ home, env }));
-  const daemon = createDaemon({ driver: 'jev', home, env, port: 0, hub, log, providerFactory: () => provider({ purchase_page: 0, purchase_control: 0 }) });
+  const daemon = createDaemon({ home, env, port: 0, hub, log });
   await daemon.listen();
   t.after(async () => { await daemon.close(); log.close(); await rm(home, { recursive: true, force: true }); });
   const api = (method, path, body) => call(daemon.port, method, path, body, { token: daemon.token });

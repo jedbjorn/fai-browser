@@ -49,7 +49,7 @@ Never repeat refused actions or invent ids. Calls are budgeted (`callsLeft`). Do
 **Uploads** (`full`, `testing`): `upload a file to "Avatar" (act with path)` takes `path`, a file in your workspace; the user approves name, size and site.
 
 ## Consent, popups, login, other origins
-Reject cookies first; below `full` an accept-only dialog returns `consent_banner`: relay it. A `popup (<kind>)` has its close action. A page outside `origins` returns `cross_origin`, a page-opened tab `child_tab` (`childOrigin` when known); a multi-subdomain task may request `"https://*.example.com"`; Google needs `["https://www.google.com", "https://consent.google.com"]`. Approved-origin children join (`tabs`) only in multiple-tab mode. `login` (sign-in), `blocked` (captcha, paywall) and `js_dialog` (JavaScript dialog): the user clears it, then observe.
+Cookie dialog: act on the offered reject button; accept is offered only at `full`. Sign-in controls and password fills are never offered below `testing`: the user signs in. A `popup (<kind>)` has its close action. A page outside `origins` returns `cross_origin`, a page-opened tab `child_tab` (`childOrigin` when known); a multi-subdomain task may request `"https://*.example.com"`; Google needs `["https://www.google.com", "https://consent.google.com"]`. Approved-origin children join (`tabs`) only in multiple-tab mode. `blocked` (captcha, paywall) and `js_dialog` (JavaScript dialog): the user clears it, then observe.
 
 **Test sites** (`testing`): observe with `logs: true` returns console errors and failed requests; JavaScript dialogs are dismissed at once unless `dialog: "accept"` (prompt: `text`) armed the next answer. These hooks are page-visible.
 

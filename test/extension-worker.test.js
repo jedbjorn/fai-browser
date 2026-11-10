@@ -40,7 +40,7 @@ test.afterEach(() => {
 // options.daemonBudget: the per-request budget the fake daemon reports in effect (hello and settings replies).
 function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode = 'daemon', leaseOrigins = null, permissions,
   hostGrants, local: extraLocal = {}, leaseError = null, opened = null, sessionStore = {}, daemonBudget = null,
-  driverControl = null, native = null, actionOpenPopup = null, lastWindow = undefined, normalWindows = [], tabCreateFails = false,
+  native = null, actionOpenPopup = null, lastWindow = undefined, normalWindows = [], tabCreateFails = false,
   daemonVersion = '0.2.0', daemonUpdate = null, manifest = {} } = {}) {
   const reloads = []; // chrome.runtime.reload() calls (an update's reload of the unpacked extension)
   const nativeCalls = []; // chrome.runtime.sendNativeMessage(host, message) calls
@@ -178,17 +178,12 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
   function answer(message) {
     if (message.type === 'hello') {
       return { ok: true, data: { mode, daemonVersion: state.daemonVersion ?? daemonVersion, endSession: false, ...(daemonUpdate ? { update: daemonUpdate } : {}),
-        ...(daemonBudget ? { budget: daemonBudget } : {}), ...(driverControl ? { control: driverControl } : {}) } };
+        ...(daemonBudget ? { budget: daemonBudget } : {}) } };
     }
     if (message.type === 'update' && daemonUpdate) {
       if (message.action === 'install' && state.updateError) return { ok: false, error: { code: 'lease_active', message: state.updateError } };
       const install = message.action === 'install' ? { state: 'running', to: daemonUpdate.latest, message: 'Installing.' } : daemonUpdate.install;
       return { ok: true, data: { update: { ...daemonUpdate, install: install ?? null } } };
-    }
-    if (message.type === 'driver') {
-      if (state.driverError && message.driver) return { ok: false, error: { code: 'driver_save_failed', message: 'Could not save' } };
-      if (message.driver) driverControl = { ...driverControl, driver: message.driver };
-      return { ok: true, data: { control: driverControl } };
     }
     if (message.type === 'settings') {
       // Like the daemon: the user's budget when set, else what applied before.
@@ -451,7 +446,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       });
     }
     const type = { '/hello': 'hello', '/lease': 'lease', '/deny': 'deny', '/status': 'status', '/validate': 'validate',
-      '/results': 'result', '/screenshots': 'screenshot', '/driver': 'driver' }[pathname];
+      '/results': 'result', '/screenshots': 'screenshot' }[pathname];
     sent.push({ via: 'http', ...body, type, headers: options.headers });
     const reply = answer({ ...body, type });
     return respond(type === 'hello' ? { ...reply.data, requests: [] } : reply.data);

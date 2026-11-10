@@ -1614,9 +1614,8 @@
   }
 
   function dispatchable(risk) {
-    // A consent reject and a nag overlay's close control (detectOverlay) are dispatched at every level.
-    return Boolean(risk) && (permits(risk.cls)
-      || ((risk.consentReject === true || risk.overlayDismiss === true) && risk.cls === 'reversible'));
+    // A consent reject is dispatched at every level.
+    return Boolean(risk) && (permits(risk.cls) || (risk.consentReject === true && risk.cls === 'reversible'));
   }
 
   // --- Approve gate (docs/REFERENCE.md "Approve gate") ---------------------------------------------------------
@@ -1698,7 +1697,7 @@
   // The risk of one control under the page rules (see above); `risk` unchanged when no rule applies. `region` (an
   // object) receives the control's region on a purchase page: 'checkout' or 'navigation'.
   function gatedRisk(el, role, label, risk, consent, purchase, region = null) {
-    if (!risk || ['forbid', 'sign_in', 'consent_accept'].includes(risk.cls) || consent || risk.overlayDismiss) return risk;
+    if (!risk || ['forbid', 'sign_in', 'consent_accept'].includes(risk.cls) || consent) return risk;
     const realLink = el.tagName === 'A' && el.hasAttribute('href') && !/^\s*(?:#|javascript:)/i.test(el.getAttribute('href') ?? '#');
     const button = role === 'button' || role === 'tab' || (role === 'link' && !realLink)
       || ((el.type === 'submit' || el.type === 'image') && Boolean(el.form));
@@ -2269,15 +2268,10 @@
     return Boolean(lastOverlay) && lastOverlay.kind !== 'task' && within(el, lastOverlay.root);
   }
 
-  // The wire marks of one control: `overlay` inside a marked overlay, and `dismiss` for a nag's close control, whose
-  // risk then takes the overlayDismiss override (dispatched at every level, as a consent reject is).
-  function markOverlayControl(el, control, risk) {
+  // The wire mark of one control: `overlay` inside a marked overlay (offered after the page's own controls).
+  function markOverlayControl(el, control) {
     if (!lastOverlay) return;
     if (inMarkedOverlay(el)) control.overlay = true;
-    if (lastOverlay.nag && overlayCloser(el) && (risk.cls === 'reversible' || risk.cls === 'navigation')) {
-      control.dismiss = true;
-      if (risk.cls === 'reversible') risk.overlayDismiss = true;
-    }
   }
 
   // Ordinary floating UI is not a blocking overlay: its choices are the current task and must survive the control and
@@ -2326,50 +2320,6 @@
 
   function inFloating(el) {
     return floatingRoots.some(root => within(el, root));
-  }
-
-  // A dismissal the runtime asks for (`dismiss_overlay` with method escape or backdrop) on the overlay of this very
-  // observation, and only on a nag. Escape: a keydown/keyup for Escape at the focused element inside the overlay (else
-  // its panel), and for a native <dialog> its cancel event and close(), as the browser does on Escape. Backdrop: a
-  // pointer click at the point under which the separate backdrop element lies.
-  async function dismissOverlay(method) {
-    const overlay = lastOverlay;
-    if (!overlay?.nag) throw new PageError('unsupported', 'No overlay this page script may dismiss');
-    if (method === 'escape') {
-      const active = document.activeElement;
-      const target = active && active !== document.body && within(active, overlay.root) ? active : overlay.panel;
-      let proceed;
-      if (realInput()) {
-        ({ proceeded: proceed } = await realInput().press(target, 'Escape'));
-      } else {
-        const init = { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true, composed: true };
-        proceed = target.dispatchEvent(new KeyboardEvent('keydown', init));
-        target.dispatchEvent(new KeyboardEvent('keyup', init));
-      }
-      const dialog = overlay.panel.tagName === 'DIALOG' ? overlay.panel : overlay.root.querySelector?.('dialog[open]');
-      if (proceed && dialog?.open) {
-        if (dialog.dispatchEvent(new Event('cancel', { cancelable: true }))) dialog.close();
-      }
-      return;
-    }
-    if (method === 'backdrop') {
-      const backdrop = overlay.backdrop;
-      if (!backdrop?.el.isConnected) throw new PageError('unsupported', 'The overlay has no separate backdrop');
-      const hit = hitAt(backdrop.x, backdrop.y);
-      if (!hit || !within(hit, backdrop.el)) throw new PageError('stale', 'The backdrop is no longer at that point');
-      if (realInput()) {
-        await realInput().click(backdrop.el, { point: { x: backdrop.x, y: backdrop.y } });
-        return;
-      }
-      const init = { bubbles: true, cancelable: true, composed: true, clientX: backdrop.x, clientY: backdrop.y, button: 0, view: window };
-      hit.dispatchEvent(new PointerEvent('pointerdown', init));
-      hit.dispatchEvent(new MouseEvent('mousedown', init));
-      hit.dispatchEvent(new PointerEvent('pointerup', init));
-      hit.dispatchEvent(new MouseEvent('mouseup', init));
-      hit.dispatchEvent(new MouseEvent('click', init));
-      return;
-    }
-    throw new PageError('unsupported', 'Unsupported dismissal');
   }
 
   // ------------------------------------------------------------------------------------------------------------
@@ -5011,7 +4961,7 @@
     // Inside an open dialog (a date picker): a click there may re-render seconds later (the runtime's late change).
     else if (inDialog(el)) control.dialog = true;
     if (inFloating(el)) control.floating = true;
-    markOverlayControl(el, control, risk);
+    markOverlayControl(el, control);
     // The label is a descriptor this script wrote (describeUnnamed): the control has no name of its own.
     if (unnamed) control.unnamed = true;
     // Whether a text box or combobox takes typed text (an input, a textarea or contenteditable); a combobox that does
@@ -5740,9 +5690,6 @@
         }
         break;
       }
-      case 'dismiss_overlay':
-        await dismissOverlay(action.method);
-        break;
       case 'navigate_allowed_url': {
         const url = new URL(action.url);
         if (!onApprovedSite(url)) throw new PageError('cross_origin', 'Navigation outside selected origin');

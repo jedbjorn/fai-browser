@@ -68,8 +68,8 @@ See [REFERENCE.md: Invites and wakes](../REFERENCE.md#invites-and-wakes).
 | Approve or Resume went to an older request | Update FAI Browser: each click now names its request, new requests are listed first and apart from paused tasks, and a stale paused task is folded under Older paused tasks. Release (or let the agent release) requests that are no longer needed |
 | Session pauses with `origin_changed` during sign-in | The sign-in went through a host the request does not list; the result's `leftOrigin` (and status) names it. Ask for that origin in the next request |
 | Screenshot is blank or boxed everywhere | A secret page, Strict mode, a canvas, or a cross-origin frame FAI did not read (always boxed). Intended; see [secret-redaction.md](secret-redaction.md) |
-| Cookie dialog blocks the page | Reject is clicked first at every level. Below Act an accept-only dialog comes back as `relay` for you |
-| Login wall (`needs_user` `login`) | FAI never signs in outside Test site. Sign in yourself in that tab, then ask the agent to continue |
+| Cookie dialog blocks the page | The agent clicks the offered reject button. An accept button is only offered at Act: with an accept-only dialog below Act, close it yourself |
+| Login wall | FAI never offers sign-in controls or password fills outside Test site. Sign in yourself in that tab, then ask the agent to continue |
 | `expectation_failed` / `unverified` | The final page did not match the expectation. Check it against the real URL/text (it is matched on redacted, settled text); loosen it |
 | `budget_exhausted` / call budget | Each request allows 50 calls / 20 minutes by default (popup, Advanced, Per-request budget raises the ceiling) |
 | `error_page` | The page returned an HTTP error; the agent should stop and tell you |

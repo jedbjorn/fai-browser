@@ -42,8 +42,7 @@ export const FORM_PAGES = {
 export async function setup(t, { pages = FORM_PAGES, env = {} } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-capability-'));
   const hub = createFakeHub({ bridgeOptions: { pages } });
-  const daemon = createDaemon({ home, env: {}, port: 0, hub,
-    providerFactory: () => { throw new Error('Agent direct must never construct a provider'); } });
+  const daemon = createDaemon({ home, env: {}, port: 0, hub });
   await daemon.listen();
   const mcp = spawnMcp({ FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port), FAI_MCP_APPROVAL_WAIT_MS: '1000', ...env });
   t.after(async () => {

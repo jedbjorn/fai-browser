@@ -89,12 +89,11 @@ const SETTLE_AFTER_NAVIGATION = { quietMs: 100, capMs: 1_500 };
 const SETTLE_IN_PLACE = { quietMs: 50, capMs: 300 };
 const WAIT_ACTION_MS = 500;
 
-// dismiss_overlay: the runtime's Escape or backdrop click on a nag overlay page.js itself detected (no target).
 // fill_secret / copy_secret: a secret handle's value into one field, or onto the clipboard, each approved by the user.
 // press / hover: a key (src/runtime.js pressKey) and a pointer rest, both from reversible (page.js checks); history:
 // back, forward or reload of the leased tab (same-origin entries only where the page can tell); switch_tab: another tab
 // of this lease (a popup or new tab it followed); dialog: a JavaScript dialog's answer (Test site, the main-world hook).
-const ACTION_TYPES = new Set(['click', 'fill_supplied_text', 'select', 'scroll', 'navigate_allowed_url', 'wait', 'dismiss_overlay',
+const ACTION_TYPES = new Set(['click', 'fill_supplied_text', 'select', 'scroll', 'navigate_allowed_url', 'wait',
   'submit_field', 'fill_secret', 'copy_secret', 'press', 'hover', 'history', 'switch_tab', 'open_tab', 'dialog', 'upload']);
 const HISTORY_MOVES = new Set(['back', 'forward', 'reload']);
 // Errors that mean the grant no longer covers what the user selected; they end the session.
@@ -2513,9 +2512,6 @@ function validateAction(action) {
   if (action.intentCleared !== undefined) throw new ExtensionError('unsupported', 'Invalid cleared click');
   if (['navigate_allowed_url', 'open_tab'].includes(action.type) && !sameSessionSite(action.url)) {
     throw new ExtensionError('cross_origin', 'Navigation outside selected origin');
-  }
-  if (action.type === 'dismiss_overlay' && (action.target !== undefined || !['escape', 'backdrop'].includes(action.method))) {
-    throw new ExtensionError('unsupported', 'Invalid overlay dismissal');
   }
   // An approved action (the Approve gate): bound to a target, never a point (copy_secret names a handle instead).
   if (action.approvalId !== undefined && (!['click', 'fill_secret', 'copy_secret', 'upload'].includes(action.type) || action.point !== undefined
