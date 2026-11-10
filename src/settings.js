@@ -1,8 +1,8 @@
-// Local settings in FAI_HOME/.env.local (mode 0600): the Jev key, the pairing secret and the extension ID.
+// Local settings in FAI_HOME/.env.local (mode 0600): the pairing secret and the extension ID.
 //
-// The daemon is the only long-lived reader. It loads the file with util.parseEnv, lets the file win over the
-// inherited environment for TYPESAFE_API_KEY, generates a missing pairing secret, and re-reads the file when its
-// mtime changes. Nothing here logs or returns the key itself; callers get `keyConfigured`.
+// The daemon is the only long-lived reader. It loads the file with util.parseEnv, generates a missing pairing secret,
+// and re-reads the file when its mtime changes. Other names in the file (a key line left by an older release) are
+// ignored and kept as written.
 import { readFileSync, statSync } from 'node:fs';
 import { chmod, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
@@ -11,7 +11,7 @@ import { dirname, resolve } from 'node:path';
 import { envFilePath, faiHome } from './paths.js';
 import { PINNED_EXTENSION_ID } from './bridge.js';
 
-const ALLOWED_NAMES = new Set(['TYPESAFE_API_KEY', 'FAI_EXTENSION_ID', 'FAI_BRIDGE_SECRET']);
+const ALLOWED_NAMES = new Set(['FAI_EXTENSION_ID', 'FAI_BRIDGE_SECRET']);
 const EXTENSION_ID = /^[a-p]{32}$/;
 const MIN_SECRET_LENGTH = 24;
 
@@ -64,42 +64,6 @@ export async function saveSettings(values, envPath = envFilePath()) {
   }
 }
 
-export async function saveKey(key, envPath = envFilePath()) {
-  return saveSettings({ TYPESAFE_API_KEY: key }, envPath);
-}
-
-/** Hidden-input prompt for the Jev key. Requires an interactive terminal. */
-export async function promptKey({ input = process.stdin, output = process.stdout } = {}) {
-  if (!input.isTTY || !output.isTTY) {
-    throw new Error('Run this script in an interactive terminal; key input must be hidden');
-  }
-  const wasRaw = input.isRaw;
-  input.setRawMode(true);
-  input.resume();
-  input.setEncoding('utf8');
-  output.write('TypeSafe Jev API key (input hidden): ');
-  return new Promise((resolveKey, reject) => {
-    let value = '';
-    const finish = error => {
-      input.off('data', onData);
-      input.setRawMode(Boolean(wasRaw));
-      input.pause();
-      output.write('\n');
-      if (error) reject(error);
-      else resolveKey(value);
-    };
-    const onData = chunk => {
-      for (const character of chunk) {
-        if (character === '\u0003' || character === '\u0004') return finish(new Error('Key setup cancelled'));
-        if (character === '\r' || character === '\n') return finish();
-        if (character === '\u007f' || character === '\b') value = value.slice(0, -1);
-        else value += character;
-      }
-    };
-    input.on('data', onData);
-  });
-}
-
 /** Parse .env.local; {} when it does not exist. */
 export function readEnvFile(envPath) {
   try {
@@ -120,10 +84,9 @@ export function envFileMtime(envPath) {
 }
 
 /**
- * Load the daemon's settings. Applies TYPESAFE_API_KEY from the file onto `env` (the file wins over the inherited
- * environment). FAI_BRIDGE_SECRET in `env` overrides the file's secret. With `generateSecret`, a missing pairing
- * secret is generated and saved.
- * Returns {secret, extensionId, keyConfigured, mtimeMs, generatedSecret}; never the key.
+ * Load the daemon's settings. FAI_BRIDGE_SECRET in `env` overrides the file's secret. With `generateSecret`, a missing
+ * pairing secret is generated and saved.
+ * Returns {secret, extensionId, mtimeMs, generatedSecret}.
  */
 export async function loadDaemonSettings(envPath, { env = process.env, generateSecret = true } = {}) {
   const values = readEnvFile(envPath);
@@ -139,12 +102,10 @@ export async function loadDaemonSettings(envPath, { env = process.env, generateS
     await saveSettings({ FAI_BRIDGE_SECRET: secret }, envPath);
     generatedSecret = true;
   }
-  if (values.TYPESAFE_API_KEY) env.TYPESAFE_API_KEY = values.TYPESAFE_API_KEY;
   const extensionId = values.FAI_EXTENSION_ID || env.FAI_EXTENSION_ID || PINNED_EXTENSION_ID;
   return {
     secret,
     extensionId,
-    keyConfigured: Boolean(env.TYPESAFE_API_KEY),
     mtimeMs: envFileMtime(envPath),
     generatedSecret,
   };
