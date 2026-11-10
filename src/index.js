@@ -1,4 +1,4 @@
-export { BrowserRuntime, legalActions, providerPayload, redactorFor } from './runtime.js';
+export { BrowserRuntime, legalActions, redactorFor } from './runtime.js';
 export { buildDigest, pickAnswerCandidates } from './digest.js';
 export {
   EXPECTATION_FIELDS,

@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { providerPayload, redactorFor, SUPPLIED_REDACTION_MIN_LENGTH } from '../src/runtime.js';
-import { ORIGIN } from './runtime-fixtures.js';
+import { redactorFor, SUPPLIED_REDACTION_MIN_LENGTH } from '../src/runtime.js';
 
 test('redactor replaces exact and URL-encoded supplied values of 4+ characters only', () => {
   assert.equal(SUPPLIED_REDACTION_MIN_LENGTH, 4);
@@ -13,23 +12,6 @@ test('redactor replaces exact and URL-encoded supplied values of 4+ characters o
   assert.equal(redact('new york'), 'new york', 'matching is exact and case-sensitive');
   assert.equal(redact('PIN 123 for Ada'), 'PIN 123 for Ada', 'short values are not redacted');
   assert.equal(redactorFor({})('unchanged'), 'unchanged');
-});
-
-test('provider payload redacts page, controls, options, criteria inputs and history', () => {
-  const observation = {
-    revision: 'r1',
-    url: `${ORIGIN}/?q=secret-value`,
-    title: 'secret-value results',
-    text: 'You typed secret-value',
-    controls: [{ id: '1', role: 'combobox', label: 'Pick secret-value', options: [{ value: 'secret-value', label: 'secret-value' }] }],
-  };
-  const actions = [{ id: 'a0', type: 'click', target: '1', label: 'secret-value', description: 'Click secret-value' }];
-  const history = [{ i: 1, type: 'click', label: 'secret-value', fromUrl: `${ORIGIN}/secret-value`, toUrl: ORIGIN, changed: true }];
-  const payload = providerPayload(observation, actions, history, { q: 'secret-value' });
-  assert.ok(!JSON.stringify(payload).includes('secret-value'));
-  assert.equal(payload.observation.text, 'You typed [supplied:q]');
-  assert.equal(payload.actions[0].id, 'a0');
-  assert.equal(actions[0].label, 'secret-value', 'inputs are not mutated');
 });
 
 test('textAbsent reads the whole document when textIncludes passed only past the viewport', async () => {

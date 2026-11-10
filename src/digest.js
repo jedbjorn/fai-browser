@@ -205,39 +205,6 @@ export function recordsOf(observation) {
   return out;
 }
 
-const LIST_SAMPLE_TITLES = 3;
-const LIST_TITLE_LIMIT = 60;
-
-/**
- * The record lists the blocks read as lists (RECORD_LIST_MIN records or more), in list order (list 0 is the page
- * script's best): `[{ list, members, total, titles, main?, afterCount?, carousel? }]`. `members` is the records sent,
- * `total` the list's size on the page (recordLists, else members), `titles` the first LIST_SAMPLE_TITLES record titles
- * (page text, clipped); `main`, `afterCount` and `carousel` are the page script's position signals (inside the main
- * landmark, after the result-count line, a horizontal strip), each present only when true. Structural facts besides
- * the titles; used to ask the provider which list a question is about (src/runtime.js listQuestion).
- */
-export function recordListsOf(observation) {
-  const perList = new Map();
-  for (const record of recordsOf(observation)) {
-    if (!perList.has(record.list)) perList.set(record.list, []);
-    perList.get(record.list).push(record);
-  }
-  const wire = new Map((Array.isArray(observation?.recordLists) ? observation.recordLists : [])
-    .filter(entry => entry && Number.isInteger(entry.list)).map(entry => [entry.list, entry]));
-  return [...perList.entries()].filter(([, members]) => members.length >= RECORD_LIST_MIN)
-    .sort(([a], [b]) => a - b)
-    .map(([list, members]) => {
-      const meta = wire.get(list) ?? {};
-      const entry = {
-        list, members: members.length,
-        total: Number.isInteger(meta.total) && meta.total >= members.length ? meta.total : members.length,
-        titles: members.map(record => record.title).filter(Boolean).slice(0, LIST_SAMPLE_TITLES)
-          .map(title => clip(title, LIST_TITLE_LIMIT)),
-      };
-      for (const flag of ['main', 'afterCount', 'carousel']) if (meta[flag] === true) entry[flag] = true;
-      return entry;
-    });
-}
 function recordHintsOf(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const hints = {};
@@ -611,8 +578,7 @@ function tableStart(blocks, i) {
 /**
  * Blocks that may answer the instruction, best first, as `{ t, text, ref?, index, score }`. Left out: headings
  * and blocks that only repeat instruction words (they label an answer rather than state it), blocks with no
- * relevance, and duplicate texts. The runtime asks the provider to choose among these, or ranks them itself when
- * the provider cannot.
+ * relevance, and duplicate texts. The runtime ranks them with heuristicConfidences.
  */
 export function pickAnswerCandidates(observation, instruction, { max = CANDIDATE_MAX } = {}) {
   const { blocks, scores, echo, matched } = scoreBlocks(observation, instruction);
@@ -695,18 +661,6 @@ export function isLoadingText(text) {
   return ELLIPSIS_END.test(value) || value.split(/\s+/).length <= LOADING_MAX_WORDS;
 }
 
-// The runtime's own placeholder lexicon for suggestions: a re-run expectation may name only these constants, never a
-// placeholder's page text. Only the "Loading" family has a constant that is safe to require absent; the other
-// families ("Fetching…", "Please wait") get no textAbsent suggestion (the page string stays in page.digest, untrusted).
-const LOADING_LEXICON = [{ pattern: /^\s*(?:(?:still |now )?loading\b)/i, absent: 'Loading' }];
-
-/** The runtime-defined textAbsent constant for a placeholder block's text, or null (never the page's own string). */
-export function loadingLexiconEntry(text) {
-  const value = String(text ?? '');
-  if (!isLoadingText(value)) return null;
-  return LOADING_LEXICON.find(entry => entry.pattern.test(value))?.absent ?? null;
-}
-
 /**
  * The content blocks of an observation that are still loading placeholders (links and buttons excluded). A block the
  * page script marked visually hidden (`hidden: true`: a 1px or clipped screen-reader status such as Google Flights'
@@ -725,15 +679,6 @@ export function loadingBlocks(observation, persistent = null) {
 
 const ROW_BLOCK_TYPES = new Set(['li', 'tr']);
 const PERSISTENT_MIN_ROWS = 3;
-
-/**
- * Whether the observation carries rows of its own (PERSISTENT_MIN_ROWS list or table rows with text): the condition
- * under which hidden, remembered or site-profile status text is not a loading placeholder (src/domains.js
- * statusFilter).
- */
-export function carriesRows(observation) {
-  return contentRows(blocksOf(observation ?? {})) >= PERSISTENT_MIN_ROWS;
-}
 
 /** The list and table rows of `blocks` that carry text and are not loading placeholders themselves. */
 function contentRows(blocks) {
@@ -798,11 +743,6 @@ export function isNavigationTrail(text) {
 // A time of day (09:00, 9.30, 9am, 17h30, noon) or a whole-day state (24/7, closed).
 const TIME_SHAPE = /\b(?:[01]?\d|2[0-4])[:.h][0-5]\d\b|\b\d{1,2}\s?(?:am|pm|a\.m\.|p\.m\.)(?![\p{L}])|\b(?:noon|midday|midnight|24\s?\/\s?7|closed)\b/iu;
 
-/** Whether a text holds a time of day (the shape an hours or time question needs). */
-export function hasTimeShape(text) {
-  return TIME_SHAPE.test(String(text ?? ''));
-}
-
 /**
  * The question's answer intent: late (late-loaded content), nth (an ordinal item), count, price, hours (a time of
  * day or opening hours), quantity (a share, duration, frequency or size), list, name or other. Checked in that order, so "How many members are listed?" is a count,
@@ -854,17 +794,6 @@ export function answerShape(intent, candidate) {
 // The intents a page can be checked for deterministically: a page without a line of the shape cannot answer.
 const PAGE_SHAPES = { price: CURRENCY, count: DIGIT, hours: TIME_SHAPE };
 
-/**
- * Whether the page could hold an answer of the intent's shape: for price, count and hours questions, some block (or
- * the visible text) has a currency amount, a digit or a time of day; any other intent is not checked (true).
- */
-export function pageHasShape(observation, intent) {
-  const shape = PAGE_SHAPES[intent];
-  if (!shape) return true;
-  if (blocksOf(observation ?? {}).some(block => shape.test(block.text))) return true;
-  return shape.test(String(observation?.text ?? ''));
-}
-
 /** Intents never auto-confirmed: one candidate rarely holds a list, and Nth items and late text were wrong 11/11. */
 const NO_AUTO_INTENTS = new Set(['list', 'nth', 'late']);
 
@@ -873,7 +802,8 @@ function round2(value) {
 }
 
 /**
- * The auto-confirm rule: the provider-ranked top candidate is at least `answerConfirm`, has the intent's shape,
+ * The auto-confirm rule: a ranked (method `provider`; the heuristic ranking never sets it) top candidate is at least
+ * `answerConfirm`, has the intent's shape,
  * leads the second by at least `answerMargin`, and the intent is not list, Nth or late-load. Returns
  * `{ answer: {text, confidence, basis} | null, intent, why }`; `why` lists the machine reasons it was rejected.
  */
@@ -920,7 +850,7 @@ export function autoConfirm(answer, { question = '', instruction = '', threshold
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// The answer value inside an auto-confirmed block. The provider ranks whole page blocks, so the top candidate is
+// The answer value inside an auto-confirmed block. Rankings cover whole page blocks, so the top candidate is
 // often a table row ("Pro | $37 per month | $370 per year | 10"), a byline ("Migrating Ledgers to Version Two by
 // Priya Raman") or a sentence. Strong hosts trim it; weaker hosts (bench matrix-2: Luna, Terra) copy verbatim and
 // fail. These narrow rules cut out the value when the block's structure makes it unambiguous; otherwise the block is

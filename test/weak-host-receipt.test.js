@@ -8,12 +8,8 @@
 //    prompt and the skill now name the tool and say it is a tool, not an MCP resource.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { agentResult, buildVerdict, createResult, setOutcome } from '../src/result.js';
 import { answerValue, autoConfirm, classifyIntent } from '../src/digest.js';
 
-const ROOT = resolve(import.meta.dirname, '..');
 const ranked = (...pairs) => ({ method: 'provider', candidates: pairs.map(([text, confidence]) => ({ text, confidence })) });
 
 // The verdict.answer blocks and host questions recorded in matrix-2 receipts.
@@ -76,28 +72,5 @@ test('autoConfirm returns the cut value with its source line; thresholds and rej
   assert.deepEqual(plain.answer, { text: 'Open links in a new tab', confidence: 0.95,
     basis: ['candidate>=0.8', 'shape:name', 'margin:0.95'] }, 'no line or exact flag when nothing was cut');
   assert.equal(autoConfirm(ranked(['Pro | $37 per month', 0.6]), { question: 'What is the price?' }).answer, null);
-});
-
-function receipt(answer) {
-  const result = createResult({ runId: 'r', expectation: null, provider: null });
-  setOutcome(result, 'expectation_passed');
-  result.verdict = buildVerdict(result, { answer });
-  return agentResult(result);
-}
-
-test('next.text for answer is imperative and self-contained; exact false asks for only the requested part', () => {
-  const exact = receipt({ text: 'Migrating Ledgers to Version Two', confidence: 0.99, basis: ['value:byline_title'],
-    line: 'Migrating Ledgers to Version Two by Priya Raman' });
-  assert.equal(exact.next.kind, 'answer');
-  assert.match(exact.next.text, /^Do not call any tool\./);
-  assert.match(exact.next.text, /verdict\.answer\.text/);
-  assert.match(exact.next.text, /copied as is/);
-  assert.equal(exact.verdict.answer.line, 'Migrating Ledgers to Version Two by Priya Raman');
-  assert.equal(exact.verdict.answer.exact, undefined);
-  assert.ok(!exact.next.text.includes('Migrating'), 'page text never enters the trusted next.text');
-
-  const whole = receipt({ text: 'Pro | 10 seats | priority support', confidence: 0.95, basis: [], exact: false });
-  assert.equal(whole.verdict.answer.exact, false);
-  assert.match(whole.next.text, /only the part of it the question asks for/);
 });
 

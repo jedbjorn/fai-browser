@@ -1,10 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import {
-  destructiveLink, CONSENT_ACCEPT, CONSENT_REJECT, CONSENT_SETTINGS, CONSENT_WITHOUT_ACCEPT, commitIntent,
-  errorPageOf,
-} from '../src/oversight.js';
+import { destructiveLink, CONSENT_ACCEPT, CONSENT_REJECT, CONSENT_SETTINGS, CONSENT_WITHOUT_ACCEPT, commitIntent, errorPageOf } from '../src/oversight.js';
 import { legalActions } from '../src/runtime.js';
 import { link, ORIGIN } from './runtime-fixtures.js';
 

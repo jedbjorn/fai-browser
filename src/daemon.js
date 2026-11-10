@@ -277,7 +277,7 @@ function checkExpectation(body) {
 
 /**
  * Optional guardrail additions for this run (src/guardrails.js): an array of plain phrases or { forbid, note }.
- * Validated here, before any provider call; returns the normalized { forbid, note } or undefined.
+ * Validated here, before any observe or act; returns the normalized { forbid, note } or undefined.
  */
 function checkPolicy(body) {
   if (body.policy === undefined || body.policy === null) return undefined;
@@ -1577,7 +1577,6 @@ export function createDaemon(options = {}) {
       timeoutMs: spec.timeoutMs,
       allowedOrigins: coveredOrigins(record),
     };
-    if (spec.maxActions !== undefined) options.maxActions = spec.maxActions;
     if (spec.answerQuestion) options.answerQuestion = spec.answerQuestion;
     // Host- and config-written plain phrases (never page text), for the audit trail.
     if (spec.policy) options.policy = spec.policy;
@@ -1679,7 +1678,7 @@ export function createDaemon(options = {}) {
     log('run_start', { runId, requestId: record.requestId, operation });
     run.done = promise
       .catch(error => {
-        const result = createResult({ runId, expectation: spec.expectation ?? null, provider: null });
+        const result = createResult({ runId, expectation: spec.expectation ?? null });
         result.permissions = permissionsOf(spec.mode ?? record.mode, record);
         return setOutcome(result, 'failed', String(error?.message ?? error));
       })
@@ -2093,7 +2092,7 @@ export function createDaemon(options = {}) {
       policy: checkPolicy(body),
       prune: checkPrune(body),
       outputDir: checkOutputDir(body),
-      // Relevance hints for the listing cap and the digest only (never sent to a provider): the body's, else the
+      // Relevance hints for the listing cap and the digest only (local only): the body's, else the
       // request's last named task (an earlier observe's or run's), else the request's own instruction.
       instruction: optionalString(body, 'instruction', 4000),
       expectation: checkExpectation(body),

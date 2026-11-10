@@ -9,7 +9,7 @@ import { join, resolve } from 'node:path';
 import { startStubDaemon } from './helpers/stub-daemon.js';
 import { createDaemon } from '../src/daemon.js';
 import { createLogger, homePaths } from '../src/home.js';
-import { directNext, nextFor } from '../src/result.js';
+import { directNext } from '../src/result.js';
 import { CLI_PATH, resumeWaitCommand, resumeWaitText, withResumeWait } from '../src/resume.js';
 import { ORIGIN, clickProvider } from './runtime-fixtures.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
@@ -377,20 +377,6 @@ test('a paused lease: next tells the agent to relay Resume and start the wait in
     const next = directNext({ status: 'needs_user', code }, { requestId: 'req_9' });
     assert.doesNotMatch(next.text, /--until active/, code);
   }
-});
-
-test('Jev receipts name the same wait for paused and pending requests', () => {
-  const command = resumeWaitCommand('req_7');
-  const paused = nextFor({ status: 'needs_user', code: 'paused', lease: { requestId: 'req_7', state: 'paused' } },
-    { requestId: 'req_7' });
-  assert.equal(paused.kind, 'relay');
-  assert.match(paused.text, /call fai_browser_run again with requestId req_7; it starts from the current page\./);
-  assert.ok(paused.text.includes(command));
-  const pending = nextFor({ status: 'needs_user', code: 'select_tab', lease: { requestId: 'req_7', state: 'pending' } },
-    { requestId: 'req_7', origin: 'https://example.com' });
-  assert.equal(pending.kind, 'relay');
-  assert.match(pending.text, /Then call fai_browser_run again with requestId req_7; no origins needed\. If you can/);
-  assert.ok(pending.text.includes(command));
 });
 
 test('the command runs as written in a POSIX shell: prefix assignments reach the CLI, a node path with = works', async t => {

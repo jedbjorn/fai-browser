@@ -176,7 +176,6 @@ code { font: .88em var(--mono); overflow-wrap: anywhere; }
 .benchmark-legend { display: flex; flex-wrap: wrap; gap: 20px; color: var(--muted); font: .68rem var(--mono); }
 .benchmark-legend span { display: inline-flex; align-items: center; gap: 8px; }
 .benchmark-canvas { overflow-x: auto; padding: 18px 28px 0; }
-#benchmark-text-chart, #benchmark-visual-chart { width: 100%; min-width: 760px; height: auto; overflow: visible; }
 .pending-grid path { fill: none; stroke: var(--chart-grid); stroke-width: 1; stroke-dasharray: 2 8; }
 .metric-name { fill: var(--chart-text); font: 700 16px var(--font); }
 .metric-note { fill: var(--chart-muted); font: 11px var(--mono); }
@@ -187,7 +186,6 @@ code { font: .88em var(--mono); overflow-wrap: anywhere; }
 .chart-track { fill: var(--chart-track); }
 .chart-bar-playwright { fill: #a3aea7; }
 .chart-bar-agent { fill: #0a9a80; }
-.chart-bar-jev { fill: #6558c7; }
 .chart-bar-label { fill: #fff; font: 700 12px var(--mono); pointer-events: none; }
 .chart-bar-label-playwright { fill: #12251f; }
 .chart-value { fill: var(--chart-text); font: 700 13px var(--mono); }
