@@ -12,8 +12,6 @@ privately first.
 2. Describe what you found, how to reproduce it (a fixture page or a short MCP session is ideal), the affected version or
    commit, and what an attacker gains.
 
-If you cannot use GitHub advisories, email 267177294+jedbjorn@users.noreply.github.com with "FAI Browser security" in the subject (no details in public issues).
-
 What to expect: an acknowledgement within 3 working days, a first assessment within 10, and a fix or mitigation plan
 within 30 days for confirmed issues, coordinated with you on disclosure. Credit in the advisory and the changelog unless you prefer not to be named.
 
