@@ -20,7 +20,6 @@ import {
   harmlessControlLabel, labelIntents, loginState, namedHops, remainingHops, resolveThresholds,
   suggestExpectation, suggestInstruction, suggestMaxActions,
 } from './oversight.js';
-import { LIST_MAX_ACTIONS } from './steps.js';
 import {
   CLASS_CAPABILITY, LEVELS, SAFE_SUBMIT, capabilitiesOf, clampLevel, guardrailPolicy, isLevel, labelClasses,
   labelSpellings, labelTier, levelFor, levelRank, paymentField, purchaseControl, purchasePage, secretAction,
@@ -1468,7 +1467,7 @@ function configure(options, { step = false } = {}) {
       ? { mode: config.mode, merged: options.guardrails.additions }
       : { mode: config.mode, request: options.policy, config: inherited ? options.guardrails.additions : options.guardrails });
   if (!CAPTURE_POLICIES.has(config.capture)) throw new TypeError('capture must be "each", "last" or "none"');
-  checkInteger('maxActions', config.maxActions, LIST_MAX_ACTIONS);
+  checkInteger('maxActions', config.maxActions, 120);
   checkInteger('timeoutMs', config.timeoutMs, 300000);
   if (!Number.isInteger(config.reobserveDelayMs) || config.reobserveDelayMs < 0 || config.reobserveDelayMs > 5000) {
     throw new RangeError('reobserveDelayMs must be an integer from 0 to 5000');

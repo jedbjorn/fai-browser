@@ -448,68 +448,6 @@ export interface DecisionProvider {
   confirm?(observation: CompactObservation, context: DecisionContext, signal?: AbortSignal): Promise<Omit<Decision, 'actionId'>>;
 }
 
-export interface ProviderOptions {
-  /** Full endpoint URL. HTTPS, or HTTP on loopback only. */
-  endpoint?: string;
-  /** Shorthand for http://127.0.0.1:<port>/v1/systemone (Kev 8009, Decider 8000). Ignored when endpoint is set. */
-  port?: number;
-  model?: string;
-  keyEnv?: string;
-  /** Per-attempt timeout. Defaults to 30000 for loopback endpoints and 10000 for hosted ones. */
-  timeoutMs?: number;
-  fetchImpl?: typeof fetch;
-  requireKey?: boolean;
-  /** Retries after the first attempt. Default 2 with the retry switch (408, 429, 5xx, network), else 1. */
-  retries?: number;
-  /** First retry delay. Default 300 ms; with the retry switch each further delay is x3, capped at 2 s. */
-  retryDelayMs?: number;
-  /** Jev guidance switches; `true`/`false` sets all. Default: all on. */
-  guidance?: boolean | Partial<Guidance>;
-}
-
-export interface Guidance {
-  /** state.policy, referenced by name from the action question. */
-  policy: boolean;
-  /** handoff as the explicit, last "none of these" option. */
-  handoffOther: boolean;
-  /** blocked / injection noul questions in the same request, returned as Decision.guards. */
-  guards: boolean;
-  /** what / not_for criteria for confusable controls and consent buttons. */
-  criteria: boolean;
-  /** Exponential backoff honouring Retry-After on 408/429/5xx/network. */
-  retry: boolean;
-  /** Reversible mode, when a button/select/fill is offered: the `commit` noul in the same request. */
-  commit: boolean;
-  /** state.site: a site-profile hint (experimental) when the runtime passes one, plus the `site_hints` policy line. */
-  site: boolean;
-  /**
-   * With policy on: a last `named` policy line when the instruction names an offered plain button as a click target
-   * (src/relevance.js namedControls). Without one the request is unchanged.
-   */
-  named: boolean;
-  /**
-   * choose() only: with two or more record lists on the final page and a question that ranks or bounds a value, a
-   * `lists` choice question in the same request (which list holds the items); the runtime aggregates over it.
-   */
-  lists: boolean;
-  /**
-   * decide() only, below testing, off by default: for each refused control whose label trips only ambiguous words
-   * (src/guardrails.js labelTier) that the runtime offers, an `intent_<action id>` choice question (what would
-   * activating it do?). The runtime clears such a control only on a confident non-purchase answer with every
-   * purchase and injection guard low; otherwise it stays refused. Returned as Decision.intents.
-   */
-  intent: boolean;
-}
-
-/** The site-profile switch (experimental): "on" (default), "off", a boolean, or single parts. */
-export type ProfilesSwitch = 'on' | 'off' | boolean | { fastPath?: boolean; hints?: boolean };
-
-/** A store of compiled site profiles, matched by exact origin (src/domains.js createDomainStore). */
-export interface DomainStore {
-  match(origin: string): unknown | null;
-  record?(profile: unknown, delta: unknown): void;
-}
-
 /** The trusted `site` receipt block: profile `id@version`, fast steps, their edges, hints and the fallback. */
 export interface SiteReceipt {
   profile: string | string[];
@@ -627,29 +565,6 @@ export function guardrailPolicy(options?: { level?: Level; mode?: Level; request
  */
 export type GuardrailAdditions = string[] | { forbid?: string[]; note?: string };
 
-export interface WarmResult {
-  ok: boolean;
-  status?: number;
-  error?: string;
-  ms: number;
-}
-
-export class TypeSafeProvider implements DecisionProvider {
-  constructor(options?: ProviderOptions);
-  readonly endpoint: string;
-  readonly model: string;
-  readonly timeoutMs: number;
-  decide: DecisionProvider['decide'];
-  /** One SystemOne `choice` question over the candidate texts (at most 60, each clipped to 300 characters). */
-  choose(request: ChooseRequest): Promise<AnswerChoice>;
-  /** The slim terminal request: done and the blocked/injection guards about the page, no controls, no action. */
-  confirm(observation: CompactObservation, context: DecisionContext, signal?: AbortSignal): Promise<Omit<Decision, 'actionId'>>;
-  /** Cheap GET to /v1/models to prime the connection. Never throws. */
-  warm(options?: { timeoutMs?: number }): Promise<WarmResult>;
-}
-
-export class LocalSystemOneProvider extends TypeSafeProvider {}
-
 // ---------------------------------------------------------------------------------------------------------------
 // Options
 // ---------------------------------------------------------------------------------------------------------------
@@ -731,33 +646,8 @@ export interface AuthorityOptions {
   suppliedText?: Record<string, string>;
 }
 
-/**
- * One step of a step list (docs/REFERENCE.md "Step lists"): its own instruction, a required declarative expectation
- * that verifies it, an optional question and action budget. `{{answer:N}}` in the instruction, the question or an
- * expectation text field (not urlMatches) is filled only from step N's auto-confirmed `verdict.answer`.
- */
-export interface RunStep {
-  instruction: string;
-  expectation: DeclarativeExpectation;
-  answerQuestion?: string;
-  /** 1-30 through MCP (1-100 for the SDK, daemon and CLI); default 8. */
-  maxActions?: number;
-}
-/** Up to five steps; validates and returns a normalized copy, or throws a TypeError naming the first problem. */
-export function validateSteps(steps: unknown, options?: { path?: string; maxActions?: number }): RunStep[];
-
 export interface RunOptions extends CommonOptions, AuthorityOptions {
   instruction?: string;
-  /**
-   * A step list instead of instruction/expectation/answerQuestion (run() only): the steps run in order in one call,
-   * in the same tab, level, grant, guardrails and budgets (maxActions, maxDecisions and timeoutMs cover the whole
-   * list; defaults: the steps' maxActions summed, that plus 3 per step, 45 s), each verified by its own expectation;
-   * the list stops at the first step that does not pass. The result carries `stepResults`. A top-level `expectation`
-   * or `answerQuestion` goes to the last step when it has none; a different expectation is checked on the final page
-   * once every step passed (`steps:final_expectation_failed` when it fails); a different question is ignored with a
-   * warning.
-   */
-  steps?: RunStep[];
   /** Use this run id instead of a random UUID (1-128 of [A-Za-z0-9._-]). */
   runId?: string;
   maxActions?: number;
@@ -775,25 +665,6 @@ export interface RunOptions extends CommonOptions, AuthorityOptions {
   minConfidence?: number;
   /** Every gate in one object; see DEFAULT_THRESHOLDS. Unknown names are rejected. */
   thresholds?: Partial<Thresholds>;
-  /**
-   * In-call retries before handing back to the host (default on): `false` turns them off, an object single switches.
-   * See RetrySwitches and docs/REFERENCE.md "In-call retries".
-   */
-  retry?: boolean | Partial<RetrySwitches>;
-  /**
-   * Site profiles (experimental): with a `domains` store, the profile of the approved origin (exact match) adds its
-   * forbidden labels and, for a run with a declarative expectation naming one of its page types, takes known link and
-   * follows known links on the page without a decision (with the slim guards request for each page it leaves) and hints
-   * Jev on the others. Experimental and opt-in: default off; "on" (or an object) turns it on.
-   */
-  profiles?: ProfilesSwitch;
-  /** The profile store for `profiles` (the daemon passes $FAI_DOMAINS_DIR or $FAI_HOME/domains). */
-  domains?: DomainStore;
-  /**
-   * Slim provider requests: `true`/`false` sets every switch, an object single switches (default DEFAULT_SLIM).
-   * See SlimSwitches and docs/REFERENCE.md "Slim provider requests".
-   */
-  slim?: boolean | Partial<SlimSwitches>;
   /** Rung 1c: wait before the one late-navigation re-observe, ms (default 300). */
   reobserveDelayMs?: number;
   /**
@@ -1313,10 +1184,7 @@ export function pickAnswerCandidates(observation: Observation, instruction: stri
 // ---------------------------------------------------------------------------------------------------------------
 
 export class BrowserRuntime {
-  constructor(options: { bridge: BrowserBridge; provider?: DecisionProvider });
-  /** At most one action; returns checkpoint when it executed and no expectation passed. */
-  step(instruction: string | RunOptions, options?: RunOptions): Promise<RunResult>;
-  run(instruction: string | RunOptions, options?: RunOptions): Promise<RunResult>;
+  constructor(options: { bridge: BrowserBridge; asks?: () => { purchase: boolean; secret: boolean; level: boolean } });
   /** Host-driven: compact page plus offered actions. Throws BridgeError on bridge failure. */
   observe(options?: ObserveOptions): Promise<ObserveResult>;
   /**
@@ -1461,43 +1329,6 @@ export interface RetryRecord {
   maxActions?: number;
 }
 export const RETRY_KINDS: readonly ['secondOpinion', 'backOut', 'rerun'];
-export function resolveRetry(value?: boolean | Partial<RetrySwitches>): RetrySwitches;
-
-/** Resolve the site-profile switch (default off); `enabled` is true for "on", true or an object with a part on. */
-export function resolveProfiles(value?: ProfilesSwitch): { enabled: boolean; fastPath: boolean; hints: boolean };
-
-/**
- * The site-profile store (experimental): `dir` defaults to $FAI_DOMAINS_DIR, else $FAI_HOME/domains, one
- * `<host>[_<port>]/profile.json` per origin, validated strictly; hit/miss counters go to stats.json beside it.
- */
-export function createDomainStore(options?: { dir?: string; statsDir?: string; log?: (event: string, fields: object) => void }): DomainStore & {
-  dir: string;
-  statsDir: string;
-  statsFile(profile: unknown): string | null;
-  error(origin: string): string | null;
-};
-/** Slim provider request switches (docs/REFERENCE.md "Slim provider requests"). */
-export interface SlimSwitches {
-  /**
-   * Every control sent once: offered links only as their option (with a relative path for the most relevant,
-   * vague-labelled or same-labelled links), other controls without hrefs. Default false.
-   */
-  controls: boolean;
-  /**
-   * On a page where the expectation already passes, first ask only done and the blocked/injection guards; complete
-   * when done reaches doneThreshold, else send the full decide (outside maxDecisions). Default false.
-   */
-  terminal: boolean;
-  /**
-   * At most 40 non-terminal options per request (scrolling, waiting, explicit URLs, consent buttons and links whose
-   * destination satisfies the expectation always kept, then the most relevant); handoff stays last. Alternatives,
-   * decide options and act() keep the full offered set. Default false.
-   */
-  cap: boolean;
-}
-export const SLIM_KEYS: readonly (keyof SlimSwitches)[];
-export const DEFAULT_SLIM: Readonly<SlimSwitches>;
-export function resolveSlim(value?: boolean | Partial<SlimSwitches>): SlimSwitches;
 
 /**
  * Receipt next kinds. MCP responses that are not receipts (state running/pending, observe, request wait, stop,
@@ -1598,11 +1429,8 @@ export interface AgentResult {
   verdict: Verdict;
   /** Trusted: requested, granted and effective level. */
   permissions?: Permissions;
-  /**
-   * The one trusted next step; `text` names the exact tool and arguments. A step list that stopped adds `steps`: the
-   * steps to send next, renumbered, earlier auto-confirmed answers written in (`{{supply:N}}` where the host must).
-   */
-  next: { kind: NextKind; text: string; steps?: RunStep[]; expectation?: DeclarativeExpectation };
+  /** The one trusted next step; `text` names the exact tool and arguments. */
+  next: { kind: NextKind; text: string; expectation?: DeclarativeExpectation };
   /** Machine warnings: password_field, expectation_weak, controls_capped:<n>, cross_origin_frame; MCP adds
    * expectation_missing and details after a colon. */
   warnings?: string[];
@@ -1792,8 +1620,6 @@ export type HubEvent =
   | { type: 'hello'; session: HubSession | null; settings: ExtensionSettings | null; reply: HubReply }
   /** The user changed a popup setting; the daemon replies `{budget}` with the budget now in effect. */
   | { type: 'settings'; settings: ExtensionSettings; reply: HubReply }
-  /** Explicit user choice from the popup; absent driver reads the daemon's current choice. */
-  | { type: 'driver'; driver?: 'jev' | 'agent'; reply: HubReply }
   | { type: 'connected' | 'disconnected'; transport: string };
 
 export interface HubOptions {
@@ -1937,44 +1763,6 @@ export interface RequestWaitResponse {
   budget?: EffectiveBudget;
 }
 
-export interface RunBody {
-  requestId: string;
-  operation?: 'run' | 'step';
-  /** Required unless `steps` is given (operation run only; a top-level expectation or answerQuestion then goes to the last step, see RunOptions.steps). */
-  instruction?: string;
-  steps?: RunStep[];
-  maxActions?: number;
-  maxDecisions?: number;
-  timeoutMs?: number;
-  capture?: CapturePolicy;
-  /** Defaults to the request's mode; clamped to the user's grant (receipt `permissions`). */
-  mode?: AccessMode;
-  expectation?: DeclarativeExpectation;
-  /** 0-1, alias for thresholds.controlFloor (default 0.5). See RunOptions.minConfidence. */
-  minConfidence?: number;
-  /** 0-1, default 0.5. See RunOptions.doneThreshold. */
-  doneThreshold?: number;
-  /** At most 2000 characters. See RunOptions.answerQuestion. */
-  answerQuestion?: string;
-  /** Guardrail additions for this run; merged with config.json `guardrails`. See GuardrailAdditions. */
-  policy?: GuardrailAdditions;
-  /** In-call retry switches; default config.json `retry`, else on. See RunOptions.retry. */
-  retry?: boolean | Partial<RetrySwitches>;
-  /** Site-profile switch; default config.json `profiles`, else off. See RunOptions.profiles. */
-  profiles?: ProfilesSwitch;
-  /** Slim provider request switches; default config.json `slim`, else DEFAULT_SLIM. See RunOptions.slim. */
-  slim?: boolean | Partial<SlimSwitches>;
-  allowedUrls?: string[];
-  suppliedText?: Record<string, string>;
-  provider?: 'typesafe' | 'local';
-  /** Only port, model and timeoutMs; endpoints come from config.json. */
-  providerOptions?: { port?: number; model?: string; timeoutMs?: number };
-  prune?: boolean;
-  /** Absolute directory for this run's trace instead of the default artifacts/. */
-  outputDir?: string;
-  /** At most 45000; default 40000. */
-  waitMs?: number;
-}
 
 export interface ObserveBody {
   requestId: string;
@@ -2075,9 +1863,6 @@ export interface DaemonStatus {
   extension: ExtensionInfo;
   /** Every browser the hub knows, connected or recently gone with a lease. */
   browsers?: BrowserInfo[];
-  /** Who chooses each action: `agent` (the host, the default) or `jev` (the experimental autopilot). */
-  driver: 'agent' | 'jev';
-  provider: { default: string | null; keyConfigured: boolean };
   /** The per-request call budget in effect (the popup setting, else config.json `budget`, else the defaults). */
   budget: EffectiveBudget;
   requests: RequestView[];
@@ -2147,7 +1932,7 @@ export interface DaemonOptions {
 export interface Daemon {
   listen(): Promise<{ port: number }>;
   close(): Promise<void>;
-  reload(): Promise<{ ok: true; keyConfigured: boolean; secretChanged: boolean }>;
+  reload(): Promise<{ ok: true; secretChanged: boolean }>;
   /** Apply request TTL, lease idle, paused expiry and cleanup now. */
   sweep(): void;
   readonly port: number | null;
@@ -2213,12 +1998,7 @@ export class FaiBrowserClient {
   wait(body: { runId: string; maxMs?: number; afterStep?: number }, options?: ClientCallOptions): Promise<RunResponse>;
   /** Loops wait until the request leaves pending/paused or timeoutMs passes. */
   waitForTab(requestId: string, options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<RequestWaitResponse>;
-  /** Raw POST /v1/runs. */
-  startRun(body: RunBody, options?: ClientCallOptions): Promise<RunResponse>;
   waitForRun(response: RunResponse, options?: ClientCallOptions): Promise<RunResponse>;
-  /** Loops until done; aborting the signal stops the run. */
-  run(body: Omit<RunBody, 'operation'>, options?: ClientCallOptions): Promise<RunResponse>;
-  step(body: Omit<RunBody, 'operation' | 'maxActions'>, options?: ClientCallOptions): Promise<RunResponse>;
   observe(body: ObserveBody): Promise<ObserveResponse>;
   act(body: ActBody, options?: ClientCallOptions): Promise<RunResponse>;
   stop(runId: string): Promise<RunResponse>;
@@ -2226,6 +2006,6 @@ export class FaiBrowserClient {
   runs(options?: { limit?: number; requestId?: string }): Promise<{ runs: RunSummary[] }>;
   evidence(runId: string, options?: { step?: number; kind?: 'screenshot'; inline?: boolean }): Promise<EvidenceResponse>;
   evidence(runId: string, options: { kind: 'trace' }): Promise<{ runId: string; path: string; trace: TraceRecord }>;
-  reload(): Promise<{ ok: true; keyConfigured: boolean; secretChanged: boolean }>;
+  reload(): Promise<{ ok: true; secretChanged: boolean }>;
   shutdown(): Promise<{ ok: true; state: 'shutting_down' }>;
 }
