@@ -3,8 +3,7 @@
 // The settings directory (FAI_HOME, else the platform's per-user settings directory, src/paths.js) holds .env.local
 // and config.json. Runtime state (daemon.lock, daemon.json, daemon.pid, client-token, logs/) and artifacts/ live in
 // the platform's state directory, or in FAI_HOME itself when it is set. FAI_DAEMON_DIR moves the runtime state
-// alone, so a benchmark or test can run an isolated daemon next to the user's. Site profiles (domains/) are the
-// package's own unless FAI_HOME or FAI_DOMAINS_DIR names another directory. Every file is created 0600.
+// alone, so a benchmark or test can run an isolated daemon next to the user's. Every file is created 0600.
 import {
   closeSync,
   mkdirSync,
@@ -18,7 +17,7 @@ import {
 } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
-import { PACKAGE_ROOT, customHome, dataDir, faiHome } from './paths.js';
+import { customHome, dataDir, faiHome } from './paths.js';
 import { resolveThresholds } from './oversight.js';
 import { checkBudget } from './settings.js';
 import { normalizeAdditions } from './guardrails.js';
@@ -44,7 +43,6 @@ export function homePaths({ home, env = process.env } = {}) {
     envFile: join(root, '.env.local'),
     config: join(root, 'config.json'),
     artifacts: join(data, 'artifacts'),
-    domains: env.FAI_DOMAINS_DIR ? resolve(env.FAI_DOMAINS_DIR) : join(custom ? root : PACKAGE_ROOT, 'domains'),
     clientToken: join(stateDir, 'client-token'),
     lock: join(stateDir, 'daemon.lock'),
     daemonJson: join(stateDir, 'daemon.json'),
@@ -193,8 +191,7 @@ export function readClientToken(paths, env = process.env) {
 }
 
 // No config key grants a permission level or a capability, and none can raise one: the level comes only from the
-// user's approval in the extension (the lease), `guardrails` can only add forbidden labels and `thresholds.commitVeto`
-// can only be lowered. Unknown keys (a "level", "mode" or "testing" key included) are rejected.
+// user's approval in the extension (the lease) and `guardrails` can only add forbidden labels. Unknown keys (a "level", "mode" or "testing" key included) are rejected.
 const CONFIG_KEYS = new Set([
   'retention', 'requestTtlMs', 'leaseIdleMs', 'idleShutdownMs', 'outputDir', 'thresholds', 'budget', 'guardrails',
   'updateCheck',

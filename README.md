@@ -35,8 +35,8 @@ approval for payments. Login is restricted to your configured test environments.
   You can pause or stop at any time. Screenshots on either browser may still need the toolbar click;
   modal approval requests host access, which does not itself grant screenshot access.
 - **Results are receipts, not guesses.** `completed` means an independent expectation passed. Each
-  result carries a trusted `verdict` and `next {kind, text}`: answer, choose, rerun, relay to the
-  user or stop.
+  result carries a trusted `verdict` and `next {kind, text}`: answer, choose, observe, relay to the
+  user, approve or stop.
 - **Invite an agent to a tab you are on.** The toolbar popup's **Invite an agent to this tab** hands the current
   tab to a live Claude Code, Codex or OpenCode session at the level you pick. Approve and Resume wake that session,
   so it continues without you typing "done" (other hosts get a copy-paste line).
@@ -45,7 +45,7 @@ approval for payments. Login is restricted to your configured test environments.
 - **Frames you approved are readable.** A cross-origin frame inside the page (an admin portal's content blade, say) is
   read and acted on when its own origin is one you approved; other frames are never read and are boxed in screenshots.
 - **Everything is local.** The FAI service, extension and traces stay on your machine, outside the
-  checkout; only provider calls leave it.
+  checkout; FAI makes no model or provider calls.
 
 ## Demo
 
@@ -128,7 +128,7 @@ sequenceDiagram
     M-->>H: status, verification, next
 ```
 
-The daemon on `127.0.0.1:4318` owns tab requests, leases, runs, traces and the provider key; the
+The daemon on `127.0.0.1:4318` owns tab requests, leases, acts, traces and the pairing secret; the
 extension acts only in the approved tab. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Quickstart
@@ -237,7 +237,8 @@ and exit code.
   only be chosen in the popup (**Test site**) for origins you listed under Advanced, Test sites
   (`http://localhost:3000`, exact origins, no wildcards). Secret-handle use still requires approval;
   filling a saved secret handle into password fields on sign-in forms is currently unsupported.
-- **Cookie dialogs are rejected first**, at every level; below Act, accept-only dialogs go to you.
+- **Cookie dialogs:** the agent clicks the offered reject button; an accept button is only offered at Act;
+  sign-in controls and password fills are never offered below Test site.
 - **Guardrails you can tighten at any level.** `policy: {"forbid": [...], "note": "..."}` per run or
   in `config.json` adds refused labels, testing included; nothing removes one.
 - **Page text is untrusted.** Receipts separate trusted fields from page text; an injection guard
@@ -249,7 +250,7 @@ and exit code.
   repository; `FAI_UPDATE_CHECK=0` turns it off), FAI only contacts GitHub and Mozilla to download
   Firefox, the add-on or an update you asked for.
 
-Details: [Policies and providers](docs/REFERENCE.md#policies-and-providers),
+Details: [Policies](docs/REFERENCE.md#policies),
 [Guardrails](docs/REFERENCE.md#guardrails) and [Traces and
 retention](docs/REFERENCE.md#traces-and-retention).
 

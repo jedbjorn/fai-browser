@@ -67,8 +67,7 @@ test('fill_secret across two origins: offered only into fields that take a secre
   const bridge = new VaultBridge(page, { level: 'reversible', offscreen });
   const hub = createFakeHub();
   hub.bridgeForTab = () => bridge;
-  const daemon = createDaemon({ home, env: {}, port: 0, hub,
-    providerFactory: () => { throw new Error('Agent direct never constructs a provider'); } });
+  const daemon = createDaemon({ home, env: {}, port: 0, hub });
   await daemon.listen();
   const mcp = spawnMcp({ FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port), FAI_MCP_APPROVAL_WAIT_MS: '1000' });
   t.after(async () => {

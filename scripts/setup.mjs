@@ -66,12 +66,17 @@ async function main() {
       yes: { type: 'boolean', short: 'y' },
       'no-register': { type: 'boolean' },
       'no-firefox': { type: 'boolean' },
+      // Removed with the Jev autopilot; kept only to explain that.
+      driver: { type: 'string' },
     },
     strict: true,
     allowPositionals: true,
   });
   if (positionals.length) {
     throw new Error('Setup takes no positional arguments');
+  }
+  if (flags.driver !== undefined) {
+    throw new Error('The Jev autopilot was removed in 0.7.0; your agent drives. Run npm run setup without --driver.');
   }
   const extensionId = flags['extension-id'] ?? PINNED_EXTENSION_ID;
   if (!/^[a-p]{32}$/.test(extensionId)) {

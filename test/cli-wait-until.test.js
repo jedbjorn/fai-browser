@@ -11,7 +11,7 @@ import { createDaemon } from '../src/daemon.js';
 import { createLogger, homePaths } from '../src/home.js';
 import { directNext } from '../src/result.js';
 import { CLI_PATH, resumeWaitCommand, resumeWaitText, withResumeWait } from '../src/resume.js';
-import { ORIGIN, clickProvider } from './runtime-fixtures.js';
+import { ORIGIN } from './runtime-fixtures.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 
 const CLI = resolve(import.meta.dirname, '..', 'src', 'cli.js');
@@ -52,9 +52,9 @@ function oneLine(stdout) {
 }
 
 async function stubbed(t, behavior = {}) {
-  // Short daemon wait rounds (the live daemon blocks up to 30 s per round) so the loop runs several rounds. The default
-  // driver (agent) unless a test asks for Jev. wait --until never starts a daemon, so none is spawned here.
-  const stub = await startStubDaemon({ requestWaitCapMs: 150, driver: 'agent', ...behavior });
+  // Short daemon wait rounds (the live daemon blocks up to 30 s per round) so the loop runs several rounds. wait --until
+  // never starts a daemon, so none is spawned here.
+  const stub = await startStubDaemon({ requestWaitCapMs: 150, ...behavior });
   t.after(() => stub.close());
   const cli = (args, options = {}) => runCli(args, stub.env(options.env), options);
   return { stub, cli };
@@ -296,8 +296,7 @@ test('against the real daemon: a paused lease, then Resume (a new lease for the 
   const hub = createFakeHub();
   const env = {};
   const log = createLogger(homePaths({ home, env }));
-  const daemon = createDaemon({ driver: 'agent', home, env, port: 0, hub, log, sweepIntervalMs: 60_000,
-    providerFactory: () => clickProvider(['About']) });
+  const daemon = createDaemon({ home, env, port: 0, hub, log, sweepIntervalMs: 60_000 });
   await daemon.listen();
   t.after(async () => {
     await daemon.close();

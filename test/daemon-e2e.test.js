@@ -11,7 +11,7 @@ import { FaiBrowserClient } from '../src/client.js';
 import { EXTENSION_ID, FakeExtension, SECRET } from './helpers/fake-extension.js';
 import { FakeBridge, ORIGIN } from './runtime-fixtures.js';
 
-const KEY = 'jev-e2e-key-never-logged-5521';
+const KEY = 'leftover-key-never-logged-5521';
 const JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==';
 
 // Answers hub commands from the in-memory page, the way extension/background.js does: execute replies with the
@@ -56,9 +56,8 @@ function serveCommands(ext, bridge) {
 
 async function setup(t, { provider, maxWaitMs, config, pages } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-daemon-e2e-'));
-  // The Jev driver, saved as a user would (the MCP server reads it before the daemon answers).
   await writeFile(join(home, 'config.json'), JSON.stringify({ ...config }));
-  const env = { TYPESAFE_API_KEY: KEY, FAI_BRIDGE_SECRET: SECRET, FAI_EXTENSION_ID: EXTENSION_ID };
+  const env = { FAI_BRIDGE_SECRET: SECRET, FAI_EXTENSION_ID: EXTENSION_ID };
   const providers = [];
   const daemon = createDaemon({
     home,

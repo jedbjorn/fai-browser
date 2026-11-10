@@ -2,8 +2,7 @@
 // 1. Agent direct through the real MCP server and daemon: every MCP message (open, observe, act, evidence screenshot
 //    and trace), every trace.json and the daemon log are scanned for every fake secret (raw, URL-encoded, base64 and
 //    a chunk of it); none may appear, and the placeholders keep their numbers across observations and pages.
-// 2. Jev delegation: the TypeSafe provider's request bodies (what would leave the machine), the run result and its
-//    trace are scanned the same way.
+// 2. An extension that sent raw secrets still yields redacted MCP results (the daemon's own pass).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
@@ -67,8 +66,7 @@ test('Agent direct over MCP: no fake secret in any MCP message, trace or daemon 
   const bridge = new SecretBridge(page, { level: 'reversible', offscreen });
   const hub = createFakeHub();
   hub.bridgeForTab = () => bridge;
-  const daemon = createDaemon({ home, env: {}, port: 0, hub,
-    providerFactory: () => { throw new Error('Agent direct never constructs a provider'); } });
+  const daemon = createDaemon({ home, env: {}, port: 0, hub });
   await daemon.listen();
   const mcp = spawnMcp({ FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port), FAI_MCP_APPROVAL_WAIT_MS: '1000' });
   t.after(async () => {
@@ -136,8 +134,7 @@ test('defense in depth: an extension that sent raw secrets (an older page script
     controls: [link('1', `Copy ${F.stripe}`, `/copy?token=${F.jwt}`)] } };
   const home = await mkdtemp(join(tmpdir(), 'fai-secrets-raw-'));
   const hub = createFakeHub({ bridgeOptions: { pages } });
-  const daemon = createDaemon({ home, env: {}, port: 0, hub,
-    providerFactory: () => { throw new Error('Agent direct never constructs a provider'); } });
+  const daemon = createDaemon({ home, env: {}, port: 0, hub });
   await daemon.listen();
   const mcp = spawnMcp({ FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port), FAI_MCP_APPROVAL_WAIT_MS: '1000' });
   t.after(async () => {

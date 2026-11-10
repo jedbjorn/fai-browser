@@ -19,7 +19,7 @@ import { legalActions } from '../src/runtime.js';
 import { createDaemon } from '../src/daemon.js';
 import { createCompanion } from '../bench/companion.js';
 import { createLogger, homePaths } from '../src/home.js';
-import { FakeBridge, clickProvider } from './runtime-fixtures.js';
+import { FakeBridge } from './runtime-fixtures.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 
 const ROOT = 'https://*.example.org';
@@ -219,10 +219,9 @@ test('legalActions offers a sibling-subdomain link only under an approved root; 
 async function daemonSetup(t) {
   const home = await mkdtemp(join(tmpdir(), 'fai-origins-daemon-'));
   const hub = createFakeHub({ bridgeOptions: { pages: SITE, path: '/' } });
-  const env = { TYPESAFE_API_KEY: 'jev-test-key' };
+  const env = {};
   const log = createLogger(homePaths({ home, env }));
-  const daemon = createDaemon({ driver: 'jev', home, env, port: 0, hub, log, sweepIntervalMs: 60_000, warm: false,
-    providerFactory: () => clickProvider(['Team'], { fallback: 'done' }) });
+  const daemon = createDaemon({ home, env, port: 0, hub, log, sweepIntervalMs: 60_000 });
   await daemon.listen();
   t.after(async () => {
     await daemon.close();

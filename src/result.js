@@ -743,8 +743,8 @@ function leanStep(step) {
   const out = { i: step?.i, action: { type: action.type, label: action.label, toUrl: action.toUrl } };
   // A fill's supplied-text name: the host's own key, never the value.
   if (typeof action.suppliedName === 'string') out.action.suppliedName = action.suppliedName;
-  // A runtime Rung 0 step: a consent reject or a nag overlay dismissal (src/overlay.js).
-  if (step?.class === 'consent' || step?.class === 'dismiss') out.class = step.class;
+  // A consent reject click.
+  if (step?.class === 'consent') out.class = step.class;
   const confidence = step?.confidence ?? step?.decision?.confidence;
   if (Number.isFinite(confidence)) out.confidence = confidence;
   const ms = Number.isFinite(step?.ms) ? step.ms : step?.ms?.total;
@@ -773,13 +773,11 @@ function leanPoint(point, resolved) {
 // text inside `verdict` is `answer.text` (an auto-confirmed page block).
 // ---------------------------------------------------------------------------------------------------------------
 
-export const NEXT_KINDS = Object.freeze(['answer', 'answer_from_digest', 'confirm_page', 'choose', 'observe', 'relay',
-  'approve', 'stop']);
+// The next kinds a host sees (directNext), and the oversight a verdict implies for each.
+export const NEXT_KINDS = Object.freeze(['answer', 'choose', 'observe', 'relay', 'approve', 'stop']);
 
 const OVERSIGHT_FOR_NEXT = {
   answer: 'none',
-  answer_from_digest: 'confirm',
-  confirm_page: 'confirm',
   choose: 'choose',
   observe: 'instruct',
   relay: 'user',
@@ -787,7 +785,7 @@ const OVERSIGHT_FOR_NEXT = {
   stop: 'user',
 };
 // Codes after which the host observes again and chooses.
-const RERUN_CODES = new Set([
+const OBSERVE_CODES = new Set([
   'time_budget', 'fill_not_kept', 'unsupported', 'stale',
   'target_unavailable', 'capture_failed', 'step_complete',
 ]);
@@ -796,13 +794,7 @@ const RESUME_CODES = new Set([
   'select_tab', 'paused', 'tab_changed', 'origin_changed', 'child_tab', 'session_inactive', 'disconnected',
 ]);
 // needs_user codes the user handles in the tab before the same request runs again.
-const RELAY_AND_RERUN = new Set(['login', 'blocked', 'cross_origin', 'js_dialog']);
-const DIGEST_HIT_CONFIDENCE = 0.5;
-function topCandidateConfidence(result) {
-  const top = result?.answer?.candidates?.[0];
-  return Number.isFinite(top?.confidence) ? top.confidence : 0;
-}
-
+const RELAY_CODES = new Set(['login', 'blocked', 'cross_origin', 'js_dialog']);
 /**
  * The actions a host act() may run next, from the runtime's `offer` on an act result ({revision, actions, listed,
  * cap, dropped}: the listing as `actions` [{id, description}], the rest counted in `moreActions`) or from an already
@@ -838,11 +830,10 @@ export function buildVerdict(result, signals = {}) {
   let answer = null;
   let kind;
   let next;
-  const instructKind = 'observe';
   if (status === 'completed' && signals.loading) {
     // The final page still shows a loading placeholder: the digest holds the pre-load text, not the answer.
     kind = 'likely';
-    next = 'answer_from_digest';
+    next = 'answer';
   } else if (status === 'completed') {
     if (signals.answer) {
       kind = 'verified';
@@ -853,12 +844,11 @@ export function buildVerdict(result, signals = {}) {
       next = 'answer';
     } else {
       kind = code === 'expectation_passed' ? 'verified' : 'likely';
-      next = 'answer_from_digest';
+      next = 'answer';
     }
   } else if (code === 'expectation_failed') {
-    const hit = topCandidateConfidence(result) >= DIGEST_HIT_CONFIDENCE;
     kind = 'likely';
-    next = hit ? 'confirm_page' : instructKind;
+    next = offerOf(result) ? 'choose' : 'observe';
   } else if (code === 'step_complete' && offerOf(result)) {
     // A host act() landed on a page with offered actions: the host keeps driving.
     kind = 'needs_decision';
@@ -872,9 +862,9 @@ export function buildVerdict(result, signals = {}) {
     // FAI Browser refuses the task itself, or the page it reached is broken.
     kind = 'failed';
     next = 'stop';
-  } else if (RERUN_CODES.has(code)) {
+  } else if (OBSERVE_CODES.has(code)) {
     kind = 'needs_decision';
-    next = instructKind;
+    next = 'observe';
   } else if (status === 'needs_user') {
     kind = 'needs_user';
     next = 'relay';
@@ -883,7 +873,7 @@ export function buildVerdict(result, signals = {}) {
     next = 'relay';
   } else if (status === 'needs_host' && code !== 'request_closed') {
     kind = 'needs_decision';
-    next = instructKind;
+    next = 'observe';
   } else {
     // request_closed, task_budget, stopped, cancelled, interrupted and failures.
     kind = 'failed';
@@ -896,7 +886,6 @@ export function buildVerdict(result, signals = {}) {
     why,
     budget: signals.budget ?? null,
   };
-  Object.defineProperty(verdict, 'nextKind', { value: next, enumerable: false, writable: true, configurable: true });
   return verdict;
 }
 
@@ -1093,7 +1082,7 @@ function directNextStep(result, context = {}) {
       + `Browser extension); once the tab is active again, call fai_browser_observe with requestId ${ref}.`, ref,
     resumeOf(context)) };
   }
-  if (RELAY_AND_RERUN.has(code) || result.status === 'needs_user') {
+  if (RELAY_CODES.has(code) || result.status === 'needs_user') {
     return { kind: 'relay', text: `Relay needs.message to the user; once they have done it, call fai_browser_observe with requestId ${ref}.` };
   }
   if (code === 'config') return { kind: 'relay', text: 'Relay needs.message to the user. Never ask for API keys in chat.' };
@@ -1220,10 +1209,6 @@ export function agentResult(source) {
   if (Array.isArray(verification.carried) && verification.carried.length) out.verification.carried = [...verification.carried];
   const verdict = result.verdict && typeof result.verdict === 'object' ? result.verdict : buildVerdict(result);
   out.verdict = leanVerdict(verdict);
-  const nextKind = verdict.nextKind ?? (NEXT_KINDS.includes(result.next?.kind) ? result.next.kind : undefined);
-  if (nextKind) {
-    Object.defineProperty(out.verdict, 'nextKind', { value: nextKind, enumerable: false, writable: true, configurable: true });
-  }
   const page = result.page;
   if (page && typeof page === 'object') {
     const offered = result.offer && Array.isArray(result.offer.actions)

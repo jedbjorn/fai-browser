@@ -1,7 +1,5 @@
-// Guardrail pass in the runtime: the Jev commit guard (reversible mode) vetoes a chosen button/select/fill, or a
-// handoff while one is offered, as needs_user / refused_action with next stop, exactly like the mechanical refusal;
-// read-only runs are unaffected; guardrail additions (`policy`, config `guardrails`) filter offered controls, reach
-// the extension as plain phrases and the provider as context, and can never relax the core rules.
+// Guardrail pass in the runtime: guardrail additions (`policy`, config `guardrails`) filter offered controls, reach the
+// extension as plain phrases, and can never relax the core rules.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BrowserRuntime, blockedControls, legalActions } from '../src/runtime.js';

@@ -28,7 +28,6 @@ import { installIntoWorkspace, REAL_SERVER_NAME, REAL_TOOLS, realInstallMcpConfi
 import {
   adjustedRequests,
   aggregate,
-  faiRunCounts,
   countModelRequests,
   costUsd,
   DEFAULT_PRICE_WEIGHTS,
@@ -135,8 +134,8 @@ const USAGE = `Usage: node bench/compare.mjs [options]
   --no-stable-paths        A new random scratch path and site port per run (default: one per timeline)
   --claude-cache-ttl V     5m (default), 1h or default (Claude Code's own: 1 h on a subscription); sets
                            CLAUDE_CODE_PROMPT_CACHE_TTL for Claude runs
-  --real-tools V           Condition R's server entry: run (default; what install --host claude writes: only
-                           fai_browser_run eager, through the server's _meta), eager (install --always-load:
+  --real-tools V           Condition R's server entry: run (default; what install --host claude writes: the
+                           open/act/observe loop eager, through the server's _meta), eager (install --always-load:
                            alwaysLoad true) or deferred (alwaysLoad false: every tool behind ToolSearch)
   --dry-run                Print prompts and host commands without running anything
   --list                   List task ids and exit`;
@@ -321,7 +320,7 @@ if (suite.prompts) {
 const showcase = Boolean(suite.server === 'bench/showcase/serve.mjs');
 const fixtureSecrets = showcase ? await fakeSecrets() : null;
 const fill = (template, vars) => template.replace(/\{\{(\w+)\}\}/g, (match, key) => vars[key] ?? match);
-// QA corpus tasks carry the fai_browser_run parameters a careful host would choose; B gets them as a hint line.
+// QA corpus tasks carry the parameters a careful host would choose; B gets them as a hint line.
 function faiHints(task, vars) {
   const hints = [];
   if (task.mode) hints.push(`mode "${task.mode}"`);
@@ -334,7 +333,7 @@ function faiHints(task, vars) {
   if (task.expectation) hints.push(`expectation ${fill(JSON.stringify(task.expectation), vars)}`);
   if (task.answerQuestion) hints.push(`answerQuestion ${JSON.stringify(fill(task.answerQuestion, vars))}`);
   if (task.maxActions) hints.push(`maxActions ${task.maxActions}`);
-  return hints.length ? `\nFor this task use these ${showcase ? 'fai_browser_open' : 'fai_browser_run'} parameters: ${hints.join(', ')}.` : '';
+  return hints.length ? `\nFor this task use these parameters: ${hints.join(', ')}.` : '';
 }
 function buildPrompt(task, condition, origin, host, workspace = '<scratch>/ws') {
   const vars = { ORIGIN: origin, WORKSPACE: workspace, FAKE_PASSWORD: fixtureSecrets?.password,
@@ -459,11 +458,7 @@ if (faiConditions.length) {
     }
   } else {
     faiServer = preflight.server;
-    if (!suite.prompts?.fai && preflight.tools.includes('fai_browser_open') && !preflight.tools.includes('fai_browser_run')
-      && faiConditions.includes('b')) {
-      skip.b = 'This legacy corpus inlines experimental Jev instructions. For Agent direct use '
-        + '--tasks-file bench/showcase/tasks.json (or supply an Agent direct suite prompt).';
-    }
+
     meta.fai = {
       server: preflight.server,
       tools: preflight.tools,
@@ -784,8 +779,6 @@ async function runOne(task, condition, rep, host, { warmup = false, w = 0 } = {}
       ...grade(task, answer),
       codexErrors: parsed.errors,
       calls: parsed.calls.map(({ result: _result, ...call }) => call),
-      // Whether the host sent step lists: fai_browser_run calls, those with steps, and steps sent.
-      ...faiRunCounts(parsed.calls),
       // ToolSearch / Skill uses (Claude): the host turns condition R exists to measure.
       ...(parsed.hostToolUses && Object.keys(parsed.hostToolUses).length ? { hostToolUses: parsed.hostToolUses } : {}),
     });
@@ -970,7 +963,6 @@ for (const item of schedule) {
       + `priced ${record.tokenSplit ? Math.round(record.tokenSplit.priced) : '-'}), cost ${fmtUsd(record.cost?.usd)}`
       + `${record.cost?.reportedUsd != null ? ` (reported ${fmtUsd(record.cost.reportedUsd)})` : ''}, `
       + `${record.cachePhase ?? '-'}${record.gapS != null ? ` after ${record.gapS} s` : ''}, `
-      + `${record.faiStepCalls ? `${record.faiStepCalls} call(s) with steps, ` : ''}`
       + `${record.outcomeGrade ? `outcome ${JSON.stringify(record.outcomeGrade.outcome)}` : `answer ${JSON.stringify(record.answer)}`}`
       + `${record.dangerClicks ? `, ${record.dangerClicks} DANGER CLICKS` : ''}`
       + `${record.reason ? ` (${record.reason.split('\n')[0]})` : ''}`;

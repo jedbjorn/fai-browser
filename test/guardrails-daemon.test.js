@@ -38,10 +38,10 @@ async function setup(t, { config, guards } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-guardrails-'));
   if (config) await writeFile(join(home, 'config.json'), JSON.stringify(config));
   const hub = createFakeHub({ bridgeOptions: { pages: PAGES, path: '/' } });
-  const env = { TYPESAFE_API_KEY: 'k-test' };
+  const env = {};
   const log = createLogger(homePaths({ home, env }));
   const provider = recordingProvider(guards);
-  const daemon = createDaemon({ driver: 'jev', home, env, port: 0, hub, log, sweepIntervalMs: 60_000, providerFactory: () => provider });
+  const daemon = createDaemon({ home, env, port: 0, hub, log, sweepIntervalMs: 60_000 });
   await daemon.listen();
   t.after(async () => {
     await daemon.close();

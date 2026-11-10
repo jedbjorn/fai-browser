@@ -19,9 +19,8 @@ const PAGE_PATH = '/private/salary-report-9921';
 async function setup(t, { alive = () => true, sweepIntervalMs = 60_000, clock = null } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-invite-'));
   const hub = createFakeHub();
-  const daemon = createDaemon({ driver: 'agent', home, env: {}, port: 0, hub, isAlive: pid => alive(pid),
-    sweepIntervalMs, ...(clock ? { now: () => clock.now } : {}),
-    providerFactory: () => { throw new Error('no provider in agent direct'); } });
+  const daemon = createDaemon({ home, env: {}, port: 0, hub, isAlive: pid => alive(pid),
+    sweepIntervalMs, ...(clock ? { now: () => clock.now } : {}) });
   await daemon.listen();
   t.after(async () => {
     await daemon.close();
@@ -329,7 +328,7 @@ test('Approve and Resume wake the session that made the request, and no other', 
 test('sessions are not client activity: polls never keep an idle daemon up', async t => {
   const home = await mkdtemp(join(tmpdir(), 'fai-invite-idle-'));
   let shutdowns = 0;
-  const daemon = createDaemon({ driver: 'agent', home, env: { FAI_DAEMON_IDLE_MS: '300' }, port: 0, hub: createFakeHub(),
+  const daemon = createDaemon({ home, env: { FAI_DAEMON_IDLE_MS: '300' }, port: 0, hub: createFakeHub(),
     sweepIntervalMs: 50, onShutdownRequest: () => { shutdowns++; } });
   await daemon.listen();
   t.after(async () => {
@@ -347,8 +346,8 @@ test('sessions are not client activity: polls never keep an idle daemon up', asy
 
 test('the real hub: an invite over the paired WebSocket, validated, with a lease bound to that browser', async t => {
   const home = await mkdtemp(join(tmpdir(), 'fai-invite-hub-'));
-  const daemon = createDaemon({ driver: 'agent', home, env: { FAI_BRIDGE_SECRET: SECRET, FAI_EXTENSION_ID: EXTENSION_ID },
-    port: 0, sweepIntervalMs: 60_000, providerFactory: () => { throw new Error('no provider'); } });
+  const daemon = createDaemon({ home, env: { FAI_BRIDGE_SECRET: SECRET, FAI_EXTENSION_ID: EXTENSION_ID },
+    port: 0, sweepIntervalMs: 60_000 });
   await daemon.listen();
   const ext = await FakeExtension.connect({ port: daemon.port });
   t.after(async () => {
@@ -541,8 +540,8 @@ test('final: a run of an invited tab stays the owner\'s after its request record
   const clock = { now: Date.now() };
   const home = await mkdtemp(join(tmpdir(), 'fai-invite-final-'));
   const hub = createFakeHub({ bridgeOptions: { captureDelayMs: 400 } });
-  const daemon = createDaemon({ driver: 'agent', home, env: {}, port: 0, hub, isAlive: () => true, now: () => clock.now,
-    sweepIntervalMs: 20, providerFactory: () => { throw new Error('no provider'); } });
+  const daemon = createDaemon({ home, env: {}, port: 0, hub, isAlive: () => true, now: () => clock.now,
+    sweepIntervalMs: 20 });
   await daemon.listen();
   t.after(async () => {
     await daemon.close();

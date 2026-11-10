@@ -13,8 +13,6 @@ const PAIRING = { FAI_BRIDGE_SECRET: 'dummy-pairing-secret-for-cli-tests-0001', 
 async function workspace(t, options) {
   const dir = await mkdtemp(join(tmpdir(), 'fai-cli-test-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  // These runs exercise the experimental Jev driver, saved as a user opts in to it.
-  await writeFile(join(dir, 'config.json'), JSON.stringify({ driver: 'jev' }));
   const optionsPath = join(dir, 'options.json');
   const base = {
     allowedOrigins: ['http://127.0.0.1:9'],

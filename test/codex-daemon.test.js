@@ -10,7 +10,7 @@ import { ORIGIN } from './runtime-fixtures.js';
 test('codex: popup Release on a paused request releases the lease through deny', async t => {
   const home = await mkdtemp(join(tmpdir(), 'codex-daemon-'));
   const hub = createFakeHub();
-  const daemon = createDaemon({ driver: 'jev', home, port: 0, hub, env: { FAI_BRIDGE_SECRET: 'test-pairing-'.repeat(4) } });
+  const daemon = createDaemon({ home, port: 0, hub, env: { FAI_BRIDGE_SECRET: 'test-pairing-'.repeat(4) } });
   t.after(async () => { await daemon.close(); await rm(home, { recursive: true, force: true }); });
   await daemon.listen();
   const created = await call(daemon.port, 'POST', '/v1/requests', {

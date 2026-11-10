@@ -922,8 +922,7 @@ export const DEFAULT_THRESHOLDS: Readonly<Thresholds>;
  * Receipt next kinds. MCP responses that are not receipts (state running/pending, observe, request wait, stop,
  * release) also send `next` as `{kind, text}`, with `wait` (call fai_browser_wait) or one of these kinds.
  */
-export type NextKind = 'answer' | 'answer_from_digest' | 'confirm_page' | 'choose' | 'observe' | 'relay'
-  | 'approve' | 'stop' | 'wait';
+export type NextKind = 'answer' | 'choose' | 'observe' | 'relay' | 'approve' | 'stop' | 'wait';
 
 /** Receipt v2 verdict: runtime-written and trusted, except `answer.text` (page text). */
 export interface Verdict {

@@ -9,14 +9,14 @@ import { LEASE_MESSAGES } from '../src/result.js';
 import { ORIGIN } from './runtime-fixtures.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 
-const KEY = 'jev-test-key-must-not-be-logged-9137';
+const KEY = 'leftover-key-must-not-be-logged-9137';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function setup(t, options = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-daemon-api-'));
   if (options.config) await writeFile(join(home, 'config.json'), JSON.stringify(options.config));
   const hub = createFakeHub({ bridgeOptions: options.bridgeOptions });
-  const env = { TYPESAFE_API_KEY: KEY, ...options.env };
+  const env = { ...options.env };
   const log = createLogger(homePaths({ home, env }));
   let shutdowns = 0;
   const daemon = createDaemon({

@@ -46,7 +46,7 @@ before proposing one.
 | `bench/` | The benchmark and QA harnesses (maintainer tools) |
 | `docs/` | `REFERENCE.md` (exhaustive), `guide/` (task-oriented), `design/` |
 
-Site-specific logic does not belong in `src/`. A new site gets a profile under `domains/` or a sub-skill under `tasks/`.
+Site-specific logic does not belong in `src/`. A new site gets a sub-skill under `tasks/<name>/`: a short `SKILL.md` guide and, when needed, the task's vocabulary in `index.js`.
 
 ## Running the tests
 
@@ -116,7 +116,7 @@ Rules of thumb for these files:
 ## Changing the agent loop
 
 For changes to observation, ranking or the result shape, measure before and after with the harness in
-[bench/](bench/README.md), one change per run; `npm run bench` uses a fake provider and needs no key. Tool schemas and
+[bench/](bench/README.md), one change per run; `npm run bench` uses an in-memory bridge and needs no browser. Tool schemas and
 server instructions are re-sent to the host model on every request, so every byte counts: `test/mcp.test.js` and
 `test/agent-direct.test.js` bound their size.
 

@@ -186,7 +186,7 @@ on several pages uses `oracle.pages: [{steps, text}, ...]`, each checked from `s
 | `/spa/app`, `/spa/app/*` | the single-page app (pushState routes survive a reload) |
 | `/links/term/<slug>` | glossary term page |
 | `/errors/billing` | the 500 page with status 500; every unknown path gets the HTML 404 page |
-| `/long/*` | `fixtures/long/`, the long-horizon corpus ([bench/long](../long/README.md)), same file rules |
+| `/long/*` | `fixtures/long/`, the long-horizon corpus (its runner was removed with the Jev autopilot), same file rules |
 
 `startQaSite()` returns `{origin, stats, mark(), since(mark), close()}`; the runner takes a mark before each task and
 attaches `since(mark)` to the record.

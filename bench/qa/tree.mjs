@@ -1,8 +1,6 @@
 // The product tree a corpus session runs: `--tree <path>` (or FAI_BENCH_TREE) points the runners at another checkout,
 // for example a worktree of an earlier tag, whose src/ (daemon, SDK client, receipt shaping, step caps) and extension/
-// are used while the runner, the corpus and the grader stay this checkout's. Default: this checkout. Read from argv at
-// load time so the modules that need the tree's caps (bench/long/lib.mjs) can resolve them before parsing flags.
-// Only bench/long/run.mjs honours it fully; bench/qa/run.mjs still shapes receipts with this checkout's src/.
+// are used while the corpus and the grader stay this checkout's. Default: this checkout. Read from argv at load time.
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';

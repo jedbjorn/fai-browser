@@ -32,7 +32,7 @@ async function until(predicate, what, ms = 8000) {
 async function setup(t, { clientInfo = { name: 'opencode', version: '1.19.5' }, plugin = true, parents = {} } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-oc-mcp-'));
   const hub = createFakeHub({ bridgeOptions: { pages: PAGES } });
-  const daemon = createDaemon({ home, env: {}, port: 0, hub, providerFactory: () => { throw new Error('no provider'); } });
+  const daemon = createDaemon({ home, env: {}, port: 0, hub });
   await daemon.listen();
   const prompts = [];
   const client = {
