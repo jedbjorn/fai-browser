@@ -1,13 +1,12 @@
 {
-  "about": "Front-end pattern corpus: small synthetic pages, one common way to build a front end each, with the observation facts extension/page.js should report on them. test/patterns.test.js loads every page into headless Chromium with the real page script and turns each check into a test; a check with `finding` is a known gap, run as a todo whose message names it. Check fields: `steps` run first in order ({click: label}, {scroll: up|down}, {fill: label, text}, {wait: ms}); `level` is the capability level the page script is given (read-only, reversible, interactive; default read-only); `expect` holds the facts: overlay (null, or a subset of the observation's overlay), consent (true/false), text / textAbsent (viewport text), blocks / blocksAbsent (any block's text), controls / controlsAbsent (control labels, substring), marked (labels of controls inside an overlay), dismiss (labels of an overlay's close controls), frameControls (labels of controls inside a frame), fillKept (the last fill), warnings. A `run` check runs BrowserRuntime at `run.level` with a provider that only reports done, and `expect` holds dismissSteps (the methods of its dismiss steps in order), overlayAfter (an overlay still on the final page), why (codes the verdict must list), status and finalBlocks (texts of the final observation's blocks).",
+  "about": "Front-end pattern corpus: small synthetic pages, one common way to build a front end each, with the observation facts extension/page.js should report on them. test/patterns.test.js loads every page into headless Chromium with the real page script and turns each check into a test; a check with `finding` is a known gap, run as a todo whose message names it. Check fields: `steps` run first in order ({click: label}, {scroll: up|down}, {fill: label, text}, {wait: ms}); `level` is the capability level the page script is given (read-only, reversible, interactive; default read-only); `expect` holds the facts: overlay (null, or a subset of the observation's overlay), consent (true/false), text / textAbsent (viewport text), blocks / blocksAbsent (any block's text), controls / controlsAbsent (control labels, substring), marked (labels of controls inside an overlay), closers (labels of an overlay's close controls), frameControls (labels of controls inside a frame), fillKept (the last fill), warnings.",
   "patterns": [
     {
       "id": "nag-aria-dialog-x",
       "file": "nag-aria-dialog-x.html",
       "exercises": "ARIA modal (role=dialog, aria-modal) in a dimming wrapper, newsletter nag closed by a × button",
       "checks": [
-        { "id": "detected", "expect": { "overlay": { "kind": "newsletter", "nag": true, "escape": true }, "dismiss": ["Close"], "marked": ["Subscribe", "Close"], "warnings": ["blocking_overlay"], "blocks": ["Pruning shears"] } },
-        { "id": "dismissed", "run": { "level": "read-only", "expectation": { "textIncludes": "Garden tools" } }, "expect": { "dismissSteps": ["close"], "overlayAfter": false, "why": ["overlay:dismissed", "overlay:close"], "status": "completed" } },
+        { "id": "detected", "expect": { "overlay": { "kind": "newsletter", "nag": true, "escape": true }, "closers": ["Close"], "marked": ["Subscribe", "Close"], "warnings": ["blocking_overlay"], "blocks": ["Pruning shears"] } },
         { "id": "records", "expect": { "records": ["Pruning shears", "Hand trowel", "Garden fork", "Hose reel"], "recordHints": { "Garden fork": { "rating": 4.8 } } } }
       ]
     },
@@ -16,8 +15,7 @@
       "file": "nag-div-backdrop.html",
       "exercises": "promo overlay made of plain divs (no dialog role) over a separate backdrop element; only a backdrop click closes it",
       "checks": [
-        { "id": "detected", "expect": { "overlay": { "kind": "promo", "nag": true, "backdrop": true }, "marked": ["Spin to win"] } },
-        { "id": "dismissed", "run": { "level": "read-only", "expectation": { "textIncludes": "City breaks" } }, "expect": { "dismissSteps": ["escape", "backdrop"], "overlayAfter": false, "why": ["overlay:dismissed", "overlay:backdrop"], "status": "completed" } }
+        { "id": "detected", "expect": { "overlay": { "kind": "promo", "nag": true, "backdrop": true }, "marked": ["Spin to win"] } }
       ]
     },
     {
@@ -25,8 +23,7 @@
       "file": "nag-native-dialog.html",
       "exercises": "native <dialog> opened with showModal(), sign-up nag with no close control; Escape closes it",
       "checks": [
-        { "id": "detected", "expect": { "overlay": { "kind": "sign_in", "nag": true, "escape": true }, "controlsAbsent": ["Close"], "marked": ["Sign up free"] } },
-        { "id": "dismissed", "run": { "level": "read-only", "expectation": { "textIncludes": "Weeknight recipes" } }, "expect": { "dismissSteps": ["escape"], "overlayAfter": false, "why": ["overlay:escape"], "status": "completed" } }
+        { "id": "detected", "expect": { "overlay": { "kind": "sign_in", "nag": true, "escape": true }, "controlsAbsent": ["Close"], "marked": ["Sign up free"] } }
       ]
     },
     {
@@ -34,8 +31,7 @@
       "file": "nag-bottom-sheet-app.html",
       "exercises": "non-modal bottom sheet asking to install the app, closed by \"Not now\"",
       "checks": [
-        { "id": "detected", "expect": { "overlay": { "kind": "app", "nag": true }, "dismiss": ["Not now"], "marked": ["Open in app"] } },
-        { "id": "dismissed", "run": { "level": "read-only", "expectation": { "textIncludes": "Today in the city" } }, "expect": { "dismissSteps": ["close"], "overlayAfter": false, "status": "completed" } }
+        { "id": "detected", "expect": { "overlay": { "kind": "app", "nag": true }, "closers": ["Not now"], "marked": ["Open in app"] } }
       ]
     },
     {
@@ -43,8 +39,7 @@
       "file": "cookie-plus-nag.html",
       "exercises": "the live Booking.com shape: a cookie banner and a membership modal (\"Sign in, save money\") at once; reject the cookies first, then dismiss the modal by its aria-labelled icon button",
       "checks": [
-        { "id": "detected", "expect": { "consent": true, "overlay": { "kind": "sign_in", "nag": true }, "dismiss": ["Dismiss sign-in info."], "controlsAbsent": [] } },
-        { "id": "dismissed", "run": { "level": "read-only", "expectation": { "textIncludes": "properties found" } }, "expect": { "dismissSteps": ["close"], "overlayAfter": false, "why": ["consent:rejected", "overlay:dismissed"], "status": "completed" } },
+        { "id": "detected", "expect": { "consent": true, "overlay": { "kind": "sign_in", "nag": true }, "closers": ["Dismiss sign-in info."], "controlsAbsent": [] } },
         { "id": "records", "expect": { "records": ["Hotel Lumière", "Maison Verte", "Le Petit Quai"], "recordHints": { "Hotel Lumière": { "price": "€412", "rating": 8.7 } } } }
       ]
     },
@@ -53,8 +48,7 @@
       "file": "task-dialog.html",
       "exercises": "a task dialog (an address form with a close X): reported as kind task, never dismissed, its controls not demoted",
       "checks": [
-        { "id": "detected", "expect": { "overlay": { "kind": "task", "nag": false }, "dismiss": [], "marked": [] } },
-        { "id": "kept", "run": { "level": "read-only", "expectation": { "textIncludes": "Edit your shipping address" } }, "expect": { "dismissSteps": [], "overlayAfter": true, "why": ["overlay:kept:task"], "status": "completed" } }
+        { "id": "detected", "expect": { "overlay": { "kind": "task", "nag": false }, "closers": [], "marked": [] } }
       ]
     },
     {
@@ -62,8 +56,7 @@
       "file": "age-gate.html",
       "exercises": "an age gate with a close X: the user answers it, never dismissed",
       "checks": [
-        { "id": "detected", "expect": { "overlay": { "kind": "age_gate", "nag": false }, "dismiss": [], "marked": ["Yes, I am over 18"] } },
-        { "id": "kept", "run": { "level": "read-only", "expectation": { "textIncludes": "Red wines" } }, "expect": { "dismissSteps": [], "overlayAfter": true, "why": ["overlay:kept:age_gate"] } }
+        { "id": "detected", "expect": { "overlay": { "kind": "age_gate", "nag": false }, "closers": [], "marked": ["Yes, I am over 18"] } }
       ]
     },
     {
@@ -81,7 +74,6 @@
       "checks": [
         { "id": "first-batch", "expect": { "blocks": ["Photo 10:"], "blocksAbsent": ["Photo 11:"] } },
         { "id": "scroll-loads", "steps": [{ "scroll": "down" }, { "wait": 250 }, { "scroll": "down" }, { "wait": 250 }], "expect": { "blocks": ["Photo 20:"] } },
-        { "id": "runtime-scrolls-to-load", "run": { "level": "read-only", "instruction": "Read the photo feed.", "answerQuestion": "Which photo has the most likes?", "expectation": { "textIncludes": "Photo feed" } }, "expect": { "why": ["more:scrolled"], "status": "completed", "finalBlocks": ["Photo 20:"] } },
         { "id": "plain-rows", "expect": { "records": [] } }
       ]
     },

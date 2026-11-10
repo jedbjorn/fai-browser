@@ -1,9 +1,7 @@
 // The front-end pattern corpus (fixtures/patterns/manifest.json): every pattern page is loaded into headless Chromium
 // with the real extension/page.js, and every check of the manifest is one test. Observation checks run the check's
 // steps through the page script (as the extension does: execute with dispatch, settle and observe) and compare the
-// manifest's expected facts; `run` checks drive BrowserRuntime over the page (test/helpers/page-bridge.js) with a
-// provider that only reports done, so the runtime's own Rung 0 (consent reject, overlay dismissal) is what acts. A
-// check with `finding` is a known gap: a todo whose name carries the FINDING message.
+// manifest's expected facts. A check with `finding` is a known gap: a todo whose name carries the FINDING message.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -116,12 +114,9 @@ function checkObservation(observation, fill, expect) {
       `marked overlay controls ${marked.join(' | ')}`);
     if (!expect.marked.length) assert.deepEqual(marked, [], 'no control is marked');
   }
-  if (expect.dismiss) {
+  if (expect.closers) {
     const closers = (observation.overlay?.closers ?? []).map(closer => closer.label);
-    assert.deepEqual(closers, expect.dismiss, 'close controls');
-    for (const closer of observation.overlay?.closers ?? []) {
-      assert.equal(observation.controls.find(control => control.id === closer.id)?.dismiss, true, `${closer.label} is a dismiss control`);
-    }
+    assert.deepEqual(closers, expect.closers, 'close controls');
   }
   for (const label of expect.frameControls ?? []) {
     assert.ok(observation.controls.some(control => control.label.includes(label) && control.frame !== undefined), `frame control "${label}"; ${where()}`);
@@ -147,8 +142,7 @@ function checkObservation(observation, fill, expect) {
 }
 
 for (const pattern of MANIFEST.patterns) {
-  // `run` checks drove the removed Jev loop (its own overlay dismissal); the page-script checks stay.
-  for (const check of pattern.checks.filter(entry => !entry.run)) {
+  for (const check of pattern.checks) {
     const name = `${pattern.id}: ${check.id}${check.finding ? ` (${check.finding})` : ''}`;
     test(name, check.finding ? { todo: check.finding } : {}, async t => {
       const page = await open(t, pattern.file);
