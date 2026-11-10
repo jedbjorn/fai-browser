@@ -148,7 +148,7 @@ Linux or macOS. See [Browsers](#browsers).
 
 ```sh
 npm test
-node examples/fake-demo.js   # deterministic provider and in-memory bridge; prints a result
+node examples/fake-demo.js   # in-memory bridge; observe, then act; prints a result
 ```
 
 **Set it up for real (one time):**

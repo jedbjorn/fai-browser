@@ -110,7 +110,7 @@ Details: [safety-model.md](safety-model.md). Risky clicks (a purchase, a delete,
 
 ```sh
 node --test test/secrets.test.js   # a fast, browserless test file; the full suite is in CONTRIBUTING.md
-node examples/fake-demo.js     # a deterministic provider and an in-memory bridge; prints a result
+node examples/fake-demo.js     # an in-memory bridge; observe, then act; prints a result
 ```
 
 ## Next
