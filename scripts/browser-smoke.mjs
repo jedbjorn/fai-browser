@@ -12,11 +12,9 @@ import http from 'node:http';
 import { mkdtemp, cp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
-import { loadEnvFile } from 'node:process';
 import { randomBytes } from 'node:crypto';
 import { createHub } from '../src/bridge.js';
 import { createCompanion } from '../bench/companion.js';
-import { TypeSafeProvider } from '../src/typesafe.js';
 import { BrowserRuntime } from '../src/runtime.js';
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright-core');
@@ -411,50 +409,24 @@ try {
   checks.push(`blocks on a ${timings.largeInPage.elements}-element page: 200 blocks, blocksTruncated`);
 
   await page.goto(origin);
-  const runtime = new BrowserRuntime({
-    bridge: companion.bridge,
-    provider: {
-      async decide(obs, actions) {
-        if (obs.url.endsWith('/about.html')) return { actionId: 'done' };
-        const about = actions.find(a => a.type === 'click' && obs.controls.find(c => c.id === a.target)?.label === 'About project');
-        return { actionId: about.id };
-      },
-    },
-  });
-  const run = await runtime.run('Open About project', {
-    allowedOrigins: [origin],
-    expectation: { textIncludes: 'Ada, Grace, Linus' },
-    maxActions: 3,
-  });
+  const runtime = new BrowserRuntime({ bridge: companion.bridge });
+  // The host-driven loop: observe, then act on the offered "About project" link with an expectation to verify.
+  const aboutOn = offered => offered.actions.find(action => action.type === 'click' && JSON.stringify(action).includes('About project'));
+  let offered = await runtime.observe({ allowedOrigins: [origin] });
+  const run = await runtime.act(aboutOn(offered).id, { expectation: { textIncludes: 'Ada, Grace, Linus' } });
   assert.equal(run.status, 'completed', run.reason);
   assert.equal(run.verification.passed, true);
   assert.equal(run.steps.length, 1);
-  checks.push('agent-facing runtime run + independent outcome verification');
+  checks.push('agent-facing runtime observe + act + independent outcome verification');
 
   await page.goto(origin);
-  const lastOnly = await runtime.run('Open About project', {
-    allowedOrigins: [origin],
-    expectation: { textIncludes: 'Ada, Grace, Linus' },
-    maxActions: 3,
-    capture: 'last',
-  });
+  offered = await runtime.observe({ allowedOrigins: [origin] });
+  const lastOnly = await runtime.act(aboutOn(offered).id, { expectation: { textIncludes: 'Ada, Grace, Linus' }, capture: 'last' });
   assert.equal(lastOnly.status, 'completed', lastOnly.reason);
   const finalStep = lastOnly.steps.at(-1);
   assert.equal(finalStep.screenshot?.revision, finalStep.observation.revision, JSON.stringify(finalStep.captureError));
   assert.ok(finalStep.screenshot.dataUrl.startsWith('data:image/jpeg;base64,'));
-  checks.push('capture last: actions run uncaptured, final step captured on demand with matching revision');
-
-  if (process.env.FAI_LIVE_JEV === '1') {
-    loadEnvFile(join(root, '.env.local'));
-    await page.goto(origin);
-    const live = new BrowserRuntime({ bridge: companion.bridge, provider: new TypeSafeProvider() });
-    const step = await live.step('Open About project', { allowedOrigins: [origin], mode: 'read-only', timeoutMs: 15000 });
-    assert.equal(step.steps.length, 1, step.reason);
-    const final = await observe();
-    assert.equal(final.url, origin + '/about.html');
-    assert.match(final.text, /Ada, Grace, Linus/);
-    checks.push('live Jev one-action read-only fixture navigation + independent URL/text evidence');
-  }
+  checks.push('capture last: the act captured on demand with matching revision');
 
   await page.goto(origin);
   observation = await observe();
