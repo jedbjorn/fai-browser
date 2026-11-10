@@ -5,13 +5,11 @@
 // Browser with each coding agent found on PATH. Settings from an older checkout-local install are moved first.
 // Last, when an official Firefox is installed, it offers to set up the FAI Browser profile for it (src/launcher/
 // launch.js: a separate profile with the signed add-on, paired); otherwise it prints the launcher command.
-// Your coding agent drives the browser by default (no key); only the experimental Jev autopilot needs a key.
+// Your coding agent drives the browser; no key is needed.
 //   npm run setup                                  everything above; asks before registering each coding agent
 //   npm run setup -- --yes                          register every detected coding agent without asking
 //   npm run setup -- --no-register                  skip coding-agent registration
 //   npm run setup -- --no-firefox                   skip the offer to set up the FAI Browser profile for Firefox
-//   npm run setup -- --driver jev                   opt in to the experimental Jev autopilot (asks for its key)
-//   npm run setup -- --driver agent                 back to your agent driving
 //   npm run setup -- --extension-id <32 a-p chars> override the pinned ID (only for a re-keyed manifest)
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
@@ -20,8 +18,8 @@ import { parseArgs } from 'node:util';
 import { PINNED_EXTENSION_ID } from '../src/bridge.js';
 import { FaiBrowserClient } from '../src/client.js';
 import { PACKAGE_ROOT } from '../src/paths.js';
-import { DRIVERS, homePaths, loadConfig, saveDriver } from '../src/home.js';
-import { promptKey, readEnvFile, saveSettings } from '../src/settings.js';
+import { homePaths, loadConfig } from '../src/home.js';
+import { readEnvFile, saveSettings } from '../src/settings.js';
 import { migrateLegacyHome } from '../src/migrate.js';
 import { applyNativeInstall, planNativeInstall } from '../src/native.js';
 import { InstallError, detectHosts, registerHost } from '../src/install.js';
@@ -65,23 +63,24 @@ async function main() {
   const { values: flags, positionals } = parseArgs({
     options: {
       'extension-id': { type: 'string' },
-      driver: { type: 'string' },
       yes: { type: 'boolean', short: 'y' },
       'no-register': { type: 'boolean' },
       'no-firefox': { type: 'boolean' },
+      // Removed with the Jev autopilot; kept only to explain that.
+      driver: { type: 'string' },
     },
     strict: true,
     allowPositionals: true,
   });
   if (positionals.length) {
-    throw new Error('Setup takes no positional arguments; enter the Jev key only at the hidden prompt');
+    throw new Error('Setup takes no positional arguments');
+  }
+  if (flags.driver !== undefined) {
+    throw new Error('The Jev autopilot was removed in 0.7.0; your agent drives. Run npm run setup without --driver.');
   }
   const extensionId = flags['extension-id'] ?? PINNED_EXTENSION_ID;
   if (!/^[a-p]{32}$/.test(extensionId)) {
     throw new Error('--extension-id must be the 32 character extension ID');
-  }
-  if (flags.driver !== undefined && !DRIVERS.includes(flags.driver)) {
-    throw new Error('--driver must be agent or jev');
   }
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error('Run setup in an interactive terminal');
@@ -92,23 +91,16 @@ async function main() {
   if (migrated.moved.length) console.log(`Moved ${migrated.moved.join(' and ')} from the checkout to ${paths.home}.`);
   if (migrated.left.length) console.log(`Left in place (delete when no longer needed): ${migrated.left.join(', ')}`);
 
-  const config = loadConfig(paths);
-  // No question: the saved choice (your agent unless Jev was opted in to) unless --driver names one.
-  const driver = flags.driver ?? config.driver;
+  // Refuse to go on over a malformed config.json (the daemon would not start with it).
+  loadConfig(paths);
   const saved = readEnvFile(paths.envFile);
   if (saved.FAI_EXTENSION_ID && saved.FAI_EXTENSION_ID !== extensionId) {
     console.log(`Replacing saved extension ID ${saved.FAI_EXTENSION_ID} with ${extensionId}.`);
   }
-  // A key only for the Jev autopilot, and only when asked for it with --driver jev.
-  const replaceKey = flags.driver === 'jev'
-    && (!saved.TYPESAFE_API_KEY || await ask('Replace the saved Jev key? [y/N]: '));
   const secret = saved.FAI_BRIDGE_SECRET || randomBytes(32).toString('hex');
   const values = { FAI_EXTENSION_ID: extensionId, FAI_BRIDGE_SECRET: secret };
-  if (replaceKey) values.TYPESAFE_API_KEY = await promptKey();
   await saveSettings(values, paths.envFile);
-  saveDriver(driver, paths);
   console.log(`Settings saved in ${paths.home} (mode 0600).`);
-  if (driver === 'jev') console.log('Jev autopilot (experimental) selected. The Jev key stays on this computer.');
 
   let native;
   try {

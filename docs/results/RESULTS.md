@@ -1,5 +1,7 @@
 # Before/after: delegating browser work
 
+> Note: the experimental Jev autopilot (TypeSafe provider, `fai_browser_run`, step lists, site profiles) this document describes was removed in Unreleased (after 0.6.2). Kept as history.
+
 FAI Browser lets a coding agent delegate a bounded browser task to a local browser worker through MCP. It returns a receipt with the observed answer, verification evidence, and the next action for the host or user.
 
 > **What these numbers measure.** Everything on this page measures the experimental **Jev autopilot** (an optional TypeSafe Jev
@@ -14,10 +16,6 @@ Across six host models, FAI's wall-time speedup is **1.24×–1.73×**, with low
 FAI with Opus 5.5 averages **8.6 s/task** over the per-task medians; Sonnet 5.5 is the fastest host/condition combination at **7.1 s/task**. These are suite averages of medians, not the best individual task times. Every host passes 24/24 with FAI. See the [report data](../../bench/report/out/all-hosts/data.json) for the numbers behind the tables and graphics. [docs/TESTED.md](../TESTED.md) describes the fixture site, the eight tasks, the QA corpus and the real-site probe.
 
 Luna and Terra are the cheapest host tiers. On the first matrix (2026-10-04 midday) they passed 21/24 and 17/24 with FAI: the receipt's answer was a whole page line that cheap hosts copied verbatim, and Terra sometimes failed to find the MCP tool behind Codex's tool search. Both were FAI-side fixes (the answer value is now cut from the line; the skill and tool text name the tool exactly). The clean rerun (`2026-10-04-matrix-3-weak-b`, contiguous timeline, 3 repeats, on the build that also includes the guardrail pass) passes 24/24 on both: Luna 13.5 s/task at $0.0014, Terra 12.8 s/task at $0.020. Their Playwright MCP baselines are from the earlier matrix (`2026-10-04-matrix-2`); the baseline does not use FAI, so those fixes do not affect it.
-
-![](../../bench/report/out/all-hosts/report-1600.png)
-
-![](../../bench/report/out/all-hosts/report-social-1080x1350.png)
 
 <!-- results:begin -->
 ## Measured comparison
@@ -120,7 +118,7 @@ These are separate checkpoints, not extra samples in the six-host comparison.
 
 - The 2026-10-03 Sol milestone reports FAI at **139.6 s** versus Playwright MCP at **174.7 s** for the eight-task suite, with **9 vs 47 tool calls** and **17 vs 55 recorded model requests**. The saved baseline has 14 attempts and FAI has 24, so this is an earlier development comparison with unequal repeat coverage. [Summary](../../bench/results/2026-10-03T23-35-50-786/summary.md).
 - The successful oversight pass reduces FAI to **8 calls and 16 recorded requests**, with **0 false automations** and 24/24 task attempts passing. [Summary](../../bench/results/2026-10-04-oversight-2/summary.md).
-- Jev guidance evaluation accuracy rises from **0.863 to 0.949**, comparing the `base` and `all` configurations. [Summary](../../bench/results/jev-eval-1/summary.md).
+- Jev guidance evaluation accuracy rises from **0.863 to 0.949**, comparing the `base` and `all` configurations. Summary (removed).
 - The guardrail pass (2026-10-04, after the six-host matrix) adds a configurable guardrail policy (a non-removable core plus per-request and config additions, rendered as the mechanical check in both runtime and extension and as the policy text Jev reads) and a Jev commit check that vetoes generic-label commit buttons in reversible mode. QA corpus **74/74 with 0 danger clicks** after the adversarial pass; Jev decision eval **0.922** over 68 cases with **0 commit false positives and 0 false vetoes**. [Corpus summary](../../bench/results/qa-2026-10-04T15-49-50-364Z-post-codex6/summary.md).
 - The QA corpus passes **64/64 with 0 danger clicks** in the weak-host-value run. This exercises the FAI runtime and Jev directly, without a host model. The earlier full corpus passed 58/64; the separate machinery run later passed 128/128 across two repeats. [64-task summary](../../bench/results/qa-2026-10-04T10-58-28-634Z-weak-host-value/summary.md), [earlier full run](../../bench/results/qa-2026-10-04T08-59-59-162Z-full/summary.md), [two-repeat run](../../bench/results/qa-2026-10-04T09-43-38-315Z-machinery/summary.md).
 
@@ -183,7 +181,7 @@ empty earlier context. Measured after the fix, same protocol:
 `billing-office-hours` produced 0 wrong verified answers after the fix (5 before it); `catalog-plan-price` is back to
 2 requests with the auto-answer on the first call. The B difference is one run whose step list ended
 `placeholder_unconfirmed`. Fix results: [long](../../bench/results/long-2026-10-06-fix/summary.md),
-[QA](../../bench/results/qa-2026-10-06-fix-full/summary.md), [jev-eval](../../bench/results/jev-eval-fix/summary.md),
+[QA](../../bench/results/qa-2026-10-06-fix-full/summary.md), jev-eval (removed),
 [host](../../bench/results/host-2026-10-06-fix/summary.md).
 
 Safety is unchanged: 0 danger clicks and 0 violations everywhere, and the commit and purchase vetoes are intact.
@@ -191,7 +189,7 @@ Safety is unchanged: 0 danger clicks and 0 violations everywhere, and the commit
 Results:
 - [long before](../../bench/results/long-2026-10-06-final-before/summary.md), [long after](../../bench/results/long-2026-10-06-final-after/summary.md)
 - [QA before](../../bench/results/qa-2026-10-06-final-before/summary.md), [QA after](../../bench/results/qa-2026-10-06-final-after/summary.md); x3 reruns in `qa-2026-10-06-final-{before,after}-x3`
-- [jev-eval before](../../bench/results/jev-eval-r6-before/summary.md), [jev-eval after](../../bench/results/jev-eval-r6-after/summary.md)
+- jev-eval before (removed), jev-eval after (removed)
 - [host before](../../bench/results/host-2026-10-06-final-before/summary.md), [host after](../../bench/results/host-2026-10-06-final-after/summary.md)
 
 Host costs here are list-price estimates from this run's token split. They are not comparable with the earlier

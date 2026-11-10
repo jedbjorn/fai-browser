@@ -469,7 +469,7 @@ test('browserMatches: the one matcher for the daemon\'s choice and the MCP reuse
 async function daemonWithBrowsers(t, { grace, home: given, pinGraceMs } = {}) {
   const home = given ?? await mkdtemp(join(tmpdir(), 'fai-multi-browser-'));
   const env = { FAI_BRIDGE_SECRET: SECRET, FAI_EXTENSION_ID: EXTENSION_ID };
-  const daemon = createDaemon({ home, env, port: 0, sweepIntervalMs: 60_000, warm: false,
+  const daemon = createDaemon({ home, env, port: 0, sweepIntervalMs: 60_000,
     ...(pinGraceMs !== undefined ? { pinGraceMs } : {}),
     ...(grace ? { hubFactory: options => createHub({ ...options, disconnectGraceMs: grace }) } : {}) });
   await daemon.listen();

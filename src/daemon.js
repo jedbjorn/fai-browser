@@ -1,41 +1,26 @@
 // The FAI Browser daemon: one loopback HTTP server shared by agent clients (/v1/*) and the extension (everything
-// else, handled by the hub). It owns tab requests and leases, runs, traces, retention, provider config and the
-// Jev key. See the Phase 2 design, sections 1 and 2.
+// else, handled by the hub). It owns tab requests and leases, acts, traces, retention and the
+// pairing secret. See the Phase 2 design, sections 1 and 2.
 import http from 'node:http';
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { BrowserRuntime, actionLabels, checkActChoice, redactionMeta, resolveRetry, resolveSlim } from './runtime.js';
+import { BrowserRuntime, actionLabels, checkActChoice, redactionMeta } from './runtime.js';
 import { checkDeclarative, validateExpectation } from './expectation.js';
 import { setTimeout as delay } from 'node:timers/promises';
-import { LIST_MAX_ACTIONS, checkSummary, foldTopLevel, listActionBudget, listInstruction } from './steps.js';
 import { agentResult, applyLeaseMessage, approvalSteps, createResult, isKnownCode, outcomeResult, setOutcome } from './result.js';
 import { hostInfo, imageSize, toAgentResult, writeRun } from './trace.js';
 import { prune, retentionConfig } from './retention.js';
-import { LocalSystemOneProvider, TypeSafeProvider } from './typesafe.js';
 import { PACKAGE_ROOT } from './paths.js';
 import {
-  acquireLock,
-  configuredPort,
-  DEFAULT_DRIVER,
-  createLogger,
-  ensureClientToken,
-  ensureDir,
-  homePaths,
-  loadConfig,
-  readDaemonInfo,
-  releaseLock,
-  removeDaemonInfo,
-  saveDriver,
-  writeDaemonInfo,
+  acquireLock, configuredPort, createLogger, ensureClientToken, ensureDir, homePaths, loadConfig, readDaemonInfo,
+  releaseLock, removeDaemonInfo, writeDaemonInfo,
 } from './home.js';
-import { DEFAULT_BUDGET, checkBudget, envFileMtime, loadDaemonSettings } from './settings.js';
-import { DEFAULT_THRESHOLDS, resolveThresholds } from './oversight.js';
+import { DEFAULT_BUDGET, checkBudget, loadDaemonSettings } from './settings.js';
 import { LEVELS, clampLevel, isLevel, levelRank, normalizeAdditions } from './guardrails.js';
 import { probeHealth } from './client.js';
 import { pickBrowser } from './bridge.js';
-import { createDomainStore, domainStatsDir, resolveProfiles } from './domains.js';
 import { checkOriginEntry, isSiteEntry, leaseOrigins, originCovered, siteRoots, urlCovered } from './origins.js';
 import { scrubSecrets } from './secrets.js';
 import { spawn } from 'node:child_process';
@@ -77,12 +62,7 @@ const PAUSE_REASONS = new Set(['paused', 'tab_changed', 'origin_changed', 'child
   'disconnected']);
 const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SUPPLIED_NAME = /^[A-Za-z0-9_.-]{1,64}$/;
-const PROVIDER_OPTION_KEYS = new Set(['port', 'model', 'timeoutMs']);
 
-const RUN_KEYS = new Set(['requestId', 'operation', 'instruction', 'maxActions', 'maxDecisions', 'timeoutMs',
-  'capture', 'mode', 'expectation', 'allowedUrls', 'suppliedText', 'provider', 'providerOptions', 'prune', 'waitMs',
-  'outputDir', 'minConfidence', 'doneThreshold', 'answerQuestion', 'thresholds', 'policy', 'retry', 'slim', 'steps',
-  'profiles']);
 const ACT_KEYS = new Set(['requestId', 'actionId', 'point', 'revision', 'expectation', 'capture', 'timeoutMs', 'waitMs',
   'prune', 'outputDir', 'answerQuestion', 'approvalWaitMs', 'reason',
   // Host-composed acts (src/runtime.js checkActChoice): typed text, batched fills, keys, hover, URLs, history, tabs,
@@ -281,29 +261,6 @@ function checkSuppliedText(body) {
   return Object.fromEntries(entries);
 }
 
-/**
- * Optional step list (src/steps.js) instead of instruction: validated here, before any provider call, with a
- * top-level expectation and answerQuestion folded in (foldTopLevel). Returns the normalized list or undefined.
- */
-function checkSteps(body, operation) {
-  if (body.steps === undefined || body.steps === null) return undefined;
-  if (operation !== 'run') throw badOptions('steps need operation run');
-  try {
-    // An instruction next to steps is the task summary (runSpec keeps it); the steps are the task.
-    checkSummary(body.instruction);
-    // A top-level expectation or question is folded into the last step (or checked at the end by the runtime).
-    return foldTopLevel(body.steps, { expectation: body.expectation, answerQuestion: body.answerQuestion, maxActions: 100 }).steps;
-  } catch (error) {
-    throw badOptions(error.message);
-  }
-}
-
-/** A step list's default action budget (the runtime's: each step's maxActions, default 8, summed; at most 60). */
-function listActions(steps) {
-  return steps ? listActionBudget(steps) : undefined;
-}
-
-
 function checkExpectation(body) {
   const expectation = body.expectation;
   if (expectation === undefined || expectation === null) return undefined;
@@ -318,91 +275,9 @@ function checkExpectation(body) {
   return { ...expectation };
 }
 
-function checkProviderOptions(body) {
-  const options = body.providerOptions;
-  if (options === undefined) return {};
-  if (!options || typeof options !== 'object' || Array.isArray(options)) throw badOptions('providerOptions must be an object');
-  const forbidden = Object.keys(options).filter(key => !PROVIDER_OPTION_KEYS.has(key));
-  if (forbidden.length) {
-    throw new HttpError(422, 'provider_option_forbidden',
-      `providerOptions accepts only port, model and timeoutMs; set ${forbidden.join(', ')} in config.json`);
-  }
-  if (options.port !== undefined && (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535)) {
-    throw badOptions('providerOptions.port must be a port number');
-  }
-  if (options.model !== undefined && (typeof options.model !== 'string' || !options.model || options.model.length > 100)) {
-    throw badOptions('providerOptions.model must be a short string');
-  }
-  if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 100
-    || options.timeoutMs > 120_000)) {
-    throw badOptions('providerOptions.timeoutMs must be an integer between 100 and 120000');
-  }
-  return { ...options };
-}
-
-/** Optional done threshold (0-1); the runtime defaults it to 0.5. */
-function checkDoneThreshold(body) {
-  const value = body.doneThreshold;
-  if (value === undefined) return undefined;
-  if (typeof value !== 'number' || !(value >= 0 && value <= 1)) throw badOptions('doneThreshold must be a number from 0 to 1');
-  return value;
-}
-
-function checkMinConfidence(body) {
-  const value = body.minConfidence;
-  if (value === undefined) return 0;
-  if (typeof value !== 'number' || !(value >= 0 && value <= 1)) throw badOptions('minConfidence must be a number from 0 to 1');
-  return value;
-}
-
-/** Optional gate thresholds (linkFloor, controlFloor, doneThreshold, strongDone, answerConfirm, answerMargin). */
-function checkThresholds(body) {
-  const value = body.thresholds;
-  if (value === undefined) return undefined;
-  try {
-    resolveThresholds({ thresholds: value });
-  } catch (error) {
-    throw badOptions(`thresholds: ${error.message}`);
-  }
-  return { ...value };
-}
-
-/** Optional in-call retry switches (src/runtime.js resolveRetry): a boolean or { secondOpinion, backOut, rerun }. */
-function checkRetry(body) {
-  if (body.retry === undefined || body.retry === null) return undefined;
-  try {
-    resolveRetry(body.retry);
-  } catch (error) {
-    throw badOptions(error.message);
-  }
-  return typeof body.retry === 'boolean' ? body.retry : { ...body.retry };
-}
-
-/** Optional site-profile switch (src/domains.js resolveProfiles): "on", "off", a boolean or { fastPath, hints }. */
-function checkProfiles(body) {
-  if (body.profiles === undefined || body.profiles === null) return undefined;
-  try {
-    resolveProfiles(body.profiles);
-  } catch (error) {
-    throw badOptions(error.message);
-  }
-  return typeof body.profiles === 'object' ? { ...body.profiles } : body.profiles;
-}
-
-/** Optional slim provider request switches (src/runtime.js resolveSlim): a boolean or single switches. */
-function checkSlim(body) {
-  if (body.slim === undefined || body.slim === null) return undefined;
-  try {
-    resolveSlim(body.slim);
-  } catch (error) {
-    throw badOptions(error.message);
-  }
-  return typeof body.slim === 'boolean' ? body.slim : { ...body.slim };
-}
-
 /**
  * Optional guardrail additions for this run (src/guardrails.js): an array of plain phrases or { forbid, note }.
- * Validated here, before any provider call; returns the normalized { forbid, note } or undefined.
+ * Validated here, before any observe or act; returns the normalized { forbid, note } or undefined.
  */
 function checkPolicy(body) {
   if (body.policy === undefined || body.policy === null) return undefined;
@@ -431,20 +306,6 @@ function checkPrune(body) {
   if (body.prune === undefined) return true;
   if (typeof body.prune !== 'boolean') throw badOptions('prune must be a boolean');
   return body.prune;
-}
-
-function configError(message) {
-  const error = new Error(message);
-  error.code = 'config';
-  return error;
-}
-
-/** Default provider construction. Endpoints come only from config.json, never from a client. */
-export function defaultProviderFactory({ name, options, env }) {
-  if (name === 'local') return new LocalSystemOneProvider(options);
-  if (name !== 'typesafe') throw configError(`Unknown provider "${name}"; expected typesafe or local`);
-  if (!env.TYPESAFE_API_KEY) throw configError('The Jev key is not configured');
-  return new TypeSafeProvider(options);
 }
 
 function iso(ms) {
@@ -525,8 +386,7 @@ function unwrittenResult(raw) {
 /**
  * Create a daemon. Nothing is read or bound until listen().
  * Options: home, env, port (default FAI_DAEMON_PORT / FAI_BRIDGE_PORT / 4318; 0 = any), hub (injected hub),
- * hubFactory, providerFactory, now, log, version, maxWaitMs, sweepIntervalMs, onShutdownRequest, warm (false skips
- * the background provider warm-up at start and on approval).
+ * hubFactory, now, log, version, maxWaitMs, sweepIntervalMs, onShutdownRequest.
  */
 export function createDaemon(options = {}) {
   const env = options.env ?? process.env;
@@ -535,14 +395,6 @@ export function createDaemon(options = {}) {
   const log = options.log ?? (() => {});
   const version = options.version ?? DAEMON_VERSION;
   const maxWaitMs = options.maxWaitMs ?? MAX_WAIT_MS;
-  const providerFactory = options.providerFactory ?? defaultProviderFactory;
-  // The driver when config.json names none (an embedding or a test harness may pick Jev); DEFAULT_DRIVER otherwise.
-  const defaultDriver = options.driver ?? DEFAULT_DRIVER;
-  // Site profiles (src/domains.js): $FAI_DOMAINS_DIR, FAI_HOME/domains or the package's, matched by exact origin per
-  // run. Counters go to <data dir>/domain-stats (or the state dir, or a temp dir): never inside the package's domains/.
-  const domains = options.domains ?? createDomainStore({
-    dir: paths.domains, statsDir: domainStatsDir({ home: paths.dataDir, stateDir: paths.stateDir }), log: (event, fields) => log(event, fields),
-  });
   const requestedPort = options.port ?? configuredPort(env);
 
   const requests = new Map();
@@ -560,8 +412,7 @@ export function createDaemon(options = {}) {
   const runs = new Map();
   const watchers = new Set();
   let settings = null;
-  let config = { driver: defaultDriver };
-  let driverChanges = Promise.resolve();
+  let config = {};
   // The popup settings each browser reported (hello and settings messages), by browserId: {budget, openRightAway,
   // approvalAsks}. `budget` is the user's per-request call budget ({maxCalls, maxMs}) or null; `openRightAway` whether
   // that extension opens a request's page by itself (null when it never said: an older one); `approvalAsks` the
@@ -581,13 +432,10 @@ export function createDaemon(options = {}) {
   let lastClientCallAt = now();
   let shuttingDown = false;
   let closing = null;
-  let warming = null; // the provider warm-up in flight (warmProvider)
-  let warmAbort = new AbortController();
   const warnings = [];
   // Update check (src/update.js): about once a day, off with FAI_UPDATE_CHECK=0, config.json updateCheck: false, or
   // under node --test unless options.updateCheck is true. Installing needs the user's click (onUpdateEvent) or command.
-  // The environment this daemon was started with, before loadDaemonSettings adds the Jev key to `env`, and without
-  // FAI's secrets: the updater and everything it starts (git, npm, the restarted daemon) get only this.
+  // The environment this daemon was started with, without FAI's secrets: the updater and everything it starts (git, npm, the restarted daemon) get only this.
   const launchEnv = scrubbedEnv(env);
   // Only a git clone can update itself; anything else is told how to update by hand.
   const installable = options.updateInstallable ?? existsSync(join(PACKAGE_ROOT, '.git'));
@@ -1073,8 +921,6 @@ export function createDaemon(options = {}) {
     record.runtime.secrets = filledSecrets;
     record.bridge = hub.bridgeFor(leaseId);
     setState(record, 'active', null);
-    // The first decision usually follows the approval at once; an idle daemon's connection has gone cold by now.
-    warmProvider('approval');
     // origins: what the lease covers. The extension follows a consent wall's redirect only to one of these
     // (followConsentRedirect) and, with `domain` scope, keeps the session across the roots' subdomains.
     return { leaseId, requestId: record.requestId, origins: [...origins], grant: { ...grant } };
@@ -1477,35 +1323,6 @@ export function createDaemon(options = {}) {
     replyTo(event, { budget: effectiveBudget(event.browserId ?? '') });
   }
 
-  function driverView() {
-    return { driver: config.driver, jevAvailable: config.provider === 'local' || Boolean(env.TYPESAFE_API_KEY) };
-  }
-
-  function onDriverEvent(event) {
-    // Serialize clicks from multiple popup windows. Only the authenticated extension channel exposes this command.
-    driverChanges = driverChanges.then(async () => {
-      if (event.driver !== undefined) {
-        if (!['agent', 'jev'].includes(event.driver)) {
-          return replyTo(event, { error: { code: 'invalid_driver', message: 'Choose your agent or Jev autopilot.' } });
-        }
-        if (event.driver === 'jev' && !driverView().jevAvailable) {
-          return replyTo(event, { error: { code: 'key_missing', message: 'Jev needs an API key. Add it during setup first.' } });
-        }
-        if (event.driver !== config.driver) {
-          const previous = config.driver;
-          saveDriver(event.driver, paths);
-          config = loadConfig(paths, { defaultDriver });
-          // The reply goes out as soon as the choice is saved; applyDriver never waits on a run.
-          applyDriver(previous);
-          log('driver_changed', { driver: config.driver });
-        }
-      }
-      replyTo(event, { control: driverView() });
-    }).catch(() => replyTo(event, { error: { code: 'driver_save_failed',
-      message: 'Could not save browser control. Reconnect and try again.' } }));
-    return driverChanges;
-  }
-
   // The popup's update card (extension channel only, authenticated by the pairing secret): `status`, `check` (the
   // user asked; a result younger than a minute is reused) or `install` (the user's Update click). Install starts
   // `fai-browser update --tag <tag>` (src/update-cli.js) detached, since it restarts this daemon; the tag is the
@@ -1573,7 +1390,6 @@ export function createDaemon(options = {}) {
       endSession,
       requests: liveViews(),
       budget: effectiveBudget(event.browserId ?? ''),
-      control: driverView(),
       update: updates.view(),
     });
     const session = event.session;
@@ -1650,8 +1466,6 @@ export function createDaemon(options = {}) {
           return onHelloEvent(event);
         case 'settings':
           return onSettingsEvent(event);
-        case 'driver':
-          return onDriverEvent(event);
         case 'update':
           return onUpdateEvent(event);
         case 'disconnected':
@@ -1680,7 +1494,7 @@ export function createDaemon(options = {}) {
     }
   }
 
-  // --- settings, config, providers --------------------------------------------------------------------------
+  // --- settings and config --------------------------------------------------------------------------
 
   function leaseIdleMs() {
     return config.leaseIdleMs ?? DEFAULT_LEASE_IDLE_MS;
@@ -1709,84 +1523,13 @@ export function createDaemon(options = {}) {
 
   async function reload() {
     const { secretChanged } = await reloadSettings();
-    const previous = config.driver;
     try {
-      config = loadConfig(paths, { defaultDriver });
+      config = loadConfig(paths);
     } catch (error) {
       throw badOptions(error.message);
     }
-    applyDriver(previous);
     log('reloaded', { secretChanged });
-    return { ok: true, keyConfigured: settings.keyConfigured, secretChanged };
-  }
-
-  /**
-   * A switch to Agent direct (from `previous`, only on an actual change): abandon the provider warm-up, interrupt
-   * Jev's own runs and steps (a host act keeps going), and drop every retained provider. Synchronous: nothing here
-   * waits on an in-flight run, so the toggle and reload reply at once.
-   */
-  function applyDriver(previous) {
-    if (config.driver !== 'agent' || previous === 'agent') return;
-    warmAbort.abort();
-    warmAbort = new AbortController();
-    for (const record of requests.values()) {
-      const active = record.activeRunId ? runs.get(record.activeRunId) : null;
-      if (active?.state === 'running' && active.operation !== 'act') record.runtime?.interrupt('interrupted');
-      if (record.runtime) record.runtime.provider = null;
-    }
-  }
-
-  async function makeProvider(spec) {
-    if (config.driver === 'agent') {
-      throw configError('Your agent is driving (Agent direct). Use observe and act; select Jev autopilot in the extension to delegate runs.');
-    }
-    if (envFileMtime(paths.envFile) !== settings.mtimeMs) await reloadSettings();
-    const name = spec.provider ?? config.provider ?? 'typesafe';
-    const options = { ...(config.providerOptions ?? {}), ...spec.providerOptions };
-    const provider = await providerFactory({ name, options, env, config });
-    if (config.driver === 'agent') throw configError('Your agent is driving (Agent direct). Use observe and act.');
-    return provider;
-  }
-
-  /**
-   * Prime the default provider's connection (DNS, TCP, TLS; TypeSafeProvider.warm() is an unauthenticated GET) in
-   * the background, at daemon start, when the user approves a tab and when a run or act starts (with that run's own
-   * provider and providerOptions, in parallel with its first observe): the moments before a first decision. Callers
-   * never await it and it never throws. A missing key, a provider without warm() or a network failure only logs a
-   * fixed code: no messages, URLs or key material. One warm-up at a time; shutdown abandons it.
-   */
-  function warmProvider(reason, runProvider = null) {
-    if (config.driver === 'agent') return null;
-    if (warming || shuttingDown || options.warm === false) return warming;
-    const controller = warmAbort;
-    warming = (async () => {
-      let provider = runProvider;
-      try {
-        provider ??= await makeProvider({});
-      } catch (error) {
-        const code = typeof error?.code === 'string' && /^[a-z_]{1,40}$/.test(error.code) ? error.code : 'unavailable';
-        log('provider_warm_skipped', { reason, code });
-        return;
-      }
-      if (config.driver === 'agent' || controller.signal.aborted || typeof provider?.warm !== 'function') return;
-      const outcome = await provider.warm({ signal: controller.signal });
-      if (shuttingDown) return; // the log may already be closed
-      log('provider_warm', {
-        reason,
-        ok: outcome?.ok === true,
-        status: Number.isInteger(outcome?.status) ? outcome.status : null,
-        ms: Number.isFinite(outcome?.ms) ? outcome.ms : null,
-      });
-    })().catch(() => {
-      try {
-        if (!shuttingDown) log('provider_warm_skipped', { reason, code: 'failed' });
-      } catch {
-        // Logging is best effort here.
-      }
-    }).finally(() => {
-      warming = null;
-    });
-    return warming;
+    return { ok: true, secretChanged };
   }
 
   // --- runs -------------------------------------------------------------------------------------------------
@@ -1819,18 +1562,6 @@ export function createDaemon(options = {}) {
     };
   }
 
-  /**
-   * config.json `thresholds` under the run's own; undefined when neither sets any. `commitVeto` can only be lowered
-   * by a run (stricter), never raised above the configured or default value.
-   */
-  function runThresholds(spec) {
-    const merged = { ...(config.thresholds ?? {}), ...(spec.thresholds ?? {}) };
-    if (spec.thresholds?.commitVeto !== undefined) {
-      merged.commitVeto = Math.min(spec.thresholds.commitVeto, config.thresholds?.commitVeto ?? DEFAULT_THRESHOLDS.commitVeto);
-    }
-    return Object.keys(merged).length ? merged : undefined;
-  }
-
   // An invited tab's runs and observes carry its invite flag and owner session, so who may read them still holds once
   // the request record is gone (traces stay on disk up to retention's 7 days).
   const inviteStamp = record => (record.invite ? { invite: true, ownerSession: record.ownerSession ?? null } : {});
@@ -1846,30 +1577,13 @@ export function createDaemon(options = {}) {
       timeoutMs: spec.timeoutMs,
       allowedOrigins: coveredOrigins(record),
     };
-    if (spec.maxActions !== undefined) options.maxActions = spec.maxActions;
-    if (spec.minConfidence) options.minConfidence = spec.minConfidence;
-    if (spec.doneThreshold !== undefined) options.doneThreshold = spec.doneThreshold;
-    const thresholds = runThresholds(spec);
-    if (thresholds) options.thresholds = thresholds;
     if (spec.answerQuestion) options.answerQuestion = spec.answerQuestion;
     // Host- and config-written plain phrases (never page text), for the audit trail.
     if (spec.policy) options.policy = spec.policy;
     if (config.guardrails && (config.guardrails.forbid?.length || config.guardrails.note)) options.guardrails = config.guardrails;
-    // The in-call retry switches the run used (resolved: run, then config.json, then on).
-    if (spec.actionId === undefined && (spec.instruction !== undefined || spec.steps)) options.retry = resolveRetry(spec.retry ?? config.retry);
-    // The slim provider request switches the run used (resolved: run, then config.json, then DEFAULT_SLIM).
-    if (spec.actionId === undefined && (spec.instruction !== undefined || spec.steps)) options.slim = resolveSlim(spec.slim ?? config.slim);
-    if (spec.steps) options.steps = spec.steps.map(step => ({ ...step, expectation: { ...step.expectation } }));
-    // The site-profile switch the run used (run, then config.json, then on).
-    if (spec.actionId === undefined && (spec.instruction !== undefined || spec.steps)) {
-      const { fastPath, hints } = resolveProfiles(spec.profiles ?? config.profiles);
-      options.profiles = { fastPath, hints };
-    }
     if (spec.expectation) options.expectation = spec.expectation;
     if (spec.allowedUrls?.length) options.allowedUrls = spec.allowedUrls;
     if (spec.suppliedText && Object.keys(spec.suppliedText).length) options.suppliedText = spec.suppliedText;
-    if (spec.provider) options.provider = spec.provider;
-    if (spec.providerOptions && Object.keys(spec.providerOptions).length) options.providerOptions = spec.providerOptions;
     if (spec.revision) options.revision = spec.revision;
     const choice = spec.choice ?? {};
     if (choice.actionId) options.actionId = choice.actionId;
@@ -1903,7 +1617,7 @@ export function createDaemon(options = {}) {
     try {
       const written = await writeRun(raw, {
         dir,
-        instruction: spec.steps ? listInstruction(spec.steps, spec.summary) : spec.instruction,
+        instruction: spec.instruction,
         operation: run.operation,
         options: traceOptions(spec, record),
         startedAt: iso(run.startedAt),
@@ -1925,7 +1639,7 @@ export function createDaemon(options = {}) {
     changed();
   }
 
-  function startRun(record, spec, operation, provider) {
+  function startRun(record, spec, operation) {
     const runId = randomUUID();
     const run = {
       runId,
@@ -1935,7 +1649,7 @@ export function createDaemon(options = {}) {
       startedAt: now(),
       finishedAt: null,
       steps: 0,
-      maxActions: operation === 'run' ? spec.maxActions ?? listActions(spec.steps) ?? 8 : 1,
+      maxActions: 1,
       lastStep: null,
       result: null,
       done: null,
@@ -1959,53 +1673,12 @@ export function createDaemon(options = {}) {
     };
     if (spec.answerQuestion) common.answerQuestion = spec.answerQuestion;
     const runtime = record.runtime;
-    let promise;
-    if (operation === 'act') {
-      runtime.provider = provider; // Clear any provider retained from before a switch to Agent direct.
-      promise = runtime.act(spec.choice, { ...common, revision: spec.revision, revisionless: spec.revisionless,
-        approvalWaitMs: spec.approvalWaitMs, reason: spec.reason });
-    } else {
-      runtime.provider = provider;
-      const runOptions = {
-        ...common,
-        // The runtime clamps the mode to the grant again; the extension intersects with the user's choice too.
-        mode: spec.mode,
-        grant: { level: record.grant?.level ?? 'read-only', tabMode: record.grant?.tabMode ?? 'single' },
-        allowedOrigins: coveredOrigins(record),
-        allowedUrls: spec.allowedUrls,
-        suppliedText: spec.suppliedText,
-      };
-      if (operation === 'run' && spec.maxActions !== undefined) runOptions.maxActions = spec.maxActions;
-      if (spec.maxDecisions !== undefined) runOptions.maxDecisions = spec.maxDecisions;
-      if (spec.minConfidence) runOptions.minConfidence = spec.minConfidence;
-      if (spec.doneThreshold !== undefined) runOptions.doneThreshold = spec.doneThreshold;
-      const thresholds = runThresholds(spec);
-      if (thresholds) runOptions.thresholds = thresholds;
-      if (spec.policy) runOptions.policy = spec.policy;
-      if (config.guardrails) runOptions.guardrails = config.guardrails;
-      // In-call retries: the run's own switch, else config.json `retry`, else on.
-      const retry = spec.retry ?? config.retry;
-      if (retry !== undefined) runOptions.retry = retry;
-      // Site profiles (experimental, opt-in): the run's switch, else config.json `profiles`, else off.
-      runOptions.domains = domains;
-      const profiles = spec.profiles ?? config.profiles;
-      if (profiles !== undefined) runOptions.profiles = profiles;
-      // Slim provider requests: the run's own switches, else config.json `slim`, else DEFAULT_SLIM.
-      const slim = spec.slim ?? config.slim;
-      if (slim !== undefined) runOptions.slim = slim;
-      if (spec.steps) runOptions.steps = spec.steps;
-      promise = spec.steps ? runtime.run(runOptions) : runtime[operation](spec.instruction, runOptions);
-      // The task this request last ran: a later observe ranks its listing by it when the host names none.
-      record.lastTask = {
-        instruction: spec.steps ? listInstruction(spec.steps, spec.summary) : spec.instruction,
-        expectation: spec.expectation,
-        answerQuestion: spec.answerQuestion,
-      };
-    }
+    const promise = runtime.act(spec.choice, { ...common, revision: spec.revision, revisionless: spec.revisionless,
+      approvalWaitMs: spec.approvalWaitMs, reason: spec.reason });
     log('run_start', { runId, requestId: record.requestId, operation });
     run.done = promise
       .catch(error => {
-        const result = createResult({ runId, expectation: spec.expectation ?? null, provider: null });
+        const result = createResult({ runId, expectation: spec.expectation ?? null });
         result.permissions = permissionsOf(spec.mode ?? record.mode, record);
         return setOutcome(result, 'failed', String(error?.message ?? error));
       })
@@ -2054,9 +1727,6 @@ export function createDaemon(options = {}) {
       extension: hub.extension(),
       // Every browser with the extension the hub knows: connected ones, and recently gone ones that hold a lease.
       browsers: hub.browsers?.() ?? [],
-      driver: config.driver,
-      provider: { default: config.driver === 'agent' ? null : config.provider ?? 'typesafe',
-        keyConfigured: Boolean(env.TYPESAFE_API_KEY) },
       // The per-request call budget in effect (the MCP server's ceiling) and where it comes from.
       budget: effectiveBudget(),
       // Newer release (src/update.js): tell the user; only their popup click or `fai-browser update` installs it.
@@ -2224,86 +1894,6 @@ export function createDaemon(options = {}) {
       budget: effectiveBudget(browserOf(record)) };
   }
 
-  function runSpec(body, record, operation) {
-    checkKeys(body, RUN_KEYS);
-    const steps = checkSteps(body, operation);
-    const instruction = body.instruction;
-    if (!steps && (typeof instruction !== 'string' || !instruction.trim() || instruction.length > 4000)) {
-      throw badOptions('instruction (at most 4000 characters) or steps is required');
-    }
-    const provider = body.provider;
-    if (provider !== undefined && provider !== 'typesafe' && provider !== 'local') {
-      throw badOptions('provider must be typesafe or local');
-    }
-    return {
-      instruction: steps ? undefined : instruction,
-      steps,
-      // With steps, the host's overall instruction: the trace's instruction leads with it (listInstruction).
-      summary: steps ? checkSummary(instruction) : undefined,
-      // One run: at most 100 actions; a step list's total budget: at most 120 (each step keeps its own maxActions).
-      maxActions: operation === 'run' ? optionalInt(body, 'maxActions', 1, steps ? LIST_MAX_ACTIONS : 100) : undefined,
-      maxDecisions: optionalInt(body, 'maxDecisions', 1, 200),
-      // Undefined lets the runtime pick 30 s, or 45 s for instructions that name four or more pages.
-      timeoutMs: optionalInt(body, 'timeoutMs', 1000, 300_000),
-      capture: oneOf(body, 'capture', ['each', 'last', 'none'], 'last'),
-      mode: checkMode(body, record),
-      expectation: checkExpectation(body),
-      minConfidence: checkMinConfidence(body),
-      doneThreshold: checkDoneThreshold(body),
-      thresholds: checkThresholds(body),
-      answerQuestion: checkAnswerQuestion(body),
-      policy: checkPolicy(body),
-      retry: checkRetry(body),
-      profiles: checkProfiles(body),
-      slim: checkSlim(body),
-      allowedUrls: checkAllowedUrls(body, record),
-      suppliedText: checkSuppliedText(body),
-      provider,
-      providerOptions: checkProviderOptions(body),
-      prune: checkPrune(body),
-      outputDir: checkOutputDir(body),
-      waitMs: clampWait(body.waitMs, DEFAULT_RUN_WAIT_MS, maxWaitMs),
-    };
-  }
-
-  async function runsRoute(body, signal, caller = null) {
-    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'bad_request', 'Body must be a JSON object');
-    const record = getRecord(body.requestId);
-    checkUse(record, caller);
-    touch(record);
-    const operation = body.operation ?? 'run';
-    if (operation !== 'run' && operation !== 'step') throw badOptions('operation must be run or step');
-    const spec = runSpec(body, record, operation);
-    if (config.driver === 'agent') {
-      throw new HttpError(409, 'agent_direct',
-        'Runs and steps use the experimental Jev driver, and your agent is driving (Agent direct). Use request-tab, '
-        + 'observe and act (MCP: fai_browser_open and fai_browser_act); select Jev autopilot in the extension to delegate runs.');
-    }
-    if (record.state !== 'active') {
-      return { state: 'done', runId: null, requestId: record.requestId, result: blockedResult(record, spec.expectation, spec.mode) };
-    }
-    ensureIdle(record);
-    let provider;
-    try {
-      provider = await makeProvider(spec);
-    } catch (error) {
-      const result = outcomeResult('config', {
-        detail: String(error?.message ?? error),
-        expectation: spec.expectation ?? null,
-        lease: { requestId: record.requestId, state: record.state },
-        permissions: permissionsOf(spec.mode, record),
-      });
-      return { state: 'done', runId: null, requestId: record.requestId, result };
-    }
-    if (record.state !== 'active') {
-      return { state: 'done', runId: null, requestId: record.requestId, result: blockedResult(record, spec.expectation, spec.mode) };
-    }
-    ensureIdle(record);
-    warmProvider('run', provider);
-    const run = startRun(record, spec, operation, provider);
-    return awaitRun(run, spec.waitMs, signal);
-  }
-
   async function actRoute(body, signal, caller = null) {
     checkKeys(body, ACT_KEYS);
     const record = getRecord(body.requestId);
@@ -2358,20 +1948,11 @@ export function createDaemon(options = {}) {
     if (problem) throw badOptions(problem);
     spec.revision = offer.revision;
     spec.mode = offer.config.mode;
-    // The provider answers the purchase guard for the chosen control (runtime act(), below testing). Without one
-    // (no key configured) the act keeps the mechanical checks only.
-    let provider = null;
-    try {
-      if (config.driver !== 'agent') provider = await makeProvider({});
-    } catch (error) {
-      log('act_provider_unavailable', { message: String(error?.message ?? error) });
-    }
     if (record.state !== 'active') {
       return { state: 'done', runId: null, requestId: record.requestId, result: blockedResult(record, spec.expectation) };
     }
     ensureIdle(record);
-    if (provider) warmProvider('act', provider);
-    const run = startRun(record, spec, 'act', provider);
+    const run = startRun(record, spec, 'act');
     return awaitRun(run, spec.waitMs, signal);
   }
 
@@ -2511,7 +2092,7 @@ export function createDaemon(options = {}) {
       policy: checkPolicy(body),
       prune: checkPrune(body),
       outputDir: checkOutputDir(body),
-      // Relevance hints for the listing cap and the digest only (never sent to a provider): the body's, else the
+      // Relevance hints for the listing cap and the digest only (local only): the body's, else the
       // request's last named task (an earlier observe's or run's), else the request's own instruction.
       instruction: optionalString(body, 'instruction', 4000),
       expectation: checkExpectation(body),
@@ -2803,7 +2384,6 @@ export function createDaemon(options = {}) {
     ['GET', /^\/v1\/requests\/([^/]+)$/, 'requests.get'],
     ['DELETE', /^\/v1\/requests\/([^/]+)$/, 'requests.delete'],
     ['POST', /^\/v1\/wait$/, 'wait'],
-    ['POST', /^\/v1\/runs$/, 'runs.create'],
     ['GET', /^\/v1\/runs$/, 'runs.list'],
     ['GET', /^\/v1\/runs\/([^/]+)$/, 'runs.get'],
     ['POST', /^\/v1\/runs\/([^/]+)\/stop$/, 'runs.stop'],
@@ -2943,8 +2523,6 @@ export function createDaemon(options = {}) {
       }
       case 'wait':
         return { body: await waitRoute(body, signal, caller) };
-      case 'runs.create':
-        return { body: await runsRoute(body, signal, caller) };
       case 'runs.list':
         return { body: await listRuns(url, caller) };
       case 'runs.get': {
@@ -2970,17 +2548,10 @@ export function createDaemon(options = {}) {
     }
   }
 
-  // Every authenticated answer names the driver in effect, so a client (the MCP server) follows the daemon's choice
-  // instead of reading config.json on its own.
-  function driverHeader(authed) {
-    return authed ? { 'X-Fai-Driver': config.driver } : {};
-  }
-
   async function clientApi(req, res, url) {
     const started = Date.now();
     let status = 500;
     let routeName = 'unknown';
-    let authed = false;
     // A long-poll whose client went away stops waiting.
     const controller = new AbortController();
     res.on('close', () => controller.abort());
@@ -2995,16 +2566,15 @@ export function createDaemon(options = {}) {
       if (!route.open && !authorized(req.headers.authorization)) {
         throw new HttpError(401, 'unauthorized', 'Missing or wrong client token');
       }
-      authed = !route.open;
       if (shuttingDown && !route.open) throw new HttpError(503, 'shutting_down', 'The daemon is shutting down', { retryable: true });
       if (!route.open && !route.quiet) lastClientCallAt = now();
       const value = await dispatch(route, req, url, controller.signal);
       status = value.status ?? 200;
-      sendJson(res, status, value.body, driverHeader(authed));
+      sendJson(res, status, value.body);
     } catch (error) {
       if (error instanceof HttpError) {
         status = error.status;
-        sendJson(res, status, errorBody(error.code, error.message, error.retryable), driverHeader(authed));
+        sendJson(res, status, errorBody(error.code, error.message, error.retryable));
       } else {
         status = 500;
         log('internal_error', { route: routeName, message: String(error?.message ?? error) });
@@ -3131,7 +2701,7 @@ export function createDaemon(options = {}) {
 
   async function listen() {
     ensureDir(paths.stateDir);
-    config = loadConfig(paths, { defaultDriver });
+    config = loadConfig(paths);
     settings = await loadDaemonSettings(paths.envFile, { env });
     if (settings.generatedSecret) log('pairing_secret_generated');
     token = ensureClientToken(paths);
@@ -3164,8 +2734,6 @@ export function createDaemon(options = {}) {
     sweepTimer.unref();
     changed();
     log('listening', { port, hub: hub.kind ?? 'hub' });
-    // In the background: readiness never waits on the network or on a configured key.
-    warmProvider('start');
     updates.start();
     return { port };
   }
@@ -3175,7 +2743,6 @@ export function createDaemon(options = {}) {
     if (closing) return closing;
     closing = (async () => {
       shuttingDown = true;
-      warmAbort.abort();
       updates.stop();
       clearInterval(sweepTimer);
       const running = [...runs.values()].filter(run => run.state === 'running');
@@ -3225,10 +2792,6 @@ export function createDaemon(options = {}) {
     paths,
     get port() {
       return port;
-    },
-    /** The provider warm-up in flight, or null (tests await it). */
-    get warming() {
-      return warming;
     },
     get token() {
       return token;

@@ -67,7 +67,7 @@ Read these before relying on FAI for anything sensitive.
   granted, or write misleading text into the agent's context. If you grant Act on a site, an injected instruction can
   cause an Act-level action there. Grant the lowest level that does the job.
 - **The host model sees the page.** The redacted digest and screenshots go to your agent's model provider. Redaction
-  reduces what they contain; it does not make a page private. With the experimental Jev autopilot the page digest also goes to the Jev provider.
+  reduces what they contain; it does not make a page private.
 - **Secrets the redactor cannot recognize.** Heuristics, not proof: a short password in plain prose, a value split across
   elements, text drawn on a canvas, text inside images and closed shadow roots are not found. A cross-origin frame is read
   only when its own origin is one you approved (then the same redaction applies inside it); other cross-origin frames are

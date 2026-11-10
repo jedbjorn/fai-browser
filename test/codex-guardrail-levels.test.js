@@ -1,5 +1,6 @@
 // Pass 7: all browser requests are intercepted local fixtures; no live service or credential files.
 import test from 'node:test';
+import { TOOLS, validateSchema } from '../src/mcp.js';
 import { headlessEnv } from '../scripts/headless-env.mjs';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -9,14 +10,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { BrowserRuntime, legalActions } from '../src/runtime.js';
-import { CAPABILITIES, LEVELS, clampLevel, guardrailPolicy, paymentField } from '../src/guardrails.js';
+import { CAPABILITIES, clampLevel, paymentField } from '../src/guardrails.js';
 import { redactSecrets, agentResult } from '../src/result.js';
 import { normalizePermissions, testingAllowed } from '../extension/permissions.js';
 import { FakeBridge } from './runtime-fixtures.js';
 import { createDaemon } from '../src/daemon.js';
 import { createLogger, homePaths, loadConfig } from '../src/home.js';
 import { createHub } from '../src/bridge.js';
-import { JEV_TOOLS, validateSchema } from '../src/mcp.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { EXTENSION_ID, EXTENSION_ORIGIN } from './helpers/fake-extension.js';
 import { writeRun } from '../src/trace.js';
@@ -391,60 +391,9 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
   return h;
 }
 
-
 const grant = level => ({ mode: level, grant: { level }, capture: 'none' });
 const checkout = () => new FakeBridge({ pages: { '/': { title: 'Checkout', text: 'Continue charges your saved card $49.',
   controls: [{ id: '1', role: 'button', label: 'Continue', enabled: true, risk: 'reversible' }] } } });
-const provider = guards => ({ async decide(_page, actions) {
-  return { actionId: actions.find(a => a.target === '1').id, confidence: 0.99, guards };
-} });
-for (const [name, guards] of [
-  ['both missing', {}], ['page missing', { purchase_control: 0 }],
-  ['control missing', { purchase_page: 0 }], ['NaN', { purchase_control: NaN, purchase_page: NaN }],
-  ['non-numeric', { purchase_control: '0', purchase_page: null }],
-]) test(`FINDING: incomplete purchase guard fails closed (${name})`, { todo: 'deferred: custom providers are mechanical-only by design; the Jev provider now fills unanswered purchase questions with 1 (guardrails-levels.test.js)' }, async () => {
-  const bridge = checkout();
-  await new BrowserRuntime({ bridge, provider: provider(guards) }).step('Continue', grant('full'));
-  assert.equal(bridge.executions.length, 0, 'unchecked checkout must never execute');
-});
-test('purchase guards veto at threshold; provider exceptions dispatch nothing', async () => {
-  for (const p of [{ purchase_control: 0.7, purchase_page: 0 }, { purchase_control: 0, purchase_page: 0.7 }]) {
-    const bridge = checkout();
-    await new BrowserRuntime({ bridge, provider: provider(p) }).step('Continue', grant('full'));
-    assert.equal(bridge.executions.length, 0);
-  }
-  const bridge = checkout();
-  await new BrowserRuntime({ bridge, provider: { async decide() { throw new Error('fixture unavailable'); } } })
-    .step('Continue', grant('full'));
-  assert.equal(bridge.executions.length, 0);
-});
-test('fixed: host observe/act applies the purchase guard at full', async () => {
-  const bridge = checkout(); let decisions = 0;
-  const runtime = new BrowserRuntime({ bridge, provider: { async decide() { decisions++;
-    throw new Error('purchase check unavailable'); } } });
-  const offer = await runtime.observe(grant('full'));
-  await runtime.act(offer.actions.find(a => a.target === '1').id, { revision: offer.observation.revision });
-  assert.equal(bridge.executions.length, 0, `host dispatched checkout without checking (${decisions} provider calls)`);
-  // A guard at the veto refuses the host's choice; low guards let it run; testing does not ask.
-  for (const [guards, level, executed, code] of [
-    [{ purchase_control: 0.1, purchase_page: 0.9 }, 'full', 0, 'refused_action'],
-    [{ purchase_control: 0.1, purchase_page: 0.1 }, 'full', 1, 'step_complete'],
-    [{ purchase_control: 0.9, purchase_page: 0.9 }, 'testing', 1, 'step_complete'],
-  ]) {
-    const b = checkout(); let asked = 0;
-    const r = new BrowserRuntime({ bridge: b, provider: { async decide() { asked++; return { actionId: 'handoff', guards }; } } });
-    const seen = await r.observe(grant(level));
-    const result = await r.act(seen.actions.find(a => a.target === '1').id, { revision: seen.observation.revision });
-    assert.equal(b.executions.length, executed, `${level} ${JSON.stringify(guards)}`);
-    assert.equal(result.code, code);
-    assert.equal(asked, level === 'testing' ? 0 : 1);
-    if (code === 'refused_action') {
-      assert.ok(result.verdict.why.includes('guard:purchase_veto'));
-      assert.equal(result.next.kind, 'stop');
-    }
-  }
-});
-
 let browser;
 test.before(async () => {
   try { browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
@@ -500,17 +449,6 @@ for (const [name, html] of [
   const r = await dispatch(p, 'full');
   assert.equal(r.code, 'blocked_risky', `${name}: ${JSON.stringify(r.obs.controls)}`);
 });
-const semanticLabels = ['Pɑy', 'Jetzt kaufen', 'Payer', 'Comprar', 'Bestellen', 'Zahlungspflichtig bestellen',
-  'Get it now', 'Rent', 'Pledge', 'Tip', 'Top up', 'Add funds'];
-test('semantic-only labels are vetoed by Jev purchase_page even when the regex misses', async () => {
-  for (const label of semanticLabels) {
-    const bridge = checkout(); bridge.pages['/'].controls[0].label = label;
-    await new BrowserRuntime({ bridge, provider: provider({ purchase_control: 0, purchase_page: 0.95 }) })
-      .step(`Use ${label}`, grant('full'));
-    assert.equal(bridge.executions.length, 0, label);
-  }
-});
-
 for (const autocomplete of ['billing cc-number', 'CC-NUMBER', 'section-x cc-exp', 'cc-given-name']) {
   test(`payment autocomplete ${autocomplete} is purchase-class`, async t => {
     const p = await pageFixture(t, `<form><input autocomplete="${autocomplete}"><button>Next</button></form>`);
@@ -568,7 +506,8 @@ test('forbid remains restrictive in page and runtime at testing', async t => {
   const p = await pageFixture(t, '<button type="button">Upgrade</button>'); if (!p) return;
   assert.equal((await dispatch(p, 'testing', ['Upgrade'])).code, 'blocked_risky');
   const bridge = checkout(); bridge.pages['/'].controls[0].label = 'Upgrade';
-  await new BrowserRuntime({ bridge, provider: provider({}) }).step('Upgrade', { ...grant('testing'), policy: ['Upgrade'] });
+  const offered = await new BrowserRuntime({ bridge }).observe({ ...grant('testing'), policy: ['Upgrade'] });
+  assert.ok(!offered.actions.some(action => action.label === 'Upgrade'), 'a forbidden control is never offered');
   assert.equal(bridge.executions.length, 0);
 });
 
@@ -651,9 +590,9 @@ test('page-controlled attributes and main-world globals cannot forge isolated-wo
 async function daemonFixture(t) {
   const home = await mkdtemp(join(tmpdir(), 'pass7-daemon-'));
   const hub = createFakeHub();
-  const env = { TYPESAFE_API_KEY: 'synthetic-fixture-value' };
+  const env = {};
   const log = createLogger(homePaths({ home, env }));
-  const daemon = createDaemon({ driver: 'jev', home, env, port: 0, hub, log, providerFactory: () => provider({ purchase_page: 0, purchase_control: 0 }) });
+  const daemon = createDaemon({ home, env, port: 0, hub, log });
   await daemon.listen();
   t.after(async () => { await daemon.close(); log.close(); await rm(home, { recursive: true, force: true }); });
   const api = (method, path, body) => call(daemon.port, method, path, body, { token: daemon.token });
@@ -670,9 +609,9 @@ test('daemon rejects host grants and keeps requested testing below user grant; a
   const id = r.body.requestId;
   await hub.approve(id, { level: 'reversible' });
   assert.equal(daemon.request(id).grant.level, 'reversible');
-  for (const path of ['/v1/observe', '/v1/runs']) {
-    const r = await api('POST', path, { requestId: id, instruction: 'Continue', mode: 'testing', grant: { level: 'testing' } });
-    assert.equal(r.status, 400);
+  for (const [path, extra] of [['/v1/observe', { instruction: 'Continue' }], ['/v1/act', { actionId: 'a0' }]]) {
+    const r = await api('POST', path, { requestId: id, ...extra, mode: 'testing', grant: { level: 'testing' } });
+    assert.equal(r.status, 400, path);
   }
   const old = daemon.request(id).lease.leaseId;
   const reply = await hub.approve(id, { level: 'full' });
@@ -702,14 +641,6 @@ test('hub clamps forged command levels independently', async t => {
     await pending;
   }
 });
-test('MCP accepts testing only as a requested mode and rejects permission-grant keys', () => {
-  const tool = JEV_TOOLS.find(t => t.name === 'fai_browser_run');
-  assert.equal(validateSchema(tool.inputSchema, { instruction: 'Continue', mode: 'testing' }), null);
-  for (const extra of [{ grant: { level: 'testing' } }, { permissions: { effective: 'testing' } }]) {
-    assert.match(validateSchema(tool.inputSchema, { instruction: 'Continue', mode: 'testing', ...extra }), /not a supported parameter/);
-  }
-});
-
 class PasswordEchoBridge extends FakeBridge {
   constructor(echo) { super({ pages: { '/': { title: 'Fixture', text: 'Test login', controls:
     [{ id: '1', role: 'textbox', type: 'password', label: 'Password', enabled: true }] } } }); this.echo = echo; }
@@ -727,10 +658,9 @@ class PasswordEchoBridge extends FakeBridge {
 }
 async function filled(secret, echo = s => s) {
   const bridge = new PasswordEchoBridge(echo);
-  const runtime = new BrowserRuntime({ bridge, provider: { async decide(_o, actions) {
-    return { actionId: actions.find(a => a.type === 'fill_supplied_text').id, confidence: 0.99 };
-  } } });
-  const result = await runtime.step('Fill the test password', { ...grant('testing'), suppliedText: { pw: secret } });
+  const runtime = new BrowserRuntime({ bridge });
+  const offered = await runtime.observe({ ...grant('testing'), suppliedText: { pw: secret } });
+  const result = await runtime.act(offered.actions.find(a => a.type === 'fill_supplied_text').id);
   assert.equal(bridge.lastText, secret, 'fixture actually filled the password');
   return { bridge, runtime, result };
 }
@@ -771,38 +701,19 @@ test('fixed: screenshot annotation caption redacts a supplied password echoed in
     {label:${JSON.stringify('Password ' + secret)}})`, context);
   assert.ok(!caption.includes(secret), caption);
 });
-test('mechanical consent rejection precedes provider selection at all levels', async () => {
-  for (const level of LEVELS) {
-    const bridge = new FakeBridge({ pages: { '/': { title: 'Cookie settings', text: 'We use cookies',
-      controls: [ { id: '1', role: 'button', label: 'Accept all', consent: true, risk: 'consent_accept', enabled: true },
-        { id: '2', role: 'button', label: 'Reject all', consent: true, risk: 'reversible', enabled: true, dismissesConsent: true } ],
-      consent: { text: 'We use cookies', buttons: [{ id: '1', kind: 'accept', label: 'Accept all' }, { id: '2', kind: 'reject', label: 'Reject all' }] } } } });
-    const runtime = new BrowserRuntime({ bridge, provider: { async decide() { return { actionId: 'done' }; } } });
-    await runtime.run('Read page', grant(level));
-    assert.equal(bridge.executions[0]?.action.target, '2', level);
-    assert.ok(!bridge.executions.some(e => e.action.target === '1'), level);
-  }
-});
-
 test('javascript links dispatch no event even when labelled as navigation', async t => {
   const p = await pageFixture(t, '<a href="javascript:void(0)" onclick="window.commits=1">Buy now</a>');
   if (!p) return;
   assert.equal((await dispatch(p, 'full')).code, 'blocked_risky');
   assert.equal(await p.evaluate(() => window.commits || 0), 0);
 });
-test('config cannot grant levels and CLI options files strip permission fields', async t => {
+test('config cannot grant levels', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'pass7-config-')); t.after(() => rm(dir, { recursive: true, force: true }));
   const { writeFile } = await import('node:fs/promises');
   for (const config of [{ grant: { level: 'testing' } }, { permissions: { level: 'testing' } }, { level: 'testing' }]) {
     await writeFile(join(dir, 'config.json'), JSON.stringify(config));
     assert.throws(() => loadConfig(homePaths({ home: dir, env: {} })), /Unknown|unknown/);
   }
-  // An options file reaches the daemon only through the RUN_OPTION_KEYS allow-list: no grant, no permissions.
-  const cli = await readFile(new URL('../src/cli.js', import.meta.url), 'utf8');
-  const list = cli.match(/const RUN_OPTION_KEYS = (\[[^\]]+\]);/)?.[1];
-  const keys = vm.runInNewContext(list);
-  assert.ok(keys.includes('mode'), 'requested need is retained');
-  assert.ok(!keys.includes('grant') && !keys.includes('permissions'));
 });
 test('fixed: worker annotation payload excludes a password echoed by a later action', async () => {
   const { h, reply } = await startWorker(); assert.equal(reply.status, 'active');
@@ -842,7 +753,7 @@ test('FINDING: cross-origin payment iframe outside form prevents interactive sub
   assert.ok(r.obs.warnings.includes('cross_origin_frame'));
   assert.equal(r.code, 'blocked_risky');
 });
-test('password redaction survives later run and a new daemon lease on the same tab', async t => {
+test('password redaction survives a later observe and a new daemon lease on the same tab', async t => {
   const { hub, api } = await daemonFixture(t);
   const secret = 'synthetic-password-77';
   const req = async () => {
@@ -853,13 +764,23 @@ test('password redaction survives later run and a new daemon lease on the same t
   const bridge = hub.bridgeForTab(1);
   bridge.pages['/'] = { title: 'Fixture', text: 'Test login', controls:
     [{ id: '1', role: 'textbox', type: 'password', label: 'Password', enabled: true }] };
-  const filled = await api('POST', '/v1/runs', { requestId: id, instruction: 'Fill password', mode: 'testing',
-    operation: 'step', suppliedText: { pw: secret }, capture: 'none', waitMs: 5000 });
+  const offered = await api('POST', '/v1/observe', { requestId: id, mode: 'testing', suppliedText: { pw: secret }, capture: false });
+  const fill = offered.body.actions.find(action => action.type === 'fill_supplied_text');
+  const filled = await api('POST', '/v1/act', { requestId: id, actionId: fill.id, revision: offered.body.revision,
+    capture: 'none', waitMs: 5000 });
   assert.equal(filled.status, 200); assert.equal(bridge.lastText, secret);
   bridge.pages['/'] = { title: `Echo ${secret}`, text: `Echo ${secret}`, controls: [] };
-  const later = await api('POST', '/v1/runs', { requestId: id, instruction: 'Read page', mode: 'testing', operation: 'step', capture: 'none', waitMs: 5000 });
+  const later = await api('POST', '/v1/observe', { requestId: id, mode: 'testing', capture: false });
   assert.ok(!JSON.stringify(later.body).includes(secret));
   const newId = await req();
   const observed = await api('POST', '/v1/observe', { requestId: newId, mode: 'testing', capture: false });
   assert.equal(observed.status, 200); assert.ok(!JSON.stringify(observed.body).includes(secret));
+});
+
+test('MCP accepts testing only as a requested mode and rejects permission-grant keys', () => {
+  const tool = TOOLS.find(t => t.name === 'fai_browser_open');
+  assert.equal(validateSchema(tool.inputSchema, { task: 'Continue', mode: 'testing' }), null);
+  for (const extra of [{ grant: { level: 'testing' } }, { permissions: { effective: 'testing' } }]) {
+    assert.match(validateSchema(tool.inputSchema, { task: 'Continue', mode: 'testing', ...extra }), /not a supported parameter/);
+  }
 });

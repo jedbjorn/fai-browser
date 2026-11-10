@@ -1,31 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readdir, rm, writeFile, readFile, stat } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createDaemon } from '../src/daemon.js';
-import { DEFAULT_DRIVER, homePaths, loadConfig, readDriver, saveDriver } from '../src/home.js';
-import { ALWAYS_LOAD_META, INSTRUCTIONS, JEV_INSTRUCTIONS, TOOLS, directText } from '../src/mcp.js';
+import { ALWAYS_LOAD_META, INSTRUCTIONS, TOOLS, directText } from '../src/mcp.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
 import { mcpData } from './helpers/mcp-result.js';
-import { ORIGIN, PAGES, link, clickProvider } from './runtime-fixtures.js';
+import { ORIGIN, PAGES, link } from './runtime-fixtures.js';
 
-async function setup(t, { driver = 'agent', pages = PAGES, providerFactory,
-  env = { TYPESAFE_API_KEY: 'dummy-key-for-isolated-test' } } = {}) {
+async function setup(t, { pages = PAGES } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-direct-'));
-  const paths = homePaths({ home, env: {} });
-  if (driver) saveDriver(driver, paths);
   const hub = createFakeHub({ bridgeOptions: { pages } });
-  let providers = 0;
-  const daemon = createDaemon({ home, env, port: 0, hub,
-    providerFactory: (...args) => {
-      providers++;
-      if (providerFactory) return providerFactory(...args);
-      throw new Error('Agent direct must never construct a provider');
-    } });
+  const daemon = createDaemon({ home, env: {}, port: 0, hub });
   await daemon.listen();
   const mcp = spawnMcp({ FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port),
     FAI_MCP_APPROVAL_WAIT_MS: '1000' });
@@ -36,7 +26,7 @@ async function setup(t, { driver = 'agent', pages = PAGES, providerFactory,
   });
   const initialized = await mcp.initialize();
   const api = (method, path, body) => call(daemon.port, method, path, body, { token: daemon.token });
-  return { home, paths, daemon, hub, mcp, initialized, api, providers: () => providers };
+  return { home, daemon, hub, mcp, initialized, api };
 }
 
 async function pendingRequest(hub) {
@@ -57,27 +47,6 @@ async function opened(ctx, args, level = 'read-only') {
   return { result, structured: mcpData(result), text: result.content[0].text, requestId: pending.requestId };
 }
 
-test('the default driver is the agent; a saved choice is kept and validated', async t => {
-  assert.equal(DEFAULT_DRIVER, 'agent');
-  const home = await mkdtemp(join(tmpdir(), 'fai-driver-config-'));
-  t.after(() => rm(home, { recursive: true, force: true }));
-  const paths = homePaths({ home, env: {} });
-  assert.equal(loadConfig(paths).driver, 'agent', 'no config.json: your agent drives');
-  await writeFile(paths.config, JSON.stringify({ budget: { maxCalls: 7 }, outputDir: 'relative-artifacts' }));
-  assert.equal(loadConfig(paths).driver, 'agent', 'a config without a driver: your agent drives');
-  saveDriver('jev', paths);
-  assert.deepEqual(JSON.parse(await readFile(paths.config, 'utf8')),
-    { budget: { maxCalls: 7 }, outputDir: 'relative-artifacts', driver: 'jev' });
-  assert.equal((await stat(paths.config)).mode & 0o777, 0o600);
-  assert.equal(loadConfig(paths).driver, 'jev');
-  assert.throws(() => saveDriver('testing', paths), /driver must be/);
-  await writeFile(paths.config, '{bad');
-  assert.throws(() => saveDriver('agent', paths), /not valid JSON/);
-  assert.equal(await readFile(paths.config, 'utf8'), '{bad');
-  assert.deepEqual(readDriver(paths).driver, 'agent', 'readDriver never throws: the default');
-  assert.match(readDriver(paths).error, /not valid JSON/);
-});
-
 test('direct MCP: open waits for approval and observes; acts are host-chosen, lean and verified without a provider', async t => {
   const ctx = await setup(t);
   assert.equal(ctx.initialized.result.instructions, INSTRUCTIONS);
@@ -87,7 +56,7 @@ test('direct MCP: open waits for approval and observes; acts are host-chosen, le
   const serialized = JSON.stringify(tools);
   assert.equal(serialized, JSON.stringify(TOOLS), 'wire serialization preserves the exported schema prefix and order');
   assert.equal(createHash('sha256').update(serialized).digest('hex'),
-    '04e3922daebf9d14ca52c31b50fe8d2e580cca970bd2075af58d68c968144ba1', 'tool schema bytes stay stable');
+    '82fef5f39dd3ea77a2165f5bfaca9fa21688c9c33ff50741747fb1b74d5304b9', 'tool schema bytes stay stable');
   const repeated = await ctx.mcp.request('tools/list', {});
   assert.equal(JSON.stringify(repeated.result.tools), serialized, 'repeated tools/list reads are byte-identical');
   assert.deepEqual(tools.map(tool => tool.name), ['fai_browser_open', 'fai_browser_act', 'fai_browser_observe',
@@ -125,13 +94,10 @@ test('direct MCP: open waits for approval and observes; acts are host-chosen, le
   assert.equal(final.status, 'completed');
   assert.equal(final.verification.passed, true);
   assert.equal(final.next.kind, 'answer');
-  assert.equal(ctx.providers(), 0, 'not even startup/approval warm-up or the act guard constructed Jev');
   const status = (await ctx.api('GET', '/v1/status')).body;
-  assert.equal(status.driver, 'agent');
-  assert.equal(status.provider.default, null);
-  assert.equal(status.provider.keyConfigured, true, 'a saved key cannot re-enable the provider');
-  const mcpStatus = mcpData(await ctx.mcp.callTool('fai_browser_status', {}));
-  assert.equal(mcpStatus.driver, 'agent');
+  assert.equal(status.driver, undefined);
+  assert.equal(status.provider, undefined);
+  assert.equal(mcpData(await ctx.mcp.callTool('fai_browser_status', {})).state, 'ok');
 });
 
 test('direct MCP projects dated records and their offered open/pagination actions', async t => {
@@ -194,7 +160,6 @@ test('direct MCP cannot observe an unapproved request', async t => {
   assert.equal(result.next.kind, 'relay');
   assert.match(result.next.text, /Then call fai_browser_observe with requestId/);
   assert.equal(ctx.hub.bridges.size, 0);
-  assert.equal(ctx.providers(), 0);
 });
 
 test('direct control keeps the user grant, policy restrictions and refusal of unoffered actions', async t => {
@@ -210,11 +175,8 @@ test('direct control keeps the user grant, policy restrictions and refusal of un
   const refused = await ctx.mcp.callTool('fai_browser_act', { actionId: 'forged', revision: page.revision });
   assert.equal(refused.isError, true);
   assert.equal(ctx.hub.bridgeForTab(1).executions.length, 0);
-  const run = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', provider: 'typesafe' });
-  assert.equal(run.status, 409);
-  assert.equal(run.body.error.code, 'agent_direct');
-  assert.match(run.body.error.message, /experimental Jev driver/);
-  assert.equal(ctx.providers(), 0);
+  const run = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About' });
+  assert.equal(run.status, 404, 'runs and steps are gone');
 });
 
 test('a later observe keeps the opening call\'s policy, supplied values and URLs; it can only add to them', async t => {
@@ -490,123 +452,7 @@ test('Enter in a filled search field is offered as a search at interactive, neve
   assert.ok(!after.actions.some(action => /press Enter/.test(action.description)));
 });
 
-test('switching to direct clears a retained provider; switching back restores delegation', async t => {
-  let decisions = 0;
-  const pages = { '/': { title: 'Home', text: 'Welcome', controls: [
-    { id: '1', role: 'button', label: 'Settings', enabled: true, risk: 'reversible' },
-  ] } };
-  const provider = { async decide(page, actions) {
-    decisions++;
-    return { actionId: actions.find(action => action.label === 'Settings')?.id ?? 'done', confidence: 1 };
-  } };
-  const ctx = await setup(t, { driver: 'jev', pages, providerFactory: () => provider });
-  const requestId = (await ctx.api('POST', '/v1/requests', {
-    origins: [ORIGIN], reason: 'Open settings', mode: 'reversible',
-  })).body.requestId;
-  await ctx.hub.approve(requestId, { level: 'reversible' });
-  const act = async () => {
-    const page = (await ctx.api('POST', '/v1/observe', { requestId, mode: 'reversible', capture: false })).body;
-    const settings = page.actions.find(action => action.label === 'Settings');
-    assert.ok(settings);
-    return ctx.api('POST', '/v1/act', { requestId, actionId: settings.id,
-      revision: page.revision, expectation: { titleEquals: 'Home' }, capture: 'none' });
-  };
-  await act();
-  assert.ok(decisions > 0);
-  saveDriver('agent', ctx.paths);
-  const reloaded = await ctx.api('POST', '/v1/daemon/reload', {});
-  assert.equal(reloaded.status, 200);
-  assert.equal(reloaded.headers['x-fai-driver'], 'agent', 'every authenticated answer names the driver');
-  const before = decisions;
-  const made = ctx.providers();
-  assert.equal((await act()).body.result.status, 'completed');
-  assert.equal(decisions, before);
-  assert.equal(ctx.providers(), made);
-  saveDriver('jev', ctx.paths);
-  assert.equal((await ctx.api('POST', '/v1/daemon/reload', {})).status, 200);
-  await act();
-  assert.ok(decisions > before);
-});
-
-test('switching to direct interrupts an active Jev run without waiting for it', async t => {
-  let entered;
-  const deciding = new Promise(resolve => { entered = resolve; });
-  let aborted = false;
-  const ctx = await setup(t, { driver: 'jev', providerFactory: () => ({
-    decide(page, actions, context, signal) {
-      entered();
-      return new Promise((resolve, reject) => {
-        signal.addEventListener('abort', () => {
-          aborted = true;
-          reject(signal.reason);
-        }, { once: true });
-      });
-    },
-  }) });
-  const requestId = (await ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Read About' })).body.requestId;
-  await ctx.hub.approve(requestId);
-  const started = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', waitMs: 0 });
-  await deciding;
-  saveDriver('agent', ctx.paths);
-  assert.equal((await ctx.api('POST', '/v1/daemon/reload', {})).status, 200);
-  assert.equal(aborted, true, 'the provider request is aborted at once');
-  const ended = await ctx.api('POST', '/v1/wait', { runId: started.body.runId, maxMs: 3000 });
-  assert.equal(ended.body.state, 'done');
-  assert.equal(ctx.hub.bridgeForTab(1).executions.length, 0);
-});
-
-test('the extension toggle persists the choice and an already-running MCP server follows the daemon both ways', async t => {
-  const ctx = await setup(t, { driver: 'jev', providerFactory: () => clickProvider(['About']) });
-  assert.equal(ctx.initialized.result.instructions, JEV_INSTRUCTIONS);
-  const hello = await ctx.hub.emit({ type: 'hello', session: null });
-  assert.deepEqual(hello.control, { driver: 'jev', jevAvailable: true });
-  const direct = await ctx.hub.emit({ type: 'driver', driver: 'agent' });
-  assert.equal(direct.control.driver, 'agent');
-  assert.equal(loadConfig(ctx.paths).driver, 'agent');
-  const before = ctx.providers();
-  // The host still holds the Jev tool list: its run opens the task instead.
-  const opening = ctx.mcp.callTool('fai_browser_run', {
-    origins: [ORIGIN], reason: 'Read About', instruction: 'Open About',
-  });
-  await ctx.hub.approve((await pendingRequest(ctx.hub)).requestId);
-  const observed = await opening;
-  assert.equal(mcpData(observed).status, 'observed');
-  assert.equal(ctx.providers(), before);
-  assert.equal(ctx.hub.bridgeForTab(1).executions.length, 0);
-  assert.match(observed.content[0].text, /switched FAI Browser to "Your agent"/);
-  // The first result after the switch summarizes the new mode's instructions in one line.
-  assert.match(observed.content[0].text, /fai_browser_act \(actionId; text for fills/);
-  assert.match(observed.content[0].text, /Approve once/);
-  assert.doesNotMatch(observed.content[0].text, /\n/);
-  assert.ok(ctx.mcp.messages.some(message => message.method === 'notifications/tools/list_changed'));
-  const listed = (await ctx.mcp.request('tools/list', {})).result.tools.map(tool => tool.name);
-  assert.ok(listed.includes('fai_browser_open') && !listed.includes('fai_browser_run'));
-  const back = await ctx.hub.emit({ type: 'driver', driver: 'jev' });
-  assert.equal(back.control.driver, 'jev');
-  const delegated = await ctx.mcp.callTool('fai_browser_run', {
-    instruction: 'Open About', expectation: { urlIncludes: '/about' },
-  });
-  assert.equal(mcpData(delegated).status, 'completed');
-  assert.match(delegated.content[0].text, /experimental Jev autopilot/);
-  assert.match(delegated.content[0].text, /one fai_browser_run .*expectation.*Purchases are refused/);
-  assert.ok(ctx.providers() > before);
-});
-
-test('MCP takes the driver from the daemon, not from config.json on its own', async t => {
-  const ctx = await setup(t, { driver: 'agent' });
-  // config.json now says jev, but the daemon has not reloaded it: the daemon's agent wins.
-  saveDriver('jev', ctx.paths);
-  const mcp = spawnMcp({ FAI_HOME: ctx.home, FAI_DAEMON_PORT: String(ctx.daemon.port) });
-  t.after(() => mcp.close());
-  await mcp.initialize();
-  const status = await mcp.callTool('fai_browser_status', {});
-  assert.equal(mcpData(status).driver, 'agent');
-  const listed = (await mcp.request('tools/list', {})).result.tools.map(tool => tool.name);
-  assert.ok(listed.includes('fai_browser_open'), listed.join(', '));
-  assert.ok(!listed.includes('fai_browser_run'));
-});
-
-test('a malformed config.json never crashes or hangs the MCP server: the default driver, logged', async t => {
+test('a malformed config.json never crashes or hangs the MCP server', async t => {
   const home = await mkdtemp(join(tmpdir(), 'fai-direct-bad-'));
   t.after(() => rm(home, { recursive: true, force: true }));
   await writeFile(join(home, 'config.json'), '{not json');
@@ -617,21 +463,8 @@ test('a malformed config.json never crashes or hangs the MCP server: the default
   assert.equal(initialized.result.instructions, INSTRUCTIONS);
   const tools = (await mcp.request('tools/list', {})).result.tools;
   assert.equal(tools[0].name, 'fai_browser_open');
-  assert.match(mcp.stderr, /config\.json unreadable, using the agent driver/);
   const result = await mcp.callTool('fai_browser_status', {}, { timeoutMs: 20_000 });
   assert.equal(result.isError, true, 'a tool call answers with an error');
-});
-
-test('a missing Jev key or invalid driver leaves the saved choice unchanged; reconnect never overrides it', async t => {
-  const ctx = await setup(t, { env: {} });
-  const unavailable = await ctx.hub.emit({ type: 'driver', driver: 'jev' });
-  assert.equal(unavailable.error.code, 'key_missing');
-  const invalid = await ctx.hub.emit({ type: 'driver', driver: 'testing' });
-  assert.equal(invalid.error.code, 'invalid_driver');
-  assert.equal(loadConfig(ctx.paths).driver, 'agent');
-  const reconnected = await ctx.hub.emit({ type: 'hello', session: null, settings: { driver: 'jev' } });
-  assert.deepEqual(reconnected.control, { driver: 'agent', jevAvailable: false });
-  assert.equal(ctx.providers(), 0);
 });
 
 test('the direct instructions stay short and name only direct tools', () => {
@@ -730,7 +563,6 @@ test('direct MCP: full observe recovers a discarded long-offer reference chain b
   assert.equal(finished.status, 'completed');
   assert.equal(finished.verification.passed, true);
   assert.equal(finished.page.url, `${ORIGIN}/finished`);
-  assert.equal(ctx.providers(), 0);
 });
 
 test('the wire-test decoder maps sparse old action ids before applying overlapping additions and removals', () => {

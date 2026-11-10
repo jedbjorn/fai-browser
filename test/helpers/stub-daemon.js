@@ -54,12 +54,9 @@ export async function startStubDaemon(behavior = {}) {
       autoGrant: false,
       hang: new Set(),
       bigImage: false,
-      // This stub serves the delegated (Jev) surface unless a test asks for the default driver, agent.
-      driver: 'jev',
       ...behavior,
     },
   };
-  await writeFile(join(home, 'config.json'), JSON.stringify({ driver: stub.behavior.driver }), { mode: 0o600 });
   const hung = new Set();
 
   function changed() {
@@ -486,9 +483,7 @@ export async function startStubDaemon(behavior = {}) {
       if (res.destroyed) {
         return;
       }
-      // As the daemon: every authenticated answer names the driver in effect.
-      const authed = req.headers.authorization === `Bearer ${token}` && url.pathname !== '/v1/health';
-      res.writeHead(status, { 'Content-Type': 'application/json', ...(authed ? { 'X-Fai-Driver': stub.behavior.driver } : {}) });
+      res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(payload));
     });
   });

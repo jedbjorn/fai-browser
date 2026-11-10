@@ -31,14 +31,14 @@ const OPENCODE_KEEP = 64;
 export class AgentSession {
   /**
    * `connect(options)`: FaiBrowserClient.connect (called with autoStart and takeover false). `host`: claude, codex,
-   * opencode or unknown (src/wake.js detectHost). `driver()`: the driver in effect (the wake text names its tools).
+   * opencode or unknown (src/wake.js detectHost).
    * `waiting(wake)`: true when this server already showed the agent what the wake is about (a call waiting on that
    * request, or one that saw it become active). `deliver`: the delivery function (tests); `onOutcome(wake, outcome)`: told how each wake went (the server stops
    * promising wakes after a failure); `pollMs`, `backoffMs`, `ppid`: test overrides. OpenCode: `clientVersion` (from
    * initialize, the plugin's version gate) and `opencodeOwnerOf(requestId)` (the OpenCode session whose call created or
    * joined that request, or null).
    */
-  constructor({ env, home, connect, clientName, host, log = () => {}, driver = () => 'agent', waiting = () => false,
+  constructor({ env, home, connect, clientName, host, log = () => {}, waiting = () => false,
     onOutcome = () => {}, clientVersion = null, opencodeOwnerOf = () => null, now = Date.now,
     deliver = deliverWake, pollMs = POLL_MS, backoffMs = BACKOFF_MIN_MS, cwd = process.cwd(), pid = process.pid,
     ppid = undefined }) {
@@ -48,7 +48,6 @@ export class AgentSession {
     this.clientName = clientName;
     this.host = host;
     this.log = log;
-    this.driver = driver;
     this.waiting = waiting;
     this.onOutcome = onOutcome;
     this.deliver = deliver;
@@ -348,7 +347,7 @@ export class AgentSession {
         outcome = { outcome: 'skipped' };
       } else {
         const text = wakeText({ kind: wake.kind, inviteId: wake.inviteId, requestId: wake.requestId, level: wake.level,
-          userText: wake.userText, driver: this.driver() });
+          userText: wake.userText });
         const capability = this.capability;
         // OpenCode: Approve and Resume go to the session whose call made (or joined) that request, never a guess; an
         // invite to the only session that used FAI lately.

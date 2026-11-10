@@ -9,12 +9,10 @@ import { join, resolve } from 'node:path';
 import { startStubDaemon } from './helpers/stub-daemon.js';
 import { createDaemon } from '../src/daemon.js';
 import { createLogger, homePaths } from '../src/home.js';
-import { directNext, nextFor } from '../src/result.js';
+import { directNext } from '../src/result.js';
 import { CLI_PATH, resumeWaitCommand, resumeWaitText, withResumeWait } from '../src/resume.js';
-import { ORIGIN, clickProvider } from './runtime-fixtures.js';
+import { ORIGIN } from './runtime-fixtures.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
-import { spawnMcp } from './helpers/mcp-harness.js';
-import { mcpData } from './helpers/mcp-result.js';
 
 const CLI = resolve(import.meta.dirname, '..', 'src', 'cli.js');
 const delay = ms => new Promise(resolveDelay => setTimeout(resolveDelay, ms));
@@ -54,9 +52,9 @@ function oneLine(stdout) {
 }
 
 async function stubbed(t, behavior = {}) {
-  // Short daemon wait rounds (the live daemon blocks up to 30 s per round) so the loop runs several rounds. The default
-  // driver (agent) unless a test asks for Jev. wait --until never starts a daemon, so none is spawned here.
-  const stub = await startStubDaemon({ requestWaitCapMs: 150, driver: 'agent', ...behavior });
+  // Short daemon wait rounds (the live daemon blocks up to 30 s per round) so the loop runs several rounds. wait --until
+  // never starts a daemon, so none is spawned here.
+  const stub = await startStubDaemon({ requestWaitCapMs: 150, ...behavior });
   t.after(() => stub.close());
   const cli = (args, options = {}) => runCli(args, stub.env(options.env), options);
   return { stub, cli };
@@ -180,23 +178,6 @@ test('the timeout exits 2 with the last state and a relay next', async t => {
   assert.match(result.next.text, /approve it in the FAI Browser extension/);
 });
 
-test('on the Jev driver the wait\'s next continues with fai_browser_run (kind rerun)', async t => {
-  const { stub, cli } = await stubbed(t, { driver: 'jev' });
-  const requestId = addRequest(stub, 'active');
-  let run = await cli(['wait', requestId, '--until', 'active']);
-  assert.equal(run.code, 0, run.stderr);
-  let result = oneLine(run.stdout);
-  assert.equal(result.next.kind, 'rerun');
-  assert.match(result.next.text, new RegExp(`call fai_browser_run again with requestId ${requestId}`));
-  assert.doesNotMatch(result.next.text, /fai_browser_observe/);
-  const paused = addRequest(stub, 'paused', 'paused');
-  run = await cli(['wait', paused, '--until', 'active', '--timeout', '200ms']);
-  assert.equal(run.code, 2);
-  result = oneLine(run.stdout);
-  assert.equal(result.next.kind, 'relay');
-  assert.match(result.next.text, /then call fai_browser_run again with requestId/);
-});
-
 test('a daemon outage mid-wait is retried with backoff; the wait still ends when the user resumes', async t => {
   const { stub, cli } = await stubbed(t);
   const requestId = addRequest(stub, 'paused', 'disconnected');
@@ -315,8 +296,7 @@ test('against the real daemon: a paused lease, then Resume (a new lease for the 
   const hub = createFakeHub();
   const env = {};
   const log = createLogger(homePaths({ home, env }));
-  const daemon = createDaemon({ driver: 'agent', home, env, port: 0, hub, log, sweepIntervalMs: 60_000,
-    providerFactory: () => clickProvider(['About']) });
+  const daemon = createDaemon({ home, env, port: 0, hub, log, sweepIntervalMs: 60_000 });
   await daemon.listen();
   t.after(async () => {
     await daemon.close();
@@ -395,50 +375,6 @@ test('a paused lease: next tells the agent to relay Resume and start the wait in
   for (const code of ['consent_banner', 'login', 'blocked', 'js_dialog']) {
     const next = directNext({ status: 'needs_user', code }, { requestId: 'req_9' });
     assert.doesNotMatch(next.text, /--until active/, code);
-  }
-});
-
-test('Jev receipts name the same wait for paused and pending requests', () => {
-  const command = resumeWaitCommand('req_7');
-  const paused = nextFor({ status: 'needs_user', code: 'paused', lease: { requestId: 'req_7', state: 'paused' } },
-    { requestId: 'req_7' });
-  assert.equal(paused.kind, 'relay');
-  assert.match(paused.text, /call fai_browser_run again with requestId req_7; it starts from the current page\./);
-  assert.ok(paused.text.includes(command));
-  const pending = nextFor({ status: 'needs_user', code: 'select_tab', lease: { requestId: 'req_7', state: 'pending' } },
-    { requestId: 'req_7', origin: 'https://example.com' });
-  assert.equal(pending.kind, 'relay');
-  assert.match(pending.text, /Then call fai_browser_run again with requestId req_7; no origins needed\. If you can/);
-  assert.ok(pending.text.includes(command));
-});
-
-test('MCP: fai_browser_wait on a paused request names the wait command (observe for your agent, run for Jev)', async t => {
-  for (const driver of ['agent', 'jev']) {
-    const stub = await startStubDaemon({ driver, requestWaitCapMs: 100 });
-    const env = stub.env();
-    const mcp = spawnMcp(env);
-    t.after(async () => {
-      mcp.child.kill('SIGKILL');
-      await stub.close();
-    });
-    await mcp.initialize();
-    const requestId = addRequest(stub, 'paused', 'tab_changed');
-    const data = mcpData(await mcp.callTool('fai_browser_wait', { requestId, maxMs: 100 }));
-    assert.equal(data.state, 'paused');
-    assert.equal(data.next.kind, 'relay');
-    assert.match(data.next.text, /The tab lease is paused \(tab_changed\)\. Ask the user to return to the tab and click Resume/);
-    assert.match(data.next.text, driver === 'jev' ? /call fai_browser_run again with requestId/
-      : /call fai_browser_observe with requestId/);
-    // The MCP server's own node, CLI path and daemon location, so the host's shell reaches the same daemon.
-    assert.ok(data.next.text.includes(resumeWaitCommand(requestId, { env, execPath: process.execPath })), data.next.text);
-    assert.ok(!data.next.text.includes(stub.token), 'the client token never goes into a command');
-    // A pending request names the same wait; Agent direct continues with observe.
-    const pending = addRequest(stub, 'pending');
-    const waiting = mcpData(await mcp.callTool('fai_browser_wait', { requestId: pending, maxMs: 100 }));
-    assert.equal(waiting.next.kind, 'relay');
-    assert.ok(waiting.next.text.includes(resumeWaitCommand(pending, { env, execPath: process.execPath })));
-    assert.match(waiting.next.text, driver === 'jev' ? /Then call fai_browser_run again with requestId/
-      : /Then call fai_browser_observe with requestId/);
   }
 });
 

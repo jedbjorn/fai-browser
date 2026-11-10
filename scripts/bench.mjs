@@ -1,11 +1,8 @@
 #!/usr/bin/env node
-// Runtime loop benchmark.
-//   node scripts/bench.mjs --fake     in-memory bridge, deterministic provider, artificial stage latencies
+// Host loop benchmark: observe, then act on the offered link, `--steps` times per run (the agent-driven loop).
+//   node scripts/bench.mjs --fake     in-memory bridge, artificial stage latencies
 //   node scripts/bench.mjs --browser  headless Chromium + extension + fixtures (same setup as browser-smoke.mjs)
 // Prints a markdown table of p50/p95 per stage; --json prints JSON instead.
-// --answer ends each run like a completed task: the provider reports done, a final decide confirms it on the last
-// page and choose() ranks the answer (both take --decide-ms); "Run tail" is the time from the last action to the
-// returned result.
 import http from 'node:http';
 import { headlessEnv } from './headless-env.mjs';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -23,10 +20,7 @@ const STAGES = {
   observe: 'Observe round trip',
   execute: 'Execute to observation',
   screenshot: 'Screenshot arrival',
-  decision: 'Provider decision',
   total: 'Total per step',
-  choose: 'Answer ranking (choose)',
-  tail: 'Run tail (last action to result)',
 };
 
 const { values: args } = parseArgs({
@@ -39,19 +33,17 @@ const { values: args } = parseArgs({
     'observe-ms': { type: 'string', default: '5' },
     'execute-ms': { type: 'string', default: '40' },
     'capture-ms': { type: 'string', default: '20' },
-    'decide-ms': { type: 'string' },
     capture: { type: 'string', default: 'last' },
     headed: { type: 'boolean' },
     'inline-capture': { type: 'boolean' },
-    answer: { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   },
 });
 
 if (args.help || args.fake === args.browser) {
-  process.stderr.write(`Usage: node scripts/bench.mjs --fake|--browser [--steps 20] [--runs N] [--json] [--answer]
-  --fake:    [--observe-ms 5] [--execute-ms 40] [--capture-ms 20] [--decide-ms 30] [--inline-capture]
-  --browser: [--decide-ms 0] [--headed]   env: CHROMIUM_PATH, PLAYWRIGHT_MODULE
+  process.stderr.write(`Usage: node scripts/bench.mjs --fake|--browser [--steps 20] [--runs N] [--json]
+  --fake:    [--observe-ms 5] [--execute-ms 40] [--capture-ms 20] [--inline-capture]
+  --browser: [--headed]   env: CHROMIUM_PATH, PLAYWRIGHT_MODULE
 `);
   process.exit(args.help ? 0 : 1);
 }
@@ -67,9 +59,7 @@ const config = {
   mode: args.fake ? 'fake' : 'browser',
   steps: number('steps', args.steps),
   runs: number('runs', args.runs ?? (args.fake ? 3 : 1)),
-  decideMs: number('decide-ms', args['decide-ms'] ?? (args.fake ? 30 : 0)),
   capture: args.capture,
-  answer: Boolean(args.answer),
   ...(args.fake ? {
     observeMs: number('observe-ms', args['observe-ms']),
     executeMs: number('execute-ms', args['execute-ms']),
@@ -83,7 +73,7 @@ if (!Number.isInteger(config.steps) || config.steps < 1 || config.steps > 100) {
 
 const sleep = ms => (ms > 0 ? new Promise(resolveSleep => setTimeout(resolveSleep, ms)) : Promise.resolve());
 
-// Wraps every method of a bridge or provider and records its wall-clock span.
+// Wraps every method of a bridge and records its wall-clock span.
 function instrument(target, timeline) {
   return new Proxy(target, {
     get(object, property) {
@@ -118,42 +108,6 @@ function instrument(target, timeline) {
       };
     },
   });
-}
-
-// Deterministic provider: alternately follows the About link and the back link. With --answer it reports done (high
-// only on the decision after the last step) and ranks answers with choose().
-function alternatingProvider(decideMs, { answer = false, steps = 0 } = {}) {
-  let decisions = 0;
-  const provider = {
-    async decide(observation, actions) {
-      await sleep(decideMs);
-      decisions++;
-      if (answer && decisions > steps) {
-        return { actionId: 'handoff', done: { probability: 0.9 } };
-      }
-      const label = LINKS.find(name => observation.controls.some(control => control.label === name));
-      const control = observation.controls.find(item => item.label === label);
-      const id = control?.ref ?? control?.id;
-      const action = actions.find(item => item.type === 'click' && (item.target === id || item.ref === id))
-        || actions.find(item => item.type === 'click' && String(item.description || '').includes(label));
-      if (!action) {
-        // Out of action budget the runtime offers only terminal choices; finish instead of failing.
-        const terminal = actions.find(item => item.type === 'done');
-        if (terminal) {
-          return { actionId: terminal.id };
-        }
-        throw new Error(`No offered click for ${label ?? 'a known link'} on ${observation.url}`);
-      }
-      return answer ? { actionId: action.id, done: { probability: 0.05 } } : { actionId: action.id };
-    },
-  };
-  if (answer) {
-    provider.choose = async ({ candidates }) => {
-      await sleep(decideMs);
-      return { choice: candidates[0].id };
-    };
-  }
-  return provider;
 }
 
 function fakeBridge({ observeMs, executeMs, captureMs, inlineCapture }, origin) {
@@ -197,17 +151,14 @@ function fakeBridge({ observeMs, executeMs, captureMs, inlineCapture }, origin) 
   };
 }
 
-function metricsFor(timeline, result, runStart, runEnd) {
+function metricsFor(timeline, runStart) {
   const pick = kind => timeline.filter(entry => entry.kind === kind && entry.end !== undefined && !entry.error);
   const executes = pick('execute');
   const metrics = {
     observe: pick('observe').map(entry => entry.end - entry.start),
     execute: executes.map(entry => entry.end - entry.start),
-    decision: pick('decide').map(entry => entry.end - entry.start),
-    choose: pick('choose').map(entry => entry.end - entry.start),
     screenshot: [],
     total: [],
-    tail: executes.length ? [runEnd - executes.at(-1).end] : [],
   };
   let previous = runStart;
   for (const [index, entry] of executes.entries()) {
@@ -236,50 +187,39 @@ function summarize(values) {
 }
 
 async function benchRuns({ bridge, beforeRun, origin }) {
-  const all = { observe: [], execute: [], screenshot: [], decision: [], total: [], choose: [], tail: [] };
+  const all = { observe: [], execute: [], screenshot: [], total: [] };
   const runs = [];
   for (let run = 0; run < config.runs; run++) {
     await beforeRun?.();
     const timeline = [];
-    const runtime = new BrowserRuntime({
-      bridge: instrument(bridge, timeline),
-      provider: instrument(alternatingProvider(config.decideMs, { answer: config.answer, steps: config.steps }), timeline),
-    });
-    const executed = () => timeline.filter(entry => entry.kind === 'execute' && entry.end !== undefined && !entry.error).length;
-    // --answer: the expectation passes once every step ran; one more decide confirms done, then the answer is ranked.
-    const answerOptions = config.answer ? {
-      maxActions: config.steps + 1,
-      maxDecisions: config.steps + 2,
-      expectation: () => executed() >= config.steps,
-      answerQuestion: 'What is this project about?',
-    } : {};
+    const runtime = new BrowserRuntime({ bridge: instrument(bridge, timeline) });
     const runStart = performance.now();
-    let result;
+    let steps = 0;
     let error;
+    let last;
     try {
-      result = await runtime.run('Alternate between the About page and the overview', {
-        allowedOrigins: [origin],
-        mode: 'read-only',
-        maxActions: config.steps,
-        maxDecisions: config.steps,
-        timeoutMs: 300_000,
-        capture: config.capture,
-        ...answerOptions,
-      });
+      // The host's own loop: observe, pick the one known link, act on it.
+      for (let step = 0; step < config.steps; step++) {
+        const page = await runtime.observe({ allowedOrigins: [origin], mode: 'read-only', capture: config.capture });
+        const link = page.actions.find(action => action.type === 'click' && LINKS.includes(action.label))
+          ?? page.actions.find(action => LINKS.some(name => String(action.description ?? '').includes(name)));
+        if (!link) throw new Error(`No offered link on ${page.observation.url}`);
+        last = await runtime.act(link.id, { revision: page.observation.revision, capture: config.capture, timeoutMs: 300_000 });
+        if (last.status === 'failed') throw new Error(last.reason);
+        steps++;
+      }
     } catch (caught) {
       error = caught.message;
     }
-    const runEnd = performance.now();
-    const steps = result?.steps?.length ?? 0;
-    const failed = Boolean(error) || result?.status === 'failed' || steps < config.steps;
+    const failed = Boolean(error) || steps < config.steps;
     runs.push({
-      status: result?.status ?? 'error',
-      reason: error ?? result?.reason,
+      status: error ? 'error' : last?.status ?? 'error',
+      reason: error ?? last?.reason,
       steps,
       failed,
       elapsedMs: Math.round(performance.now() - runStart),
     });
-    const metrics = metricsFor(timeline, result, runStart, runEnd);
+    const metrics = metricsFor(timeline, runStart);
     for (const key of Object.keys(all)) {
       all[key].push(...metrics[key]);
     }
@@ -306,7 +246,6 @@ function markdown(report) {
   ];
   for (const [key, label] of Object.entries(STAGES)) {
     const stage = report.stages[key];
-    if (!report.config.answer && (key === 'choose' || key === 'tail')) continue;
     lines.push(`| ${label} | ${stage.n} | ${format(stage.p50)} | ${format(stage.p95)} | ${format(stage.mean)} |`);
   }
   const failed = report.runDetails.filter(run => run.failed);

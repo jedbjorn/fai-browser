@@ -253,8 +253,8 @@ export function describeEntry(entry) {
 }
 
 // A navigation verb right before the URL: "Open", "go to", "navigate to", "load", "visit", "browse to", optionally
-// with "the page", "the URL" or "this URL" (and "at") in between. Anything else ("compare with https://...") is left
-// to the provider.
+// with "the page", "the URL" or "this URL" (and "at") in between. Anything else ("compare with https://...") is not
+// a hop.
 const URL_HOP_VERB =
   /\b(?:open|go\s+to|navigate\s+to|load|visit|browse\s+to)\s+(?:(?:the|this)\s+(?:page|url|link)\s+)?(?:at\s+)?[<("'`“]?$/i;
 export const URL_IN_TEXT = /https?:\/\/[^\s<>"'`”]+/gi;

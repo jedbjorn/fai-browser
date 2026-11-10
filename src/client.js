@@ -3,11 +3,11 @@
 //   const client = await FaiBrowserClient.connect({ clientName: 'my-agent' });   // auto-starts the daemon
 //   const { requestId } = await client.requestTab({ origins: ['https://example.com'], reason: 'Check members' });
 //   await client.waitForTab(requestId, { timeoutMs: 120000 });
-//   const { result } = await client.run({ requestId, instruction: 'Open Members', expectation: { urlIncludes: '/members' } });
+//   const page = await client.observe({ requestId });
+//   const { result } = await client.act({ requestId, actionId: 'a3', expectation: { urlIncludes: '/members' } });
 //
 // HTTP errors throw FaiClientError {status, code, message}. Task outcomes (needs_user, failed, ...) are results.
 import http from 'node:http';
-import { normalizeAdditions } from './guardrails.js';
 import { spawn } from 'node:child_process';
 import { closeSync, openSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -51,7 +51,7 @@ export class FaiClientError extends Error {
 
 const delay = ms => new Promise(resolveDelay => setTimeout(resolveDelay, ms));
 
-/** One HTTP/JSON call. Resolves {status, body, driver}; rejects only on transport failures. */
+/** One HTTP/JSON call. Resolves {status, body}; rejects only on transport failures. */
 export function httpJson({ port, method, path, token, body, timeoutMs, signal, headers = {} }) {
   return new Promise((resolveCall, reject) => {
     const payload = body === undefined ? null : JSON.stringify(body);
@@ -77,9 +77,7 @@ export function httpJson({ port, method, path, token, body, timeoutMs, signal, h
         } catch {
           parsed = null;
         }
-        // The daemon names its driver on every authenticated answer (X-Fai-Driver).
-        const driver = res.headers['x-fai-driver'];
-        resolveCall({ status: res.statusCode, body: parsed, driver: driver === 'agent' || driver === 'jev' ? driver : null });
+        resolveCall({ status: res.statusCode, body: parsed });
       });
       res.on('error', reject);
     });
@@ -288,11 +286,6 @@ export class FaiBrowserClient {
       if (signal?.aborted) throw error;
       throw new FaiClientError(0, 'daemon_unreachable', `Daemon request failed: ${error.message}`, { retryable: true });
     }
-    if (response.driver) {
-      // The driver in effect on the daemon (agent or jev), with a hook for a caller that follows it (the MCP server).
-      this.driver = response.driver;
-      this.onDriver?.(response.driver);
-    }
     if (response.status >= 400) {
       const detail = response.body?.error ?? {};
       throw new FaiClientError(response.status, detail.code ?? 'internal', detail.message ?? `HTTP ${response.status}`,
@@ -341,13 +334,6 @@ export class FaiBrowserClient {
     }
   }
 
-  /** Raw POST /v1/runs: returns state done or running after at most waitMs. */
-  startRun(body, { signal } = {}) {
-    if (body?.policy !== undefined) normalizeAdditions(body.policy, 'policy');
-    const waitMs = Math.min(Math.max(body?.waitMs ?? 40_000, 0), MAX_WAIT_MS);
-    return this.request('POST', '/v1/runs', body, { timeoutMs: waitMs + LONG_POLL_SLACK_MS, signal });
-  }
-
   /** Loop wait on a run until it is done. With onProgress(progress), reports each new step. */
   async waitForRun(response, { signal, onProgress } = {}) {
     let current = response;
@@ -368,14 +354,6 @@ export class FaiBrowserClient {
       if (current.state === 'running') onProgress?.(current.progress);
     }
     return current;
-  }
-
-  async run(body, options = {}) {
-    return this.waitForRun(await this.startRun({ ...body, operation: 'run' }, options), options);
-  }
-
-  async step(body, options = {}) {
-    return this.waitForRun(await this.startRun({ ...body, operation: 'step' }, options), options);
   }
 
   observe(body) {

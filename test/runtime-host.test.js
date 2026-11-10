@@ -151,29 +151,6 @@ test('act stale re-resolve leaves a named button stale: Next on a later wizard s
   }
 });
 
-test('act stale re-resolve asks the commit guard again about the fresh page', async () => {
-  // A picker-open click (one of the controls a stale act re-resolves) on a page that became a binding step.
-  const pages = { '/': { title: 'Wizard', text: 'Step 1', controls: [{ id: '1', role: 'textbox', label: 'Departure', type: 'text', enabled: true }] } };
-  const calls = [];
-  const provider = {
-    async decide(observation, actions) {
-      calls.push(observation.text ?? '');
-      // The step-2 page commits (a binding confirmation); step 1 did not.
-      const commit = /Step 2/.test(JSON.stringify(observation)) ? 0.95 : 0.1;
-      return { actionId: actions[0].id, confidence: 0.9, done: { probability: 0.1 }, guards: { commit, injection: 0.1, blocked: 0.1 }, model: 'fake' };
-    },
-  };
-  const bridge = new FakeBridge({ pages });
-  const runtime = new BrowserRuntime({ bridge, provider });
-  const { actions } = await runtime.observe({ mode: 'reversible' });
-  bridge.version++;
-  bridge.pages['/'].text = 'Step 2: confirm the transfer';
-  const result = await runtime.act(actions.find(a => a.label === 'Departure' && a.opens).id);
-  assert.equal(result.code, 'refused_action', result.reason);
-  assert.equal(bridge.executions.length, 1, 'the re-resolved click never ran');
-  assert.equal(calls.length, 2);
-});
-
 test('act uses the authority fixed at observe time for supplied text', async () => {
   const bridge = new FakeBridge({ path: '/form' });
   const runtime = new BrowserRuntime({ bridge });

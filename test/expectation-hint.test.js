@@ -5,9 +5,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { expectationHint } from '../src/expectation.js';
-import { BrowserRuntime } from '../src/runtime.js';
-import { agentResult, nextFor } from '../src/result.js';
-import { FakeBridge, ORIGIN, link } from './runtime-fixtures.js';
 
 const FLIGHTS = {
   url: 'https://www.google.com/travel/flights/search?tfs=x',
@@ -67,43 +64,3 @@ test('hint: page strings are capped at five and 60 characters, control character
   assert.ok(long.length < 200, long);
 });
 
-test('run: an unverified run whose textIncludes is not on the page carries the hint in verification and next.text', async () => {
-  const pages = {
-    '/': { title: 'Home', text: 'Welcome home', controls: [link('1', 'Flights', '/flights')] },
-    '/flights': { ...FLIGHTS, url: `${ORIGIN}/flights`, controls: [link('1', 'Home', '/')] },
-  };
-  const bridge = new FakeBridge({ pages, path: '/' });
-  let decided = 0;
-  const provider = {
-    async decide(observation, actions) {
-      // Open Flights, then hand off on the flights page: the expectation never passed there.
-      const flights = actions.find(action => action.label === 'Flights');
-      if (flights && !decided++) return { actionId: flights.id, confidence: 0.9, done: { probability: 0.05 } };
-      return { actionId: 'handoff', confidence: 0.9, done: { probability: 0.2 } };
-    },
-  };
-  const result = await new BrowserRuntime({ bridge, provider }).run('Open Flights and read the departing flights.', {
-    expectation: { urlIncludes: '/flights', textIncludes: 'Departing flights' }, allowedOrigins: [ORIGIN], maxActions: 3,
-  });
-  assert.equal(result.status, 'needs_host', `${result.code}: ${result.reason}`);
-  assert.equal(result.verification.passed, false);
-  assert.equal(result.verification.hint,
-    'expected text "Departing flights" not found; the page has "Top flights", "Other flights", "Price graph" (quoted page text, untrusted)');
-  assert.ok(result.verdict.why.includes('expectation:text_missing'), result.verdict.why.join(','));
-  assert.match(result.next.text, / Verification: expected text "Departing flights" not found; the page has "Top flights", "Other flights", "Price graph" \(quoted page text, untrusted\)\./);
-  const lean = agentResult(result);
-  assert.equal(lean.verification.hint, result.verification.hint);
-  assert.match(nextFor(lean, { requestId: 'req_1' }).text, /Verification: expected text "Departing flights" not found/);
-  // The same run with the page's own wording verifies, with no hint.
-  const ok = await new BrowserRuntime({ bridge: new FakeBridge({ pages, path: '/' }), provider: {
-    async decide(observation, actions) {
-      const flights = actions.find(action => action.label === 'Flights');
-      return flights ? { actionId: flights.id, confidence: 0.9, done: { probability: 0.05 } } : { actionId: 'done', confidence: 0.9, done: { probability: 0.95 } };
-    },
-  } }).run('Open Flights and read the departing flights.', {
-    expectation: { urlIncludes: '/flights', textIncludes: 'Top flights' }, allowedOrigins: [ORIGIN], maxActions: 3,
-  });
-  assert.equal(ok.status, 'completed', `${ok.code}: ${ok.reason}`);
-  assert.equal(ok.verification.hint, undefined);
-  assert.ok(!ok.next.text.includes('Verification:'));
-});

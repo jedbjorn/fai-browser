@@ -248,8 +248,7 @@ const AGGREGATE_WORDS = new Set(tokenize('cheapest lowest highest least most exp
 // The intent reads an extremum, a measure and a few filters (a rating bound, a price bound, a time window, stock). A
 // question can say more about its items: "the cheapest hotel with free cancellation", "the cheapest laptop that has
 // 16 GB of RAM", "the lowest price plan without ads". The aggregation then orders every item it read, and its first
-// item may fail the unread condition, so a computed minimum is never confirmed over the provider's disagreement then
-// (src/runtime.js aggregateOverride). What the intent consumed (its patterns' spans, and the measure's own nouns) is
+// item may fail the unread condition, so a computed minimum is never confirmed then. What the intent consumed (its patterns' spans, and the measure's own nouns) is
 // blanked out first; then a condition marker that still introduces a word is an unread condition. The markers, plain
 // English and short on purpose:
 //   with, without, including, excluding, except, only, near, within   + a word (not its/their/his/her: "with its
@@ -562,8 +561,7 @@ function contextOf(blocks, index) {
 /**
  * Candidate lines of one observation for `question`: `{ key, text, context?, score, t, value?, item?, category? }`,
  * best first. `item` marks a line that has the intent's value and passes its filters. `mainList` is the record list
- * the question is about (default 0, the page script's best list; src/runtime.js listQuestion asks the provider when
- * the page has two or more).
+ * the question is about (default 0, the page script's best list).
  */
 export function factPool(observation, question, intent = aggregateIntent(question), { mainList = 0 } = {}) {
   const { blocks } = scoreBlocks(observation, question);
@@ -612,7 +610,7 @@ export function factPool(observation, question, intent = aggregateIntent(questio
     // measure ("available on") keeps every item.
     if (line.item && intent?.measure) tiers.set(line, record ? (record.list === mainList ? 0 : 1) : 2);
   }
-  // The page's main results first: when the main record list (`mainList`: the provider's choice, else list 0, the
+  // The page's main results first: when the main record list (`mainList`, default list 0, the
   // page script's best) has items for the question, only they are items; else the other lists' records (a carousel, a
   // module); else the plain blocks. A carousel of cheaper extras never wins a question about the results, and a
   // question about the extras still finds them.

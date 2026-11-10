@@ -17,7 +17,6 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createDaemon } from '../src/daemon.js';
-import { homePaths, saveDriver } from '../src/home.js';
 import { createFakeHub, call } from '../test/helpers/fake-hub.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -33,9 +32,8 @@ const sleep = ms => new Promise(resolveSleep => setTimeout(resolveSleep, ms));
 
 const home = await mkdtemp(join(tmpdir(), 'fai-invite-e2e-home-'));
 const work = await mkdtemp(join(tmpdir(), 'fai-invite-e2e-work-'));
-saveDriver('agent', homePaths({ home, env: {} }));
 const hub = createFakeHub();
-const daemon = createDaemon({ home, env: {}, port: 0, hub, providerFactory: () => { throw new Error('no provider'); } });
+const daemon = createDaemon({ home, env: {}, port: 0, hub });
 await daemon.listen();
 const api = (method, path, body) => call(daemon.port, method, path, body, { token: daemon.token });
 

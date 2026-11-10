@@ -1,7 +1,7 @@
 // Agent-facing result schema (docs/design/PROPOSAL.md section 5) and the mapping from error codes to outcomes.
 //
 // Page-derived text only ever appears under `page`, `answer.candidates[].text`, `trail[]`, `steps[].observation`,
-// `steps[].action.label` and, for low_confidence, `needs.alternatives[].description`. `reason` and `needs.message`
+// `steps[].action.label`. `reason` and `needs.message`
 // are written by the runtime and never contain page text, so a host can treat them as trusted.
 //
 // Two shapes: the full in-memory runtime result (createResult, written to trace.json by writeRun) and the lean
@@ -58,59 +58,17 @@ const OUTCOMES = {
     reason: 'Expectation passed on the settled page',
     message: '',
   },
-  budget_reached_expectation_passed: {
-    status: 'completed',
-    who: 'none',
-    reason: 'Action budget reached with the expectation passing; the provider had not confirmed the outcome',
-    message: '',
-  },
-  handoff_expectation_passed: {
-    status: 'completed',
-    who: 'none',
-    reason: 'Expectation passed; the provider saw no further action but did not confirm the outcome',
-    message: '',
-  },
-  expectation_mismatch: {
-    status: 'unverified',
-    who: 'host',
-    reason: 'The provider judged the page final but the expectation did not match it',
-    message: 'Answer from page.digest if it answers the question; otherwise run again with verdict.suggested.',
-  },
   expectation_failed: {
     status: 'unverified',
     who: 'host',
-    reason: 'Provider reported done but the expectation did not pass',
+    reason: 'The expectation did not pass on the page the act landed on',
     message: 'Inspect the page evidence and decide whether to continue.',
-  },
-  no_expectation: {
-    status: 'unverified',
-    who: 'host',
-    reason: 'Provider reported done; no expectation was supplied to verify it',
-    message: 'Inspect the page evidence; supply an expectation to get a verified result.',
-  },
-  expectation_error: {
-    status: 'unverified',
-    who: 'host',
-    reason: 'Provider reported done but the expectation predicate threw',
-    message: 'Fix the expectation predicate and inspect the page evidence.',
   },
   step_complete: {
     status: 'checkpoint',
     who: 'host',
     reason: 'One action executed; no expectation passed yet',
-    message: 'Inspect the step evidence and issue the next instruction.',
-  },
-  action_budget: {
-    status: 'budget_exhausted',
-    who: 'host',
-    reason: 'Action budget reached before the expectation passed',
-    message: 'Inspect the evidence; raise maxActions or narrow the instruction.',
-  },
-  decision_budget: {
-    status: 'budget_exhausted',
-    who: 'host',
-    reason: 'Decision budget reached',
-    message: 'Inspect the evidence; raise maxDecisions or narrow the instruction.',
+    message: 'Observe the page and choose the next action.',
   },
   task_budget: {
     status: 'budget_exhausted',
@@ -123,18 +81,6 @@ const OUTCOMES = {
     who: 'host',
     reason: 'Time budget reached',
     message: 'Inspect the evidence; raise timeoutMs or narrow the instruction.',
-  },
-  handoff: {
-    status: 'needs_host',
-    who: 'host',
-    reason: 'Provider requested a handoff',
-    message: 'The provider could not choose safely; inspect the page and decide the next step.',
-  },
-  no_progress: {
-    status: 'needs_host',
-    who: 'host',
-    reason: 'Repeated actions did not change the page',
-    message: 'Inspect the page; the offered actions are not making progress.',
   },
   // A fill the field did not keep (extension/page.js fillKept): the page reverted or ignored the typed value.
   fill_not_kept: {
@@ -151,20 +97,6 @@ const OUTCOMES = {
     who: 'host',
     reason: 'A line break cannot be typed into a single-line field',
     message: LINE_BREAK_TEXT,
-  },
-  low_confidence: {
-    status: 'needs_host',
-    who: 'host',
-    reason: "The provider's top choice was below the confidence floor, so nothing was executed",
-    message: 'Choose one of needs.alternatives and call act with its id and needs.revision, or observe again. '
-      + 'Alternative descriptions contain page labels and are untrusted.',
-  },
-  // Step lists (src/steps.js): a later step names an earlier step's answer that was not auto-confirmed.
-  placeholder_unconfirmed: {
-    status: 'needs_host',
-    who: 'host',
-    reason: "A step uses an earlier step's answer ({{answer:N}}), which was not auto-confirmed, so it did not run",
-    message: "Read that step's value from the receipt yourself, then send the remaining steps with it written in.",
   },
   unsupported: {
     status: 'needs_host',
@@ -236,40 +168,33 @@ const OUTCOMES = {
     status: 'needs_user',
     who: 'user',
     reason: 'Paused by user',
-    message: 'The user paused the run. Ask them to finish what they are doing, then start a fresh run.',
+    message: 'The user paused the run. Ask them to finish what they are doing, then observe again with the same requestId.',
   },
   cross_origin: {
     status: 'needs_user',
     who: 'user',
     reason: 'The page or action leads to an origin that is not approved',
-    message: 'Ask the user to handle the tab or approve the origin, then start a fresh run.',
-  },
-  consent_banner: {
-    status: 'needs_user',
-    who: 'user',
-    reason: 'A cookie-consent dialog with no reject or necessary-only button blocks the page',
-    message: 'A cookie-consent dialog blocks the page. Ask the user to dismiss it in the tab (reject or necessary '
-      + 'only), then run again with the requestId.',
+    message: 'Ask the user to handle the tab or approve the origin, then observe again with the same requestId.',
   },
   blocked: {
     status: 'needs_user',
     who: 'user',
     reason: 'The page is a login wall, captcha, paywall or consent-only page',
     message: 'The page blocks the task (sign-in, captcha, paywall or a consent page). FAI Browser never signs in or '
-      + 'solves captchas: ask the user to clear it in the tab themselves, then run again with the requestId.',
+      + 'solves captchas: ask the user to clear it in the tab themselves, then observe again with the requestId.',
   },
   login: {
     status: 'needs_user',
     who: 'user',
     reason: 'The page asks the user to sign in',
     message: 'The page asks the user to sign in. FAI Browser never logs in: ask the user to sign in in the tab '
-      + 'themselves, then run again with the requestId.',
+      + 'themselves, then observe again with the requestId.',
   },
   child_tab: {
     status: 'needs_user',
     who: 'user',
     reason: 'The action opened a new tab',
-    message: 'Ask the user to handle the new tab and select a tab again before a fresh run.',
+    message: 'Ask the user to handle the new tab and select a tab again before you observe again.',
   },
   tab_changed: {
     status: 'needs_user',
@@ -287,7 +212,7 @@ const OUTCOMES = {
     status: 'needs_user',
     who: 'user',
     reason: 'No active browser tab lease',
-    message: 'Ask the user to click "Select tab and start" in the extension, then run again.',
+    message: 'Ask the user to click "Select tab and start" in the extension, then observe again.',
   },
   disconnected: {
     status: 'needs_user',
@@ -349,18 +274,6 @@ const OUTCOMES = {
     reason: 'A browser command timed out',
     message: 'Check that the extension is connected and the tab is responsive.',
   },
-  provider_error: {
-    status: 'failed',
-    who: 'host',
-    reason: 'The decision provider failed',
-    message: 'Check provider configuration and connectivity.',
-  },
-  invalid_decision: {
-    status: 'failed',
-    who: 'host',
-    reason: 'The provider chose an action that was not offered',
-    message: 'Check the decision provider.',
-  },
   invalid_observation: {
     status: 'failed',
     who: 'host',
@@ -409,7 +322,7 @@ export function applyLeaseMessage(result) {
   return result;
 }
 
-/** True when the code has a defined outcome (bridge, runtime or provider code). */
+/** True when the code has a defined outcome (bridge or runtime code). */
 export function isKnownCode(code) {
   return typeof code === 'string' && Object.hasOwn(OUTCOMES, code);
 }
@@ -421,7 +334,7 @@ export function outcomeFor(code) {
 
 /**
  * Write the outcome fields onto a result. `detail` is appended to the reason; callers must only pass
- * runtime- or provider-generated strings, never page text.
+ * runtime-generated strings, never page text.
  */
 export function setOutcome(result, code, detail) {
   const outcome = outcomeFor(code);
@@ -437,9 +350,9 @@ export function setOutcome(result, code, detail) {
  * closed, configuration missing). `trace` is null. `lease`, when given, is `{requestId, state}`. `approval` (a
  * select_tab outcome) is how the user approves the request (see approvalSteps) and words needs.message.
  */
-export function outcomeResult(code, { runId = null, expectation = null, detail, lease, provider = null, permissions,
+export function outcomeResult(code, { runId = null, expectation = null, detail, lease, permissions,
   approval = null } = {}) {
-  const result = createResult({ runId, expectation, provider });
+  const result = createResult({ runId, expectation });
   setOutcome(result, code, detail);
   if (permissions) result.permissions = permissions;
   applyLeaseMessage(result);
@@ -453,7 +366,7 @@ export function outcomeResult(code, { runId = null, expectation = null, detail, 
   return agentResult(result);
 }
 
-export function createResult({ runId, expectation, provider }) {
+export function createResult({ runId, expectation }) {
   const result = {
     v: RESULT_VERSION,
     runId,
@@ -465,11 +378,11 @@ export function createResult({ runId, expectation, provider }) {
     page: null,
     answer: emptyAnswer(),
     steps: [],
-    cost: { provider: provider ?? null, decisions: 0, inputTokens: 0, outputTokens: 0, elapsedMs: 0 },
+    cost: { decisions: 0, inputTokens: 0, outputTokens: 0, elapsedMs: 0 },
   };
   // Non-enumerable diagnostics, omitted from JSON so the serialized result stays lean; writeRun puts them in the
   // trace. `observation` is the last full (uncompacted) observation; `answerDetail` records how the answer was
-  // ranked (provider model, probabilities, latency, or why the provider was skipped).
+  // ranked (the heuristic's candidates and scores).
   Object.defineProperty(result, 'observation', { value: undefined, writable: true, enumerable: false });
   Object.defineProperty(result, 'answerDetail', { value: undefined, writable: true, enumerable: false });
   return result;
@@ -784,16 +697,6 @@ export function compactStepObservation(observation) {
   };
 }
 
-/** Keep only the five most likely actions so traces stay small. */
-export function topProbabilities(probabilities, limit = 5) {
-  if (!probabilities || typeof probabilities !== 'object') return undefined;
-  const entries = Object.entries(probabilities)
-    .filter(([, p]) => Number.isFinite(p))
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, limit);
-  return entries.length ? Object.fromEntries(entries) : undefined;
-}
-
 // ---------------------------------------------------------------------------------------------------------------
 // Lean agent results
 // ---------------------------------------------------------------------------------------------------------------
@@ -818,10 +721,6 @@ function leanNeeds(needs) {
   const out = { who: needs.who, message: needs.message };
   if (needs.revision !== undefined) out.revision = needs.revision;
   if (needs.confidence !== undefined) out.confidence = needs.confidence;
-  if (needs.minConfidence !== undefined) out.minConfidence = needs.minConfidence;
-  if (Array.isArray(needs.alternatives)) {
-    out.alternatives = needs.alternatives.map(option => ({ id: option.id, description: option.description }));
-  }
   // The level a refusal asks the user to grant (refused_action relayed as a level request).
   if (typeof needs.level === 'string') out.level = needs.level;
   // Untrusted page text (the consent dialog), kept apart from the trusted message.
@@ -844,8 +743,8 @@ function leanStep(step) {
   const out = { i: step?.i, action: { type: action.type, label: action.label, toUrl: action.toUrl } };
   // A fill's supplied-text name: the host's own key, never the value.
   if (typeof action.suppliedName === 'string') out.action.suppliedName = action.suppliedName;
-  // A runtime Rung 0 step: a consent reject or a nag overlay dismissal (src/overlay.js).
-  if (step?.class === 'consent' || step?.class === 'dismiss') out.class = step.class;
+  // A consent reject click.
+  if (step?.class === 'consent') out.class = step.class;
   const confidence = step?.confidence ?? step?.decision?.confidence;
   if (Number.isFinite(confidence)) out.confidence = confidence;
   const ms = Number.isFinite(step?.ms) ? step.ms : step?.ms?.total;
@@ -871,70 +770,31 @@ function leanPoint(point, resolved) {
 
 // ---------------------------------------------------------------------------------------------------------------
 // Receipt v2: verdict and next (docs/design/OVERSIGHT-SPEC.md section 2). Both are runtime-written and trusted; the only page
-// text inside `verdict` is `answer.text` (an auto-confirmed page block) and `decide.options[].label`, and the MCP
-// text block prints both under the untrusted heading.
+// text inside `verdict` is `answer.text` (an auto-confirmed page block).
 // ---------------------------------------------------------------------------------------------------------------
 
-export const VERDICT_KINDS = Object.freeze(['verified', 'likely', 'needs_decision', 'needs_user', 'failed']);
-export const OVERSIGHT_LEVELS = Object.freeze(['none', 'confirm', 'choose', 'instruct', 'approve', 'user']);
-export const NEXT_KINDS = Object.freeze([
-  'answer', 'answer_from_digest', 'confirm_page', 'choose', 'rerun', 'split', 'relay', 'approve', 'stop',
-]);
+// The next kinds a host sees (directNext), and the oversight a verdict implies for each.
+export const NEXT_KINDS = Object.freeze(['answer', 'choose', 'observe', 'relay', 'approve', 'stop']);
 
 const OVERSIGHT_FOR_NEXT = {
   answer: 'none',
-  answer_from_digest: 'confirm',
-  confirm_page: 'confirm',
   choose: 'choose',
-  rerun: 'instruct',
-  split: 'instruct',
+  observe: 'instruct',
   relay: 'user',
   approve: 'approve',
   stop: 'user',
 };
-// Codes after which a sharper re-run is the next step.
-const RERUN_CODES = new Set([
-  'action_budget', 'decision_budget', 'time_budget', 'no_progress', 'fill_not_kept', 'unsupported', 'stale',
-  'target_unavailable', 'capture_failed', 'expectation_error', 'step_complete',
+// Codes after which the host observes again and chooses.
+const OBSERVE_CODES = new Set([
+  'time_budget', 'fill_not_kept', 'unsupported', 'stale',
+  'target_unavailable', 'capture_failed', 'step_complete',
 ]);
 // Lease codes the daemon resumes on the same request once the user acts.
 const RESUME_CODES = new Set([
   'select_tab', 'paused', 'tab_changed', 'origin_changed', 'child_tab', 'session_inactive', 'disconnected',
 ]);
 // needs_user codes the user handles in the tab before the same request runs again.
-const RELAY_AND_RERUN = new Set(['consent_banner', 'login', 'blocked', 'cross_origin', 'js_dialog']);
-const DIGEST_HIT_CONFIDENCE = 0.5;
-const SUGGESTED_KEYS = ['instruction', 'expectation', 'maxActions', 'allowedUrls'];
-
-function cleanSuggested(suggested) {
-  if (!suggested || typeof suggested !== 'object') return null;
-  const out = {};
-  for (const key of SUGGESTED_KEYS) {
-    if (suggested[key] !== undefined && suggested[key] !== null) out[key] = suggested[key];
-  }
-  return Object.keys(out).length ? out : null;
-}
-
-function decideFromNeeds(needs) {
-  const alternatives = Array.isArray(needs?.alternatives) ? needs.alternatives : [];
-  if (!alternatives.length) return null;
-  return {
-    question: 'Which offered action should run next?',
-    options: alternatives.map(option => {
-      const entry = { id: option.id, label: option.label ?? option.description };
-      const p = option.p ?? option.probability;
-      if (Number.isFinite(p)) entry.p = p;
-      return entry;
-    }),
-    revision: needs.revision ?? null,
-  };
-}
-
-function topCandidateConfidence(result) {
-  const top = result?.answer?.candidates?.[0];
-  return Number.isFinite(top?.confidence) ? top.confidence : 0;
-}
-
+const RELAY_CODES = new Set(['login', 'blocked', 'cross_origin', 'js_dialog']);
 /**
  * The actions a host act() may run next, from the runtime's `offer` on an act result ({revision, actions, listed,
  * cap, dropped}: the listing as `actions` [{id, description}], the rest counted in `moreActions`) or from an already
@@ -959,30 +819,21 @@ export function offerOf(result) {
 }
 
 /**
- * The verdict for a result. `signals` come from the runtime (auto-confirmed answer, done, expectation shape,
- * decide options, suggestions, split plan, extra `why` codes, whether a question was asked); without them (older
- * traces, daemon-side outcomes) the verdict is derived from the code alone.
- * Shape: `{kind, oversight, answer, why, decide, suggested, budget}` plus `plan` when a split is advised.
+ * The verdict for a result. `signals` come from the runtime (auto-confirmed answer, extra `why` codes, whether a
+ * question was asked, a loading final page); without them (older traces, daemon-side outcomes) the verdict is
+ * derived from the code alone. Shape: `{kind, oversight, answer, why, budget}`.
  */
 export function buildVerdict(result, signals = {}) {
   const code = result?.code ?? 'failed';
   const status = result?.status ?? 'failed';
   const why = [...new Set([code, ...(signals.why ?? [])].filter(Boolean))];
-  let decide = signals.decide ?? null;
-  const suggested = cleanSuggested(signals.suggested);
-  const plan = signals.plan?.split ? signals.plan : null;
   let answer = null;
   let kind;
   let next;
-  const instructKind = plan ? 'split' : 'rerun';
-  if (status === 'completed' && why.includes('guard:blocked_page')) {
-    // The expectation passed on a page the provider scored as blocked (>= 0.85): the host confirms the page first.
-    kind = 'likely';
-    next = 'confirm_page';
-  } else if (status === 'completed' && signals.loading) {
+  if (status === 'completed' && signals.loading) {
     // The final page still shows a loading placeholder: the digest holds the pre-load text, not the answer.
     kind = 'likely';
-    next = suggested ? 'rerun' : 'answer_from_digest';
+    next = 'answer';
   } else if (status === 'completed') {
     if (signals.answer) {
       kind = 'verified';
@@ -993,44 +844,27 @@ export function buildVerdict(result, signals = {}) {
       next = 'answer';
     } else {
       kind = code === 'expectation_passed' ? 'verified' : 'likely';
-      next = 'answer_from_digest';
+      next = 'answer';
     }
-  } else if (code === 'expectation_mismatch') {
-    kind = 'likely';
-    next = 'confirm_page';
   } else if (code === 'expectation_failed') {
-    const hit = topCandidateConfidence(result) >= DIGEST_HIT_CONFIDENCE;
-    kind = hit || !suggested ? 'likely' : 'needs_decision';
-    next = kind === 'likely' ? 'confirm_page' : instructKind;
-  } else if (code === 'no_expectation') {
-    // Nothing checked the provider's "done". With a likely answer in the digest the host answers from it (no call);
-    // without one it runs again with an expectation: a rerun, so an exhausted call budget turns it into a stop.
-    const hit = topCandidateConfidence(result) >= DIGEST_HIT_CONFIDENCE;
-    kind = hit ? 'likely' : 'needs_decision';
-    next = hit ? 'answer_from_digest' : 'rerun';
-  } else if (code === 'low_confidence') {
-    decide ??= decideFromNeeds(result?.needs);
-    kind = 'needs_decision';
-    next = decide ? 'choose' : instructKind;
-  } else if (code === 'handoff') {
-    kind = 'needs_decision';
-    next = decide ? 'choose' : instructKind;
+    kind = 'likely';
+    next = offerOf(result) ? 'choose' : 'observe';
   } else if (code === 'step_complete' && offerOf(result)) {
-    // A host act() landed on a page with offered actions: the host keeps driving (act) or hands back (run).
+    // A host act() landed on a page with offered actions: the host keeps driving.
     kind = 'needs_decision';
     next = 'choose';
   } else if (code === 'refused_action' && typeof result?.needs?.level === 'string') {
     // A higher level would allow it: the user re-approves the tab at needs.level (or, when the grant already covers
-    // it, the host runs again with that mode).
+    // it, the host observes again with that mode).
     kind = result.needs.who === 'host' ? 'needs_decision' : 'needs_user';
-    next = result.needs.who === 'host' ? 'rerun' : 'relay';
+    next = result.needs.who === 'host' ? 'observe' : 'relay';
   } else if (code === 'refused_action' || code === 'error_page') {
-    // Never a rerun: FAI Browser refuses the task itself, or the page it reached is broken.
+    // FAI Browser refuses the task itself, or the page it reached is broken.
     kind = 'failed';
     next = 'stop';
-  } else if (RERUN_CODES.has(code)) {
+  } else if (OBSERVE_CODES.has(code)) {
     kind = 'needs_decision';
-    next = instructKind;
+    next = 'observe';
   } else if (status === 'needs_user') {
     kind = 'needs_user';
     next = 'relay';
@@ -1039,24 +873,19 @@ export function buildVerdict(result, signals = {}) {
     next = 'relay';
   } else if (status === 'needs_host' && code !== 'request_closed') {
     kind = 'needs_decision';
-    next = instructKind;
+    next = 'observe';
   } else {
     // request_closed, task_budget, stopped, cancelled, interrupted and failures.
     kind = 'failed';
     next = 'stop';
   }
-  if (next !== 'choose') decide = null;
   const verdict = {
     kind,
     oversight: OVERSIGHT_FOR_NEXT[next],
     answer,
     why,
-    decide,
-    suggested: ['rerun', 'split', 'confirm_page', 'answer_from_digest'].includes(next) ? suggested : null,
     budget: signals.budget ?? null,
   };
-  if (plan && (next === 'split' || next === 'rerun')) verdict.plan = plan;
-  Object.defineProperty(verdict, 'nextKind', { value: next, enumerable: false, writable: true, configurable: true });
   return verdict;
 }
 
@@ -1085,28 +914,9 @@ function leanVerdict(verdict) {
     oversight: verdict.oversight,
     answer: verdict.answer ? leanAnswer(verdict.answer) : null,
     why: [...(verdict.why ?? [])],
-    decide: verdict.decide
-      ? {
-        question: verdict.decide.question,
-        options: (verdict.decide.options ?? []).map(option => ({ ...option })),
-        revision: verdict.decide.revision ?? null,
-      }
-      : null,
-    suggested: verdict.suggested ? structuredClone(verdict.suggested) : null,
     budget: verdict.budget ? { ...verdict.budget } : null,
   };
-  if (verdict.plan) out.plan = { ...verdict.plan };
   return out;
-}
-
-const NEXT_FOR_OVERSIGHT = Object.fromEntries(Object.entries(OVERSIGHT_FOR_NEXT).map(([kind, level]) => [level, kind]));
-
-/** The next kind a lean verdict implies (stored verdicts carry it as `next.kind`; derived ones as nextKind). */
-function nextKindOf(result) {
-  const verdict = result.verdict;
-  if (verdict?.nextKind) return verdict.nextKind;
-  if (NEXT_KINDS.includes(result.next?.kind)) return result.next.kind;
-  return buildVerdict(result).nextKind ?? NEXT_FOR_OVERSIGHT[verdict?.oversight] ?? 'stop';
 }
 
 /** Approval instructions for an automatically opened task page or the request window. */
@@ -1127,55 +937,10 @@ export function selectTabMessage(approval) {
 // capability (a session FAI wakes needs no background wait command).
 const resumeOf = context => ({ env: context?.env, wake: context?.wake ?? null });
 
-function approveText(origin, requestId, approval, resume) {
-  const root = siteRoot(origin);
-  const site = root ?? (origin ? origin.replace(/^https:\/\//, '') : null);
-  return withResumeWait(`Ask the user to approve the request${site ? ` for ${site}` : ''} in the browser: `
-    + `${approvalSteps(approval)}. Then call fai_browser_run again with requestId ${requestId}; no origins needed.`,
-  requestId, resume);
-}
-
-// `env`: the environment whose daemon location the wait command carries (the MCP server's; src/resume.js).
-function relayText(result, ref, resume) {
-  const code = result.code;
-  if (code === 'select_tab') return approveText(result.origin, ref, result.approval, resume);
-  if (code === 'approval_pending') return approvalPendingText(result);
-  if (RESUME_CODES.has(code)) {
-    return withResumeWait('Relay needs.message to the user (they click Resume in the FAI Browser extension), then '
-      + `call fai_browser_run again with requestId ${ref}; it starts from the current page.`, ref, resume);
-  }
-  // A level request: a refusal a higher level would lift, or a login wall on a run that asked for testing.
-  if ((code === 'refused_action' || code === 'login') && typeof result.needs?.level === 'string') {
-    return `Relay needs.message to the user (they approve the new request in FAI Browser; its level is preselected). Once they have `
-      + `re-approved the tab, call fai_browser_run again with requestId ${ref} and mode "${result.needs.level}". `
-      + 'Do not retry before that.';
-  }
-  if (RELAY_AND_RERUN.has(code)) {
-    return `Tell the user needs.message in one sentence, then call fai_browser_run again with requestId ${ref} once `
-      + 'they have done it.';
-  }
-  if (code === 'config') return 'Relay needs.message to the user. Never ask for API keys in chat.';
-  return 'Relay needs.message to the user; they must handle this in the tab themselves. Do not retry it yourself.';
-}
-
 const STATUS_NAMES = {
   404: 'Not Found', 410: 'Gone', 500: 'Internal Server Error', 502: 'Bad Gateway', 503: 'Service Unavailable',
   504: 'Gateway Timeout',
 };
-
-/**
- * The fill step a fill_not_kept result ended on, named for next.text by its supplied-text name (the host's own key,
- * `"departure"`), else by its ref: never by the page label.
- */
-function fillNotKept(result) {
-  const step = [...(result?.steps ?? [])].reverse().find(entry => entry?.fill?.kept === false || entry?.fill === 'not_kept'
-    || (entry?.action?.type === 'fill_supplied_text' && entry?.fill?.kept !== true));
-  if (!step) return null;
-  const name = step.action?.suppliedName;
-  if (typeof name === 'string' && /^[\w.-]{1,40}$/.test(name)) return `for supplied text "${name}"`;
-  const ref = step.action?.ref;
-  return ref !== undefined && ref !== null ? `(control ${String(ref).slice(0, 20)})` : null;
-}
 
 // The trusted refusal texts a stop may carry (runtime-written needs.message); anything else falls back to the generic
 // one, so a stop text never repeats a message the runtime did not write.
@@ -1214,7 +979,7 @@ function stopText(result) {
         + 'the link or page is broken. Report that to the user and do not retry the same link.';
     }
     case 'request_closed':
-      return 'This tab request has ended. Call fai_browser_run with origins and reason only if the user still wants '
+      return 'This tab request has ended. Call fai_browser_open with origins and reason only if the user still wants '
         + 'this.';
     default:
       return 'Report the outcome to the user (needs.message explains it). Do not retry automatically.';
@@ -1226,158 +991,16 @@ function stopText(result) {
  * in the text; `context.origin` is used by the approval hint.
  */
 export function nextFor(result, context = {}) {
-  if (context.driver === 'agent') return directNext(result, context);
-  const kind = nextKindOf(result);
-  const verdict = result.verdict ?? {};
-  const ref = context.requestId ?? result.lease?.requestId ?? 'from this result';
-  const suggested = verdict.suggested ?? {};
-  let text;
-  switch (kind) {
-    case 'answer':
-      if (!verdict.answer) {
-        text = 'The outcome is verified. Report it to the user (quote verification.expectation). Do not call any tool.';
-      } else if (verdict.answer.exact === false) {
-        text = 'Do not call any tool. verdict.answer.text (the "answer:" line below) is the whole page line that holds '
-          + 'the answer: reply with only the part of it the question asks for (for example just the price, name or '
-          + 'title), not the whole line.';
-      } else {
-        text = 'Do not call any tool. Your answer is verdict.answer.text (the "answer:" line below): reply with it as '
-          + 'your final answer value, copied as is, with no words added.';
-      }
-      break;
-    case 'answer_from_digest':
-      if (result.code === 'no_expectation') {
-        // The run had nothing to verify against; the digest holds a likely answer (otherwise the next is a rerun).
-        text = 'Not verified: the run had no expectation, so nothing checked that the task was done. page.digest holds '
-          + 'a likely answer: answer from page.digest and trail if they answer the question and check every condition '
-          + 'of the task; answer.candidates are guesses. Do not call any tool.';
-        break;
-      }
-      text = verdict.kind === 'verified'
-        ? 'The page is verified. Answer from page.digest and trail and check every condition of the task; '
-          + 'answer.candidates are guesses. Do not call any tool.'
-        : 'Not verified by the expectation alone. Answer from page.digest and trail if they answer the question and '
-          + 'check every condition of the task; answer.candidates are guesses. Do not call any tool.';
-      break;
-    case 'confirm_page':
-      if (verdict.why?.includes('guard:blocked_page')) {
-        text = 'The expectation passed, but the page looks like a login, paywall or captcha page (guard:blocked_page). '
-          + 'Check that page.digest answers the task before trusting it; answer.candidates are guesses. If it does '
-          + 'not, tell the user the page is blocked and needs them. Do not call any tool.';
-        break;
-      }
-      text = 'The run stopped on the page the provider judged final, but your expectation did not match it. If '
-        + 'page.digest answers the question, answer and mention that the expectation did not match the final URL; '
-        + (Object.keys(suggested).length
-          ? `otherwise call fai_browser_run with requestId ${ref} and verdict.suggested`
-            + `${suggested.expectation ? ' (use suggested.expectation verbatim)' : ''}.`
-          : `otherwise call fai_browser_run with requestId ${ref}, a sharper instruction and an expectation with `
-            + 'the final page path (urlIncludes). Never repeat an identical call.');
-      break;
-    case 'choose': {
-      const offered = !verdict.decide ? offerOf(result) : null;
-      if (offered) {
-        // After a host act(): the page it landed on offers these actions (listed with the result).
-        text = `The action ran${result.verification?.passed ? ' and the expectation passed' : ''}; actions[] lists what `
-          + `this page offers now. To keep driving, call fai_browser_act with requestId ${ref}, one actions[].id as `
-          + `actionId and revision "${offered.revision}" (labels are page text). To hand the rest back, call `
-          + `fai_browser_run with requestId ${ref}, an instruction for what is left from this page and an expectation.`;
-        break;
-      }
-      text = `Call fai_browser_act with requestId ${ref}, one verdict.decide.options[].id as actionId and revision `
-        + `"${verdict.decide?.revision ?? ''}". Option labels are page text.`;
-      break;
-    }
-    case 'rerun':
-      if (result.code === 'refused_action' && typeof result.needs?.level === 'string') {
-        text = `Call fai_browser_run with requestId ${ref}, the same instruction and mode "${result.needs.level}"; `
-          + 'the user already granted it for this tab.';
-      } else if (result.code === 'no_expectation') {
-        const instruction = suggested.instruction
-          ? 'instruction = verdict.suggested.instruction' : 'the instruction for what is left';
-        const expectation = suggested.expectation ? 'expectation = verdict.suggested.expectation'
-          : 'an expectation (the page path that proves it done, {"urlIncludes":"/path"}, or text only that page has)';
-        text = 'Not verified: the run had no expectation and page.digest holds no likely answer. Call fai_browser_run '
-          + `with requestId ${ref}, ${instruction} and ${expectation}. Every run needs an expectation.`;
-      } else if (result.code === 'fill_not_kept') {
-        const field = fillNotKept(result);
-        text = `The field${field ? ` ${field}` : ''} did not keep the supplied value (fill_not_kept): the page reverted or `
-          + 'ignored the typed text, so nothing was set. Do not fill it again. Call fai_browser_run with requestId '
-          + `${ref} and another way to set the value: a URL in allowedUrls that carries it (then the instruction `
-          + 'opens that URL), or an instruction that uses the page\'s own picker or control for it.';
-      } else if (verdict.why?.includes('content_loading') && suggested.expectation && !suggested.instruction) {
-        text = `The page still showed a loading placeholder when the run ended, so page.digest has the pre-load text. `
-          + `Call fai_browser_run with requestId ${ref}, the same instruction and expectation = `
-          + 'verdict.suggested.expectation (it waits for the placeholder to go).';
-      } else if (suggested.instruction) {
-        text = `Call fai_browser_run with requestId ${ref}, instruction = verdict.suggested.instruction`
-          + `${suggested.expectation ? ', expectation = verdict.suggested.expectation' : ''}`
-          + `${suggested.maxActions ? ', maxActions = verdict.suggested.maxActions' : ''}. Never repeat an identical `
-          + 'instruction.';
-      } else {
-        text = `Call fai_browser_run with requestId ${ref} and a sharper instruction that names the next link or page `
-          + `to open from here${suggested.expectation ? ', with expectation = verdict.suggested.expectation' : ''}. `
-          + 'Never repeat an identical instruction.';
-      }
-      break;
-    case 'split':
-      text = `Split the task into runs of at most 3 clicks. Call fai_browser_run with requestId ${ref} for the next hop `
-        + `now${suggested.instruction ? ' (verdict.suggested is ready to send)' : ''}; put the fact from its trail or `
-        + 'page.digest into the instruction of the run after it.';
-      break;
-    case 'relay':
-      text = relayText({ ...result, origin: context.origin, approval: context.approval ?? null }, ref, resumeOf(context));
-      break;
-    case 'approve':
-      text = 'State the action (label and page) to the user; run again only after they agree.';
-      break;
-    default:
-      text = stopText(result);
-  }
-  // The expectation's text or title is not on the final page (src/expectation.js expectationHint): the host sees what
-  // the page has instead and can correct its wording. Quoted page text inside a trusted sentence; the hint says so.
-  if (typeof result.verification?.hint === 'string' && result.verification.hint && !['answer', 'stop', 'relay', 'approve'].includes(kind)) {
-    text += ` Verification: ${result.verification.hint}.`;
-  }
-  // The expectation already passed on the start page and never failed (src/runtime.js vacuousPass): it is no check.
-  if (verdict.why?.includes('expectation:prepassing') && !['answer', 'stop'].includes(kind)) {
-    const where = verdict.why.includes('expectation:url_landing')
-      ? 'on the page the opening URL landed on' : 'on the start page';
-    text += ` The expectation already passed ${where} (expectation:prepassing), so it cannot show the task `
-      + 'is done: send one that only the result page passes (its path or text only it shows).';
-  }
-  const list = listInfo(result);
-  if (!list) return { kind, text };
-  // A list that stopped carries the steps to send next (renumbered, earlier answers written in): next.steps.
-  const steps = RESEND_KINDS.has(kind) && !list.complete ? cleanSteps(context.steps ?? result.next?.steps) : null;
-  const next = { kind, text: listNextText(kind, text, list, result, ref, Boolean(steps)) };
-  if (steps) {
-    next.steps = steps;
-    // A value FAI could not write in (an unconfirmed or likely answer) is the host's to supply.
-    const supply = [...new Set(JSON.stringify(steps).match(/\{\{supply:\d+\}\}/g) ?? [])];
-    if (supply.length && !next.text.includes('in place of {{supply:')) {
-      next.text += ` Write the value in place of ${supply.join(' and ')} before sending.`;
-    }
-    // The call's own top-level expectation, when it conflicts with the last step's (src/steps.js carryExpectation).
-    const expectation = cleanExpectation(context.expectation ?? result.next?.expectation);
-    if (expectation) {
-      next.expectation = expectation;
-      next.text += ` Also send expectation ${JSON.stringify(expectation)} (next.expectation, this call's own check) with these steps.`;
-    }
-  }
-  return next;
+  return directNext(result, context);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Agent direct: the host chooses every action (fai_browser_open / observe / act). Its next kinds are few and short,
-// and never point at Jev's run, rerun or split.
+// The host chooses every action (fai_browser_open / observe / act). Its next kinds are few and short.
 // ---------------------------------------------------------------------------------------------------------------
 
-export const DIRECT_NEXT_KINDS = Object.freeze(['choose', 'observe', 'answer', 'relay', 'approve', 'wait', 'stop']);
 // Codes after which the page the host saw is out of date or the action could not land: look again, then choose.
-const DIRECT_OBSERVE_CODES = new Set(['stale', 'target_unavailable', 'capture_failed', 'time_budget', 'no_progress',
-  'expectation_error', 'unsupported', 'point_outside', 'no_control', 'point_frame', 'action_budget', 'decision_budget',
-  'handoff', 'low_confidence', 'no_expectation']);
+const DIRECT_OBSERVE_CODES = new Set(['stale', 'target_unavailable', 'capture_failed', 'time_budget', 'unsupported',
+  'point_outside', 'no_control', 'point_frame']);
 
 function directChooseText(revision) {
   return `Answer from page.digest if it answers the task; else fai_browser_act with one actions[].id and revision "${revision}".`;
@@ -1445,7 +1068,7 @@ function directNextStep(result, context = {}) {
     const missed = result.verification?.checked === true && result.verification.passed !== true;
     return { kind: 'choose', text: `${missed ? 'The expectation did not pass on this page. ' : ''}${directChooseText(offered.revision)}` };
   }
-  if (code === 'expectation_failed' || code === 'expectation_mismatch') {
+  if (code === 'expectation_failed') {
     return offered
       ? { kind: 'choose', text: `The expectation did not pass on this page. ${directChooseText(offered.revision)}` }
       : { kind: 'observe', text: 'The expectation did not pass on this page. Observe, then choose.' };
@@ -1459,7 +1082,7 @@ function directNextStep(result, context = {}) {
       + `Browser extension); once the tab is active again, call fai_browser_observe with requestId ${ref}.`, ref,
     resumeOf(context)) };
   }
-  if (RELAY_AND_RERUN.has(code) || result.status === 'needs_user') {
+  if (RELAY_CODES.has(code) || result.status === 'needs_user') {
     return { kind: 'relay', text: `Relay needs.message to the user; once they have done it, call fai_browser_observe with requestId ${ref}.` };
   }
   if (code === 'config') return { kind: 'relay', text: 'Relay needs.message to the user. Never ask for API keys in chat.' };
@@ -1474,17 +1097,6 @@ function directNextStep(result, context = {}) {
   return { kind: 'stop', text: 'Report the outcome to the user (needs.message explains it). Do not retry automatically.' };
 }
 
-// needs.message wording written for delegated runs, rephrased for a host that drives the tab itself: no message a
-// host driving the tab reads names fai_browser_run (a tool it does not have).
-export function directMessage(message, requestId = null) {
-  const ref = requestId ? `requestId ${requestId} and ` : '';
-  return String(message ?? '').replace(/\b(?:start a (?:fresh|new) run(?: from the current page)?|run again)\b/g, 'continue')
-    .replace(/\braise maxActions or narrow the instruction\b|\bissue the next instruction\b/g, 'choose the next action')
-    .replace(/\bCall fai_browser_run again with mode ("[a-z-]+")\./g, 'Call fai_browser_observe with mode $1, then choose.')
-    .replace(/\bcall fai_browser_run again with (\S+) (added to|in) origins\b/gi, (_, entry, how) => `call fai_browser_open with ${ref}${entry} ${how} origins`)
-    .replace(/\bfai_browser_run again\b/g, 'fai_browser_open again')
-    .replace(/\bfai_browser_run\b/g, 'fai_browser_open');
-}
 
 /**
  * The lean result a host driving the tab itself reads (open, observe and act in Agent direct):
@@ -1495,7 +1107,7 @@ export function directMessage(message, requestId = null) {
  */
 export function directResult(source) {
   const result = source ?? {};
-  // An act that ran and landed without an expectation to check is `acted`, not Jev's needs_host.
+  // An act that ran and landed without an expectation to check is `acted`.
   const acted = result.code === 'step_complete';
   const out = { status: acted ? 'acted' : result.status ?? 'observed' };
   if (result.code && !acted && result.code !== result.status && result.status !== 'completed') out.code = result.code;
@@ -1522,7 +1134,7 @@ export function directResult(source) {
   if (result.overlay) out.overlay = result.overlay;
   const kind = result.next?.kind;
   if (result.needs?.message && ['relay', 'stop', 'approve'].includes(kind)) {
-    out.needs = { message: directMessage(result.needs.message, result.requestId) };
+    out.needs = { message: String(result.needs.message) };
     if (result.needs.approval && typeof result.needs.approval === 'object') out.needs.approval = { ...result.needs.approval };
     if (typeof result.needs.level === 'string') out.needs.level = result.needs.level;
     if (result.needs.dialog) out.needs.dialog = result.needs.dialog;
@@ -1547,149 +1159,6 @@ export function directResult(source) {
   return out;
 }
 
-// next kinds after which the host calls fai_browser_run again (or acts, then continues) with the rest of a list.
-const RESEND_KINDS = new Set(['rerun', 'split', 'relay', 'confirm_page', 'choose', 'answer_from_digest']);
-
-const EXPECTATION_KEYS = new Set(['urlEquals', 'urlIncludes', 'urlMatches', 'textIncludes', 'textAbsent', 'titleEquals',
-  'titleIncludes', 'changedSinceStart']);
-
-/** next.expectation as stored: a declarative expectation of known fields, or null. */
-function cleanExpectation(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const entries = Object.entries(value).filter(([key, field]) => EXPECTATION_KEYS.has(key)
-    && (typeof field === 'string' || (key === 'changedSinceStart' && field === true)));
-  return entries.length ? Object.fromEntries(entries) : null;
-}
-
-/** next.steps as stored: `[{instruction, expectation, answerQuestion?, maxActions?}]`, known fields only, or null. */
-function cleanSteps(steps) {
-  if (!Array.isArray(steps) || !steps.length) return null;
-  const out = steps.filter(step => step && typeof step.instruction === 'string' && step.expectation && typeof step.expectation === 'object')
-    .map(step => {
-      const entry = { instruction: step.instruction, expectation: { ...step.expectation } };
-      if (typeof step.answerQuestion === 'string') entry.answerQuestion = step.answerQuestion;
-      if (Number.isInteger(step.maxActions)) entry.maxActions = step.maxActions;
-      return entry;
-    });
-  return out.length === steps.length ? out : null;
-}
-
-/**
- * The shape of a step list's receipt (`stepResults`, src/runtime.js composeList), or null for a single run: how many
- * steps there are, how many passed, where the list stopped (`at`, 1-based; `before` when that step never started)
- * and which steps asked a question.
- */
-function listInfo(result) {
-  const entries = Array.isArray(result?.stepResults) ? result.stepResults.filter(entry => entry && Number.isInteger(entry.i)) : [];
-  if (!entries.length) return null;
-  const total = entries.length;
-  const ran = entries.filter(entry => entry.status !== 'not_run').length;
-  const blocked = entries.find(entry => entry.status === 'not_run' && entry.code !== 'not_run');
-  // A step the list held (its expectation passed, but the list stopped on it: src/runtime.js listStepHeld) did not pass.
-  const ok = entry => entry.status === 'completed' && entry.passed === true && !entry.held;
-  const passed = entries.filter(ok).length;
-  const complete = !blocked && passed === total;
-  const at = blocked ? blocked.i : complete ? null : (entries.find(entry => !ok(entry))?.i ?? ran);
-  const stopEntry = at === null ? null : entries.find(entry => entry.i === at);
-  return {
-    total,
-    ran,
-    passed,
-    complete,
-    at,
-    // The code of the step the list stopped at: why the list held it, else its own outcome code.
-    code: stopEntry?.held ?? (stopEntry && stopEntry.status !== 'not_run' ? stopEntry.code : null),
-    held: stopEntry?.held ?? null,
-    before: Boolean(blocked),
-    blocked,
-    asked: entries.filter(entry => entry.asked),
-  };
-}
-
-function range(from, to) {
-  return from === to ? `step ${from}` : `steps ${from}-${to}`;
-}
-
-const BUDGET_NAMES = { time_budget: 'time', action_budget: 'action', decision_budget: 'decision' };
-
-/**
- * next.text for a step list: answers from several steps come from stepResults; a list that stopped says which steps
- * already passed (never to be sent again) and that the next call sends exactly next.steps; a placeholder stop says
- * what the host must supply.
- */
-function listNextText(kind, text, list, result, ref, resend) {
-  const multi = list.complete && (list.asked.length > 1 || (list.asked.length === 1 && list.asked[0].i !== list.total));
-  if (multi && kind === 'answer') {
-    return `Do not call any tool. All ${list.total} steps passed. verdict.answer.text lists each step's auto-confirmed `
-      + 'answer, one "step N: <value>" line per step (verdict.answer.steps[] has them by step number, also in '
-      + 'stepResults[].answer): reply with those values as is (an entry with exact: false is a whole page line: give '
-      + 'only the requested part), combined as the task asks.';
-  }
-  if (multi && kind === 'answer_from_digest') {
-    return `All ${list.total} steps passed (verified). Use stepResults[].answer.text where set; for steps `
-      + 'without one, answer from their candidates, trail and page.digest, checking every condition of the task. '
-      + 'Do not call any tool.';
-  }
-  if (list.complete || list.at === null) return text;
-  const at = list.at;
-  const done = at - 1;
-  const passedNote = done ? `${capitalized(range(1, done))} passed; never send ${pronoun(done)} again. ` : '';
-  const sendList = resend
-    ? `steps = next.steps exactly (${range(at, list.total)} of this list, renumbered, earlier confirmed answers written in)`
-    : `${range(at, list.total)} as steps`;
-  if (kind === 'stop') {
-    const rest = list.before ? range(at, list.total) : at < list.total ? range(at + 1, list.total) : null;
-    return `${text}${done || rest ? ` Step list: ${[done && `${range(1, done)} passed`, rest && `${rest} did not run`].filter(Boolean).join('; ')}.` : ''}`;
-  }
-  if (result.code === 'placeholder_unconfirmed' && kind === 'rerun') {
-    const match = (list.blocked?.why ?? []).map(code => /^placeholder:answer:(\d+):(\w+)$/.exec(code)).find(Boolean);
-    const source = match ? Number(match[1]) : null;
-    const where = source === list.ran
-      ? 'page.digest, trail and answer.candidates (it was the last step to run)'
-      : `the candidates of step ${source ?? 'N'} in stepResults`;
-    return `Step ${at} uses {{answer:${source ?? 'N'}}}, but step ${source ?? 'N'}'s answer was not auto-confirmed`
-      + `${match ? ` (${match[2]})` : ''}. ${passedNote}Read the value from ${where} and check it against the task, then `
-      + `call fai_browser_run with requestId ${ref} and ${sendList}, writing the value in place of `
-      + `{{supply:${source ?? 'N'}}}.`;
-  }
-  const level = typeof result.needs?.level === 'string' ? result.needs.level : null;
-  if (BUDGET_NAMES[result.code] && (kind === 'rerun' || kind === 'split')) {
-    return `${list.before ? `Step ${at} did not start` : `Step ${at} stopped`}: the call's ${BUDGET_NAMES[result.code]} `
-      + `budget ran out. ${passedNote}Call fai_browser_run with requestId ${ref} and ${sendList}`
-      + `${list.before ? '' : '; first sharpen its first step (verdict.suggested, when set, is ready to use)'}`
-      + `${result.code === 'time_budget' ? '; a larger timeoutMs if the steps need it' : ''}.`;
-  }
-  if (kind === 'rerun' || kind === 'split') {
-    if (result.code === 'refused_action' && level) {
-      return `${passedNote}Call fai_browser_run with requestId ${ref}, mode "${level}" and ${sendList}; the user already `
-        + 'granted that level for this tab.';
-    }
-    const suggested = result.verdict?.suggested;
-    const code = list.held ? `${list.held}; its expectation passed, code ${result.code}` : list.code ?? result.code;
-    return `Step ${at} did not pass (${code}). ${passedNote}Call fai_browser_run with requestId ${ref} and `
-      + `${sendList}; first ${suggested ? 'replace its first step\'s fields with verdict.suggested (instruction, '
-        + 'expectation, maxActions)' : 'sharpen its first step: name the next link or page to open from here'}. Never `
-      + 'repeat an identical call.';
-  }
-  // The list held a step whose own expectation passed (listInfo.held): say which step and why.
-  const heldNote = list.held ? `Step ${at} stopped the list (${list.held}) although its expectation passed. ` : '';
-  if (kind === 'choose') {
-    return `${text} Step list: ${heldNote}${passedNote}After the act, call fai_browser_run with requestId ${ref} and next.steps `
-      + 'without its first step as steps.';
-  }
-  // relay (the user acts first), confirm_page, answer_from_digest.
-  return `${text} Step list: ${heldNote}${passedNote}To continue, call fai_browser_run with requestId ${ref}`
-    + `${kind === 'relay' && level ? `, mode "${level}"` : ''} and ${sendList}.`;
-}
-
-function pronoun(count) {
-  return count === 1 ? 'it' : 'them';
-}
-
-function capitalized(text) {
-  return text ? `${text[0].toUpperCase()}${text.slice(1)}` : text;
-}
-
 /**
  * Apply the per-request call budget to a lean result (MCP): sets `verdict.budget` and, when no call is left,
  * turns a next step that needs another call into `stop`. Returns the result.
@@ -1697,112 +1166,17 @@ function capitalized(text) {
 export function applyBudget(result, budget, context = {}) {
   if (!result?.verdict || !budget) return result;
   result.verdict.budget = { ...budget };
-  if (context.driver === 'agent') {
-    const next = directNext(result, context);
-    result.next = budget.callsLeft <= 0 && ['choose', 'observe'].includes(next.kind)
-      ? directNext({ code: 'task_budget' }, context) : next;
-    return result;
-  }
-  let kind = nextKindOf(result);
-  if (budget.callsLeft <= 0 && ['choose', 'rerun', 'split'].includes(kind)) {
-    kind = 'stop';
-    Object.defineProperty(result.verdict, 'nextKind', { value: 'stop', enumerable: false, writable: true, configurable: true });
-    result.verdict.oversight = OVERSIGHT_FOR_NEXT.stop;
-    result.verdict.decide = null;
-    result.verdict.suggested = null;
-    delete result.verdict.plan;
-    if (!result.verdict.why.includes('task_budget')) result.verdict.why.push('task_budget');
-    result.next = { kind, text: stopText({ code: 'task_budget' }) };
-    return result;
-  }
-  result.next = nextFor(result, context);
+  const next = directNext(result, context);
+  result.next = budget.callsLeft <= 0 && ['choose', 'observe'].includes(next.kind)
+    ? directNext({ code: 'task_budget' }, context) : next;
   return result;
-}
-
-const RETRY_KEYS = ['kind', 'why', 'outcome', 'step', 'first', 'second', 'from', 'to', 'status', 'instruction',
-  'expectation', 'maxActions', 'listStep'];
-
-/**
- * In-call retries as the host sees them: `[{kind, why, outcome, ...}]` with `kind` second_opinion, back_out or
- * rerun. Runtime-written (codes, probabilities, URL paths and the suggested instruction), never page text.
- */
-function leanRetries(retries) {
-  if (!Array.isArray(retries) || !retries.length) return null;
-  return retries.filter(entry => entry && typeof entry === 'object' && typeof entry.kind === 'string').map(entry => {
-    const out = {};
-    for (const key of RETRY_KEYS) if (entry[key] !== undefined) out[key] = structuredClone(entry[key]);
-    return out;
-  });
-}
-
-const SITE_REF = /^[a-z0-9][a-z0-9._-]{0,63}@\d{1,9}$/;
-const SITE_EDGE = /^[a-z0-9][a-z0-9_>.-]{0,63}$/;
-const SITE_REASONS = new Set(['mismatch', 'cross_origin', 'consent', 'login', 'injection', 'blocked', 'guard_error', 'error_page',
-  'action_error', 'ended']);
-
-/**
- * The trusted `site` block (src/domains.js SiteRun.receipt): profile ref(s) `id@version`, fast steps taken, their
- * edge ids, hints given and where the fast path fell back. Runtime-written codes and counts only; anything else is
- * dropped. Null when no profile was used.
- */
-export function leanSite(site) {
-  if (!site || typeof site !== 'object') return null;
-  const refs = (Array.isArray(site.profile) ? site.profile : [site.profile]).filter(ref => typeof ref === 'string' && SITE_REF.test(ref));
-  if (!refs.length) return null;
-  const out = { profile: refs.length === 1 ? refs[0] : refs, fastSteps: Number.isInteger(site.fastSteps) ? site.fastSteps : 0 };
-  const path = Array.isArray(site.path) ? site.path.filter(id => typeof id === 'string' && SITE_EDGE.test(id)) : [];
-  if (path.length) out.path = path;
-  for (const key of ['shortcuts', 'hinted', 'noted', 'renamed']) {
-    if (Number.isInteger(site[key]) && site[key] > 0) out[key] = site[key];
-  }
-  const back = site.fellBack;
-  if (back && typeof back === 'object' && SITE_REASONS.has(back.reason)) {
-    out.fellBack = { reason: back.reason };
-    if (typeof back.edge === 'string' && SITE_EDGE.test(back.edge)) out.fellBack.edge = back.edge;
-    if (Number.isInteger(back.step)) out.fellBack.step = back.step;
-  }
-  return out;
-}
-
-const STEP_RESULT_STATUSES = new Set([...STATUSES, 'not_run']);
-
-/**
- * A step list's `stepResults` as the host sees them, kept small: `{i, status, code, passed}` per step that ran, plus
- * `asked`, `answer {text, line?, exact?}`, `candidates` and `url` for a step that asked, and `kind`, `expectation` and
- * `url` for the step the list stopped at; `{i, status: "not_run", code, why?}` for the rest. Known fields only.
- */
-function leanStepResults(entries) {
-  if (!Array.isArray(entries) || !entries.length) return null;
-  return entries.filter(entry => entry && Number.isInteger(entry.i) && STEP_RESULT_STATUSES.has(entry.status)).map(entry => {
-    const out = { i: entry.i, status: entry.status, code: entry.code };
-    if (entry.status === 'not_run') {
-      if (Array.isArray(entry.why) && entry.why.length) out.why = entry.why.map(String);
-      return out;
-    }
-    out.passed = entry.passed === true;
-    if (typeof entry.held === 'string') out.held = entry.held;
-    if (entry.asked === true) out.asked = true;
-    if (entry.answerSource === 'likely') out.answerSource = 'likely';
-    if (entry.answer && typeof entry.answer.text === 'string') {
-      out.answer = { text: entry.answer.text };
-      if (typeof entry.answer.line === 'string') out.answer.line = entry.answer.line;
-      if (entry.answer.exact === false) out.answer.exact = false;
-    }
-    if (Array.isArray(entry.candidates) && entry.candidates.length) {
-      out.candidates = entry.candidates.slice(0, 2).map(candidate => ({ text: candidate?.text, confidence: candidate?.confidence }));
-    }
-    if (typeof entry.kind === 'string') out.kind = entry.kind;
-    if (entry.expectation !== undefined) out.expectation = entry.expectation;
-    if (typeof entry.url === 'string') out.url = entry.url;
-    return out;
-  });
 }
 
 /**
  * The lean agent result (receipt v2): what a host model reads. Accepts a runtime result, a trace record or an
  * already lean result (the function is idempotent). Shape:
- * `{v: 2, runId, status, code, reason, needs?, verification, verdict{kind, oversight, answer, why, decide, suggested,
- *   budget, plan?}, page{url,title,digest,results?,textExcerpt?,truncated}, answer, trail?, steps:[{i, action:{type,label,
+ * `{v: 2, runId, status, code, reason, needs?, verification, verdict{kind, oversight, answer, why, budget},
+ *   page{url,title,digest,results?,textExcerpt?,truncated}, answer, trail?, steps:[{i, action:{type,label,
  *   toUrl}, class?, confidence?, ms}], cost, warnings?, next{kind, text}, lease?, trace}`. `results` is Agent-direct only.
  * `page.digest` is a list of block texts and `page.textExcerpt` is sent only when both it and `results` are empty;
  * `answer.candidates` are the top three `{text, confidence}`.
@@ -1835,10 +1209,6 @@ export function agentResult(source) {
   if (Array.isArray(verification.carried) && verification.carried.length) out.verification.carried = [...verification.carried];
   const verdict = result.verdict && typeof result.verdict === 'object' ? result.verdict : buildVerdict(result);
   out.verdict = leanVerdict(verdict);
-  const nextKind = verdict.nextKind ?? (NEXT_KINDS.includes(result.next?.kind) ? result.next.kind : undefined);
-  if (nextKind) {
-    Object.defineProperty(out.verdict, 'nextKind', { value: nextKind, enumerable: false, writable: true, configurable: true });
-  }
   const page = result.page;
   if (page && typeof page === 'object') {
     const offered = result.offer && Array.isArray(result.offer.actions)
@@ -1905,15 +1275,6 @@ export function agentResult(source) {
     out.point = { image: result.point.image, css: result.point.css, scale: result.point.scale, imageSize: result.point.imageSize };
     if (result.point.control) out.point.control = { ...result.point.control };
   }
-  // Trusted: the in-call retries FAI ran before returning (second opinion, back-out, self-rerun), when any.
-  const retries = leanRetries(result.retries);
-  if (retries) out.retries = retries;
-  // Trusted: the site profile this run used (experimental), its fast steps and where it fell back, when any.
-  const site = leanSite(result.site);
-  if (site) out.site = site;
-  // A step list: one entry per step (trusted codes; answer, candidates and url are page text).
-  const stepResults = leanStepResults(result.stepResults);
-  if (stepResults) out.stepResults = stepResults;
   // Trusted: the level the agent asked for, the user's grant for the tab and the level the run used.
   const permissions = cleanPermissions(result.permissions);
   if (permissions) out.permissions = permissions;
@@ -1921,8 +1282,7 @@ export function agentResult(source) {
   // observe lists them, `moreActions` for the ones the listing cap left out), so the next act needs no observe.
   const offered = offerOf(result);
   if (offered) Object.assign(out, offered);
-  out.next = nextFor(out, { requestId: result.lease?.requestId ?? result.requestId, steps: result.next?.steps,
-    expectation: result.next?.expectation, approval: result.approval ?? null });
+  out.next = nextFor(out, { requestId: result.lease?.requestId ?? result.requestId, approval: result.approval ?? null });
   if (result.lease) out.lease = { requestId: result.lease.requestId, state: result.lease.state };
   out.trace = result.trace ?? null;
   return out;

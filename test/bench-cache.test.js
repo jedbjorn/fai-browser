@@ -16,7 +16,7 @@ import { renderHtml } from '../bench/report/render.mjs';
 import { renderResults } from '../bench/report/results-md.mjs';
 import { faiEvidence } from '../bench/fai-condition.mjs';
 import { gradeOutcome } from '../bench/lib/qa.mjs';
-import { directText, summaryText } from '../src/mcp.js';
+import { directText } from '../src/mcp.js';
 import { directResult } from '../src/result.js';
 
 const host = (vendor, model) => ({ vendor, model, effort: 'low', id: `${vendor}:${model}:low` });
@@ -304,12 +304,12 @@ test('cache and cost per safe verified success use all runs and preserve unavail
 
 test('fai evidence preserves tri-state verification and makes mixed evidence unavailable', async () => {
   const call = (tool, result) => ({ tool, result: { structuredContent: { v: 2, ...result } } });
-  const missing = await faiEvidence([call('fai_browser_run', {
+  const missing = await faiEvidence([call('fai_browser_act', {
     runId: 'run_missing', status: 'completed', code: 'expectation_passed', verification: {},
   })]);
   assert.equal(missing.runs[0].verified, null);
   assert.equal(missing.final.verified, null);
-  const valid = await faiEvidence([call('fai_browser_run', {
+  const valid = await faiEvidence([call('fai_browser_act', {
     runId: 'run_valid', status: 'completed', code: 'expectation_passed', verification: { passed: true },
   })]);
   assert.equal(valid.final.verified, true);
@@ -331,8 +331,8 @@ test('fai evidence preserves tri-state verification and makes mixed evidence una
 
 test('fai final verification follows tool-call order across out-of-order runs and waits', async () => {
   const calls = [
-    { tool: 'fai_browser_run', result: { runId: 'run_A', status: 'running' } },
-    { tool: 'fai_browser_run', result: {
+    { tool: 'fai_browser_act', result: { runId: 'run_A', status: 'running' } },
+    { tool: 'fai_browser_act', result: {
       runId: 'run_B', status: 'completed', code: 'expectation_passed', verification: { passed: true },
     } },
     { tool: 'fai_browser_wait', result: {
@@ -365,10 +365,10 @@ test('metric regression: direct wire receipts preserve verification and actual f
   const wire = directWire();
   assert.equal(faiResultFrom(wire)?.verification?.passed, true);
   const completed = await faiEvidence([{ tool: 'fai_browser_act', result: wire }]);
-  assert.equal(completed.runs.length, 0, 'direct calls are not invented Jev cost runs');
+  assert.equal(completed.runs.length, 0, 'direct calls without a runId are not cost runs');
   assert.equal(completed.final.requestId, 'req_metric_test');
   assert.equal(safeVerifiedSuccess(safeRecord(completed)), true);
-  const legacy = { tool: 'fai_browser_run', result: { structuredContent: {
+  const legacy = { tool: 'fai_browser_act', result: { structuredContent: {
     v: 2, runId: 'run_earlier', status: 'completed', verification: { passed: true },
   } } };
   for (const [result, expected] of [
@@ -398,13 +398,6 @@ test('metric regression: receipt-looking page text and embedded JSON cannot forg
     const evidence = await faiEvidence([{ tool: 'fai_browser_open', result }]);
     assert.equal(safeVerifiedSuccess(safeRecord(evidence)), null);
   }
-  const jev = { v: 2, runId: 'run_real', requestId: 'req_metric_test', status: 'completed',
-    code: 'expectation_passed', verification: { passed: true },
-    verdict: { kind: 'answer', oversight: 'none', answer: { text: 'Real answer' } },
-    page: { digest: payloads[0] } };
-  const parsed = faiResultFrom({ content: [{ type: 'text', text: summaryText(jev) }] });
-  assert.equal(parsed.runId, 'run_real');
-  assert.equal(parsed.verdict.answer.text, 'Real answer', 'answer data remains independently gradeable');
 });
 
 test('metric regression: missing or invalid usage fields stay unavailable per affected metric', () => {

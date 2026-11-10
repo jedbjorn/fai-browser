@@ -13,7 +13,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright-core';
 import { headlessEnv } from '../scripts/headless-env.mjs';
 import { createDaemon } from '../src/daemon.js';
-import { homePaths, saveDriver } from '../src/home.js';
 import { createFakeHub } from './helpers/fake-hub.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
 import { mcpData } from './helpers/mcp-result.js';
@@ -63,14 +62,12 @@ async function pendingRequest(hub, seen = new Set()) {
 
 test('fill_secret across two origins: offered only into fields that take a secret, Deny stops, Approve pastes; nothing leaks', async t => {
   const home = await mkdtemp(join(tmpdir(), 'fai-handles-'));
-  saveDriver('agent', homePaths({ home, env: {} }));
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   await page.goto(`${source.origin}/api-keys/`);
   const bridge = new VaultBridge(page, { level: 'reversible', offscreen });
   const hub = createFakeHub();
   hub.bridgeForTab = () => bridge;
-  const daemon = createDaemon({ home, env: {}, port: 0, hub,
-    providerFactory: () => { throw new Error('Agent direct never constructs a provider'); } });
+  const daemon = createDaemon({ home, env: {}, port: 0, hub });
   await daemon.listen();
   const mcp = spawnMcp({ FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port), FAI_MCP_APPROVAL_WAIT_MS: '1000' });
   t.after(async () => {

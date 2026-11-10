@@ -40,7 +40,7 @@ test.afterEach(() => {
 // options.daemonBudget: the per-request budget the fake daemon reports in effect (hello and settings replies).
 function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode = 'daemon', leaseOrigins = null, permissions,
   hostGrants, local: extraLocal = {}, leaseError = null, opened = null, sessionStore = {}, daemonBudget = null,
-  driverControl = null, native = null, actionOpenPopup = null, lastWindow = undefined, normalWindows = [], tabCreateFails = false,
+  native = null, actionOpenPopup = null, lastWindow = undefined, normalWindows = [], tabCreateFails = false,
   daemonVersion = '0.2.0', daemonUpdate = null, manifest = {} } = {}) {
   const reloads = []; // chrome.runtime.reload() calls (an update's reload of the unpacked extension)
   const nativeCalls = []; // chrome.runtime.sendNativeMessage(host, message) calls
@@ -178,17 +178,12 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
   function answer(message) {
     if (message.type === 'hello') {
       return { ok: true, data: { mode, daemonVersion: state.daemonVersion ?? daemonVersion, endSession: false, ...(daemonUpdate ? { update: daemonUpdate } : {}),
-        ...(daemonBudget ? { budget: daemonBudget } : {}), ...(driverControl ? { control: driverControl } : {}) } };
+        ...(daemonBudget ? { budget: daemonBudget } : {}) } };
     }
     if (message.type === 'update' && daemonUpdate) {
       if (message.action === 'install' && state.updateError) return { ok: false, error: { code: 'lease_active', message: state.updateError } };
       const install = message.action === 'install' ? { state: 'running', to: daemonUpdate.latest, message: 'Installing.' } : daemonUpdate.install;
       return { ok: true, data: { update: { ...daemonUpdate, install: install ?? null } } };
-    }
-    if (message.type === 'driver') {
-      if (state.driverError && message.driver) return { ok: false, error: { code: 'driver_save_failed', message: 'Could not save' } };
-      if (message.driver) driverControl = { ...driverControl, driver: message.driver };
-      return { ok: true, data: { control: driverControl } };
     }
     if (message.type === 'settings') {
       // Like the daemon: the user's budget when set, else what applied before.
@@ -451,7 +446,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       });
     }
     const type = { '/hello': 'hello', '/lease': 'lease', '/deny': 'deny', '/status': 'status', '/validate': 'validate',
-      '/results': 'result', '/screenshots': 'screenshot', '/driver': 'driver' }[pathname];
+      '/results': 'result', '/screenshots': 'screenshot' }[pathname];
     sent.push({ via: 'http', ...body, type, headers: options.headers });
     const reply = answer({ ...body, type });
     return respond(type === 'hello' ? { ...reply.data, requests: [] } : reply.data);
@@ -2365,38 +2360,6 @@ test('mark: an opened window\'s tab is marked too once the icon click approves i
   await h.until(() => h.groups.get(h.groupOf.get(9))?.title === 'FAI');
   assert.equal(h.groups.get(h.groupOf.get(9)).title, 'FAI');
   assert.equal(h.tabBadge(9), 'ON');
-});
-
-test('the driver toggle uses acknowledged daemon state over WebSocket and HTTP, without persisting a stale choice', async () => {
-  for (const transport of ['websocket', 'http']) {
-    const h = harness({ driverControl: { driver: 'jev', jevAvailable: true },
-      ...(transport === 'http' ? { ws: 'fail', timeScale: 0.02 } : {}) });
-    await h.until(() => h.session.connection?.control?.driver === 'jev');
-    const changed = await h.send({ type: 'set_driver', driver: 'agent' },
-      { id: 'ext', url: 'chrome-extension://ext/popup.html' });
-    assert.equal(changed.connection.control.driver, 'agent');
-    assert.equal(changed.connection.transport, transport === 'http' ? 'longpoll' : 'websocket');
-    assert.ok(h.sent.some(message => message.type === 'driver' && message.driver === 'agent' && message.via === (transport === 'http' ? 'http' : 'ws')));
-    assert.equal(h.local.driver, undefined, 'only the daemon owns the saved choice');
-    assert.equal(h.sent.find(message => message.type === 'hello').settings.driver, undefined);
-    const reopened = await h.send({ type: 'connect' });
-    assert.equal(reopened.connection.control.driver, 'agent');
-    if (transport === 'websocket') {
-      h.state.driverError = true;
-      const failed = await h.send({ type: 'set_driver', driver: 'jev' },
-        { id: 'ext', url: 'chrome-extension://ext/popup.html?window=1' });
-      assert.match(failed.error, /Could not save/);
-      assert.equal(h.session.connection.control.driver, 'agent', 'failed saves never show an optimistic switch');
-    }
-  }
-});
-
-test('a page cannot change the driver through a runtime message', async () => {
-  const h = harness({ driverControl: { driver: 'jev', jevAvailable: true } });
-  await h.until(() => h.session.connection?.control);
-  const result = await h.send({ type: 'set_driver', driver: 'agent' }, { id: 'ext', url: ORIGIN });
-  assert.match(result.error, /popup/);
-  assert.ok(!h.sent.some(message => message.type === 'driver' && message.driver));
 });
 
 // --- updates (docs/REFERENCE.md "Updates") ------------------------------------------------------------------------

@@ -4,13 +4,10 @@ import { readFile } from 'node:fs/promises';
 import * as api from '../src/index.js';
 
 const PUBLIC = [
-  'BrowserRuntime', 'legalActions', 'providerPayload', 'redactorFor', 'RETRY_KINDS', 'resolveRetry', 'SLIM_KEYS',
-  'DEFAULT_SLIM', 'resolveSlim', 'buildDigest',
-  'pickAnswerCandidates', 'validateSteps',
+  'BrowserRuntime', 'legalActions', 'redactorFor', 'buildDigest', 'pickAnswerCandidates',
   'EXPECTATION_FIELDS', 'describeExpectation', 'evaluateExpectation', 'validateExpectation', 'verifyExpectation',
   'RECOVERABLE_CODES', 'RESULT_VERSION', 'STATUSES', 'bridgeError', 'LEASE_MESSAGES', 'agentResult', 'leanObserve',
-  'TypeSafeProvider', 'LocalSystemOneProvider', 'DEFAULT_THRESHOLDS', 'createDomainStore', 'resolveProfiles',
-  'checkOriginEntry', 'originCovered',
+  'DEFAULT_THRESHOLDS', 'checkOriginEntry', 'originCovered',
   'LEVELS', 'CAPABILITIES', 'capabilitiesOf', 'clampLevel', 'guardrailPolicy',
   'createHub', 'BridgeError', 'BRIDGE_ERROR_CODES', 'PROTOCOL_VERSION', 'PINNED_EXTENSION_ID', 'DEFAULT_PORT',
   'writeRun', 'readRun', 'toAgentResult',

@@ -1,9 +1,5 @@
-export {
-  BrowserRuntime, DEFAULT_SLIM, RETRY_KINDS, SLIM_KEYS, legalActions, providerPayload, redactorFor, resolveRetry,
-  resolveSlim,
-} from './runtime.js';
+export { BrowserRuntime, legalActions, redactorFor } from './runtime.js';
 export { buildDigest, pickAnswerCandidates } from './digest.js';
-export { validateSteps } from './steps.js';
 export {
   EXPECTATION_FIELDS,
   describeExpectation,
@@ -22,8 +18,6 @@ export {
 } from './result.js';
 export { DEFAULT_THRESHOLDS } from './oversight.js';
 export { CAPABILITIES, LEVELS, capabilitiesOf, clampLevel, guardrailPolicy } from './guardrails.js';
-export { TypeSafeProvider, LocalSystemOneProvider } from './typesafe.js';
-export { createDomainStore, resolveProfiles } from './domains.js';
 export { checkOriginEntry, originCovered } from './origins.js';
 export {
   BRIDGE_ERROR_CODES,

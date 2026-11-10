@@ -15,7 +15,7 @@
 //   /spa/app, /spa/app/*     the single-page app (history.pushState routes survive a reload)
 //   /links/term/<slug>       the glossary term page
 //   /errors/billing          the 500 page with status 500; every unknown path gets the HTML 404 page
-//   /long/*                  fixtures/long/ (the long-horizon corpus, bench/long), same file rules
+//   /long/*                  fixtures/long/ pages, same file rules
 // Every request is appended to stats.log, so a runner can slice what one task caused (mark() / since(mark)).
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';

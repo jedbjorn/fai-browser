@@ -51,9 +51,9 @@ test('reserved page actions survive the cap on busy pages', () => {
   }));
   const actions = legalActions(page(controls), { mode: 'reversible', allowedUrls: [`${ORIGIN}/help`] });
   const types = actions.map(action => action.type);
-  assert.equal(actions.length, 252);
-  for (const type of ['scroll', 'wait', 'navigate_allowed_url', 'done', 'handoff']) assert.ok(types.includes(type), type);
-  assert.deepEqual(actions.slice(-2).map(action => action.id), ['done', 'handoff']);
+  assert.equal(actions.length, 250);
+  for (const type of ['scroll', 'wait', 'navigate_allowed_url']) assert.ok(types.includes(type), type);
+  assert.ok(!types.includes('done') && !types.includes('handoff'), 'no terminal actions: the host decides when it is done');
   assert.equal(new Set(actions.map(action => action.id)).size, actions.length);
 });
 

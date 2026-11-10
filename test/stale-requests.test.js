@@ -12,7 +12,7 @@ import { createDaemon, STALE_IDLE_MS } from '../src/daemon.js';
 import { createLogger, homePaths } from '../src/home.js';
 import { pageExtras } from '../src/result.js';
 import { controlText, directText } from '../src/mcp.js';
-import { ORIGIN, clickProvider } from './runtime-fixtures.js';
+import { ORIGIN } from './runtime-fixtures.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 
 async function setup(t, { clock = null } = {}) {
@@ -21,9 +21,8 @@ async function setup(t, { clock = null } = {}) {
   const env = {};
   const log = createLogger(homePaths({ home, env }));
   const daemon = createDaemon({
-    driver: 'agent', home, env, port: 0, hub, log, sweepIntervalMs: 60_000,
+    home, env, port: 0, hub, log, sweepIntervalMs: 60_000,
     ...(clock ? { now: () => clock.t } : {}),
-    providerFactory: () => clickProvider(['About']),
   });
   await daemon.listen();
   t.after(async () => {

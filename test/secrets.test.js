@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import {
   findSecrets, redactText, redactUrl, scrubSecrets, scrubString, secretIds, secretPage, secretCard, secretKeyShaped,
 } from '../src/secrets.js';
-import { INSTRUCTIONS, JEV_INSTRUCTIONS, JEV_TOOLS, TOOLS } from '../src/mcp.js';
+import { INSTRUCTIONS, TOOLS } from '../src/mcp.js';
 import { leaks, loadFakes } from './helpers/secret-fakes.js';
 
 const F = loadFakes();
@@ -206,10 +206,8 @@ test('the leak scanner finds a fake raw, URL-encoded, base64-encoded and by a ch
 });
 
 test('the MCP instructions and tool definitions pass the scrub unchanged', () => {
-  assert.equal(scrubSecrets(JEV_INSTRUCTIONS), JEV_INSTRUCTIONS);
   assert.equal(scrubSecrets(TOOLS), TOOLS);
   assert.equal(scrubSecrets(INSTRUCTIONS), INSTRUCTIONS);
-  assert.equal(scrubSecrets(JEV_TOOLS), JEV_TOOLS);
 });
 
 // ---------------------------------------------------------------------------------------------------------------

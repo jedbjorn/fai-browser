@@ -4,8 +4,6 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, utimes, writeFile
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { imageSize, readRun, toAgentResult, writeRun } from '../src/trace.js';
-import { BrowserRuntime } from '../src/runtime.js';
-import { FakeBridge, link } from './runtime-fixtures.js';
 import { prune, retentionConfig, RETENTION_DEFAULTS } from '../src/retention.js';
 
 const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aEt8AAAAASUVORK5CYII=';
@@ -216,71 +214,6 @@ test('retention config merges defaults, options and environment', () => {
   assert.throws(() => retentionConfig({ maxRuns: -1 }, {}), /non-negative/);
   assert.throws(() => retentionConfig({ maxRunz: 1 }, {}), /Unknown retention/);
   assert.throws(() => retentionConfig(undefined, { FAI_RETENTION_MAX_BYTES: 'lots' }), /FAI_RETENTION_MAX_BYTES/);
-});
-
-test('the trace keeps blocks, controls, the digest, probabilities and answer details; the agent result does not', async t => {
-  const dir = await scratch(t);
-  const pages = {
-    '/': { title: 'Home', text: 'Welcome', controls: [link('1', 'Pricing', '/pricing')] },
-    '/pricing': {
-      title: 'Pricing',
-      text: 'Pricing\nPro $37 per month\nTeam $96 per month',
-      controls: [{ ...link('1', 'Home', '/'), bounds: { x: 1, y: 2, width: 3, height: 4 } }],
-      blocks: [
-        { t: 'h1', text: 'Pricing' },
-        { t: 'tr', text: 'Plan Monthly' },
-        { t: 'tr', text: 'Pro $37 per month' },
-        { t: 'tr', text: 'Team $96 per month' },
-      ],
-    },
-  };
-  const provider = {
-    async decide(_, actions) {
-      const target = actions.find(action => action.label === 'Pricing');
-      return { actionId: target.id, confidence: 0.9, probabilities: { [target.id]: 0.9, done: 0.1 } };
-    },
-    async choose({ candidates }) {
-      return { choice: candidates[0].id, confidence: 0.95, probabilities: { [candidates[0].id]: 0.95 } };
-    },
-  };
-  const runtime = new BrowserRuntime({ bridge: new FakeBridge({ pages }), provider });
-  const result = await runtime.run('What does Pro cost per month?', { expectation: { urlIncludes: '/pricing' } });
-  const written = await writeRun(result, { dir, instruction: 'What does Pro cost per month?', operation: 'run' });
-  const trace = JSON.parse(await readFile(written.trace, 'utf8'));
-
-  assert.equal(trace.finalObservation.blocks.length, 4);
-  assert.equal(trace.finalObservation.controls[0].label, 'Home');
-  assert.equal(trace.finalObservation.controls[0].bounds, undefined, 'bounds are still stripped');
-  assert.deepEqual(trace.page.digest.map(block => block.text), ['Pricing', 'Plan Monthly', 'Pro $37 per month',
-    'Team $96 per month']);
-  assert.deepEqual(trace.steps[0].decision.probabilities, { a0: 0.9, done: 0.1 });
-  assert.equal(trace.finalDecision.actionId, 'a0');
-  assert.equal(trace.answer.method, 'provider');
-  assert.equal(trace.answerDetail.choice, 'c0');
-  assert.deepEqual(trace.answerDetail.probabilities, { c0: 0.95 });
-  assert.ok(trace.answerDetail.candidates.length >= 2);
-
-  const agent = written.result;
-  assert.equal(agent.finalObservation, undefined);
-  assert.equal(agent.finalDecision, undefined);
-  assert.equal(agent.answerDetail, undefined);
-  assert.equal(agent.steps[0].decision, undefined, 'no decision records or probabilities');
-  assert.equal(agent.steps[0].confidence, 0.9);
-  assert.deepEqual(agent.steps[0].action, { type: 'click', label: 'Pricing', toUrl: 'https://example.com/pricing' });
-  assert.equal(agent.page.controls, undefined);
-  assert.deepEqual(agent.page.digest, ['Pricing', 'Plan Monthly', 'Pro $37 per month', 'Team $96 per month']);
-  assert.deepEqual(agent.answer.candidates[0], { text: 'Pro $37 per month', confidence: 0.95 });
-  assert.deepEqual(Object.keys(agent), ['v', 'runId', 'status', 'code', 'reason', 'verification', 'verdict', 'page',
-    'answer', 'steps', 'cost', 'permissions', 'next', 'trace']);
-  // A price question, one provider-ranked block at 0.95 with a currency amount and no runner-up: auto-confirmed.
-  assert.equal(agent.verdict.kind, 'verified');
-  // The value is cut from the block (weak hosts copy verdict.answer.text verbatim); the block stays as `line`.
-  assert.deepEqual(agent.verdict.answer, { text: '$37 per month', confidence: 0.95,
-    basis: ['candidate>=0.8', 'shape:price', 'margin:0.95', 'value:price'], line: 'Pro $37 per month' });
-  assert.deepEqual(agent.next.kind, 'answer');
-  assert.deepEqual(Object.keys(agent.cost), ['decisions', 'inputTokens', 'outputTokens', 'elapsedMs']);
-  assert.deepEqual(toAgentResult(await readRun(written.runDir)), agent, 'toAgentResult of the trace is the same');
-  assert.deepEqual(toAgentResult(agent), agent, 'idempotent');
 });
 
 test('toAgentResult drops page controls from traces written before the digest', () => {
