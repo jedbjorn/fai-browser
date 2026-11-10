@@ -68,22 +68,6 @@
     <details id="advanced" class="connection advanced">
       <summary><span>Advanced</span><span class="chevron" aria-hidden="true"></span></summary>
       <div class="connection-body">
-        <fieldset class="driver-control" aria-describedby="driver-help driver-note">
-          <legend>Who drives the browser?</legend>
-          <div class="driver-toggle">
-            <button id="driver-agent" type="button" aria-pressed="false" disabled>Your agent<small>recommended</small></button>
-            <button id="driver-jev" type="button" aria-pressed="false" disabled>Jev autopilot<small>experimental</small></button>
-          </div>
-          <p id="driver-help" class="field-help">Connect to the FAI service to choose.</p>
-          <p id="driver-note" class="field-help">Applies on the next agent call. No restart needed.</p>
-          <p id="driver-error" class="field-help field-error" role="alert"></p>
-          <p id="driver-saved" class="field-help" role="status" aria-live="polite"></p>
-        </fieldset>
-        <div id="key-row" class="key-row" hidden>
-          <div><strong>Jev API key</strong><span>Only for Jev. Add it with npm run setup -- --driver jev.</span></div>
-          <span class="key-badge">OPTIONAL</span>
-        </div>
-
         <span class="section-label">Approvals</span>
         <label for="default-level">Preselect up to</label>
         <select id="default-level" class="level-select">

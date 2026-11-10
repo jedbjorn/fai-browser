@@ -99,7 +99,6 @@ const HTTP_ROUTES = {
   '/lease': 'lease',
   '/lease-level': 'lease_level',
   '/settings': 'settings',
-  '/driver': 'driver',
   '/update': 'update',
   '/deny': 'deny',
   '/status': 'status',
@@ -1017,17 +1016,6 @@ export function createHub({
         browser.settings = extensionSettings;
         const event = { type: 'settings', settings: extensionSettings, browserId, reply };
         if (!emit(event)) reply({ settings: extensionSettings });
-        return;
-      }
-      case 'driver': {
-        // Explicit popup command only. Never replay a saved driver through hello/settings.
-        if (message.driver !== undefined && !['agent', 'jev'].includes(message.driver)) {
-          reply({ error: { code: 'invalid_driver', message: 'Choose your agent or Jev autopilot.' } });
-          return;
-        }
-        if (!emit({ type: 'driver', driver: message.driver, reply })) {
-          reply({ error: { code: 'unsupported', message: 'Update the local service to switch browser control.' } });
-        }
         return;
       }
       case 'update': {

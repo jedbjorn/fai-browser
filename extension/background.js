@@ -113,14 +113,13 @@ const KNOWN_CODES = new Set([
 ]);
 const RECOVERABLE = new Set(['stale', 'target_unavailable', 'capture_failed']);
 // Message types that get exactly one reply, and their HTTP fallback paths.
-const REPLY_TYPES = new Set(['hello', 'lease', 'lease_level', 'deny', 'validate', 'settings', 'driver', 'update', 'move',
+const REPLY_TYPES = new Set(['hello', 'lease', 'lease_level', 'deny', 'validate', 'settings', 'update', 'move',
   'invite', 'invite_cancel', 'agents']);
 const HTTP_PATHS = {
   hello: '/hello',
   lease: '/lease',
   lease_level: '/lease-level',
   settings: '/settings',
-  driver: '/driver',
   update: '/update',
   deny: '/deny',
   status: '/status',
@@ -577,7 +576,6 @@ let testingOrigins = [];
 let budget = null;
 let budgetLoaded = false;
 let effectiveBudget = null;
-let driverControl = null; // Daemon-owned choice; never replayed from extension storage.
 // This install's browser identity ({id, product, name, version}; browserIdentity()), the browsers the service has
 // connected ([{id, product, name}]), and why the connection is held back: 'superseded' (this browser's newer
 // connection took over), 'replaced' (an older service keeps replacing this browser with another), or null.
@@ -704,7 +702,7 @@ function storeSession(values) {
 
 function connectionView() {
   return { connected, transport: connected ? transportName : 'none', budget: effectiveBudget, paired: Boolean(pairing),
-    native: nativeState, ...(driverControl ? { control: driverControl } : {}), ...(updateInfo ? { update: updateInfo } : {}),
+    native: nativeState, ...(updateInfo ? { update: updateInfo } : {}),
     ...(identity ? { browserId: identity.id } : {}), ...(connectedBrowsers.length ? { browsers: connectedBrowsers } : {}),
     ...(conflict ? { conflict } : {}) };
 }
@@ -810,17 +808,6 @@ async function reloadForUpdate(daemonVersion) {
   if (updateReloadedFor === daemonVersion) return;
   await chrome.storage.local.set({ updateReloadedFor: daemonVersion });
   chrome.runtime.reload();
-}
-
-function cleanDriverControl(value) {
-  return value && ['jev', 'agent'].includes(value.driver) && typeof value.jevAvailable === 'boolean'
-    ? { driver: value.driver, jevAvailable: value.jevAvailable } : null;
-}
-
-async function readDriver() {
-  const data = await send('driver');
-  driverControl = cleanDriverControl(data?.control);
-  publishConnection();
 }
 
 function publishConnection() {
@@ -1392,7 +1379,6 @@ function handleHello(data, via) {
   transportName = via;
   // The budget the daemon applies (the user's, else config.json, else its default); an older daemon names none.
   effectiveBudget = cleanBudget(data?.budget);
-  driverControl = cleanDriverControl(data?.control);
   updateInfo = cleanUpdate(data?.update);
   ignore(reloadForUpdate(data?.daemonVersion));
   if (data?.endSession && session) {
@@ -4110,8 +4096,6 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         await waitForAttempt(1_000);
       }
       if (toolbarPopup) reportUsed();
-      // A failed driver read never fails the connect: the popup keeps the last known choice.
-      if (connected && driverControl) await readDriver().catch(() => {});
       // The daily check may have found a release since the hello (a service that knows updates said so in it).
       if (connected && updateInfo) await readUpdate().catch(() => {});
     } else if (message.type === 'invite') {
@@ -4151,26 +4135,6 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
           : 'Automatic pairing failed. Run npm run setup in the fai-browser folder.');
       }
       if (!connected) await waitForAttempt(CONNECT_WAIT_MS);
-    } else if (message.type === 'set_driver') {
-      const popupUrl = chrome.runtime.getURL('popup.html');
-      if (typeof sender.url !== 'string' || sender.url.split('?')[0] !== popupUrl) {
-        throw new Error('Change browser control from the FAI Browser popup.');
-      }
-      if (!['jev', 'agent'].includes(message.driver)) throw new Error('Choose your agent or Jev autopilot.');
-      if (!connected || !driverControl) {
-        throw new Error('Connect to an updated FAI service before switching browser control.');
-      }
-      try {
-        const data = await send('driver', { driver: message.driver });
-        const control = cleanDriverControl(data?.control);
-        if (!control || control.driver !== message.driver) throw new Error('The FAI service did not confirm the switch.');
-        driverControl = control;
-        publishConnection();
-      } catch (error) {
-        // A lost acknowledgement may still have saved the change. Read the actual state before reporting failure.
-        await readDriver().catch(() => {});
-        throw error;
-      }
     } else {
       throw new Error('Unsupported control');
     }

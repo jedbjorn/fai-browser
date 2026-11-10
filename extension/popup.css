@@ -23,7 +23,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .topbar { display: flex; align-items: center; gap: 10px; margin-bottom: 17px; }
 .brand-mark { display: block; flex: 0 0 auto; width: 34px; height: 34px; border-radius: 9px; }
 .brand-copy { flex: 1; min-width: 0; }
-.eyebrow, .card-label, .local-label, .key-badge { font-size: 10px; font-weight: 700; letter-spacing: .105em; }
+.eyebrow, .card-label, .local-label { font-size: 10px; font-weight: 700; letter-spacing: .105em; }
 .eyebrow { display: block; color: var(--amber-dark); }
 h1 { margin: 1px 0 0; font-size: 17px; line-height: 1.15; font-weight: 630; }
 .local-label { padding: 4px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); }
@@ -54,14 +54,6 @@ h1 { margin: 1px 0 0; font-size: 17px; line-height: 1.15; font-weight: 630; }
 .chevron { width: 8px; height: 8px; margin: 0 5px 4px 0; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); transition: transform .16s; }
 .connection[open] .chevron { margin-bottom: 0; transform: rotate(225deg); }
 .connection-body { padding-top: 13px; }
-.driver-control { min-width: 0; margin: 16px 0 4px; padding: 0; border: 0; }
-.driver-control legend { margin-bottom: 7px; font-size: 12px; font-weight: 650; }
-.driver-toggle { display: flex; padding: 3px; gap: 3px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-deep); }
-.driver-toggle button { flex: 1; padding: 8px 5px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--ink); font-size: 12px; }
-.driver-toggle button small { display: block; margin-top: 1px; color: var(--muted); font-size: 9px; font-weight: 500; letter-spacing: .02em; }
-.driver-toggle button[aria-pressed="true"] { border-color: var(--amber); background: var(--surface); color: var(--amber-dark); font-weight: 650; box-shadow: 0 1px 3px #69502515; }
-.driver-toggle button:hover:not(:disabled) { background: var(--surface); }
-#driver-saved:empty, #driver-error:empty { display: none; }
 .pin-hint { margin: 0 0 12px; padding: 9px 11px; border: 1px solid #e8d7ba; border-radius: 9px; background: #f8f0e4; color: #654b28; font-size: 11px; }
 .setup-card { margin-bottom: 12px; padding: 13px 15px 15px; border: 1px solid #e8d7ba; border-radius: 12px; background: #f8f0e4; }
 .setup-card .card-label { color: var(--amber-dark); }
@@ -71,11 +63,6 @@ h1 { margin: 1px 0 0; font-size: 17px; line-height: 1.15; font-weight: 630; }
 .connection-line + .advanced { border-top: 0; }
 .approval-window .advanced, .approval-window .connection-line { display: none; }
 code { font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
-.key-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 12px 0; padding: 10px 0; border-bottom: 1px solid var(--line); }
-.key-row strong, .key-row span { display: block; }
-.key-row strong { font-size: 12px; }
-.key-row div span { margin-top: 2px; color: var(--muted); font-size: 10px; }
-.key-badge { flex: 0 0 auto; padding: 4px 6px; border-radius: 4px; background: #e3ece4; color: var(--green); font-size: 8px; }
 label { display: block; margin: 12px 0 5px; font-weight: 600; font-size: 12px; }
 input { display: block; width: 100%; height: 36px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: white; color: var(--ink); }
 input::placeholder { color: var(--muted); }
