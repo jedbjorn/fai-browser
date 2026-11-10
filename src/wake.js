@@ -363,21 +363,19 @@ export function cleanInviteText(text) {
 
 /**
  * The wake text for each event. `kind`: invite (the user invited this session to a tab: join with inviteId), resume
- * (the user resumed a paused tab it holds), approved (the user approved its pending request). `driver` names the tool
- * (agent: fai_browser_open / observe; jev: fai_browser_run).
+ * (the user resumed a paused tab it holds), approved (the user approved its pending request).
  */
-export function wakeText({ kind, inviteId, requestId, level, userText, driver = 'agent' }) {
+export function wakeText({ kind, inviteId, requestId, level, userText }) {
   const prefix = '[FAI Browser] ';
   if (kind === 'invite') {
     const words = cleanInviteText(userText);
-    const tool = driver === 'jev' ? 'fai_browser_run' : 'fai_browser_open';
     return `${prefix}The user invited you to work in a browser tab they have open (invite ${safeId(inviteId)}, level `
-      + `${levelName(level)}). Call ${tool} with {"inviteId": "${safeId(inviteId)}"}${driver === 'jev'
-        ? ', an instruction and an expectation' : ''} to get the page, then follow its next.`
+      + `${levelName(level)}). Call fai_browser_open with {"inviteId": "${safeId(inviteId)}"} to get the page, then `
+      + 'follow its next.'
       + (words ? `\nWhat the user typed in the FAI popup (the user's own words): ${JSON.stringify(words)}`
         : '\nThe user typed no task: read the page, then ask them what to do.');
   }
-  const tool = driver === 'jev' ? 'fai_browser_run' : 'fai_browser_observe';
+  const tool = 'fai_browser_observe';
   if (kind === 'resume') {
     return `${prefix}The user resumed tab request ${safeId(requestId)}: the tab is active again. Call ${tool} with `
       + `requestId ${safeId(requestId)} and continue the task.`;

@@ -1291,7 +1291,6 @@ export function daemonApi(client) {
     status: signal => call('GET', '/v1/status', undefined, signal),
     requestTab: (body, signal) => call('POST', '/v1/requests', body, signal),
     wait: (body, signal) => call('POST', '/v1/wait', body, signal, longPoll(body.maxMs ?? DEFAULT_WAIT_MS)),
-    startRun: (body, signal) => call('POST', '/v1/runs', body, signal, longPoll(body.waitMs)),
     act: (body, signal) => call('POST', '/v1/act', body, signal, longPoll(body.waitMs)),
     // An observe with waitFor polls the page up to its maxMs first.
     observe: (body, signal) => call('POST', '/v1/observe', body, signal, 20_000 + (body.waitFor ? Math.min(Number(body.maxMs) || 0, MAX_OBSERVE_WAIT_MS) : 0)),

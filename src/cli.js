@@ -1,31 +1,22 @@
 #!/usr/bin/env node
 // FAI Browser CLI: a thin client of the daemon (src/client.js auto-starts it). Stdout carries exactly one JSON line;
 // all diagnostics go to stderr. `--port` (or an options.json "port") always names the daemon port.
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
-import { resolveSlim, slimFromText } from './runtime.js';
 import { DEFAULT_PORT } from './bridge.js';
 import { RESULT_VERSION, agentResult, approvalSteps, buildVerdict, leanObserve, nextFor } from './result.js';
 import { envFilePath, faiHome } from './paths.js';
-import { homePaths } from './home.js';
 import { validateExpectation } from './expectation.js';
-import { LIST_MAX_ACTIONS, checkSummary, validateSteps } from './steps.js';
 import { LEVELS, normalizeAdditions } from './guardrails.js';
 import { requestStartUrl } from './origins.js';
 import { RESUME_WAIT_TIMEOUT } from './resume.js';
 
 const FAI_HOME = faiHome();
-const DEFAULT_LEASE_TIMEOUT_MS = 120_000;
 const WAIT_SLICE_MS = 30_000;
-// Options-file keys forwarded to POST /v1/runs in daemon mode.
-const RUN_OPTION_KEYS = ['maxActions', 'maxDecisions', 'timeoutMs', 'capture', 'mode', 'expectation', 'allowedUrls',
-  'suppliedText', 'provider', 'providerOptions', 'minConfidence', 'doneThreshold', 'answerQuestion', 'policy', 'retry',
-  'slim', 'steps', 'profiles'];
 const TERMINAL_REQUEST_STATES = new Set(['denied', 'expired', 'cancelled', 'released']);
 
-const USAGE = `Usage (your agent chooses each action; the default driver):
+const USAGE = `Usage (your agent chooses each action):
   fai-browser request-tab --origin O [--origin O2] --reason TEXT [--mode M] [--instruction TEXT] [--browser B]
                            --browser: which paired browser (firefox, chrome, chromium, edge, brave, or an id from
                            status); default: the one the user used FAI in last
@@ -39,11 +30,6 @@ const USAGE = `Usage (your agent chooses each action; the default driver):
   fai-browser act --request ID --open-tab URL --revision R   (Multiple task tabs grant required)
   fai-browser act --request ID --tab t0 --revision R
   fai-browser release <requestId>
-Experimental Jev autopilot (driver jev: select it in the extension or npm run setup -- --driver jev):
-  fai-browser step|run "instruction" [options.json] [flags]
-  fai-browser run ["summary"] --steps-file steps.json [options.json] [flags]
-  fai-browser stop <runId>
-Both:
   fai-browser runs [--limit N]    fai-browser evidence <runId> [--step N] [--kind screenshot|trace]
   fai-browser status              fai-browser pair
   fai-browser daemon [start|stop|restart|status|logs [--lines N]]
@@ -57,31 +43,10 @@ Both:
   fai-browser uninstall-launcher  remove the FAI profile and what launch set up (asks first)
   fai-browser serve               deprecated alias for "daemon"
 
-step/run flags (experimental Jev driver):
-  --request ID             Reuse an approved tab request (no new click)
-  --origin O, --reason T   Request a tab without an options file
-  --browser B              Which paired browser a new tab request opens in (default: the one used last)
-  --release                Release the tab when the run ends (default: keep it for the next command)
+act flags:
   --expect-url-includes S, --expect-text-includes S, --expect-title-includes S
-  --capture each|last|none --max-actions N --timeout-ms N
-  --mode M                 read-only|reversible|interactive|full|testing: the level this task needs. The user's
-                           approval in the extension is the ceiling; the receipt's permissions block says what ran.
-                           testing is granted only by the user for listed test origins; nothing purchases below it
-  --min-confidence F       0-1 floor for button/select/fill choices (default 0.5); below it nothing runs
-  --answer TEXT            Question to answer from the final page (result answer.candidates)
-  --policy P               Extra control labels to refuse: "Upgrade,Gift wrap" or JSON (["Upgrade"] or
-                           {"forbid":["Upgrade"],"note":"..."}); adds to the built-in rules, never relaxes them
-  --no-retry               No in-call retries (second opinion, back-out, self-rerun): hand back the first outcome
-  --slim S                 Slim provider requests: on, off, or the switches to turn on ("controls,terminal,cap"); the
-                           rest off
-  --profile on|off         Site profiles (experimental, opt-in, $FAI_HOME/domains): on, or off (the default: no
-                           profile, no fast steps, hints or profile restrictions)
-  --lease-timeout-ms N     How long to wait for the user to approve the tab (default 120000)
-  --instruction-file FILE  Read the instruction from a file instead of an argument
-  --steps-file FILE        Run a step list instead of one instruction: a JSON array (or {"steps": [...]}) of
-                           {instruction, expectation, answerQuestion?, maxActions?}, run in order in one call and
-                           verified step by step; {{answer:N}} inserts step N's auto-confirmed answer
-  --output-dir DIR         Artifacts directory (default $FAI_HOME/artifacts)
+  --capture each|last|none --timeout-ms N
+  --release                Release the tab when the act ends (default: keep it for the next command)
   --no-prune               Skip artifact retention after writing the trace
   --pretty                 Pretty-print the JSON result
 
@@ -89,7 +54,7 @@ Global flags:
   --port N                 Daemon port (default FAI_DAEMON_PORT or ${DEFAULT_PORT}); another port needs the manifest edit
   --no-auto-start          Fail with daemon_unreachable instead of starting the daemon
 
-Stdout is one JSON line. Exit codes for step/run/act: 0 completed|unverified|checkpoint,
+Stdout is one JSON line. Exit codes for act: 0 completed|unverified|checkpoint,
 2 needs_user|needs_host|budget_exhausted|stopped, 1 failed. wait --until active: 0 active, 3 the request ended
 (released, expired, denied, cancelled or unknown), 2 timeout (still pending or paused), 130 interrupted, 1 error.
 Other commands: 0 success, 1 error.
@@ -107,7 +72,6 @@ class ConfigError extends Error {
 }
 
 const log = message => process.stderr.write(`fai-browser: ${message}\n`);
-const seconds = ms => `${Number((ms / 1000).toFixed(ms < 10_000 ? 1 : 0))} s`;
 
 function exitCodeFor(status) {
   if (['completed', 'unverified', 'checkpoint'].includes(status)) {
@@ -156,17 +120,9 @@ function parseCli(argv) {
         all: { type: 'boolean' },
         'output-dir': { type: 'string' },
         capture: { type: 'string' },
-        'max-actions': { type: 'string' },
-        'min-confidence': { type: 'string' },
         'timeout-ms': { type: 'string' },
         mode: { type: 'string' },
-        'lease-timeout-ms': { type: 'string' },
-        'instruction-file': { type: 'string' },
-        'steps-file': { type: 'string' },
         'no-prune': { type: 'boolean' },
-        'no-retry': { type: 'boolean' },
-        slim: { type: 'string' },
-        profile: { type: 'string' },
         'no-auto-start': { type: 'boolean' },
         request: { type: 'string' },
         release: { type: 'boolean' },
@@ -176,7 +132,6 @@ function parseCli(argv) {
         'expect-url-includes': { type: 'string' },
         'expect-text-includes': { type: 'string' },
         'expect-title-includes': { type: 'string' },
-        answer: { type: 'string' },
         policy: { type: 'string' },
         run: { type: 'string' },
         'max-ms': { type: 'string' },
@@ -233,92 +188,6 @@ function envInteger(name, min = 0) {
   return number;
 }
 
-async function readOptionsFile(path) {
-  let text;
-  try {
-    text = await readFile(path, 'utf8');
-  } catch (error) {
-    throw new ConfigError(`Cannot read options file ${resolve(path)}: ${error.code || error.message}`);
-  }
-  let options;
-  try {
-    options = JSON.parse(text);
-  } catch (error) {
-    throw new ConfigError(`Options file ${resolve(path)} is not valid JSON: ${error.message}`);
-  }
-  if (!options || typeof options !== 'object' || Array.isArray(options)) {
-    throw new ConfigError('Options file must contain a JSON object');
-  }
-  return options;
-}
-
-function requireOrigins(options) {
-  if (!Array.isArray(options.allowedOrigins) || !options.allowedOrigins.length) {
-    throw new ConfigError('Options must list allowedOrigins, the exact origins the user approved');
-  }
-}
-
-async function readOptions(path) {
-  if (!path) {
-    throw new ConfigError('An options.json path is required', { hint: 'See examples/options.json.' });
-  }
-  const options = await readOptionsFile(path);
-  requireOrigins(options);
-  return options;
-}
-
-/**
- * `run options.json` (the options file alone) would send its path to the provider as the instruction: Jev then
- * hands off on every page (handoff 0.55-0.72, the named control at 0.00, measured with bench/jev-replay.mjs) while the
- * file's mode, expectation and policy are silently ignored. A lone first positional that names an existing .json
- * file is therefore refused.
- */
-function refuseFileAsInstruction(instruction, optionsPath) {
-  if (optionsPath !== undefined || typeof instruction !== 'string' || !/\.json$/i.test(instruction.trim())) return;
-  if (!existsSync(instruction.trim())) return;
-  throw new ConfigError(`The instruction is the path of a JSON file (${instruction.trim()}), not a task`, {
-    hint: 'Give the instruction first and the options file second: run "<instruction>" options.json; or use '
-      + '--instruction-file FILE or --steps-file FILE.',
-  });
-}
-
-async function readInstruction(flags, positionals) {
-  if (flags['steps-file'] !== undefined) {
-    if (flags['instruction-file'] !== undefined) throw new ConfigError('Give --instruction-file or --steps-file, not both');
-    let parsed;
-    try {
-      parsed = JSON.parse(await readFile(flags['steps-file'], 'utf8'));
-    } catch (error) {
-      throw new ConfigError(`Cannot read steps file: ${error.code || error.message}`);
-    }
-    const steps = Array.isArray(parsed) ? parsed : parsed?.steps;
-    // An overall instruction is optional with steps and kept as the task summary (the approval card, the trace): a
-    // positional before the options file (one that does not end in .json when it stands alone), or the file's own
-    // `instruction` ({"instruction": "...", "steps": [...]}).
-    const [first, second] = [positionals[1], positionals[2]];
-    const positional = second !== undefined || (first !== undefined && !/\.json$/i.test(first.trim()));
-    let summary = positional ? first : (Array.isArray(parsed) ? undefined : parsed?.instruction);
-    try {
-      validateSteps(steps, { maxActions: 100 });
-      summary = checkSummary(summary);
-    } catch (error) {
-      throw new ConfigError(error.message);
-    }
-    return { steps, instruction: summary, optionsPath: positional ? second : first };
-  }
-  if (flags['instruction-file'] === undefined) {
-    refuseFileAsInstruction(positionals[1], positionals[2]);
-    return { instruction: positionals[1], optionsPath: positionals[2] };
-  }
-  let text;
-  try {
-    text = await readFile(flags['instruction-file'], 'utf8');
-  } catch (error) {
-    throw new ConfigError(`Cannot read instruction file: ${error.code || error.message}`);
-  }
-  return { instruction: text.trim(), optionsPath: positionals[1] };
-}
-
 function checkMode(mode) {
   if (mode !== undefined && !LEVELS.includes(mode)) {
     throw new ConfigError(`--mode must be one of ${LEVELS.join(', ')}`);
@@ -342,55 +211,11 @@ function parsePolicyFlag(value) {
   return phrases;
 }
 
-/** --slim: on, off, JSON, or the comma-separated switches to turn on (the rest off). */
-function parseSlimFlag(value) {
-  try {
-    return slimFromText(value);
-  } catch (error) {
-    throw new ConfigError(`--slim: ${error.message}`);
-  }
-}
-
 function applyOverrides(options, flags) {
   const merged = { ...options };
-  const maxActions = integerFlag('max-actions', flags['max-actions'], { min: 1, max: LIST_MAX_ACTIONS });
   const timeoutMs = integerFlag('timeout-ms', flags['timeout-ms'], { min: 1, max: 300_000 });
-  if (maxActions !== undefined) {
-    merged.maxActions = maxActions;
-    delete merged.maxSteps;
-  }
   if (timeoutMs !== undefined) {
     merged.timeoutMs = timeoutMs;
-  }
-  if (flags['min-confidence'] !== undefined) {
-    const floor = Number(flags['min-confidence']);
-    if (flags['min-confidence'] === '' || !(floor >= 0 && floor <= 1)) {
-      throw new ConfigError('--min-confidence must be a number from 0 to 1');
-    }
-    merged.minConfidence = floor;
-  }
-  if (merged.minConfidence !== undefined && (typeof merged.minConfidence !== 'number'
-    || !(merged.minConfidence >= 0 && merged.minConfidence <= 1))) {
-    throw new ConfigError('minConfidence must be a number from 0 to 1');
-  }
-  if (flags.answer !== undefined) {
-    if (!flags.answer.trim()) {
-      throw new ConfigError('--answer must not be empty');
-    }
-    merged.answerQuestion = flags.answer;
-  }
-  if (flags['no-retry']) merged.retry = false;
-  if (flags.slim !== undefined) merged.slim = parseSlimFlag(flags.slim);
-  if (merged.slim !== undefined) {
-    try {
-      resolveSlim(merged.slim);
-    } catch (error) {
-      throw new ConfigError(error.message);
-    }
-  }
-  if (flags.profile !== undefined) {
-    if (flags.profile !== 'on' && flags.profile !== 'off') throw new ConfigError('--profile must be on or off');
-    merged.profiles = flags.profile;
   }
   if (flags.policy !== undefined) merged.policy = parsePolicyFlag(flags.policy);
   if (merged.policy !== undefined) {
@@ -426,26 +251,6 @@ function applyOverrides(options, flags) {
     throw new ConfigError(error.message);
   }
   return merged;
-}
-
-function resolveOutputDir(flags, options, optionsPath) {
-  if (flags['output-dir']) {
-    return resolve(flags['output-dir']);
-  }
-  if (options.outputDir) {
-    return resolve(optionsPath ? dirname(resolve(optionsPath)) : process.cwd(), options.outputDir);
-  }
-  return undefined;
-}
-
-function resolveLeaseTimeout(flags, options) {
-  const fromFlag = integerFlag('lease-timeout-ms', flags['lease-timeout-ms'], { min: 1 });
-  const fromEnv = envInteger('FAI_LEASE_TIMEOUT_MS', 1);
-  const fromOptions = options.leaseTimeoutMs;
-  if (fromOptions !== undefined && (!Number.isInteger(fromOptions) || fromOptions < 1)) {
-    throw new ConfigError('leaseTimeoutMs must be a positive integer');
-  }
-  return fromFlag ?? fromEnv ?? fromOptions ?? DEFAULT_LEASE_TIMEOUT_MS;
 }
 
 function emitLine(value, pretty) {
@@ -495,69 +300,6 @@ function applyDaemonPortFlag(flags) {
 
 // ---------------------------------------------------------------------------------------------------------------
 // step / run / act through the daemon.
-
-// Loop wait until the request is active, terminal, the timeout passes or the signal aborts.
-async function waitForActive(client, requestId, timeoutMs, signal) {
-  const deadline = Date.now() + timeoutMs;
-  let last = null;
-  while (Date.now() < deadline) {
-    if (signal.aborted) {
-      return { state: 'interrupted', request: last };
-    }
-    const maxMs = Math.max(0, Math.min(WAIT_SLICE_MS, deadline - Date.now()));
-    try {
-      const response = await client.wait({ requestId, maxMs }, { signal });
-      last = response.request ?? last;
-      if (response.state === 'active' || TERMINAL_REQUEST_STATES.has(response.state)) {
-        return response;
-      }
-    } catch (error) {
-      if (signal.aborted) {
-        return { state: 'interrupted', request: last };
-      }
-      throw error;
-    }
-  }
-  return { state: 'timeout', request: last };
-}
-
-function notActiveResult(outcome, requestId, leaseTimeoutMs, expectation, elapsedMs) {
-  if (outcome.state === 'interrupted') {
-    return baseResult({
-      status: 'stopped',
-      code: 'interrupted',
-      reason: 'Interrupted before a tab was selected',
-      who: 'host',
-      message: 'Rerun the command when ready.',
-      expectation,
-      elapsedMs,
-      extra: { lease: { requestId, state: 'cancelled' } },
-    });
-  }
-  if (outcome.state === 'timeout') {
-    return baseResult({
-      status: 'needs_user',
-      code: 'select_tab',
-      reason: `No tab was approved for request ${requestId} within ${seconds(leaseTimeoutMs)}`,
-      who: 'user',
-      message: `Ask the user to approve request ${requestId} in the browser: ${approvalSteps(outcome.request?.approval)}. `
-        + `Then rerun with --request ${requestId}.`,
-      expectation,
-      elapsedMs,
-      extra: { lease: { requestId, state: 'pending' } },
-    });
-  }
-  return baseResult({
-    status: 'needs_host',
-    code: 'request_closed',
-    reason: `The tab request ended (${outcome.state})`,
-    who: 'host',
-    message: 'This tab request has ended. Request a tab again only if the user still wants this.',
-    expectation,
-    elapsedMs,
-    extra: { lease: { requestId, state: outcome.state } },
-  });
-}
 
 // Follow a run response until it is done, logging each new step to stderr.
 async function followRun(client, response) {
@@ -625,94 +367,6 @@ async function finishRun(client, response, { requestId, release, interrupt }) {
   return agentResult(result);
 }
 
-function runBody(operation, instruction, options, flags, optionsPath) {
-  const body = { operation, instruction, waitMs: 0 };
-  const source = { ...options };
-  if (source.maxActions === undefined && source.maxSteps !== undefined) {
-    source.maxActions = source.maxSteps;
-  }
-  for (const key of RUN_OPTION_KEYS) {
-    if (source[key] !== undefined) {
-      body[key] = source[key];
-    }
-  }
-  if (operation === 'step') {
-    delete body.maxActions;
-  }
-  const outputDir = resolveOutputDir(flags, options, optionsPath);
-  if (outputDir) {
-    body.outputDir = outputDir;
-  }
-  if (flags['no-prune']) {
-    body.prune = false;
-  }
-  const known = new Set([...RUN_OPTION_KEYS, 'maxSteps', 'allowedOrigins', 'outputDir', 'leaseTimeoutMs', 'port']);
-  for (const key of Object.keys(options)) {
-    if (!known.has(key)) {
-      log(key === 'retention'
-        ? 'note: "retention" is set in FAI_HOME/config.json in daemon mode; ignoring it here'
-        : `note: option "${key}" is not used in daemon mode; ignoring it`);
-    }
-  }
-  return body;
-}
-
-async function executeThin(operation, flags, instruction, options, optionsPath) {
-  const leaseTimeoutMs = resolveLeaseTimeout(flags, options);
-  const origins = flags.origin ?? options.allowedOrigins;
-  if (!flags.request && (!Array.isArray(origins) || !origins.length)) {
-    throw new ConfigError('Give --origin (or allowedOrigins in an options file), or --request with an approved tab');
-  }
-  const body = runBody(operation, instruction, options, flags, optionsPath);
-  const expectation = body.expectation ?? null;
-  // A step list's first step names the task on the approval card.
-  const label = instruction ?? options.steps?.[0]?.instruction ?? '';
-  const started = Date.now();
-  const client = await connectClient();
-  for (const warning of client.warnings ?? []) {
-    log(`warning: ${warning}`);
-  }
-  const interrupt = interruptHandler(client);
-  let createdRequest = null;
-  try {
-    let requestId = flags.request;
-    if (!requestId) {
-      const created = await client.requestTab({
-        origins,
-        mode: body.mode ?? 'read-only',
-        reason: flags.reason ?? `CLI: ${label.slice(0, 80)}`,
-        ...(flags.browser ? { browser: flags.browser } : {}),
-        instruction: label.slice(0, 300),
-        url: requestStartUrl(origins, body.allowedUrls, [label]),
-      });
-      requestId = created.requestId;
-      createdRequest = requestId;
-      log(`ACTION NEEDED: approve request ${requestId} for ${origins.join(' or ')} in the browser: `
-        + `${approvalSteps(created.request?.approval)}. Waiting up to ${seconds(leaseTimeoutMs)}.`);
-      if (created.extensionConnected === false) {
-        log('note: the extension is not connected to the daemon; open it and check Setup & connection.');
-      }
-      const outcome = await waitForActive(client, requestId, leaseTimeoutMs, interrupt.signal);
-      if (outcome.state !== 'active') {
-        if (outcome.state === 'interrupted') {
-          await client.release(requestId, 'cli interrupted').catch(() => null);
-        }
-        return notActiveResult(outcome, requestId, leaseTimeoutMs, expectation, Date.now() - started);
-      }
-      log('tab approved; running');
-    }
-    const response = await client.startRun({ ...body, requestId });
-    return await finishRun(client, response, { requestId, release: flags.release, interrupt });
-  } catch (error) {
-    if (createdRequest && interrupt.signal.aborted) {
-      await client.release(createdRequest, 'cli interrupted').catch(() => null);
-    }
-    throw clientConfigError(error);
-  } finally {
-    interrupt.dispose();
-  }
-}
-
 // `--point X,Y`: pixels of the observe screenshot (the image `observe` served for that revision).
 function parsePoint(text) {
   const match = /^\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*$/.exec(String(text));
@@ -751,29 +405,6 @@ async function executeAct(flags) {
   } finally {
     interrupt.dispose();
   }
-}
-
-async function execute(operation, flags, positionals) {
-  const { instruction, steps, optionsPath } = await readInstruction(flags, positionals);
-  if (steps) {
-    if (operation !== 'run') throw new ConfigError('--steps-file runs with run, not step');
-  } else if (typeof instruction !== 'string' || !instruction.trim()) {
-    throw new ConfigError('An instruction is required (argument, --instruction-file or --steps-file)');
-  }
-  const options = optionsPath ? await readOptionsFile(optionsPath) : {};
-  if (steps) {
-    // A top-level expectation or answerQuestion (options file or flags) goes to the last step; the daemon folds it.
-    options.steps = steps;
-  }
-  // Daemon mode: --port, else an options-file "port", selects the daemon port (FAI_DAEMON_PORT).
-  if (flags.port === undefined && options.port !== undefined) {
-    const port = integerFlag('port', String(options.port), { max: 65535 });
-    process.env.FAI_DAEMON_PORT = String(port);
-  }
-  if (optionsPath && !flags.origin && !flags.request) {
-    requireOrigins(options);
-  }
-  return executeThin(operation, flags, instruction, applyOverrides(options, flags), optionsPath);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -841,22 +472,20 @@ function durationFlag(name, value, { max = UNTIL_MAX_MS } = {}) {
   return ms;
 }
 
-/** How the host continues on the request once the tab is ready, by the daemon's driver (jev: a run; else observe). */
-function continueOn(requestId, driver) {
-  return driver === 'jev'
-    ? `call fai_browser_run again with requestId ${requestId}, an instruction and an expectation`
-    : `call fai_browser_observe with requestId ${requestId} (CLI: observe --request ${requestId}), then choose`;
+/** How the host continues on the request once the tab is ready. */
+function continueOn(requestId) {
+  return `call fai_browser_observe with requestId ${requestId} (CLI: observe --request ${requestId}), then choose`;
 }
 
-function untilNext(outcome, requestId, timeoutText, driver, goneMs) {
+function untilNext(outcome, requestId, timeoutText, goneMs) {
   switch (outcome.state) {
     case 'active':
-      return { kind: driver === 'jev' ? 'rerun' : 'observe',
-        text: `The tab is ready (request ${requestId} is active). Continue the task: ${continueOn(requestId, driver)}.` };
+      return { kind: 'observe',
+        text: `The tab is ready (request ${requestId} is active). Continue the task: ${continueOn(requestId)}.` };
     case 'timeout':
       return { kind: 'relay', text: `Request ${requestId} is still ${outcome.lastState ?? 'waiting'} after `
         + `${timeoutText}. Ask the user to ${outcome.lastState === 'pending' ? 'approve it' : 'click Resume'} in the `
-        + `FAI Browser extension and to tell you when they have; then ${continueOn(requestId, driver)}. Or run this `
+        + `FAI Browser extension and to tell you when they have; then ${continueOn(requestId)}. Or run this `
         + 'wait again.' };
     case 'interrupted':
       return { kind: 'stop', text: `The wait was interrupted before request ${requestId} became active. Run it again, `
@@ -893,7 +522,7 @@ function untilErrorLine(error, requestId) {
       kind: 'relay',
       text: `The background wait failed (${failure.code}: ${String(failure.message).slice(0, 200)}). Ask the user to `
         + 'tell you when they have resumed or approved the tab in the FAI Browser extension, then call '
-        + `fai_browser_observe${ref ? ` with requestId ${ref}` : ''} (Jev driver: fai_browser_run again).`,
+        + `fai_browser_observe${ref ? ` with requestId ${ref}` : ''}.`,
     },
   };
 }
@@ -939,7 +568,6 @@ async function commandWaitUntil(flags, positionals) {
   process.on('SIGTERM', onSignal);
   const { FaiBrowserClient } = await import('./client.js');
   let client = null;
-  let driver = null;
   let fresh = false;
   let last = null;
   let reconnects = 0;
@@ -957,7 +585,7 @@ async function commandWaitUntil(flags, positionals) {
       reconnects,
       request: last,
     };
-    outcome.next = untilNext(outcome, requestId, timeoutText, driver, goneMs);
+    outcome.next = untilNext(outcome, requestId, timeoutText, goneMs);
     return { value: outcome, exitCode: UNTIL_EXIT[state] ?? UNTIL_EXIT.ended };
   };
   const timedOut = () => finish('timeout', { lastState: last?.state ?? null });
@@ -972,7 +600,6 @@ async function commandWaitUntil(flags, positionals) {
         const roundStarted = Date.now();
         const maxMs = Math.max(0, Math.min(WAIT_SLICE_MS, deadline - roundStarted));
         const response = await client.wait({ requestId, maxMs }, { signal });
-        driver = client.driver ?? driver;
         if (downSince !== null) {
           // One outage counts once, however many connection attempts it took.
           reconnects += 1;
@@ -1044,12 +671,6 @@ async function commandObserve(flags) {
 async function commandStatus() {
   const client = await connectClient();
   return client.status();
-}
-
-async function commandStop(positionals) {
-  const runId = positional(positionals, 1, 'A runId');
-  const client = await connectClient();
-  return client.stop(runId);
 }
 
 async function commandRelease(positionals) {
@@ -1210,13 +831,12 @@ async function commandNative(command, flags) {
   return applyNativeInstall(plan);
 }
 
-const RUN_COMMANDS = new Set(['step', 'run', 'act']);
+const RUN_COMMANDS = new Set(['act']);
 const OTHER_COMMANDS = {
   'request-tab': flags => commandRequestTab(flags),
   wait: (flags, positionals) => commandWait(flags, positionals),
   observe: flags => commandObserve(flags),
   status: () => commandStatus(),
-  stop: (flags, positionals) => commandStop(positionals),
   release: (flags, positionals) => commandRelease(positionals),
   runs: flags => commandRuns(flags),
   evidence: (flags, positionals) => commandEvidence(flags, positionals),
@@ -1234,7 +854,7 @@ function failureJson(error) {
 
 async function runCommand(operation, flags, positionals) {
   try {
-    return operation === 'act' ? await executeAct(flags) : await execute(operation, flags, positionals);
+    return await executeAct(flags);
   } catch (error) {
     if (!(error instanceof ConfigError) && !Number.isInteger(error?.status)) {
       log(error?.stack || String(error));

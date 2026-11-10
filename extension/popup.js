@@ -1,6 +1,6 @@
 // Popup: pending tab requests from agents (level and, for a domain root, site scope), the active session's Pause and
-// Stop, setup state (pairing is automatic through the native host; Pair retries it), and an Advanced section (driver,
-// approvals, test sites, budget, connection with the manual pairing fallback).
+// Stop, setup state (pairing is automatic through the native host; Pair retries it), and an Advanced section
+// (approvals, test sites, budget, connection with the manual pairing fallback).
 // Everything an agent wrote (reason, instruction, client, origins) is rendered with textContent only. The pairing
 // secret is never shown or put into the page: its field only ever holds what the user types, and is cleared once saved.
 import {
@@ -48,7 +48,6 @@ const setupText = document.getElementById('setup-text');
 const pairButton = document.getElementById('pair');
 const connectionLine = document.getElementById('connection-line');
 const connectionText = document.getElementById('connection-text');
-const privacyNote = document.getElementById('privacy-note');
 const pinHint = document.getElementById('pin-hint');
 const endpointField = document.getElementById('endpoint');
 const secretField = document.getElementById('secret');
@@ -75,15 +74,6 @@ const budgetCalls = document.getElementById('budget-calls');
 const budgetMinutes = document.getElementById('budget-minutes');
 const budgetEffective = document.getElementById('budget-effective');
 const budgetError = document.getElementById('budget-error');
-const driverButtons = { jev: document.getElementById('driver-jev'), agent: document.getElementById('driver-agent') };
-const driverHelp = document.getElementById('driver-help');
-const driverError = document.getElementById('driver-error');
-const driverSaved = document.getElementById('driver-saved');
-let savingDriver = false;
-let savedDriver = null;
-// The choice a failed switch asked for: its error clears once the service reports that choice in effect after all.
-let failedDriver = null;
-const keyRow = document.getElementById('key-row');
 if (typeof config.endpoint === 'string' && config.endpoint) endpointField.value = config.endpoint;
 
 // Shared view of the worker's state: {status, session, connection, requests}.
@@ -500,61 +490,6 @@ function saveBudget() {
   });
 }
 
-function renderDriver() {
-  const control = view.connection?.control;
-  if (savedDriver && (!view.connection?.connected || savedDriver !== control?.driver)) {
-    savedDriver = null;
-    driverSaved.textContent = '';
-  }
-  if (failedDriver && !savingDriver && view.connection?.connected && control?.driver === failedDriver) {
-    failedDriver = null;
-    driverError.textContent = '';
-  }
-  // The Jev key matters only to the experimental Jev autopilot.
-  if (keyRow) keyRow.hidden = control?.driver !== 'jev';
-  const ready = view.connection?.connected && control;
-  for (const [driver, button] of Object.entries(driverButtons)) {
-    button.setAttribute('aria-pressed', String(control?.driver === driver));
-    button.disabled = !ready || savingDriver || (driver === 'jev' && !control?.jevAvailable);
-  }
-  driverHelp.textContent = !view.connection?.connected ? 'Connect to the FAI service to choose.'
-    : !control ? 'Update the FAI service to switch browser control here.'
-      : control.driver === 'agent' ? 'Your coding agent reads each page and chooses each step.'
-        : 'Experimental: Jev carries out whole tasks for your agent.';
-  if (ready && !control.jevAvailable) driverHelp.textContent += ' Jev needs its key: add it during setup.';
-  // Where page text goes depends on who drives.
-  privacyNote.textContent = control?.driver === 'jev'
-    ? 'Only the approved tab is shared. Page text goes to your agent and the Jev provider.'
-    : 'Only the approved tab is shared. Page text goes to your coding agent.';
-}
-
-async function switchDriver(driver) {
-  if (savingDriver || driverButtons[driver].disabled || view.connection?.control?.driver === driver) return;
-  savingDriver = true;
-  failedDriver = null;
-  driverError.textContent = '';
-  driverSaved.textContent = 'Saving…';
-  renderDriver();
-  try {
-    const result = await chrome.runtime.sendMessage({ type: 'set_driver', driver });
-    if (result?.error) throw new Error(result.error);
-    if (result?.connection?.control?.driver !== driver) throw new Error('The FAI service did not confirm the switch.');
-    applyState(result);
-    savedDriver = driver;
-    driverSaved.textContent = `${driver === 'agent' ? 'Your agent drives' : 'Jev autopilot (experimental) is on'}. No restart needed.`;
-  } catch (error) {
-    driverSaved.textContent = '';
-    driverError.textContent = error.message;
-    failedDriver = driver;
-    await chrome.runtime.sendMessage({ type: 'connect' }).then(applyState, () => {});
-  } finally {
-    savingDriver = false;
-    renderDriver();
-  }
-}
-
-for (const [driver, button] of Object.entries(driverButtons)) button.addEventListener('click', () => switchDriver(driver));
-
 function renderPermissions() {
   // A ceiling saved as Reversible (before the popup merged it into Use) shows as Use.
   defaultLevel.value = permissions.defaultLevel === 'reversible' ? 'interactive' : permissions.defaultLevel;
@@ -691,7 +626,6 @@ function render() {
   renderBrowsers();
   renderSetup();
   renderBudgetEffective();
-  renderDriver();
   invitePanel?.render();
 }
 
