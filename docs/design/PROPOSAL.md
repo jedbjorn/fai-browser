@@ -1,5 +1,7 @@
 # FAI Browser: improvement proposal
 
+> Note: the experimental Jev autopilot (TypeSafe provider, `fai_browser_run`, step lists, site profiles) this document describes was removed in Unreleased (after 0.6.2). Kept as history.
+
 Status: proposal for approval, 2026-10-03. Synthesized from three code reviews (runtime loop, extension, agent surface) and four research passes (Chrome MV3, MCP tool design, host integration, decision providers). Line references are to the prototype as it was before Phase 1. Phases 1 and 2 are implemented (see "What changed in Phase 1" and "What changed in Phase 2" at the end); Phases 3 and 4 are not. ARCHITECTURE.md describes the current system.
 
 ## 1. Where we are

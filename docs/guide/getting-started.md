@@ -118,4 +118,3 @@ node examples/fake-demo.js     # a deterministic provider and an in-memory bridg
 - [MCP tools](mcp-tools.md): what your agent can call.
 - [Secret redaction](secret-redaction.md) and [approvals](approvals.md): what is hidden and what asks.
 - [Troubleshooting](troubleshooting.md).
-- The experimental **Jev autopilot** (one call per task) is opt-in: `npm run setup -- --driver jev`, see [skills/fai-browser/jev.md](../../skills/fai-browser/jev.md).

@@ -1,5 +1,7 @@
 # Package split proposal
 
+> Note: the experimental Jev autopilot (TypeSafe provider, `fai_browser_run`, step lists, site profiles) this document describes was removed in Unreleased (after 0.6.2). Kept as history.
+
 Status: proposal, nothing has been moved. Companion to [reusing the core](../guide/reusing-the-core.md), which has the module map.
 
 ```text

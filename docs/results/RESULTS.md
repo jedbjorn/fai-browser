@@ -1,5 +1,7 @@
 # Before/after: delegating browser work
 
+> Note: the experimental Jev autopilot (TypeSafe provider, `fai_browser_run`, step lists, site profiles) this document describes was removed in Unreleased (after 0.6.2). Kept as history.
+
 FAI Browser lets a coding agent delegate a bounded browser task to a local browser worker through MCP. It returns a receipt with the observed answer, verification evidence, and the next action for the host or user.
 
 > **What these numbers measure.** Everything on this page measures the experimental **Jev autopilot** (an optional TypeSafe Jev

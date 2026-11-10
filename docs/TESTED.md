@@ -7,18 +7,19 @@ that FAI Browser refuses them.
 | Tier | Pages | Tasks | Driver | What it answers |
 |---|---|---|---|---|
 | [Fixture benchmark](#1-fixture-benchmark-the-numbers-in-the-readme) | 1 local site, 13 pages | 8 | Six host models through Playwright MCP and through FAI Browser | Is a coding agent faster and cheaper with FAI, and by how much? |
-| [QA corpus](#2-qa-corpus-the-page-types-that-break-browser-agents) | 24 local page archetypes, 87 pages | 74 | FAI runtime + Jev directly, no host model | Does the runtime handle hostile page types and refuse dangerous ones? |
-| [Real-site probe](#3-real-site-probe-live-websites) | 8 live sites | 10 | FAI runtime + Jev directly, headless Chromium with a real user agent | What breaks on live websites today? |
+| [QA corpus](#2-qa-corpus-the-page-types-that-break-browser-agents) | 24 local page archetypes, 87 pages | 74 | FAI runtime + the since-removed Jev autopilot, no host model | Does the runtime handle hostile page types and refuse dangerous ones? |
+| [Real-site probe](#3-real-site-probe-live-websites) | 8 live sites | 10 | FAI runtime + the since-removed Jev autopilot, headless Chromium with a real user agent | What breaks on live websites today? |
+
+Tiers 2 and 3 are historical: their runners drove the experimental Jev autopilot, which was removed after 0.6.2 together with `bench/qa/run.mjs` and `bench/real/probe.mjs`. The QA pages and tasks remain.
 
 ## Actions FAI Browser can take
 
-The runtime offers the decision provider a list of concrete actions from the current page; the provider picks one or
-chooses `done` or `handoff`. What is on offer depends on the mode:
+The runtime offers the agent a list of concrete actions from the current page; the agent picks one. What is on offer depends on the mode:
 
 | Mode | Offered | Never offered |
 |---|---|---|
 | `read-only` (default) | Same-origin links, scroll, wait, reject or necessary-only on cookie dialogs | Any button, select, fill, form submit, cross-origin link |
-| `reversible` | Everything above plus ordinary buttons, selects, and fills from caller-supplied strings | Sign in, submit, purchase, send, delete, checkout, pay, remove and similar labels; generic-label commits ("Continue", "Next", "Yes") that a Jev commit check scores as committing |
+| `reversible` | Everything above plus ordinary buttons, selects, and fills from caller-supplied strings | Sign in, submit, purchase, send, delete, checkout, pay, remove and similar labels |
 
 The core label list lives in `src/guardrails.js` and is mirrored in `extension/page.js`, so the extension refuses
 the same controls even if the runtime is bypassed. Callers can only add restrictions, with

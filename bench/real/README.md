@@ -1,5 +1,7 @@
 # Real-website probe
 
+> Note: `probe.mjs` drove the experimental Jev autopilot and was removed with it after 0.6.2; `tasks.json` and the recorded results remain as history.
+
 What breaks when FAI Browser navigates live sites? `probe.mjs` drives FAI with the TypeSafe Jev provider directly
 (no coding agent, no Codex quota) on the tasks in `tasks.json` and records everything per run.
 

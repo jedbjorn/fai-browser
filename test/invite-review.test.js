@@ -12,7 +12,6 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { FaiBrowserClient } from '../src/client.js';
 import { createDaemon } from '../src/daemon.js';
-import { homePaths, saveDriver } from '../src/home.js';
 import { AgentSession } from '../src/mcp-session.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { startFakeClaudeSocket } from './helpers/fake-agents.js';
@@ -97,7 +96,6 @@ test('review: a daemon without the proof (an older one) turns invites and wakes 
 
 async function realSetup(t, { socketPid = process.pid } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-review-mcp-'));
-  saveDriver('agent', homePaths({ home, env: {} }));
   const hub = createFakeHub();
   const daemon = createDaemon({ home, env: {}, port: 0, hub, providerFactory: () => { throw new Error('no provider'); } });
   await daemon.listen();
@@ -311,7 +309,6 @@ test('final: the daemon hands out at most 4 wakes a poll; the rest come on the n
 
 test('final: a failed Approve wake shows in the request (the popup\'s "tell it to continue") and the MCP relay names the wait command again', async t => {
   const home = await mkdtemp(join(tmpdir(), 'fai-review-final-'));
-  saveDriver('agent', homePaths({ home, env: {} }));
   const hub = createFakeHub();
   const daemon = createDaemon({ home, env: {}, port: 0, hub, providerFactory: () => { throw new Error('no provider'); } });
   await daemon.listen();
