@@ -9,8 +9,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { extname, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
-import { BrowserRuntime } from '../src/runtime.js';
-import { PageBridge } from './helpers/page-bridge.js';
 import { headlessEnv } from '../scripts/headless-env.mjs';
 
 const DIR = resolve(import.meta.dirname, '..', 'fixtures', 'patterns');
@@ -148,30 +146,12 @@ function checkObservation(observation, fill, expect) {
   }
 }
 
-async function checkRun(page, run, expect) {
-  const provider = { model: 'fake', async decide() { return { actionId: 'handoff', confidence: 0.9, done: { probability: 0.95 } }; } };
-  const runtime = new BrowserRuntime({ bridge: new PageBridge(page, { level: run.level }), provider });
-  const result = await runtime.run(run.instruction ?? 'Read the page.', { mode: run.level, capture: 'none',
-    expectation: run.expectation, maxActions: 6, retry: false, consentWaitMs: 50,
-    ...(run.answerQuestion ? { answerQuestion: run.answerQuestion } : {}) });
-  const dismissSteps = result.steps.filter(step => step.class === 'dismiss').map(step => step.action.method ?? 'close');
-  const why = result.verdict?.why ?? [];
-  const trail = `${result.status}/${result.code} why ${why.join(',')} steps ${result.steps.map(step => `${step.class}:${step.action.type}:${step.action.label}`).join(' / ')}`;
-  if (expect.dismissSteps) assert.deepEqual(dismissSteps, expect.dismissSteps, trail);
-  if ('overlayAfter' in expect) assert.equal(Boolean(result.observation?.overlay), expect.overlayAfter, trail);
-  for (const code of expect.why ?? []) assert.ok(why.includes(code), `why ${code}: ${trail}`);
-  if (expect.status) assert.equal(result.status, expect.status, trail);
-  for (const text of expect.finalBlocks ?? []) {
-    assert.ok((result.observation?.blocks ?? []).some(block => block.text.includes(text)), `final block "${text}": ${trail}`);
-  }
-}
-
 for (const pattern of MANIFEST.patterns) {
-  for (const check of pattern.checks) {
+  // `run` checks drove the removed Jev loop (its own overlay dismissal); the page-script checks stay.
+  for (const check of pattern.checks.filter(entry => !entry.run)) {
     const name = `${pattern.id}: ${check.id}${check.finding ? ` (${check.finding})` : ''}`;
     test(name, check.finding ? { todo: check.finding } : {}, async t => {
       const page = await open(t, pattern.file);
-      if (check.run) return checkRun(page, check.run, check.expect);
       const allow = CAPABILITIES[check.level ?? 'read-only'];
       const { observation, fill } = await runSteps(page, check.steps, allow);
       checkObservation(observation, fill, check.expect);
