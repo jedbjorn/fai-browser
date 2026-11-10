@@ -9,9 +9,9 @@ import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  CAPABILITIES, CAPABILITY_NAMES, COMMIT_OTHER, DELETE_WORDS, LEVELS, PAYMENT_AUTOCOMPLETE, PAYMENT_FIELD, PURCHASE,
-  SAFE_SUBMIT, SIGN_IN_WORDS, SUBMIT_WORDS, capabilitiesOf, clampLevel, guardrailPolicy, jevPolicy, normalizeAdditions,
-  DANGEROUS, labelClasses, paymentField,
+  CAPABILITIES, CAPABILITY_NAMES, COMMIT_OTHER, DELETE_WORDS, LEVELS, PAYMENT_AUTOCOMPLETE, PAYMENT_FIELD,
+  PURCHASE, SAFE_SUBMIT, SIGN_IN_WORDS, SUBMIT_WORDS, capabilitiesOf, clampLevel, guardrailPolicy, jevPolicy,
+  DANGEROUS, labelClasses, normalizeAdditions, paymentField,
 } from '../src/guardrails.js';
 import { BrowserRuntime, legalActions } from '../src/runtime.js';
 import { agentResult } from '../src/result.js';
@@ -19,7 +19,7 @@ import { writeRun } from '../src/trace.js';
 import { createHub } from '../src/bridge.js';
 import { createDaemon } from '../src/daemon.js';
 import { createLogger, homePaths, loadConfig } from '../src/home.js';
-import { JEV_TOOLS, TOOLS } from '../src/mcp.js';
+import { TOOLS } from '../src/mcp.js';
 import { FakeBridge, ORIGIN, clickProvider, link } from './runtime-fixtures.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { EXTENSION_ID, EXTENSION_ORIGIN, SECRET } from './helpers/fake-extension.js';
@@ -728,17 +728,19 @@ test('runtime: a grant lowered mid-run takes effect on the next decision and in 
   assert.equal(plain.needs.level, undefined, 'a run that did not ask for testing is told to let the user sign in');
 });
 
-test('no run field, config key, policy, CLI flag or MCP argument grants a level', async t => {
+test('no act or observe field, config key, policy, CLI flag or MCP argument grants a level', async t => {
   const ctx = await daemonSetup(t);
   const requestId = await ctx.request('testing');
   await ctx.hub.approve(requestId, { level: 'reversible' });
-  for (const field of [{ grant: { level: 'testing' } }, { level: 'testing' }, { permissions: { granted: 'testing' } }]) {
-    const response = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', ...field });
-    assert.equal(response.status, 400, JSON.stringify(field));
-    assert.equal(response.body.error.code, 'invalid_options');
+  for (const route of ['/v1/act', '/v1/observe']) {
+    for (const field of [{ grant: { level: 'testing' } }, { level: 'testing' }, { permissions: { granted: 'testing' } }]) {
+      const response = await ctx.api('POST', route, { requestId, ...(route === '/v1/act' ? { actionId: 'a0' } : {}), ...field });
+      assert.equal(response.status, 400, `${route} ${JSON.stringify(field)}`);
+      assert.equal(response.body.error.code, 'invalid_options');
+    }
   }
-  const asked = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', mode: 'testing', operation: 'step', waitMs: 5000 });
-  assert.equal(asked.body.result.permissions.effective, 'reversible');
+  const asked = await ctx.api('POST', '/v1/observe', { requestId, mode: 'testing' });
+  assert.equal(asked.body.permissions.effective, 'reversible');
   // A policy is restrict-only: no level or allow keys.
   for (const policy of [{ level: 'testing' }, { allow: ['Place order'] }, { testing: true }]) {
     assert.throws(() => normalizeAdditions(policy), /unknown key/);
@@ -751,10 +753,10 @@ test('no run field, config key, policy, CLI flag or MCP argument grants a level'
     assert.throws(() => loadConfig(homePaths({ home, env: {} })), /Unknown|unknown/, JSON.stringify(config));
   }
   // MCP: `mode` states a need (five levels); there is no grant argument.
-  const run = JEV_TOOLS.find(tool => tool.name === 'fai_browser_run').inputSchema;
-  assert.deepEqual(run.properties.mode.enum, LEVELS);
-  assert.match(run.properties.mode.description, /testing: user-granted on test origins only/);
-  for (const tool of [...JEV_TOOLS, ...TOOLS]) {
+  const open = TOOLS.find(tool => tool.name === 'fai_browser_open').inputSchema;
+  assert.deepEqual(open.properties.mode.enum, LEVELS);
+  assert.match(open.properties.mode.description, /testing: user-granted on test origins only/);
+  for (const tool of TOOLS) {
     for (const name of ['grant', 'level', 'permissions', 'testing']) assert.equal(tool.inputSchema.properties?.[name], undefined, `${tool.name}.${name}`);
   }
 });
@@ -857,27 +859,3 @@ test('hub: lease_level is validated like lease.level, only lowers, and clamps la
   await observe;
 });
 
-test('the Jev purchase guard fails closed: asked but unanswered purchase questions read 1 and veto a control', async () => {
-  const { TypeSafeProvider } = await import('../src/typesafe.js');
-  const answers = [
-    { action: { type: 'choice', choice: 'a0' } },
-    { action: { type: 'choice', choice: 'a0' }, purchase_control: { noul: 0.02 }, purchase_page: { noul: Number.NaN } },
-  ];
-  for (const answer of answers) {
-    const provider = new TypeSafeProvider({ requireKey: false, keyEnv: 'FAI_UNUSED_TEST_KEY',
-      fetchImpl: async () => new Response(JSON.stringify({ answers: answer }), { status: 200 }) });
-    const page = { url: 'https://shop.example/checkout', title: 'Checkout', text: 'Continue charges your card.', controls: [
-      { id: '1', role: 'button', label: 'Continue', enabled: true, visible: true, risk: 'reversible' }] };
-    const offered = [{ id: 'a0', type: 'click', target: '1', role: 'button', label: 'Continue', description: 'Click Continue' },
-      { id: 'handoff', type: 'handoff', description: 'None of these' }];
-    const decision = await provider.decide(page, offered, { instruction: 'Continue', level: 'full' });
-    assert.equal(decision.guards.purchase_page, 1);
-    if (!answer.purchase_control) assert.equal(decision.guards.purchase_control, 1);
-  }
-  // Not asked at testing: nothing is filled in.
-  const provider = new TypeSafeProvider({ requireKey: false, keyEnv: 'FAI_UNUSED_TEST_KEY',
-    fetchImpl: async () => new Response(JSON.stringify({ answers: answers[0] }), { status: 200 }) });
-  const decision = await provider.decide({ url: 'https://t.example/', title: 'T', text: '', controls: [] },
-    [{ id: 'a0', type: 'click', target: '1', role: 'button', label: 'Pay', description: 'Click Pay' }], { instruction: 'Pay', level: 'testing' });
-  assert.equal(decision.guards?.purchase_control, undefined);
-});

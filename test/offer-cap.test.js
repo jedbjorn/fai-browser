@@ -10,7 +10,6 @@ import { headlessEnv } from '../scripts/headless-env.mjs';
 import { BrowserRuntime, cappedWarning, legalActions, offeredActions } from '../src/runtime.js';
 import { DEFAULT_OPTION_CAP, OFFER_CAPS, capActions, capOffer, offerCap, relevanceHints } from '../src/relevance.js';
 import { agentResult, leanObserve } from '../src/result.js';
-import { observeText } from '../src/mcp.js';
 import { FakeBridge, link } from './runtime-fixtures.js';
 
 const PAGE_SCRIPT = new URL('../extension/page.js', import.meta.url).pathname;
@@ -303,10 +302,6 @@ test('flights fixture: over the interactive cap the listing keeps 80 controls pl
   assert.ok(lean.actions.some(action => action.description === 'scroll down'));
   // Without a task, ties keep page order: the last control on the page ("Price calendar") is left out.
   assert.ok(!listedLabels(lean).includes('click button "Price calendar"'));
-  // The MCP text says so.
-  const text = observeText({ ...lean, next: { kind: 'choose', text: 'x' } });
-  assert.match(text, new RegExp(`\\(${dropped} more offered actions not listed: these are the most relevant to the task\\)`));
-  assert.match(text, new RegExp(`warning: controls_capped:${dropped}`));
 });
 
 test('flights fixture: the control the instruction names near the end of the page is listed', async t => {

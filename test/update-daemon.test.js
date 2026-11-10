@@ -110,14 +110,14 @@ test('daemon: Update from the popup refuses during a lease and otherwise starts 
   assert.equal(unknown.error.code, 'invalid_action');
 });
 
-test('M1: the updater starts from the launch environment without the Jev key, a pairing override or a client token', async t => {
+test('M1: the updater starts from the launch environment without a leftover key, a pairing override or a client token', async t => {
   const home = await mkdtemp(join(tmpdir(), 'fai-update-env-'));
   t.after(() => rm(home, { recursive: true, force: true }));
   await writeFile(join(home, '.env.local'), `FAI_BRIDGE_SECRET=${SECRET}\nTYPESAFE_API_KEY=fake-review-key-not-real\n`, { mode: 0o600 });
   const env = { FAI_BRIDGE_SECRET: SECRET, FAI_CLIENT_TOKEN: 'f'.repeat(64), PATH: process.env.PATH ?? '' };
   const ctx = await setup(t, { home, env, updateFetch: releaseFetch('v9.0.0'), updateCheck: true });
   await untilAvailable(ctx.api);
-  assert.equal(env.TYPESAFE_API_KEY, 'fake-review-key-not-real', 'the daemon itself loaded the key');
+  assert.equal(env.TYPESAFE_API_KEY, undefined, 'a leftover key line is ignored, never loaded');
   const started = await ctx.hub.emit({ type: 'update', action: 'install' });
   assert.equal(started.update.install.state, 'running');
   const childEnv = ctx.spawned[0].env;

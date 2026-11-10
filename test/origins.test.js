@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -15,10 +15,9 @@ import {
 import * as popupSide from '../extension/permissions.js';
 import { PSL_RULES, PSL_VERSION } from '../src/psl-data.js';
 import { VENDORED, parsePsl, renderModule, renderScript } from '../scripts/update-psl.mjs';
-import { BrowserRuntime, legalActions } from '../src/runtime.js';
+import { legalActions } from '../src/runtime.js';
 import { createDaemon } from '../src/daemon.js';
 import { createCompanion } from '../bench/companion.js';
-import { createDomainStore } from '../src/domains.js';
 import { createLogger, homePaths } from '../src/home.js';
 import { FakeBridge, clickProvider } from './runtime-fixtures.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
@@ -215,41 +214,6 @@ test('legalActions offers a sibling-subdomain link only under an approved root; 
   assert.deepEqual(urls, [`${WWW}/team`]);
 });
 
-function siteRun(allowedOrigins, labelsToClick, path = '/') {
-  const bridge = new FakeBridge({ pages: SITE, path });
-  const runtime = new BrowserRuntime({ bridge, provider: clickProvider(labelsToClick, { fallback: 'done' }) });
-  return { bridge, run: (instruction, options) => runtime.run(instruction, { allowedOrigins, ...options }) };
-}
-
-test('a run under a root follows a link to another subdomain and reports permissions.scope domain', async () => {
-  const { run } = siteRun([ROOT], ['Team']);
-  const result = await run('Open Team. Read who runs the team.', { expectation: { urlIncludes: '/team' } });
-  assert.equal(result.status, 'completed', JSON.stringify(result.needs ?? result.code));
-  assert.equal(result.page.url, `${WWW}/team`);
-  assert.equal(result.permissions.scope, 'domain');
-});
-
-test('a sibling subdomain is cross_origin under an exact origin, with the root suggested; another domain always is', async () => {
-  const exact = await siteRun([DEV], [], '/team').run('Read the team', {});
-  assert.equal(exact.code, 'cross_origin');
-  assert.match(exact.needs.message, /https:\/\/\*\.example\.org in origins/);
-  assert.ok(exact.verdict.why.includes(`origin:${WWW}`), JSON.stringify(exact.verdict.why));
-  assert.equal(exact.permissions.scope, 'origin');
-
-  // A provider suffix the list does not cover: the exact origin is suggested, never a root over every tenant.
-  const AZURE = { '/': { url: 'https://vm2.westeurope.cloudapp.azure.com/', title: 'VM', text: 'x', controls: [] } };
-  const azure = await new BrowserRuntime({ bridge: new FakeBridge({ pages: AZURE }), provider: clickProvider([]) })
-    .run('Read it', { allowedOrigins: ['https://vm1.westeurope.cloudapp.azure.com'] });
-  assert.equal(azure.code, 'cross_origin');
-  assert.match(azure.needs.message, /https:\/\/vm2\.westeurope\.cloudapp\.azure\.com added to origins/);
-  assert.doesNotMatch(azure.needs.message, /\*\./);
-
-  const other = await siteRun([ROOT], [], '/x').run('Read it', {});
-  assert.equal(other.code, 'cross_origin');
-  assert.match(other.needs.message, /https:\/\/example\.net added to origins/);
-  assert.doesNotMatch(other.needs.message, /\*\.example\.org/);
-});
-
 // --- daemon: requests, lease scope, receipts ----------------------------------------------------------------------
 
 async function daemonSetup(t) {
@@ -286,129 +250,12 @@ test('daemon: origins accept a domain root; public suffixes, http roots and path
   }
 });
 
-test('daemon: a domain-scope lease keeps the root; a run crosses subdomains; the receipt says scope domain', async t => {
-  const ctx = await daemonSetup(t);
-  const id = await ctx.request([ROOT]);
-  const reply = await ctx.hub.approve(id, { origin: DEV, level: 'read-only', scope: 'domain', tabMode: 'single' });
-  assert.deepEqual(reply.origins, [ROOT]);
-  assert.equal(reply.grant.scope, 'domain');
-  assert.deepEqual(ctx.hub.bound.at(-1).allowedOrigins, [ROOT]);
-  const view = (await ctx.api('GET', `/v1/requests/${id}`)).body;
-  assert.deepEqual((view.request ?? view).lease.origins, [ROOT]);
-  const run = await ctx.api('POST', '/v1/runs', { requestId: id, instruction: 'Open Team. Read who runs the team.',
-    expectation: { urlIncludes: '/team' }, waitMs: 5000 });
-  const result = run.body.result;
-  assert.equal(result.status, 'completed', JSON.stringify(result.needs ?? result.code));
-  assert.deepEqual(result.permissions, { requested: 'read-only', granted: 'read-only', effective: 'read-only',
-    testing: false, scope: 'domain', tabMode: 'single' });
-  // allowedUrls on another subdomain of the root are accepted with domain scope.
-  const urls = await ctx.api('POST', '/v1/runs', { requestId: id, instruction: 'Open the team page',
-    allowedUrls: [`${WWW}/team`], waitMs: 5000 });
-  assert.notEqual(urls.status, 422, JSON.stringify(urls.body));
-});
-
-test('daemon: an origin-scope lease narrows the root to the tab origin; a sibling subdomain is then cross_origin', async t => {
-  const ctx = await daemonSetup(t);
-  const id = await ctx.request([ROOT]);
-  // The user picked "Only <origin>" or declined Chrome's prompt; an older extension sends no scope at all.
-  for (const scope of ['origin', undefined]) {
-    const reply = await ctx.hub.approve(scope ? id : await ctx.request([ROOT]), { origin: DEV, level: 'read-only', scope });
-    assert.deepEqual(reply.origins, [DEV]);
-    assert.equal(reply.grant.scope, 'origin');
-  }
-  assert.deepEqual(ctx.hub.bound.at(-1).allowedOrigins, [DEV]);
-  const latest = ctx.hub.bound.at(-1).requestId;
-  const refused = await ctx.api('POST', '/v1/runs', { requestId: latest, instruction: 'Open the team page',
-    allowedUrls: [`${WWW}/team`], waitMs: 5000 });
-  assert.equal(refused.status, 422);
-  assert.equal(refused.body.code ?? refused.body.error?.code, 'origin_not_granted');
-  const run = await ctx.api('POST', '/v1/runs', { requestId: latest, instruction: 'Open Team. Read who runs the team.',
-    expectation: { urlIncludes: '/team' }, waitMs: 5000 });
-  assert.notEqual(run.body.result.status, 'completed', 'the Team link is not offered under origin scope');
-  assert.equal(run.body.result.permissions.scope, 'origin');
-});
-
-test('daemon: a tab outside the root is not approved; a domain scope on an exact request stays origin', async t => {
-  const ctx = await daemonSetup(t);
-  const id = await ctx.request([ROOT]);
-  const refused = await ctx.hub.approve(id, { origin: 'https://example.net', level: 'read-only', scope: 'domain', tabMode: 'single' });
-  assert.equal(refused.error.code, 'origin_not_requested');
-  const exact = await ctx.request([DEV]);
-  const reply = await ctx.hub.approve(exact, { origin: DEV, level: 'read-only', scope: 'domain', tabMode: 'single' });
-  assert.equal(reply.grant.scope, 'origin', 'nothing to widen without a root');
-  assert.deepEqual(reply.origins, [DEV]);
-  // A second request (an identical one would get the first, still pending, back).
-  const pending = await ctx.request([ROOT], { reason: 'Domain roots again' });
-  const blocked = await ctx.api('POST', '/v1/runs', { requestId: pending, instruction: 'x', operation: 'step', waitMs: 100 });
-  assert.equal(blocked.body.result.permissions.scope, undefined, 'no scope before approval');
-});
-
-test('daemon: re-approving the active lease can change its scope; the hub lease follows', async t => {
-  const ctx = await daemonSetup(t);
-  const id = await ctx.request([ROOT]);
-  const first = await ctx.hub.approve(id, { origin: DEV, level: 'read-only', scope: 'domain', tabMode: 'single' });
-  assert.deepEqual(first.origins, [ROOT]);
-  const narrowed = await ctx.hub.approve(id, { origin: DEV, level: 'read-only', scope: 'origin', tabMode: 'single' });
-  assert.equal(narrowed.leaseId, first.leaseId, 'the same lease');
-  assert.deepEqual(narrowed.origins, [DEV]);
-  assert.equal(narrowed.grant.scope, 'origin');
-  assert.deepEqual(ctx.hub.lease(first.leaseId).allowedOrigins, [DEV]);
-  assert.deepEqual(ctx.daemon.request(id).lease.origins, [DEV]);
-  const widened = await ctx.hub.approve(id, { origin: DEV, level: 'reversible', scope: 'domain', tabMode: 'single' });
-  assert.deepEqual(widened.origins, [ROOT]);
-  assert.deepEqual(ctx.hub.lease(first.leaseId).allowedOrigins, [ROOT]);
-  const run = await ctx.api('POST', '/v1/runs', { requestId: id, instruction: 'Open Team. Read who runs the team.',
-    expectation: { urlIncludes: '/team' }, waitMs: 5000 });
-  assert.equal(run.body.result.permissions.scope, 'domain');
-});
-
 test('the in-process companion takes exact origins only', () => {
   assert.throws(() => createCompanion({ secret: 'x'.repeat(30), extensionId: 'a'.repeat(32), allowedOrigins: [ROOT] }),
     /exact origins/);
 });
 
 // --- site profiles through a root ---------------------------------------------------------------------------------
-
-test('a domain root attaches the profiles of the origins it covers (same matcher); an exact origin only its own', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'fai-origins-profiles-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const profile = JSON.parse(await readFile(new URL('../domains/developer.mozilla.org/profile.json', import.meta.url), 'utf8'));
-  await mkdir(join(dir, 'developer.mozilla.org'), { recursive: true });
-  await writeFile(join(dir, 'developer.mozilla.org', 'profile.json'), JSON.stringify(profile));
-  await mkdir(join(dir, 'evilmozilla.org'), { recursive: true });
-  await writeFile(join(dir, 'evilmozilla.org', 'profile.json'), JSON.stringify({ ...profile, id: 'evil', origins: ['https://evilmozilla.org'] }));
-  const store = createDomainStore({ dir, statsDir: join(dir, '..', `${dir.split('/').pop()}-stats`) });
-  assert.deepEqual(store.matchSite('https://*.mozilla.org').map(item => item.id), ['developer.mozilla.org']);
-  assert.deepEqual(store.matchSite('https://*.example.org'), []);
-  assert.deepEqual(store.matchSite('https://*.org'), [], 'an invalid root matches nothing');
-  assert.equal(store.match('https://developer.mozilla.org')?.id, 'developer.mozilla.org');
-  // The runtime attaches it for a run whose approved origins hold the root (its restrict.forbid would merge here).
-  const forbidding = { ...profile, restrict: { forbid: ['Newsletter'] } };
-  await writeFile(join(dir, 'developer.mozilla.org', 'profile.json'), JSON.stringify(forbidding));
-  const runtime = new BrowserRuntime({ bridge: new FakeBridge({ pages: SITE }), provider: clickProvider([]) });
-  const offered = [];
-  runtime.provider = {
-    async decide(obs, list) {
-      offered.push(list.map(action => action.label));
-      return { actionId: 'done' };
-    },
-  };
-  const pages = { '/': { url: 'https://developer.mozilla.org/en-US/', title: 'MDN', text: 'MDN',
-    controls: [link('1', 'Newsletter', 'https://developer.mozilla.org/plus'), link('2', 'Docs', 'https://www.mozilla.org/docs')] } };
-  runtime.bridge = new FakeBridge({ pages });
-  await runtime.run('Read it', { allowedOrigins: ['https://*.mozilla.org'], domains: store, profiles: 'on' });
-  assert.ok(offered.length, 'the provider was asked');
-  assert.ok(!offered[0].includes('Newsletter'), `the root attached the profile's forbid: ${offered[0]}`);
-  assert.ok(offered[0].includes('Docs'), 'a link to another mozilla.org subdomain is offered under the root');
-  offered.length = 0;
-  runtime.bridge = new FakeBridge({ pages });
-  await runtime.run('Read it', { allowedOrigins: ['https://*.example.org', 'https://developer.mozilla.org'], domains: store, profiles: 'on' });
-  assert.ok(!offered[0].includes('Newsletter'), 'an exact origin attaches its own profile as before');
-  offered.length = 0;
-  runtime.bridge = new FakeBridge({ pages });
-  await runtime.run('Read it', { allowedOrigins: ['https://*.mozilla.org'], domains: store, profiles: 'off' });
-  assert.ok(offered[0].includes('Newsletter'), 'profiles off: nothing attached');
-});
 
 // --- the popup-side helpers ---------------------------------------------------------------------------------------
 

@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { MCP_ENTRY, OPENCODE_PLUGIN_SOURCE, SKILL_SOURCE, TASKS_SOURCE, refreshUserSkills, taskGuides } from '../src/install.js';
-import { ALWAYS_LOAD_META, JEV_TOOLS, TOOLS } from '../src/mcp.js';
+import { ALWAYS_LOAD_META, TOOLS } from '../src/mcp.js';
 
 const CLI = resolve(import.meta.dirname, '..', 'src', 'cli.js');
 const NODE = process.execPath;
@@ -145,8 +145,6 @@ test('--always-load is refused for codex and opencode, whose configs have no per
 test('the server marks only its loop to load eagerly (Claude Code _meta anthropic/alwaysLoad)', () => {
   const eager = TOOLS.filter(tool => tool._meta?.[ALWAYS_LOAD_META] === true).map(tool => tool.name);
   assert.deepEqual(eager, ['fai_browser_open', 'fai_browser_act', 'fai_browser_observe']);
-  const jevEager = JEV_TOOLS.filter(tool => tool._meta?.[ALWAYS_LOAD_META] === true).map(tool => tool.name);
-  assert.deepEqual(jevEager, ['fai_browser_run']);
   assert.equal(ALWAYS_LOAD_META, 'anthropic/alwaysLoad');
 });
 
@@ -276,10 +274,9 @@ test('--dry-run lists writes without touching disk; --link symlinks the skill', 
   const { project, install } = await sandbox(t);
   const dry = install(['--host', 'claude', '--dry-run']);
   assert.equal(dry.code, 0);
-  assert.deepEqual(dry.json.writes.map(write => write.action), ['create', 'create', 'create', 'create', 'create']);
-  assert.equal(dry.json.writes[2].path, join(project, '.claude', 'skills', 'fai-browser', 'jev.md'));
-  assert.equal(dry.json.writes[3].path, join(project, '.claude', 'skills', 'fai-browser', 'tasks', 'flights', 'SKILL.md'));
-  assert.equal(dry.json.writes[4].path, join(project, '.claude', 'skills', 'fai-browser', 'tasks', 'hotels', 'SKILL.md'));
+  assert.deepEqual(dry.json.writes.map(write => write.action), ['create', 'create', 'create', 'create']);
+  assert.equal(dry.json.writes[2].path, join(project, '.claude', 'skills', 'fai-browser', 'tasks', 'flights', 'SKILL.md'));
+  assert.equal(dry.json.writes[3].path, join(project, '.claude', 'skills', 'fai-browser', 'tasks', 'hotels', 'SKILL.md'));
   assert.equal(dry.json.writes[0].path, join(project, '.mcp.json'));
   assert.match(dry.json.writes[0].content, /"fai-browser"/);
   assert.deepEqual(readdirSync(project), []);
@@ -292,7 +289,6 @@ test('--dry-run lists writes without touching disk; --link symlinks the skill', 
   assert.ok(!readlinkSync(target).startsWith('/'), 'relative link');
   assert.ok(existsSync(join(target, 'tasks', 'flights', 'SKILL.md')), 'the guide resolves through the linked skill');
   assert.ok(existsSync(join(target, 'tasks', 'hotels', 'SKILL.md')), 'the hotels guide too');
-  assert.ok(existsSync(join(target, 'jev.md')), 'the Jev autopilot guide too');
   const again = install(['--host', 'claude']);
   assert.ok(again.json.writes.every(write => write.action === 'unchanged'), 'a link to the source is left alone');
   const bad = install(['--host', 'cursor']);
