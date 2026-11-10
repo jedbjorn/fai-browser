@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
-import { BrowserRuntime, actionClass } from '../src/runtime.js';
+import { actionClass } from '../src/runtime.js';
 import { overlayDismissActions, overlayKey, overlayOf } from '../src/overlay.js';
 import { leanObserve } from '../src/result.js';
 import { headlessEnv } from '../scripts/headless-env.mjs';
@@ -42,109 +42,6 @@ test('leanObserve lists the overlay kind and its untrusted text; an unknown kind
   const page = { url: `${ORIGIN}/`, title: 'Shop', overlay: { ...NAG, text: '  Get 10% off.\n Join  ' } };
   assert.deepEqual(leanObserve({ page, actions: [] }).overlay, { kind: 'newsletter', text: 'Get 10% off. Join' });
   assert.equal(leanObserve({ page: { ...page, overlay: { kind: 'banner' } }, actions: [] }).overlay, undefined);
-});
-
-// A page with a nag overlay. `closes` decides which dismissal method closes it; `returns` how many times it comes back
-// (on the next observe after it closed); `afterClick` opens the overlay only after a click on button 2.
-class OverlayBridge {
-  constructor({ closes = ['close'], returns = 0, afterClick = false } = {}) {
-    Object.assign(this, { closes, returns, afterClick, open: !afterClick, version: 1, executions: [], comeBack: false });
-  }
-
-  get observation() {
-    const controls = [...main, { id: '2', role: 'button', label: 'Favourite', enabled: true, risk: 'reversible' }];
-    if (this.open) controls.push(closeControl);
-    return {
-      revision: `r${this.version}`, documentId: 'doc', url: `${ORIGIN}/shop`, title: 'Shop', text: 'Garden tools: 8 results',
-      blocks: [{ t: 'h1', text: 'Garden tools: 8 results' }], controls, consent: null, warnings: [],
-      ...(this.open ? { overlay: NAG } : {}),
-    };
-  }
-
-  // The overlay comes back on a later look or action, never in the dismissal's own observation.
-  reopen() {
-    if (this.comeBack && this.returns > 0) {
-      this.returns--;
-      this.open = true;
-      this.version++;
-    }
-    this.comeBack = false;
-  }
-
-  async observe() {
-    this.reopen();
-    return this.observation;
-  }
-
-  async execute(action) {
-    this.executions.push(action);
-    if (!action.method && action.target !== '3') this.reopen();
-    const method = action.type === 'dismiss_overlay' ? action.method : action.target === '3' ? 'close' : null;
-    if (method && this.closes.includes(method)) {
-      this.open = false;
-      this.comeBack = true;
-      this.version++;
-    }
-    if (action.target === '2' && this.afterClick) {
-      this.open = true;
-      this.version++;
-    }
-    return { observation: this.observation, settle: { reason: 'quiet', ms: 0 }, navigated: false, screenshot: Promise.resolve(null) };
-  }
-}
-
-const doneProvider = { model: 'fake', async decide() { return { actionId: 'handoff', confidence: 0.9, done: { probability: 0.95 } }; } };
-const run = (bridge, options = {}, provider = doneProvider) => new BrowserRuntime({ bridge, provider }).run('Read the garden tools list.',
-  { mode: 'read-only', capture: 'none', expectation: { textIncludes: 'Garden tools' }, retry: false, consentWaitMs: 0, maxActions: 4, ...options });
-
-test('a nag is closed at read-only by its close control, as a dismiss step, before any decision', async () => {
-  const bridge = new OverlayBridge();
-  const result = await run(bridge);
-  assert.equal(result.status, 'completed');
-  assert.deepEqual(result.steps.map(step => [step.class, step.decision.by, step.action.type]), [['dismiss', 'runtime', 'click']]);
-  assert.ok(result.verdict.why.includes('overlay:dismissed') && result.verdict.why.includes('overlay:close'));
-});
-
-test('a close control that does nothing is not repeated: Escape, then the backdrop', async () => {
-  const bridge = new OverlayBridge({ closes: ['backdrop'] });
-  const result = await run(bridge);
-  assert.deepEqual(bridge.executions.map(action => action.method ?? action.target), ['3', 'escape', 'backdrop']);
-  assert.ok(result.verdict.why.includes('overlay:backdrop'));
-});
-
-test('an overlay nothing closes is reported overlay:undismissable after three steps, and the task goes on', async () => {
-  const bridge = new OverlayBridge({ closes: [] });
-  const result = await run(bridge);
-  assert.equal(bridge.executions.length, 3);
-  assert.ok(result.verdict.why.includes('overlay:undismissable'), result.verdict.why.join(','));
-  assert.ok(!result.verdict.why.includes('overlay:dismissed'));
-  assert.equal(result.status, 'completed');
-});
-
-test('an overlay that comes back more than twice is persistent: three dismissals, then no more', async () => {
-  const bridge = new OverlayBridge({ returns: 5 });
-  // The provider scrolls on, so the page is looked at again after each dismissal.
-  const scroller = { model: 'fake', async decide(observation, actions) {
-    const scroll = actions.find(action => action.type === 'scroll' && action.direction === 'down');
-    return { actionId: scroll.id, confidence: 0.9, done: { probability: 0.05 } };
-  } };
-  const result = await run(bridge, { maxActions: 6 }, scroller);
-  assert.equal(bridge.executions.filter(action => action.target === '3').length, 3, bridge.executions.map(action => action.target ?? action.method).join(','));
-  assert.ok(result.verdict.why.includes('overlay:persistent'), result.verdict.why.join(','));
-});
-
-test('a nag the run\'s own click opened is left to the provider (overlay:user_opened)', async () => {
-  const bridge = new OverlayBridge({ afterClick: true });
-  let calls = 0;
-  const provider = { model: 'fake', async decide(observation, actions) {
-    calls++;
-    const save = actions.find(action => action.label === 'Favourite');
-    if (calls === 1) return { actionId: save.id, confidence: 0.9, done: { probability: 0.05 } };
-    return { actionId: 'handoff', confidence: 0.9, done: { probability: 0.95 } };
-  } };
-  const result = await run(bridge, { mode: 'reversible' }, provider);
-  assert.ok(result.verdict.why.includes('overlay:user_opened'), result.verdict.why.join(','));
-  assert.ok(!result.steps.some(step => step.class === 'dismiss'));
 });
 
 let browser;

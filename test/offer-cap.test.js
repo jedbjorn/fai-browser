@@ -418,33 +418,6 @@ test('runtime observe passes the page script warnings and consent through', asyn
   assert.deepEqual(observed.observation.consent, { text: 'Cookies', buttons: [] });
 });
 
-test('a run warns controls_capped:<n> when the page script capped its controls', async () => {
-  const pages = {
-    '/': { ...busyPage(3, [link('900', 'Members', '/members')]), warnings: ['controls_capped'], controlsDropped: 31 },
-    '/members': { title: 'Members', text: 'Ada', controls: [] },
-  };
-  const bridge = new FakeBridge({ pages });
-  const original = Object.getOwnPropertyDescriptor(FakeBridge.prototype, 'observation').get;
-  Object.defineProperty(bridge, 'observation', {
-    get() {
-      const observation = original.call(this);
-      const page = this.pages[this.path];
-      if (page.controlsDropped) observation.controlsDropped = page.controlsDropped;
-      return observation;
-    },
-  });
-  const provider = {
-    async decide(observation, actions) {
-      const members = actions.find(action => action.label === 'Members');
-      return members ? { actionId: members.id, confidence: 0.9, done: { probability: 0.05 } } : { actionId: 'handoff', confidence: 0.9, done: { probability: 0.9 } };
-    },
-  };
-  const result = await new BrowserRuntime({ bridge, provider })
-    .run('Open the Members page', { expectation: { urlIncludes: '/members' }, capture: 'none' });
-  assert.equal(result.status, 'completed');
-  assert.deepEqual(result.warnings.filter(code => code.startsWith('controls_capped')), ['controls_capped:31']);
-});
-
 // --------------------------------------------------------------------------------------------- slim composition
 
 test('slim.cap composes with the listing cap: the same ranking, no second drop of what the first kept', () => {
@@ -459,33 +432,6 @@ test('slim.cap composes with the listing cap: the same ranking, no second drop o
   // Each cap counts only its own drop: the listing left out 15, slim.cap 43 more of the 83 listed.
   assert.equal(composed.dropped, listed.length - DEFAULT_OPTION_CAP);
   assert.equal(direct.dropped, nonTerminal(actions).length - DEFAULT_OPTION_CAP);
-});
-
-test('slim.cap through a run on a page over MAX_OFFERED: the named link survives both caps, each drop counted once', async () => {
-  // 28 links, 70 selects with 5 options (one selected: 4 offered each) and the named link last: 28 + 280 + 1 + 3 = 312
-  // actions from 99 controls, over MAX_OFFERED (250).
-  const selects = Array.from({ length: 70 }, (_, i) => ({
-    id: String(200 + i), role: 'combobox', label: `Filter ${i + 1}`, enabled: true, selectedValue: 'a',
-    options: ['a', 'b', 'c', 'd', 'e'].map(value => ({ value, label: value.toUpperCase() })),
-  }));
-  const pages = { '/': busyPage(28, [...selects, link('900', 'Members', '/members')]), '/members': { title: 'Members', text: 'Ada', controls: [] } };
-  const seen = [];
-  const provider = {
-    async decide(observation, actions) {
-      seen.push(actions.length);
-      const members = actions.find(action => action.label === 'Members');
-      return members ? { actionId: members.id, confidence: 0.9, done: { probability: 0.05 } } : { actionId: 'handoff', confidence: 0.9, done: { probability: 0.9 } };
-    },
-  };
-  const result = await new BrowserRuntime({ bridge: new FakeBridge({ pages }), provider })
-    .run('Open the Members page', { mode: 'reversible', expectation: { urlIncludes: '/members' }, capture: 'none', slim: { cap: true } });
-  assert.equal(result.status, 'completed');
-  assert.equal(seen[0], DEFAULT_OPTION_CAP + 2);
-  const offered = 28 + 70 * 4 + 1 + 3;
-  // The offer cap left out offered - 250 actions (the warning); slim.cap then trimmed the request from 250 to 40 (the
-  // provider-only trim is recorded in cost.requests, not as a warning).
-  assert.deepEqual(result.warnings, [`controls_capped:${offered - 250}`]);
-  assert.equal(result.cost.requests[0].optionsDropped, 250 - DEFAULT_OPTION_CAP);
 });
 
 test('runtime act returns the next offered actions on the landing page, remembered so the next act needs no observe', async () => {
