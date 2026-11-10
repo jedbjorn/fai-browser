@@ -22,17 +22,9 @@ import { PACKAGE_ROOT, customHome, dataDir, faiHome } from './paths.js';
 import { resolveThresholds } from './oversight.js';
 import { checkBudget } from './settings.js';
 import { normalizeAdditions } from './guardrails.js';
-import { resolveRetry, resolveSlim } from './runtime.js';
-import { resolveProfiles } from './domains.js';
 import { scrubSecrets } from './secrets.js';
 
 export const DAEMON_DEFAULT_PORT = 4318;
-/**
- * Who chooses each browser action. `agent` (the default): the host agent itself, through MCP observe/act; FAI makes
- * no provider calls. `jev` (experimental, opt-in): the delegated Jev driver runs whole tasks with a provider key.
- */
-export const DRIVERS = Object.freeze(['agent', 'jev']);
-export const DEFAULT_DRIVER = 'agent';
 const TOKEN = /^[0-9a-f]{64}$/;
 const LOG_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -204,17 +196,18 @@ export function readClientToken(paths, env = process.env) {
 // user's approval in the extension (the lease), `guardrails` can only add forbidden labels and `thresholds.commitVeto`
 // can only be lowered. Unknown keys (a "level", "mode" or "testing" key included) are rejected.
 const CONFIG_KEYS = new Set([
-  'retention', 'provider', 'providerOptions', 'requestTtlMs', 'leaseIdleMs', 'idleShutdownMs', 'outputDir',
-  'thresholds', 'budget', 'guardrails', 'retry', 'slim', 'profiles', 'driver', 'updateCheck',
+  'retention', 'requestTtlMs', 'leaseIdleMs', 'idleShutdownMs', 'outputDir', 'thresholds', 'budget', 'guardrails',
+  'updateCheck',
 ]);
-/** Read FAI_HOME/config.json (only the driver when absent; `defaultDriver` when it names none). Throws on invalid JSON or unknown keys. */
+// Keys of the removed Jev autopilot (0.6 and earlier): ignored without a word, so an old config.json keeps working.
+const RETIRED_KEYS = new Set(['driver', 'provider', 'providerOptions', 'retry', 'slim', 'profiles']);
 /** Read FAI_HOME/config.json ({} when absent). Throws on invalid JSON or unknown keys. */
-export function loadConfig(paths, { defaultDriver = DEFAULT_DRIVER } = {}) {
+export function loadConfig(paths) {
   let text;
   try {
     text = readFileSync(paths.config, 'utf8');
   } catch (error) {
-    if (error.code === 'ENOENT') return { driver: defaultDriver };
+    if (error.code === 'ENOENT') return {};
     throw new Error(`Cannot read ${paths.config}: ${error.code ?? error.message}`);
   }
   let config;
@@ -226,11 +219,9 @@ export function loadConfig(paths, { defaultDriver = DEFAULT_DRIVER } = {}) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
     throw new Error(`${paths.config} must contain a JSON object`);
   }
+  for (const key of RETIRED_KEYS) delete config[key];
   const unknown = Object.keys(config).filter(key => !CONFIG_KEYS.has(key));
   if (unknown.length) throw new Error(`Unknown config.json key: ${unknown.join(', ')}`);
-  if (config.driver !== undefined && !DRIVERS.includes(config.driver)) {
-    throw new Error('config.json driver must be agent or jev');
-  }
   // The daily check for a newer release (src/update.js); false turns it off. It never installs anything.
   if (config.updateCheck !== undefined && typeof config.updateCheck !== 'boolean') {
     throw new Error('config.json updateCheck must be true or false');
@@ -239,10 +230,6 @@ export function loadConfig(paths, { defaultDriver = DEFAULT_DRIVER } = {}) {
     if (config[key] !== undefined && (!Number.isSafeInteger(config[key]) || config[key] < 0)) {
       throw new Error(`config.json ${key} must be a non-negative integer`);
     }
-  }
-  if (config.providerOptions !== undefined && (typeof config.providerOptions !== 'object'
-    || config.providerOptions === null || Array.isArray(config.providerOptions))) {
-    throw new Error('config.json providerOptions must be an object');
   }
   if (config.thresholds !== undefined) {
     try {
@@ -266,60 +253,8 @@ export function loadConfig(paths, { defaultDriver = DEFAULT_DRIVER } = {}) {
       throw new Error(error.message);
     }
   }
-  // In-call retries for every run (src/runtime.js resolveRetry): false turns them off, an object single switches.
-  if (config.retry !== undefined) {
-    try {
-      resolveRetry(config.retry);
-    } catch (error) {
-      throw new Error(`config.json ${error.message}`);
-    }
-  }
-  // Slim provider requests for every run (src/runtime.js resolveSlim): a boolean or single switches.
-  if (config.slim !== undefined) {
-    try {
-      resolveSlim(config.slim);
-    } catch (error) {
-      throw new Error(`config.json ${error.message}`);
-    }
-  }
-  // Site profiles for every run (src/domains.js resolveProfiles): "off" (default), "on" or { fastPath, hints }.
-  if (config.profiles !== undefined) {
-    try {
-      resolveProfiles(config.profiles);
-    } catch (error) {
-      throw new Error(`config.json ${error.message}`);
-    }
-  }
   if (config.outputDir !== undefined) config.outputDir = resolve(paths.home, String(config.outputDir));
-  config.driver ??= defaultDriver;
   return config;
-}
-
-/**
- * The saved driver without ever throwing: `{ driver, error }`, where a missing, unreadable or invalid config.json
- * yields DEFAULT_DRIVER and `error` names the problem (null when the file was fine). For callers that must always
- * answer (the MCP server's initialize and tools/list), never for anything that writes the config.
- */
-export function readDriver(paths) {
-  try {
-    return { driver: loadConfig(paths).driver, error: null };
-  } catch (error) {
-    return { driver: DEFAULT_DRIVER, error: String(error?.message ?? error) };
-  }
-}
-
-/** Setup's control choice, preserving the user's other config values as written. */
-export function saveDriver(driver, paths = homePaths()) {
-  if (!DRIVERS.includes(driver)) throw new Error('driver must be agent or jev');
-  loadConfig(paths); // Refuse to overwrite a malformed or unsupported config.
-  let config = {};
-  try {
-    config = JSON.parse(readFileSync(paths.config, 'utf8'));
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
-  ensureDir(paths.home);
-  writePrivate(paths.config, `${JSON.stringify({ ...config, driver }, null, 2)}\n`);
 }
 
 /**
