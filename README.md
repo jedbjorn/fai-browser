@@ -351,19 +351,13 @@ This is a plain-language summary, not legal advice.
 
 Other open-source projects by the same author:
 
-- [subfloor](https://subfloor.designs-os.com): a forkable shell substrate for a code repository, with DB-backed
-  identity, memory and roadmap, independent of the agent harness.
-- [rst-c (RST)](https://jedbjorn.github.io/rst-c/): a native Revit add-in for curated ribbon profiles that users load
-  with one click.
-- [gantt-it](https://github.com/jedbjorn/gantt-it): a Revit add-in that draws Gantt charts inside your project, ready
-  to place on sheets.
-- [splash-it](https://github.com/jedbjorn/splash-it): a Revit add-in that colors view tabs by file, so open models and
-  families are easy to tell apart.
-- [md-converter](https://md-converter.designs-os.com): turns Markdown into themed, shareable HTML in the browser.
-- [storybench](https://github.com/jedbjorn/storybench): a local workspace for developing videos with an AI production
-  agent.
-- [anj-cloud](https://github.com/jedbjorn/anj-cloud): household file sync from a self-hosted gateway, with clients for
-  Linux, macOS, Windows and Android.
+- **[Subfloor](https://subfloor.designs-os.com)** — a standing team of coding agents for your Git repository, with durable identity, memory, specs and handoffs, run through your coding harness. ([source](https://github.com/jedbjorn/subfloor))
+- **[RST](https://jedbjorn.github.io/rst-c/)** — a native Revit add-in for curated ribbon profiles: admins build them, users load them with one click. ([source](https://github.com/jedbjorn/rst-c))
+- **[Gantt-It](https://jedbjorn.github.io/gantt-it/)** — a Revit add-in that draws Gantt charts in your project, ready to place on sheets. ([source](https://github.com/jedbjorn/gantt-it))
+- **[Splash-It](https://jedbjorn.github.io/splash-it/)** — a Revit add-in that colors view tabs by file, so open models and families are easy to tell apart. ([source](https://github.com/jedbjorn/splash-it))
+- **[md-converter](https://md-converter.designs-os.com)** — a static web app that renders themed Markdown into styled, shareable HTML. ([source](https://github.com/jedbjorn/md-converter))
+- **[Storybench](https://github.com/jedbjorn/storybench)** — a local workspace for developing videos with an AI production agent.
+- **[AnJ Cloud](https://jedbjorn.github.io/anj-cloud/)** — household file sync from a gateway you host yourself, with clients for Linux, macOS, Windows and Android. ([source](https://github.com/jedbjorn/anj-cloud))
 
 ## License
 
