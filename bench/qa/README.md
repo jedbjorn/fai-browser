@@ -35,7 +35,7 @@ see below), `--sim-jev [latencyMs]` (see below), `--thresholds JSON` (the run bo
 `domains/_templates/qa-fixture.json` for the session's origin into a scratch `FAI_DOMAINS_DIR` and sends the run body's
 `profiles` switch, so `on` and `off` differ only in the switch; without the flag no profile exists and nothing
 changes; the profile's `stats.json` is copied to `profile-stats.json` and the summary counts fast steps and fallbacks,
-see [Site profiles](../../docs/REFERENCE.md#site-profiles-experimental-opt-in)). Compare `--sim-jev --profile off` with
+site profiles, removed after 0.6.2). Compare `--sim-jev --profile off` with
 `--sim-jev --profile on` for decisions per run and run time.
 
 `--sim-jev` swaps Jev for `bench/qa/sim-jev.mjs`, a loopback SystemOne-compatible server sent as `provider: "local"`

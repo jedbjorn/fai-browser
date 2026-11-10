@@ -39,7 +39,7 @@ The agent asks for a level; you grant the same or lower. The run is **clamped** 
 | Act | `full` | + save, send, submit, delete, accept a cookie dialog that has no reject button |
 | Test site | `testing` | + sign-in, purchase, payment fields; only for exact origins you listed under Advanced, Test sites; the tab card reads "TEST SITE, no guardrails" |
 
-Cookie dialogs: the agent clicks the offered reject button; an accept button is only offered at Act. Sign-in
+Cookie dialogs and popups: the agent clicks the offered reject or close button, from Use (at Read it asks for Use); an accept button is only offered at Act. Sign-in
 controls and password fills are never offered below Test site.
 
 ## 3. Guardrails run three times

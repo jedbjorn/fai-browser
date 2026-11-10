@@ -237,7 +237,7 @@ and exit code.
   only be chosen in the popup (**Test site**) for origins you listed under Advanced, Test sites
   (`http://localhost:3000`, exact origins, no wildcards). Secret-handle use still requires approval;
   filling a saved secret handle into password fields on sign-in forms is currently unsupported.
-- **Cookie dialogs:** the agent clicks the offered reject button; an accept button is only offered at Act;
+- **Cookie dialogs:** the agent clicks the offered reject button (from Use; at Read it asks for Use); an accept button is only offered at Act;
   sign-in controls and password fills are never offered below Test site.
 - **Guardrails you can tighten at any level.** `policy: {"forbid": [...], "note": "..."}` per run or
   in `config.json` adds refused labels, testing included; nothing removes one.
