@@ -3,25 +3,14 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createDaemon, clampWait, MAX_WAIT_MS } from '../src/daemon.js';
+import { createDaemon } from '../src/daemon.js';
 import { createLogger, homePaths } from '../src/home.js';
 import { LEASE_MESSAGES } from '../src/result.js';
-import { ORIGIN, clickProvider } from './runtime-fixtures.js';
+import { ORIGIN } from './runtime-fixtures.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 
 const KEY = 'jev-test-key-must-not-be-logged-9137';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-function slowProvider(ms, labels = ['About', 'Members'], fallback = 'done') {
-  const inner = clickProvider(labels, { fallback });
-  return {
-    model: 'slow',
-    async decide(...args) {
-      await delay(ms);
-      return inner.decide(...args);
-    },
-  };
-}
 
 async function setup(t, options = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-daemon-api-'));
@@ -30,10 +19,7 @@ async function setup(t, options = {}) {
   const env = { TYPESAFE_API_KEY: KEY, ...options.env };
   const log = createLogger(homePaths({ home, env }));
   let shutdowns = 0;
-  const providerFactory = options.providerFactory
-    ?? (() => (options.provider ? options.provider() : clickProvider(['About', 'Members'])));
   const daemon = createDaemon({
-    driver: 'jev',
     home,
     env,
     port: 0,
@@ -42,7 +28,6 @@ async function setup(t, options = {}) {
     now: options.now,
     maxWaitMs: options.maxWaitMs,
     sweepIntervalMs: 60_000,
-    providerFactory,
     onShutdownRequest: () => {
       shutdowns++;
     },
@@ -61,6 +46,17 @@ async function requestTab(ctx, body = {}) {
   const response = await ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Check the page', ...body });
   assert.equal(response.status, 201, JSON.stringify(response.body));
   return response.body.requestId;
+}
+
+/** Observe, then act on the offered click on `label` (POST /v1/act); returns the act response body. */
+async function actOn(ctx, requestId, label, extra = {}) {
+  const observed = await ctx.api('POST', '/v1/observe', { requestId });
+  assert.equal(observed.status, 200, JSON.stringify(observed.body));
+  const action = observed.body.actions.find(entry => entry.type === 'click' && entry.label === label);
+  assert.ok(action, `no action for ${label}: ${JSON.stringify(observed.body.actions ?? observed.body).slice(0, 400)}`);
+  const acted = await ctx.api('POST', '/v1/act', { requestId, actionId: action.id, revision: observed.body.revision, ...extra });
+  assert.equal(acted.status, 200, JSON.stringify(acted.body));
+  return acted.body;
 }
 
 async function approved(ctx, body = {}) {
@@ -116,7 +112,7 @@ test('client API rejects Origin, foreign Host, missing or wrong token; health is
   const status = await ctx.api('GET', '/v1/status');
   assert.equal(status.body.daemon.port, ctx.daemon.port);
   assert.equal(status.body.extension.transport, 'websocket');
-  assert.equal(status.body.provider.keyConfigured, true);
+  assert.equal(status.body.provider, undefined, 'no provider: the agent drives');
   assert.deepEqual(status.body.requests, []);
 
   assert.equal((await ctx.api('GET', '/v1/nope')).body.error.code, 'not_found');
@@ -272,167 +268,6 @@ test('request url: the start page on the origins, else a default; on the view an
   assert.equal(sub.request.url, 'https://docs.example.com/a');
 });
 
-test('request, approval wakes wait early, run completes with a trace, evidence and lease', async t => {
-  const ctx = await setup(t);
-  const requestId = await requestTab(ctx);
-  const started = Date.now();
-  const waiting = ctx.api('POST', '/v1/wait', { requestId, maxMs: 20_000 });
-  await delay(50);
-  const reply = await ctx.hub.approve(requestId);
-  const waited = await waiting;
-  assert.ok(Date.now() - started < 5000, 'wait woke on the state change');
-  assert.equal(waited.body.state, 'active');
-  assert.equal(waited.body.request.lease.leaseId, reply.leaseId);
-  assert.equal(waited.body.request.lease.origin, ORIGIN);
-  assert.deepEqual(ctx.hub.bound.at(-1).allowedOrigins, [ORIGIN]);
-
-  const run = await ctx.api('POST', '/v1/runs', {
-    requestId, operation: 'run', instruction: 'Open Members', expectation: { textIncludes: 'Ada' }, capture: 'each',
-  });
-  assert.equal(run.status, 200);
-  assert.equal(run.body.state, 'done');
-  const { result } = run.body;
-  assert.equal(result.status, 'completed');
-  assert.equal(result.runId, run.body.runId);
-  assert.equal(result.verification.passed, true);
-  assert.equal(result.cost.decisions, 2);
-  assert.ok(result.cost.elapsedMs >= 0);
-  assert.ok(result.page.digest.includes('Ada, Grace, Linus'));
-  assert.equal(result.page.textExcerpt, undefined, 'the excerpt is only a fallback for an empty digest');
-  assert.deepEqual(result.lease, { requestId, state: 'active' });
-  assert.ok(result.trace.startsWith(ctx.home));
-  const trace = JSON.parse(await readFile(result.trace, 'utf8'));
-  assert.equal(trace.operation, 'run');
-  assert.equal(trace.options.requestId, requestId);
-  assert.equal(result.steps.length, 2);
-  // Screenshots stay in the trace (and behind the evidence route); the lean result has no paths.
-  assert.equal(result.steps[1].screenshot, undefined);
-  assert.ok(trace.steps[1].screenshot.path.endsWith('2.jpg'));
-
-  const snapshot = await ctx.api('GET', `/v1/runs/${run.body.runId}`);
-  assert.equal(snapshot.body.state, 'done');
-  assert.equal(snapshot.body.result.status, 'completed');
-
-  const list = await ctx.api('GET', `/v1/runs?limit=5&requestId=${requestId}`);
-  assert.deepEqual(list.body.runs.map(entry => entry.runId), [run.body.runId]);
-  assert.equal(list.body.runs[0].status, 'completed');
-
-  const evidence = await ctx.api('GET', `/v1/runs/${run.body.runId}/evidence`);
-  assert.equal(evidence.body.step, 2);
-  assert.equal(evidence.body.mimeType, 'image/jpeg');
-  assert.equal(evidence.body.path, trace.steps[1].screenshot.path);
-  assert.equal(evidence.body.bytes, 1);
-  assert.equal(evidence.body.data, undefined);
-  const inline = await ctx.api('GET', `/v1/runs/${run.body.runId}/evidence?step=1&inline=1`);
-  assert.equal(inline.body.step, 1);
-  assert.equal(inline.body.data, 'YQ==');
-  const traceEvidence = await ctx.api('GET', `/v1/runs/${run.body.runId}/evidence?kind=trace`);
-  assert.equal(traceEvidence.body.path, result.trace);
-  assert.equal(traceEvidence.body.trace.runId, run.body.runId);
-  const missing = await ctx.api('GET', `/v1/runs/${run.body.runId}/evidence?step=9`);
-  assert.equal(missing.status, 404);
-  assert.equal(missing.body.error.code, 'no_evidence');
-  assert.equal((await ctx.api('GET', '/v1/runs/nope/evidence')).body.error.code, 'unknown_run');
-  assert.equal((await ctx.api('GET', '/v1/runs/nope')).body.error.code, 'unknown_run');
-
-  const status = await ctx.api('GET', '/v1/status');
-  assert.equal(status.body.requests[0].state, 'active');
-  assert.equal(status.body.runs.recent[0].runId, run.body.runId);
-});
-
-test('runs before approval and after the request ends return results, not HTTP errors', async t => {
-  const ctx = await setup(t);
-  const requestId = await requestTab(ctx);
-  const pending = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open', expectation: { urlIncludes: '/x' } });
-  assert.equal(pending.status, 200);
-  assert.equal(pending.body.state, 'done');
-  assert.equal(pending.body.runId, null);
-  assert.equal(pending.body.result.status, 'needs_user');
-  assert.equal(pending.body.result.code, 'select_tab');
-  assert.equal(pending.body.result.needs.message, LEASE_MESSAGES.select_tab);
-  assert.equal(pending.body.result.trace, null);
-  assert.deepEqual(pending.body.result.verification.expectation, { urlIncludes: '/x' });
-  assert.deepEqual(pending.body.result.lease, { requestId, state: 'pending' });
-
-  const cancelled = await ctx.api('DELETE', `/v1/requests/${requestId}`, { reason: 'done' });
-  assert.deepEqual(cancelled.body, { requestId, state: 'cancelled' });
-  const again = await ctx.api('DELETE', `/v1/requests/${requestId}`);
-  assert.deepEqual(again.body, { requestId, state: 'cancelled' });
-  const closed = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open' });
-  assert.equal(closed.body.result.status, 'needs_host');
-  assert.equal(closed.body.result.code, 'request_closed');
-  const waited = await ctx.api('POST', '/v1/wait', { requestId, maxMs: 1000 });
-  assert.equal(waited.body.state, 'cancelled');
-  const observed = await ctx.api('POST', '/v1/observe', { requestId });
-  assert.equal(observed.body.state, 'done');
-  assert.equal(observed.body.result.code, 'request_closed');
-});
-
-test('waitMs returns running with progress; wait afterStep reports steps, then done', async t => {
-  const ctx = await setup(t, { provider: () => slowProvider(150) });
-  const requestId = await approved(ctx);
-  const first = await ctx.api('POST', '/v1/runs', {
-    requestId, instruction: 'Find members', maxActions: 4, expectation: { textIncludes: 'Ada' }, waitMs: 50,
-  });
-  assert.equal(first.body.state, 'running');
-  assert.equal(first.body.progress.maxActions, 4);
-  assert.equal(first.body.progress.steps, 0);
-  const { runId } = first.body;
-  assert.equal((await ctx.api('GET', `/v1/requests/${requestId}`)).body.activeRunId, runId);
-
-  const busy = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Again' });
-  assert.equal(busy.status, 409);
-  assert.equal(busy.body.error.code, 'run_active');
-  assert.equal((await ctx.api('POST', '/v1/observe', { requestId })).body.error.code, 'run_active');
-  const runningEvidence = await ctx.api('GET', `/v1/runs/${runId}/evidence`);
-  assert.equal(runningEvidence.body.error.code, 'no_evidence');
-
-  const progress = await ctx.api('POST', '/v1/wait', { runId, afterStep: 0, maxMs: 5000 });
-  assert.ok(progress.body.state === 'done' || progress.body.progress.steps >= 1, JSON.stringify(progress.body));
-  if (progress.body.state === 'running') {
-    assert.deepEqual(progress.body.progress.lastStep.action, { type: 'click', ref: '1' });
-    assert.equal(Object.keys(progress.body.progress.lastStep.action).includes('label'), false);
-  }
-  const done = await ctx.api('POST', '/v1/wait', { runId, maxMs: 10_000 });
-  assert.equal(done.body.state, 'done');
-  assert.equal(done.body.result.status, 'completed');
-  assert.equal((await ctx.api('GET', `/v1/requests/${requestId}`)).body.activeRunId, null);
-  assert.equal((await ctx.api('GET', `/v1/requests/${requestId}`)).body.lastRunId, runId);
-});
-
-test('every wait is bounded: maxMs is clamped to the daemon maximum, negative means now', async t => {
-  assert.equal(MAX_WAIT_MS, 45_000);
-  assert.equal(clampWait(100_000, 30_000), 45_000);
-  assert.equal(clampWait(undefined, 30_000), 30_000);
-  assert.equal(clampWait(undefined, 40_000), 40_000);
-  assert.equal(clampWait(-5, 30_000), 0);
-  assert.throws(() => clampWait('5', 30_000), /numbers/);
-
-  const ctx = await setup(t, { maxWaitMs: 300, provider: () => slowProvider(2000) });
-  const requestId = await requestTab(ctx);
-  let started = Date.now();
-  const bounded = await ctx.api('POST', '/v1/wait', { requestId, maxMs: 100_000 });
-  let elapsed = Date.now() - started;
-  assert.equal(bounded.status, 200, 'a wait timeout is not an error');
-  assert.equal(bounded.body.state, 'pending');
-  assert.ok(elapsed >= 250 && elapsed < 2000, `clamped wait took ${elapsed} ms`);
-  assert.ok(bounded.body.waitedMs >= 250);
-
-  started = Date.now();
-  const immediate = await ctx.api('POST', '/v1/wait', { requestId, maxMs: -1 });
-  assert.equal(immediate.body.state, 'pending');
-  assert.ok(Date.now() - started < 200);
-
-  await ctx.hub.approve(requestId);
-  started = Date.now();
-  const run = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', waitMs: 100_000 });
-  elapsed = Date.now() - started;
-  assert.equal(run.body.state, 'running');
-  assert.ok(elapsed < 1500, `run waitMs clamped, took ${elapsed} ms`);
-  const stopped = await ctx.api('POST', `/v1/runs/${run.body.runId}/stop`);
-  assert.equal(stopped.body.state, 'done');
-});
-
 test('pending requests expire after ttl, idle leases expire, paused leases expire, terminal records age out', async t => {
   let clock = Date.now();
   const ctx = await setup(t, { now: () => clock, config: { leaseIdleMs: 120_000 } });
@@ -471,62 +306,6 @@ test('pending requests expire after ttl, idle leases expire, paused leases expir
   assert.equal((await ctx.api('GET', `/v1/requests/${pending}`)).body.error.code, 'unknown_request');
 });
 
-test('release stops the active run first and pushes released to the hub', async t => {
-  const ctx = await setup(t, { provider: () => slowProvider(300) });
-  const requestId = await approved(ctx);
-  const leaseId = ctx.daemon.request(requestId).lease.leaseId;
-  const run = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', waitMs: 20 });
-  assert.equal(run.body.state, 'running');
-  const released = await ctx.api('DELETE', `/v1/requests/${requestId}`);
-  assert.deepEqual(released.body, { requestId, state: 'released' });
-  const done = await ctx.api('GET', `/v1/runs/${run.body.runId}`);
-  assert.equal(done.body.state, 'done');
-  assert.equal(done.body.result.status, 'stopped');
-  assert.equal(done.body.result.code, 'cancelled');
-  assert.deepEqual(ctx.hub.updates.at(-1), { leaseId, state: 'released', reason: 'released' });
-  const after = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About' });
-  assert.equal(after.body.result.code, 'request_closed');
-});
-
-test('user pause ends the run as needs_user/paused; Resume for the request re-activates with a new lease', async t => {
-  const ctx = await setup(t, { provider: () => slowProvider(300) });
-  const requestId = await approved(ctx);
-  const leaseId = ctx.daemon.request(requestId).lease.leaseId;
-  const run = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', waitMs: 20 });
-  await ctx.hub.emit({ type: 'status', leaseId, status: 'paused', reason: 'paused' });
-  const done = await ctx.api('POST', '/v1/wait', { runId: run.body.runId, maxMs: 5000 });
-  assert.equal(done.body.result.status, 'needs_user');
-  assert.equal(done.body.result.code, 'paused');
-  assert.equal(done.body.result.needs.message, LEASE_MESSAGES.paused);
-  assert.deepEqual(done.body.result.lease, { requestId, state: 'paused' });
-  const view = (await ctx.api('GET', `/v1/requests/${requestId}`)).body;
-  assert.equal(view.state, 'paused');
-  assert.equal(view.stateReason, 'paused');
-
-  const blocked = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About' });
-  assert.equal(blocked.body.result.code, 'paused');
-
-  const waiting = ctx.api('POST', '/v1/wait', { requestId, maxMs: 5000 });
-  await delay(30);
-  const resumed = await ctx.hub.approve(requestId);
-  assert.notEqual(resumed.leaseId, leaseId);
-  const waited = await waiting;
-  assert.equal(waited.body.state, 'active');
-  assert.equal(waited.body.request.lease.leaseId, resumed.leaseId);
-});
-
-test('tab events pause with their code and the lease message', async t => {
-  const ctx = await setup(t, { provider: () => slowProvider(300) });
-  const requestId = await approved(ctx);
-  const leaseId = ctx.daemon.request(requestId).lease.leaseId;
-  const run = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', waitMs: 20 });
-  await ctx.hub.emit({ type: 'status', leaseId, status: 'paused', reason: 'tab_changed' });
-  const done = await ctx.api('POST', '/v1/wait', { runId: run.body.runId, maxMs: 5000 });
-  assert.equal(done.body.result.code, 'tab_changed');
-  assert.equal(done.body.result.needs.message, LEASE_MESSAGES.tab_changed);
-  assert.equal(ctx.daemon.request(requestId).stateReason, 'tab_changed');
-});
-
 test('an origin_changed pause that names the origin: the request view and needs.message say where the tab went', async t => {
   const ctx = await setup(t);
   const requestId = await approved(ctx);
@@ -534,42 +313,13 @@ test('an origin_changed pause that names the origin: the request view and needs.
   await ctx.hub.emit({ type: 'status', leaseId, status: 'paused', reason: 'origin_changed', origin: 'https://login.example.org' });
   assert.equal(ctx.daemon.request(requestId).stateReason, 'origin_changed');
   assert.equal(ctx.daemon.request(requestId).leftOrigin, 'https://login.example.org');
-  const blocked = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About' });
+  const blocked = await ctx.api('POST', '/v1/act', { requestId, actionId: 'a0' });
   assert.equal(blocked.body.result.code, 'origin_changed');
   assert.match(blocked.body.result.needs.message, /^The tab lease is paused\./);
   // The origin is page-chosen: in leftOrigin (untrusted), never in the trusted needs.message.
   assert.match(blocked.body.result.needs.message, /The tab went to an origin this request does not list \(leftOrigin/);
   assert.doesNotMatch(blocked.body.result.needs.message, /login\.example\.org/);
   assert.equal(blocked.body.result.leftOrigin, 'https://login.example.org');
-});
-
-test('disconnect pauses; hello with the same leaseId resumes it; unknown and empty sessions', async t => {
-  const ctx = await setup(t);
-  const requestId = await approved(ctx);
-  const leaseId = ctx.daemon.request(requestId).lease.leaseId;
-  await ctx.hub.emit({ type: 'disconnected', transport: 'websocket' });
-  assert.equal(ctx.daemon.request(requestId).state, 'paused');
-  assert.equal(ctx.daemon.request(requestId).stateReason, 'disconnected');
-  const blocked = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About' });
-  assert.equal(blocked.body.result.code, 'disconnected');
-
-  const session = { requestId, leaseId, tabId: 1, origin: ORIGIN, status: 'active' };
-  const hello = await ctx.hub.emit({ type: 'hello', session });
-  assert.equal(hello.endSession, false);
-  assert.equal(hello.mode, 'daemon');
-  assert.equal(hello.requests[0].requestId, requestId);
-  assert.equal(ctx.daemon.request(requestId).state, 'active');
-  assert.equal(ctx.daemon.request(requestId).lease.leaseId, leaseId);
-  const run = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', expectation: { urlIncludes: '/about' } });
-  assert.equal(run.body.result.status, 'completed');
-
-  const unknown = await ctx.hub.emit({ type: 'hello', session: { ...session, leaseId: 'stale' } });
-  assert.equal(unknown.endSession, true);
-
-  const restarted = await ctx.hub.emit({ type: 'hello', session: null });
-  assert.equal(restarted.endSession, false);
-  assert.equal(ctx.daemon.request(requestId).state, 'paused');
-  assert.equal(ctx.daemon.request(requestId).stateReason, 'session_inactive');
 });
 
 test('approving another request supersedes the active lease; lease replies refuse bad requests', async t => {
@@ -589,7 +339,7 @@ test('approving another request supersedes the active lease; lease replies refus
   assert.equal(ctx.daemon.request(first).stateReason, 'superseded');
   assert.deepEqual(ctx.hub.updates.at(-1), { leaseId: firstLease, state: 'released', reason: 'superseded' });
   assert.equal((await ctx.hub.approve(first)).error.code, 'request_not_pending');
-  const closed = await ctx.api('POST', '/v1/runs', { requestId: first, instruction: 'Open' });
+  const closed = await ctx.api('POST', '/v1/act', { requestId: first, actionId: 'a0' });
   assert.equal(closed.body.result.code, 'request_closed');
 
   // A v2 extension sends no requestId: the newest pending request for the origin is bound.
@@ -604,117 +354,6 @@ test('approving another request supersedes the active lease; lease replies refus
   assert.deepEqual(deny, { requestId: denied, state: 'denied' });
   assert.equal((await ctx.api('POST', '/v1/wait', { requestId: denied, maxMs: 1000 })).body.state, 'denied');
   assert.equal((await ctx.hub.emit({ type: 'deny', requestId: denied })).error.code, 'request_not_pending');
-});
-
-test('user Stop releases the lease and the run ends stopped/stopped', async t => {
-  const ctx = await setup(t, { provider: () => slowProvider(300) });
-  const requestId = await approved(ctx);
-  const leaseId = ctx.daemon.request(requestId).lease.leaseId;
-  const run = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', waitMs: 20 });
-  await ctx.hub.emit({ type: 'status', leaseId, status: 'stopped', reason: 'stopped' });
-  const done = await ctx.api('POST', '/v1/wait', { runId: run.body.runId, maxMs: 5000 });
-  assert.equal(done.body.result.status, 'stopped');
-  assert.equal(done.body.result.code, 'stopped');
-  assert.equal(done.body.result.needs.message, LEASE_MESSAGES.stopped);
-  assert.equal(ctx.daemon.request(requestId).state, 'released');
-  const after = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About' });
-  assert.equal(after.body.result.status, 'stopped');
-  assert.equal(after.body.result.code, 'stopped');
-});
-
-test('POST stop cancels a running run and is idempotent', async t => {
-  const ctx = await setup(t, { provider: () => slowProvider(400) });
-  const requestId = await approved(ctx);
-  const run = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', waitMs: 20 });
-  const stopped = await ctx.api('POST', `/v1/runs/${run.body.runId}/stop`);
-  assert.equal(stopped.body.state, 'done');
-  assert.equal(stopped.body.result.status, 'stopped');
-  assert.equal(stopped.body.result.code, 'cancelled');
-  assert.ok(stopped.body.result.trace);
-  const again = await ctx.api('POST', `/v1/runs/${run.body.runId}/stop`);
-  assert.equal(again.body.result.code, 'cancelled');
-  assert.equal(ctx.daemon.request(requestId).state, 'active', 'the lease stays active');
-  assert.equal((await ctx.api('POST', '/v1/runs/unknown/stop')).body.error.code, 'unknown_run');
-});
-
-test('authority checks: mode, provider options, allowedUrls, expectation and unknown fields', async t => {
-  const ctx = await setup(t);
-  const requestId = await approved(ctx);
-  const expectError = async (body, status, code) => {
-    const response = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open', ...body });
-    assert.equal(response.status, status, JSON.stringify(response.body));
-    assert.equal(response.body.error.code, code);
-  };
-  await expectError({ mode: 'root' }, 400, 'invalid_options');
-  await expectError({ providerOptions: { endpoint: 'https://evil.example/v1' } }, 422, 'provider_option_forbidden');
-  await expectError({ providerOptions: { keyEnv: 'HOME' } }, 422, 'provider_option_forbidden');
-  await expectError({ allowedUrls: ['https://evil.example/x'] }, 422, 'origin_not_granted');
-  await expectError({ expectation: { urlHas: '/x' } }, 400, 'invalid_options');
-  await expectError({ expectation: { changedSinceStart: 'yes' } }, 400, 'invalid_options');
-  await expectError({ unknownField: 1 }, 400, 'invalid_options');
-  await expectError({ maxActions: 0 }, 400, 'invalid_options');
-  await expectError({ operation: 'act' }, 400, 'invalid_options');
-  await expectError({ instruction: '' }, 400, 'invalid_options');
-  await expectError({ suppliedText: { name: 5 } }, 400, 'invalid_options');
-  await expectError({ outputDir: 'relative/dir' }, 400, 'invalid_options');
-  await expectError({ requestId: 'req_unknown' }, 404, 'unknown_request');
-  // A mode above the grant is clamped, never a 422: the receipt reports what ran.
-  const clamped = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open', mode: 'testing', waitMs: 5000 });
-  assert.equal(clamped.status, 200, JSON.stringify(clamped.body));
-  assert.deepEqual(clamped.body.result.permissions,
-    { requested: 'testing', granted: 'read-only', effective: 'read-only', testing: false, scope: 'origin', tabMode: 'single' });
-  const observed = await ctx.api('POST', '/v1/observe', { requestId, mode: 'reversible', capture: false });
-  assert.equal(observed.status, 200, JSON.stringify(observed.body));
-  assert.deepEqual(observed.body.permissions,
-    { requested: 'reversible', granted: 'read-only', effective: 'read-only', testing: false, scope: 'origin', tabMode: 'single' });
-  assert.equal((await ctx.api('POST', '/v1/observe', { requestId, mode: 'admin' })).body.error.code, 'invalid_options');
-  assert.equal((await ctx.api('POST', '/v1/wait', { maxMs: 10 })).body.error.code, 'invalid_options');
-  assert.equal((await ctx.api('POST', '/v1/wait', { requestId, while: ['bogus'] })).body.error.code, 'invalid_options');
-  assert.equal((await ctx.api('POST', '/v1/wait', { runId: 'nope' })).body.error.code, 'unknown_run');
-});
-
-test('provider configuration failures are failed/config results; providerOptions reach the factory', async t => {
-  const seen = [];
-  const ctx = await setup(t, {
-    config: { providerOptions: { endpoint: 'http://127.0.0.1:9/v1/systemone', model: 'from-config' } },
-    providerFactory: spec => {
-      seen.push(spec);
-      if (spec.name === 'local') return clickProvider(['About']);
-      const error = new Error('The Jev key is not configured');
-      error.code = 'config';
-      throw error;
-    },
-  });
-  const requestId = await approved(ctx);
-  const failed = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open' });
-  assert.equal(failed.body.state, 'done');
-  assert.equal(failed.body.result.status, 'failed');
-  assert.equal(failed.body.result.code, 'config');
-  assert.equal(failed.body.result.needs.who, 'user');
-  assert.match(failed.body.result.reason, /Jev key/);
-  const local = await ctx.api('POST', '/v1/runs', {
-    requestId, instruction: 'Open', provider: 'local', providerOptions: { model: 'kev', port: 8009 },
-    expectation: { urlIncludes: '/about' },
-  });
-  assert.equal(local.body.result.status, 'completed');
-  assert.deepEqual(seen.at(-1).options, { endpoint: 'http://127.0.0.1:9/v1/systemone', model: 'kev', port: 8009 });
-});
-
-test('the default provider factory refuses to run without a Jev key', async t => {
-  const home = await mkdtemp(join(tmpdir(), 'fai-daemon-nokey-'));
-  const hub = createFakeHub();
-  const daemon = createDaemon({ driver: 'jev', home, env: {}, port: 0, hub, sweepIntervalMs: 60_000 });
-  await daemon.listen();
-  t.after(async () => {
-    await daemon.close();
-    await rm(home, { recursive: true, force: true });
-  });
-  const api = (method, path, body) => call(daemon.port, method, path, body, { token: daemon.token });
-  const requestId = (await api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'r' })).body.requestId;
-  await hub.approve(requestId);
-  const response = await api('POST', '/v1/runs', { requestId, instruction: 'Open' });
-  assert.equal(response.body.result.code, 'config');
-  assert.equal((await api('GET', '/v1/status')).body.provider.keyConfigured, false);
 });
 
 test('observe returns offered actions and evidence; act runs one with changedSinceStart', async t => {
@@ -843,29 +482,30 @@ test('observe captures with the offered ids as badge labels and reports the imag
 test('retention prunes after each trace write and keeps the newest run', async t => {
   const ctx = await setup(t, { config: { retention: { maxRuns: 1 } } });
   const requestId = await approved(ctx);
-  const first = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', operation: 'step' });
-  const second = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open Members', operation: 'step' });
+  const first = await actOn(ctx, requestId, 'About');
+  const second = await actOn(ctx, requestId, 'Members');
   const dirs = await readdir(join(ctx.home, 'artifacts'));
-  assert.deepEqual(dirs, [second.body.runId]);
-  assert.notEqual(first.body.runId, second.body.runId);
-  const noPrune = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Home', operation: 'step', prune: false });
+  assert.deepEqual(dirs, [second.runId]);
+  assert.notEqual(first.runId, second.runId);
+  const noPrune = await actOn(ctx, requestId, 'Home', { prune: false });
   assert.equal((await readdir(join(ctx.home, 'artifacts'))).length, 2);
-  assert.ok(noPrune.body.result.trace);
+  assert.ok(noPrune.result.trace);
 });
 
 test('the log carries routes and states but never the key, secret, token or supplied text', async t => {
   const ctx = await setup(t, { bridgeOptions: { path: '/form' } });
   const requestId = await approved(ctx, { mode: 'reversible' });
-  await ctx.api('POST', '/v1/runs', {
-    requestId, instruction: 'Fill the name', suppliedText: { name: 'supplied-secret-value-4411' }, mode: 'reversible',
-  });
   await ctx.api('POST', '/v1/observe', { requestId, suppliedText: { name: 'supplied-secret-value-4411' } });
+  const observed = await ctx.api('POST', '/v1/observe', { requestId });
+  const fill = observed.body.actions.find(action => action.type === 'fill_supplied_text');
+  assert.ok(fill, JSON.stringify(observed.body.actions));
+  await ctx.api('POST', '/v1/act', { requestId, actionId: fill.id, revision: observed.body.revision });
   await ctx.api('GET', '/v1/status', undefined, { token: 'wrong-token' });
   const log = await readFile(ctx.logFile, 'utf8');
   const env = await readFile(join(ctx.home, '.env.local'), 'utf8');
   const secret = /FAI_BRIDGE_SECRET="([^"]+)"/.exec(env)[1];
   assert.ok(secret.length >= 24);
-  assert.match(log, /"route":"runs.create"/);
+  assert.match(log, /"route":"act"/);
   assert.match(log, /"event":"run_done"/);
   for (const forbidden of [KEY, secret, ctx.daemon.token, 'supplied-secret-value-4411', 'Profile form', 'wrong-token']) {
     assert.ok(!log.includes(forbidden), `log contains ${forbidden.slice(0, 6)}...`);
@@ -875,11 +515,11 @@ test('the log carries routes and states but never the key, secret, token or supp
 
 test('reload re-reads settings and config; shutdown is requested over the API', async t => {
   const ctx = await setup(t);
-  await writeFile(join(ctx.home, 'config.json'), JSON.stringify({ provider: 'local' }));
+  await writeFile(join(ctx.home, 'config.json'), JSON.stringify({ budget: { maxCalls: 7 } }));
   const reloaded = await ctx.api('POST', '/v1/daemon/reload');
   assert.equal(reloaded.body.ok, true);
   assert.equal(reloaded.body.secretChanged, false);
-  assert.equal((await ctx.api('GET', '/v1/status')).body.provider.default, 'local');
+  assert.equal((await ctx.api('GET', '/v1/status')).body.budget.maxCalls, 7);
   await writeFile(join(ctx.home, '.env.local'), `FAI_BRIDGE_SECRET="${'b'.repeat(40)}"\n`, { mode: 0o600 });
   const changed = await ctx.api('POST', '/v1/daemon/reload');
   assert.equal(changed.body.secretChanged, true);
@@ -894,95 +534,16 @@ test('reload re-reads settings and config; shutdown is requested over the API', 
   assert.equal(ctx.shutdowns(), 1);
 });
 
-test('close interrupts runs, releases leases with daemon_shutdown and answers 503 meanwhile', async t => {
-  const ctx = await setup(t, { provider: () => slowProvider(300) });
+test('close releases leases with daemon_shutdown and answers 503 meanwhile', async t => {
+  const ctx = await setup(t);
   const requestId = await approved(ctx);
   const leaseId = ctx.daemon.request(requestId).lease.leaseId;
-  const run = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', waitMs: 20 });
   const closing = ctx.daemon.close();
   const during = await ctx.api('GET', '/v1/status').catch(() => null);
   if (during) assert.equal(during.body.error.code, 'shutting_down');
   await closing;
   assert.deepEqual(ctx.hub.updates.at(-1), { leaseId, state: 'released', reason: 'daemon_shutdown' });
   assert.equal(ctx.hub.closed, true);
-  const traces = await readdir(join(ctx.home, 'artifacts'));
-  assert.deepEqual(traces, [run.body.runId]);
-  const trace = JSON.parse(await readFile(join(ctx.home, 'artifacts', run.body.runId, 'trace.json'), 'utf8'));
-  assert.equal(trace.code, 'interrupted');
-  assert.equal(trace.status, 'stopped');
-});
-
-test('answerQuestion passes through /v1/runs and /v1/act; results carry digest and answer, not controls', async t => {
-  const calls = [];
-  const ctx = await setup(t, {
-    provider: () => ({
-      ...clickProvider(['About', 'Members']),
-      async choose(request) {
-        calls.push(request);
-        return { choice: request.candidates[0].id, confidence: 0.7 };
-      },
-    }),
-  });
-  const requestId = await approved(ctx);
-
-  const bad = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open Members', answerQuestion: '   ' });
-  assert.equal(bad.status, 400);
-  const long = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'x', answerQuestion: 'q'.repeat(2001) });
-  assert.equal(long.status, 400);
-
-  const run = await ctx.api('POST', '/v1/runs', {
-    requestId, instruction: 'Open Members', answerQuestion: 'Who are the members?', expectation: { textIncludes: 'Ada' },
-  });
-  const { result } = run.body;
-  assert.equal(result.status, 'completed');
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].question, 'Who are the members?');
-  assert.equal(calls[0].instruction, 'Open Members');
-  assert.equal(result.answer.method, 'provider');
-  assert.equal(result.answer.candidates[0].text, 'Ada, Grace, Linus');
-  assert.equal(result.page.controls, undefined);
-  assert.ok(result.page.digest.includes('Ada, Grace, Linus'), 'the lean digest is a list of block texts');
-  assert.ok(result.steps.every(step => step.decision === undefined), 'no decision records or probabilities');
-  const trace = JSON.parse(await readFile(result.trace, 'utf8'));
-  assert.equal(trace.options.answerQuestion, 'Who are the members?');
-  assert.ok(Array.isArray(trace.finalObservation.blocks));
-  assert.ok(Array.isArray(trace.finalObservation.controls));
-
-  const observed = await ctx.api('POST', '/v1/observe', { requestId, capture: false });
-  assert.ok(Array.isArray(observed.body.page.controls), 'observe keeps controls');
-  const home = observed.body.actions.find(action => action.label === 'Home');
-  const act = await ctx.api('POST', '/v1/act', {
-    requestId, actionId: home.id, revision: observed.body.revision, answerQuestion: 'What is on the home page?',
-  });
-  assert.equal(act.status, 200, JSON.stringify(act.body));
-  assert.equal(act.body.result.status, 'checkpoint');
-  assert.notEqual(act.body.result.answer.method, 'provider', 'act never asks the provider');
-  assert.equal(calls.length, 1);
-});
-
-test('observe: the listing (offer) and its relevance task, from the body, else the last run, else the request', async t => {
-  const ctx = await setup(t);
-  const requestId = await approved(ctx, { instruction: 'Look around the members area' });
-  const bridge = ctx.hub.bridgeForTab(1);
-  const termsOfLastObserve = () => bridge.observeOptions.at(-1)?.terms ?? [];
-  // No task named and no run yet: the request's instruction.
-  const first = await ctx.api('POST', '/v1/observe', { requestId, capture: false });
-  assert.equal(first.status, 200, JSON.stringify(first.body));
-  assert.deepEqual(first.body.offer, { cap: 40, listed: first.body.actions.map(action => action.id), dropped: 0 });
-  assert.ok(termsOfLastObserve().includes('members'), JSON.stringify(termsOfLastObserve()));
-  // The body's task wins.
-  await ctx.api('POST', '/v1/observe', { requestId, capture: false, instruction: 'Open the pricing page', expectation: { urlIncludes: '/pricing' } });
-  assert.ok(termsOfLastObserve().includes('pricing'));
-  // After a run: that run's task.
-  const run = await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open About', maxActions: 1, waitMs: 5000 });
-  assert.equal(run.status, 200, JSON.stringify(run.body));
-  await ctx.api('POST', '/v1/observe', { requestId, capture: false });
-  assert.ok(termsOfLastObserve().includes('about'), JSON.stringify(termsOfLastObserve()));
-  // The hints are validated like a run's.
-  for (const body of [{ instruction: 5 }, { expectation: { bogus: 1 } }, { answerQuestion: ' ' }]) {
-    const refused = await ctx.api('POST', '/v1/observe', { requestId, capture: false, ...body });
-    assert.equal(refused.body.error?.code, 'invalid_options', JSON.stringify(body));
-  }
 });
 
 test('the per-request budget in effect: the popup setting (hello or settings), else config.json, else the default', async t => {
@@ -1023,7 +584,7 @@ test('a request is approved on its page when the extension opens pages right awa
   const PAGE = /its task page opened in an existing browser window; click Approve in the page request modal \(grant browser site access if asked\), or use the FAI Browser toolbar icon/;
   const WINDOW = /click Open in the FAI Browser window, then Approve in the page request modal/;
   const viewOf = async requestId => (await ctx.api('GET', `/v1/requests/${requestId}`)).body;
-  const blocked = async requestId => (await ctx.api('POST', '/v1/runs', { requestId, instruction: 'Open', expectation: { urlIncludes: '/x' } })).body.result;
+  const blocked = async requestId => (await ctx.api('POST', '/v1/act', { requestId, actionId: 'a0', expectation: { urlIncludes: '/x' } })).body.result;
   // An extension that reports nothing about the setting (older): the window wording.
   await ctx.hub.emit({ type: 'hello', session: null, settings: { budget: null } });
   let created = await ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Check', mode: 'reversible', url: `${ORIGIN}/cart` });
