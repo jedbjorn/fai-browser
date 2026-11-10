@@ -43,7 +43,7 @@ Request the user's tab for origins at a mode, wait for approval, and return the 
 
 | Argument | Type | Required | Meaning |
 |---|---|---|---|
-| `origins` | string[] | yes | Exact origins needed |
+| `origins` | string[] | yes (not with `inviteId`) | Exact origins needed |
 | `reason` | string (1-200) | yes | One line shown to the user on the approval card |
 | `task` | string (1-2000) | no | What the user wants, in plain words; **ranks** the digest and actions, never executed |
 | `mode` | enum | no (`read-only`) | Level needed |
@@ -51,6 +51,7 @@ Request the user's tab for origins at a mode, wait for approval, and return the 
 | `allowedUrls` | string[] (<= 10) | no | URLs on the granted origins to open directly; the first opens on approval (fastest for search results) |
 | `policy` | `{forbid?: string[<=20], note?: string}` | no | Extra control labels to refuse; only adds restrictions |
 | `requestId` | string | no | Reuse an existing request |
+| `inviteId` | `inv-` + 8 characters | no | An invite from the user's FAI popup: opens that tab at the level the user chose; no origins needed. Pass it alone |
 | `browser` | string (1-64) | no | Which paired browser a new request opens in: `firefox`, `chrome`, `chromium`, `edge`, `brave`, a name or an id from status. Default: the one the user used FAI in last. Not connected: `browser_not_connected`, naming the connected ones |
 | `returnImages` | `none` / `final` | no | Screenshot of the first page |
 
@@ -130,11 +131,11 @@ Wait for a pending tab request (`requestId`) or a still-running act (`runId`). R
 
 ### `fai_browser_status`
 
-Daemon, extension connection, the connected browsers (one `browser:` line each: name, product, id, transport, last use, tabs), driver (`agent`: you choose each action) and tab requests (each names the browser it is in). No arguments. Also carries `next`.
+Daemon, extension connection, the connected browsers (one `browser:` line each: name, product, id, transport, last use, tabs), driver (`agent`: you choose each action) tab requests (each names the browser it is in; a paused one nobody is expected to continue is marked `stale`), this agent session and the open invites meant for it. No arguments. Also carries `next`.
 
 ### `fai_browser_release`
 
-End FAI's access to the tab request. **Only when the user asks**, not at the end of a task. Argument: `requestId`.
+End FAI's access to the tab request. **Only when the user asks**, not at the end of a task; the exception is your own requests that status marks `stale`, once you no longer need them. Argument: `requestId`.
 
 ### `fai_browser_evidence`
 

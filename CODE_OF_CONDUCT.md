@@ -48,7 +48,7 @@ applies when an individual is officially representing the community in public sp
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible
-for enforcement at **jedbjorn@gmail.com**. All complaints will be
+for enforcement through the repository's private vulnerability reporting (Security tab, **Report a vulnerability**; title it "Conduct"). All complaints will be
 reviewed and investigated promptly and fairly. All community leaders are obligated to respect the privacy and security of
 the reporter of any incident.
 
