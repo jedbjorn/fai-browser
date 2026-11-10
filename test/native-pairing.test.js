@@ -52,7 +52,7 @@ test('homePaths: default home splits settings and state; FAI_HOME is one directo
   assert.equal(paths.artifacts, '/h/.local/state/fai-browser/artifacts');
   const custom = homePaths({ env: { HOME: '/h', FAI_HOME: '/c' } });
   assert.equal(custom.custom, true);
-  for (const key of ['envFile', 'clientToken', 'logFile', 'artifacts', 'domains']) assert.ok(custom[key].startsWith('/c/'), key);
+  for (const key of ['envFile', 'clientToken', 'logFile', 'artifacts']) assert.ok(custom[key].startsWith('/c/'), key);
   assert.equal(homePaths({ env: { HOME: '/h', FAI_HOME: '/c', FAI_DAEMON_DIR: '/d' } }).clientToken, '/d/client-token');
 });
 

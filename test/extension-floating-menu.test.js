@@ -181,7 +181,7 @@ test('screenshot action badges cover the same open portal-menu controls', async 
     'a refused menu item gets no action badge');
 });
 
-test('a blocking dialog with a closed nested popover keeps its overlay dismissal semantics', async t => {
+test('a blocking dialog with a closed nested popover keeps its overlay marks', async t => {
   const page = await load(t, `<!doctype html><html><body>
     <div role="dialog" aria-modal="true" style="position:fixed;inset:25%;background:white">
       <p>Join our newsletter for updates.</p>
@@ -193,13 +193,13 @@ test('a blocking dialog with a closed nested popover keeps its overlay dismissal
   const observation = await observe(page);
   assert.equal(observation.overlay?.kind, 'newsletter');
   const close = byLabel(observation, 'Close');
-  assert.equal(close.dismiss, true);
+  assert.equal(close.overlay, true);
   assert.equal(close.floating, undefined);
   assert.equal(byLabel(observation, 'Closed popover action'), undefined);
 });
 
 for (const kind of ['popover', 'listbox']) {
-  test(`a non-dialog newsletter with an open nested ${kind} keeps read-only dismissal and floating marks`, async t => {
+  test(`a non-dialog newsletter with an open nested ${kind} keeps overlay and floating marks; its close button needs the controls level`, async t => {
     const nested = kind === 'popover' ? `
       <div id="choices" popover="manual"><button>Weekly updates</button></div>
       <script>document.getElementById('choices').showPopover()</script>` : `
@@ -218,11 +218,14 @@ for (const kind of ['popover', 'listbox']) {
     const observation = await observe(page);
     assert.equal(observation.overlay?.kind, 'newsletter');
     const close = byLabel(observation, 'Close');
-    assert.equal(close.dismiss, true);
+    assert.equal(close.overlay, true);
     assert.equal(close.floating, undefined);
     assert.equal(byLabel(observation, 'Weekly updates').floating, true);
 
-    const dismissed = await execute(page, { type: 'click', target: close.id }, observation.revision, { allow: ['navigate'] });
+    // Nothing dismisses a popup by itself: at read-only its close button is refused like any button.
+    const refused = await execute(page, { type: 'click', target: close.id }, observation.revision, { allow: ['navigate'] });
+    assert.equal(refused.error?.code, 'blocked_risky', JSON.stringify(refused));
+    const dismissed = await execute(page, { type: 'click', target: close.id }, observation.revision, { allow: ['navigate', 'controls'] });
     assert.equal(dismissed.error, undefined, JSON.stringify(dismissed.error));
     assert.equal(dismissed.value.observation.overlay, undefined);
     assert.equal(await page.locator('#newsletter').count(), 0);
