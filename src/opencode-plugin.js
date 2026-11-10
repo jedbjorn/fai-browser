@@ -30,12 +30,12 @@ const SESSION = /^ses_[A-Za-z0-9]{10,60}$/;
 // invite the user's own words as one JSON string of at most 500 characters.
 const ID = String.raw`([A-Za-z0-9][A-Za-z0-9._:-]{0,127})`;
 const LEVEL = String.raw`(?:Read|Use|Act|Test site)`;
-const NEXT_TOOL = String.raw`(?:fai_browser_observe|fai_browser_run)`;
+const NEXT_TOOL = String.raw`fai_browser_observe`;
 const PREFIX = String.raw`^\[FAI Browser\] `;
 const APPROVED = new RegExp(String.raw`${PREFIX}The user approved tab request ${ID} at level ${LEVEL}\. Call ${NEXT_TOOL} with requestId ${ID} and continue the task\.$`);
 const RESUMED = new RegExp(String.raw`${PREFIX}The user resumed tab request ${ID}: the tab is active again\. Call ${NEXT_TOOL} with requestId ${ID} and continue the task\.$`);
 const INVITED = new RegExp(String.raw`${PREFIX}The user invited you to work in a browser tab they have open \(invite ${ID}, level ${LEVEL}\)\. `
-  + String.raw`Call (?:fai_browser_open with \{"inviteId": "${ID}"\}|fai_browser_run with \{"inviteId": "${ID}"\}, an instruction and an expectation) `
+  + String.raw`Call fai_browser_open with \{"inviteId": "${ID}"\} `
   + String.raw`to get the page, then follow its next\.\n(?:The user typed no task: read the page, then ask them what to do\.|`
   + String.raw`What the user typed in the FAI popup \(the user's own words\): ("(?:[^"\\\u0000-\u001f]|\\.)*"))$`);
 const MAX_TEXT = 2000;
@@ -97,10 +97,10 @@ function wakeTextOk(text) {
   let match = APPROVED.exec(text) ?? RESUMED.exec(text);
   if (match) return match[1] === match[2];
   match = INVITED.exec(text);
-  if (!match || match[1] !== (match[2] ?? match[3])) return false;
-  if (match[4] === undefined) return true;
+  if (!match || match[1] !== match[2]) return false;
+  if (match[3] === undefined) return true;
   try {
-    const words = JSON.parse(match[4]);
+    const words = JSON.parse(match[3]);
     return typeof words === 'string' && words.length > 0 && words.length <= MAX_WORDS
       && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(words);
   } catch {

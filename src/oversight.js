@@ -262,7 +262,7 @@ export const LEVEL_NAMES = Object.freeze({
 export function levelRefusalText({ granted, needed }) {
   const want = LEVEL_NAMES[needed] ?? needed;
   if (LEVEL_ORDER.indexOf(granted) >= LEVEL_ORDER.indexOf(needed)) {
-    return `This task needs mode ${needed}, which the user already granted for this tab. Call fai_browser_run again `
+    return `This task needs mode ${needed}, which the user already granted for this tab. Call fai_browser_observe `
       + `with mode "${needed}".`;
   }
   const text = `The user approved ${LEVEL_NAMES[granted] ?? granted} for this tab; this task needs ${want}. Ask them to `

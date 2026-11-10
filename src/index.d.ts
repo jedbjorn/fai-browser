@@ -552,7 +552,6 @@ export interface GuardrailPolicy {
   blocks(label: string): LabelClass | null;
   forbids(label: string): boolean;
   wire(): { level: Level; forbid?: string[] };
-  jev(): Record<string, string>;
 }
 export function guardrailPolicy(options?: { level?: Level; mode?: Level; request?: GuardrailAdditions; config?: GuardrailAdditions }): GuardrailPolicy;
 
