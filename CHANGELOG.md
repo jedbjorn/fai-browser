@@ -10,7 +10,7 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 ### Removed
 
 - **Breaking: the experimental Jev autopilot is gone.** Removed: the MCP tools `fai_browser_run` and `fai_browser_stop`, `npm run setup -- --driver jev` and the extension's driver toggle and key row, CLI `run`, `step` and `stop`, `POST /v1/runs`, step lists, in-call retries, slim requests and site profiles (`domains/`), and the SDK's `TypeSafeProvider`, `LocalSystemOneProvider`, `validateSteps` and `BrowserRuntime.run()`/`step()`. Your agent drives through `fai_browser_open` and `fai_browser_act` as before. A leftover `driver: "jev"` (or `provider`, `retry`, `slim`, `profiles`) in `config.json`, or a Jev key in `.env.local`, is ignored (delete the `TYPESAFE_API_KEY` line if you like).
-- Also gone with it: automatic cookie-dialog rejection and nag-overlay dismissal (the agent clicks the offered reject button), the receipt's `verdict.decide`, `verdict.suggested` and `plan.split` and the `rerun`/`split` next kinds (now `observe`), and every threshold except `answerConfirm`/`answerMargin` (other names in `config.json` are ignored).
+- Also gone with it: automatic cookie-dialog rejection and nag-overlay dismissal (the agent clicks the offered reject button), the receipt's `verdict.decide`, `verdict.suggested` and `plan.split` and the `rerun`/`split` next kinds (now `observe`), and every threshold except `answerConfirm`/`answerMargin` (other names in `config.json` are ignored). The CLI `act` JSON's `verdict.oversight` no longer reports `confirm`.
 
 ## 0.6.2 (2026-11-10)
 

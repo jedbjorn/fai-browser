@@ -927,7 +927,7 @@ export type NextKind = 'answer' | 'choose' | 'observe' | 'relay' | 'approve' | '
 /** Receipt v2 verdict: runtime-written and trusted, except `answer.text` (page text). */
 export interface Verdict {
   kind: 'verified' | 'likely' | 'needs_decision' | 'needs_user' | 'failed';
-  oversight: 'none' | 'confirm' | 'choose' | 'instruct' | 'approve' | 'user';
+  oversight: 'none' | 'choose' | 'instruct' | 'approve' | 'user';
   /**
    * The auto-confirmed answer; null unless the call asks something (answerQuestion, or an instruction with a
    * question or read request outside quoted labels): an action-only call has `why` `answer:not_asked`. `line` is the

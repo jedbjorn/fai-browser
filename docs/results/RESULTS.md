@@ -17,10 +17,6 @@ FAI with Opus 5.5 averages **8.6 s/task** over the per-task medians; Sonnet 5.5 
 
 Luna and Terra are the cheapest host tiers. On the first matrix (2026-10-04 midday) they passed 21/24 and 17/24 with FAI: the receipt's answer was a whole page line that cheap hosts copied verbatim, and Terra sometimes failed to find the MCP tool behind Codex's tool search. Both were FAI-side fixes (the answer value is now cut from the line; the skill and tool text name the tool exactly). The clean rerun (`2026-10-04-matrix-3-weak-b`, contiguous timeline, 3 repeats, on the build that also includes the guardrail pass) passes 24/24 on both: Luna 13.5 s/task at $0.0014, Terra 12.8 s/task at $0.020. Their Playwright MCP baselines are from the earlier matrix (`2026-10-04-matrix-2`); the baseline does not use FAI, so those fixes do not affect it.
 
-![](../../bench/report/out/all-hosts/report-1600.png)
-
-![](../../bench/report/out/all-hosts/report-social-1080x1350.png)
-
 <!-- results:begin -->
 ## Measured comparison
 
