@@ -463,8 +463,8 @@ test('runtime act returns the next offered actions on the landing page, remember
   assert.ok(lean.actions.some(action => action.description === 'click "Ada"'));
   assert.equal(lean.moreActions, offer.dropped);
   assert.equal(lean.next.kind, 'choose');
-  assert.match(lean.next.text, /call fai_browser_act with requestId .* one actions\[\]\.id as actionId and revision/);
-  assert.match(lean.next.text, /fai_browser_run/);
+  assert.match(lean.next.text, /fai_browser_act with one actions\[\]\.id and revision/);
+  assert.doesNotMatch(lean.next.text, /fai_browser_run/);
   assert.equal(agentResult(lean).actions.length, lean.actions.length, 'idempotent');
   // A second act on the new revision, with no observe in between; an expectation that passes ends it completed.
   const second = await runtime.act(ada.id, { revision: offer.revision, expectation: { urlIncludes: '/members/ada' } });
