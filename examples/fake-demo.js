@@ -1,4 +1,4 @@
-// Deterministic SDK demonstration. Does not launch Chrome or contact a provider.
+// Deterministic SDK demonstration. Does not launch Chrome.
 import { BrowserRuntime } from '../src/runtime.js';
 
 const ORIGIN = 'http://127.0.0.1:8765';
@@ -45,17 +45,11 @@ const bridge = {
   },
 };
 
-// Deterministic provider: click the About link.
-const provider = {
-  model: 'demo-provider',
-  async decide(page, actions) {
-    const about = actions.find(action => action.type === 'click' && action.label === 'About');
-    return { actionId: about ? about.id : 'done', confidence: 1 };
-  },
-};
-
-const browser = new BrowserRuntime({ bridge, provider });
-const result = await browser.run('Open About', { expectation: { titleEquals: 'About' } });
+// The host-driven loop: observe the page, then act on the offered About link with an expectation to verify.
+const browser = new BrowserRuntime({ bridge });
+const page = await browser.observe({ allowedOrigins: [ORIGIN] });
+const about = page.actions.find(action => action.type === 'click' && action.label === 'About');
+const result = await browser.act(about.id, { expectation: { titleEquals: 'About' } });
 
 // Shorten base64 so the printed schema stays readable.
 const printable = JSON.parse(JSON.stringify(result));

@@ -49,7 +49,7 @@ Requires Node 22+ and Chrome/Chromium 116+. The runtime has no npm dependencies,
 
 ```sh
 npm test
-node examples/fake-demo.js   # deterministic provider and in-memory bridge; prints a v1 result
+node examples/fake-demo.js   # in-memory bridge; observe, then act; prints a result
 ```
 
 ## One-time setup
