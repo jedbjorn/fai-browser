@@ -28,9 +28,9 @@ Tag the clean release commit as `vX.Y.Z` and push the tag. The workflow verifies
 and Firefox lint, builds a reproducible ZIP, signs through AMO, then publishes the signed XPI, unsigned ZIP,
 `updates.json` and `SHA256SUMS`. A draft or prerelease is not offered as the latest automatic update.
 
-Only a final release may get a plain `vX.Y.Z` tag: while the repository is private, the self-updater finds releases
-with `git ls-remote --tags` (it cannot see GitHub's draft or prerelease flags), and every pushed `vX.Y.Z` tag counts as
-a release there. Tag a prerelease `vX.Y.Z-rc.N`, which never counts ([Updates](REFERENCE.md#updates)).
+Only a final release may get a plain `vX.Y.Z` tag: when GitHub's releases API answers 404 (a fork without releases,
+for example), the self-updater falls back to `git ls-remote --tags` (it cannot see GitHub's draft or prerelease flags),
+and every pushed `vX.Y.Z` tag counts as a release there. Tag a prerelease `vX.Y.Z-rc.N`, which never counts ([Updates](REFERENCE.md#updates)).
 
 For local signing, store the same two variables in the environment or `amo.env` in the FAI settings directory with
 mode `0600`; `npm run sign:firefox -- --yes` reads them without printing their values. Follow with

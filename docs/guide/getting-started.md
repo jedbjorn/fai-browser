@@ -54,7 +54,7 @@ turn on **Developer mode**, click **Load unpacked** and select the `extension/` 
 manifest, so the native host already trusts it.
 
 In Firefox the FAI Browser button is on the toolbar from the start; in Chromium **pin the FAI Browser icon** (puzzle-piece
-menu, then the pin). You approve agent requests by clicking it.
+menu, then the pin). It holds the popup's controls and invites, and is one way to approve agent requests.
 
 The extension should now say it is paired. If not, click **Pair with the FAI service** in the popup, or see
 [troubleshooting](troubleshooting.md).
@@ -80,12 +80,19 @@ Ask your agent: *"Use FAI Browser to open http://127.0.0.1:8080/ and tell me wha
 What happens:
 
 1. The agent calls `fai_browser_open` with the origin, a reason and the lowest level that works (Read for a plain look).
-2. A page opens in a new window with a small prompt next to it. **Click the FAI Browser icon on that page** to approve. You can lower the level in the
-   prompt. (A request for **Act** or **Test site** shows the FAI Browser window first, where you confirm the level and click **Open**.)
+2. The page opens in a new task tab in your existing browser window, with a request modal next to it. Click **Approve**
+   there (allow the browser's site access if it asks), or click the FAI Browser icon on that tab. You can lower the level
+   before approving. (A request for **Act** or **Test site** shows the FAI Browser window first, where you confirm the
+   level and click **Open**.)
 3. The agent receives the page: a digest, the actions you allowed, a revision.
 4. It answers, or acts (`fai_browser_act`) and gets the next page.
 
-Pause or stop at any time from the popup; the tab is marked with a `FAI` tab group while the agent has it.
+Pause or stop at any time from the popup; the tab is marked with a `FAI` tab group while the agent has it. After you
+approve or resume, a Claude Code, Codex or OpenCode session that FAI can wake continues by itself (see
+[troubleshooting](troubleshooting.md) for the versions); otherwise tell the agent to continue.
+
+You can also start from a page you already have open: the popup's **Invite an agent to this tab** hands that tab to a
+running agent session at the level you choose ([REFERENCE: Invites and wakes](../REFERENCE.md#invites-and-wakes)).
 
 ## Levels in one minute
 

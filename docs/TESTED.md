@@ -119,7 +119,7 @@ user must clear, one handed back to the host, and one (Google Flights) is an ope
 
 ### A signed-in app, headed
 
-One headed run on the author's own signed-in workspace app (a button-driven single-page app, not public) in
+One headed run on a signed-in, button-driven single-page app (not public) in
 `reversible` mode: click Projects and read the panel. Jev chose the click at 0.99 confidence, two decisions,
 1.07 s, verified. A chat transcript on the same app scored 0.83 on the injection guard, which is now a negative
 case in the Jev evaluation set.

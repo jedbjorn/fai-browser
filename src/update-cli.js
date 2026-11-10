@@ -64,7 +64,7 @@ async function liveRequests({ home, env }) {
 }
 
 const NEXT = 'Restart your coding agent so it loads the new MCP server and skill. A Chromium-family browser reloads '
-  + 'the extension by itself; Firefox updates the signed add-on by itself (not while the repository is private).';
+  + 'the extension by itself; Firefox updates the signed add-on by itself.';
 
 /**
  * Run the command. `options` replace the network and process steps in tests: `fetch`, `gitSource`, `steps`, `git`,

@@ -5,14 +5,12 @@ privately first.
 
 ## Reporting a vulnerability
 
-**Please do not open a public issue.** Use GitHub's private vulnerability reporting:
+**Please do not open a public issue.** Use GitHub's private vulnerability reporting (enabled on this repository), the primary channel:
 
 1. Go to the repository's **Security** tab, then **Report a vulnerability**
    (`https://github.com/jedbjorn/fai-browser/security/advisories/new`).
 2. Describe what you found, how to reproduce it (a fixture page or a short MCP session is ideal), the affected version or
    commit, and what an attacker gains.
-
-If you cannot use GitHub advisories, email info@designs-os.com with "FAI Browser security" in the subject (no details in public issues).
 
 What to expect: an acknowledgement within 3 working days, a first assessment within 10, and a fix or mitigation plan
 within 30 days for confirmed issues, coordinated with you on disclosure. Credit in the advisory and the changelog unless you prefer not to be named.
@@ -71,9 +69,10 @@ Read these before relying on FAI for anything sensitive.
 - **The host model sees the page.** The redacted digest and screenshots go to your agent's model provider. Redaction
   reduces what they contain; it does not make a page private. With the experimental Jev autopilot the page digest also goes to the Jev provider.
 - **Secrets the redactor cannot recognize.** Heuristics, not proof: a short password in plain prose, a value split across
-  elements, text drawn on a canvas, text inside images and closed shadow roots are not found. Cross-origin frames are never
-  read, so their text cannot be redacted because it is never returned; on screenshots, payment and sign-in widget frames are
-  always boxed, and in Strict mode (or on a secret page) every canvas, other cross-origin frame and code block is boxed too.
+  elements, text drawn on a canvas, text inside images and closed shadow roots are not found. A cross-origin frame is read
+  only when its own origin is one you approved (then the same redaction applies inside it); other cross-origin frames are
+  never read, so their text is never returned, and screenshots box every cross-origin frame, `<object>` and `<embed>` FAI did
+  not read. In Strict mode (or on a secret page) every canvas and code block is boxed too.
   A page that is itself sensitive (a bank statement) is readable at Read level: redaction targets credentials, not personal data.
 - **Values you hand the agent.** Anything in `suppliedText` is typed into the page, which can read it. Do not give an agent passwords or codes; use secret handles.
 - **The clipboard.** `copy_secret` writes a value to the OS clipboard (after you approve). Other local programs, the agent's shell included, can read the clipboard until something else replaces it. The approval card says so.
@@ -108,7 +107,7 @@ reference sections [Guardrails](docs/REFERENCE.md#guardrails), [Approve gate](do
 ## For users: staying safe
 
 - Approve requests by reading the card: site, level, reason. Deny what you did not expect.
-- Use the lowest level; use a separate browser profile for agent work (the planned Firefox launcher creates one) and do not stay signed in to accounts the task does not need.
+- Use the lowest level; use a separate browser profile for agent work (`node src/cli.js launch` creates one for Firefox) and do not stay signed in to accounts the task does not need.
 - Run setup yourself; never paste a key or the pairing secret into a chat.
 - Keep the extension and the package up to date.
 

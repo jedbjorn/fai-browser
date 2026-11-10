@@ -4,7 +4,7 @@
 //
 // Order: refuse unless the checkout is safe to move (a git clone of UPDATE_REPO, no local modifications, on main with
 // nothing unpushed or on a detached HEAD, no tab lease active or paused), `git fetch --tags` from that remote, check
-// the tag names the commit the release names (GitHub's API, or `git ls-remote` for a private repository) and its
+// the tag names the commit the release names (GitHub's API, or the `git ls-remote` fallback after an API 404) and its
 // package.json the release's version, then move:
 //   - HEAD already at the release commit: nothing to move (the CLI finishes an interrupted update instead);
 //   - on main: fast-forward main to the tag's commit (`git merge --ff-only`); refused when main has commits the tag

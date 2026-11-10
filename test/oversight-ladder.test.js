@@ -275,7 +275,7 @@ test('rung 1c: a link click that settles quiet on the same URL is re-observed on
 
 test('rung 1c: a button click that settles quiet and changes nothing is re-observed once; a changing one is not',
   async () => {
-    // An app's top nav of buttons whose navigation starts after the click settled (dos-arch, live 2026-10-06).
+    // An app's top nav of buttons whose navigation starts after the click settled (a live signed-in app, 2026-10-06).
     const nav = { id: '1', role: 'button', label: 'Projects', lateHref: `${ORIGIN}/projects` };
     const pages = {
       '/workspace': { title: 'Workspace', text: 'Workspace home', controls: [nav] },
