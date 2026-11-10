@@ -67,11 +67,6 @@ body:
     attributes:
       label: Coding agent
       options: [Claude Code, Codex, OpenCode, Other MCP client, CLI only]
-  - type: dropdown
-    id: driver
-    attributes:
-      label: Driver
-      options: ["Your agent (default)", "Jev autopilot (experimental)"]
   - type: textarea
     id: logs
     attributes:

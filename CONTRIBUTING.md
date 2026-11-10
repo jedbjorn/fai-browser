@@ -39,7 +39,7 @@ before proposing one.
 | `src/guardrails.js`, `src/oversight.js`, `src/origins.js` | Permission levels, label rules, origin matching (Public Suffix List based) |
 | `src/secrets.js` | Secret redaction rules |
 | `src/native.js`, `src/native-host.js`, `src/install.js`, `src/home.js`, `src/settings.js` | Native messaging pairing, agent registration, per-user state and settings |
-| `src/typesafe.js`, `src/steps.js`, `src/facts.js`, `src/domains.js` | The experimental Jev autopilot, step lists, fact memory and site profiles |
+| `src/facts.js` | Fact memory: answer candidates across the pages an act visited |
 | `extension/` | The browser extension: `background.js` (service worker / Firefox event page), `page.js` (the content script that reads the page and acts), `offscreen.js` (screenshot redaction, clipboard), popup and approval UI, `compat.js` (Firefox shim) |
 | `skills/fai-browser/`, `tasks/` | The host-facing skill and task sub-skills (flight and hotel search) |
 | `fixtures/`, `test/` | Local fake sites and the test suite |

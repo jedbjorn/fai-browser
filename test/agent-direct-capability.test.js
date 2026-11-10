@@ -8,7 +8,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createDaemon } from '../src/daemon.js';
-import { homePaths, saveDriver } from '../src/home.js';
 import { GATE_MAX_WAIT_MS, MAX_BATCH_FILLS, MAX_TYPED_CHARS, TOOLS } from '../src/mcp.js';
 import { MAX_BATCH_FILLS as RUNTIME_BATCH, MAX_TYPED_CHARS as RUNTIME_CHARS, pressKey } from '../src/runtime.js';
 import { directMessage, directNext } from '../src/result.js';
@@ -42,7 +41,6 @@ export const FORM_PAGES = {
 
 export async function setup(t, { pages = FORM_PAGES, env = {} } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-capability-'));
-  saveDriver('agent', homePaths({ home, env: {} }));
   const hub = createFakeHub({ bridgeOptions: { pages } });
   const daemon = createDaemon({ home, env: {}, port: 0, hub,
     providerFactory: () => { throw new Error('Agent direct must never construct a provider'); } });

@@ -10,7 +10,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createDaemon } from '../src/daemon.js';
-import { homePaths, saveDriver } from '../src/home.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
 import { ORIGIN, link } from './runtime-fixtures.js';
@@ -35,7 +34,6 @@ async function until(predicate, what, ms = 8000) {
 
 async function setup(t, { clientName = 'claude-code', env = {}, socket = true } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-invite-mcp-'));
-  saveDriver('agent', homePaths({ home, env: {} }));
   const hub = createFakeHub({ bridgeOptions: { pages: PAGES } });
   const daemon = createDaemon({ home, env: {}, port: 0, hub, providerFactory: () => { throw new Error('no provider'); } });
   await daemon.listen();

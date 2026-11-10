@@ -6,7 +6,6 @@ description: Operate user-approved browser tabs for live tasks, never research o
 # FAI Browser
 
 Tool search: `mcp__fai-browser__fai_browser_open` or `mcp__fai_browser__fai_browser_open`.
-Your agent drives by default; for driver `jev` (`fai_browser_status`) use [jev.md](jev.md), same hard rules.
 Flights or hotels: read `tasks/<name>/SKILL.md` beside this file first (`tasks/flights/SKILL.md`, `tasks/hotels/SKILL.md`).
 
 ## A. Open the task

@@ -1,5 +1,7 @@
 # QA/QC corpus
 
+> Note: the runner this page describes (`bench/qa/run.mjs`, `bench/qa/session.mjs`, `--sim-jev`) drove the experimental Jev autopilot and was removed with it after 0.6.2. The pages (`fixtures/qa`), `tasks.json`, `serve.mjs` and `lib.mjs` remain; run the corpus through a host with `npm run bench:compare -- --tasks-file bench/qa/tasks.json`. The rest of this page is history.
+
 A local, deterministic corpus of the page types that break browser agents, and a runner that drives FAI Browser with
 the TypeSafe Jev provider directly (no coding agent, no Codex quota) against it. Where `bench/real/probe.mjs` shows
 what live sites do today, this corpus gives the same failure classes as a repeatable regression suite: consent

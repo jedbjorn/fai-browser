@@ -67,7 +67,7 @@ Typical job: copy a new API key from one site into another site's settings field
 3. Acting on it opens the approval window: *"Paste secret:3 (openai key from platform.openai.com) into 'API key' on vercel.com"*, with a warning if the origins differ. It always asks, at every level, whatever the Approve-gate settings.
 4. After a fill, the field is a secret field: never offered again, boxed on screenshots, and the page's own echo of the value is redacted.
 
-The value appears nowhere in the API. A run (Jev) is never offered a secret action. Secret handles do not fill password
+The value appears nowhere in the API. Secret handles do not fill password
 sign-in forms, including in Test site mode; a sign-in task may require a user handoff.
 
 ## Limits
