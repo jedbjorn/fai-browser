@@ -25,7 +25,6 @@ import {
   CLASS_CAPABILITY, LEVELS, SAFE_SUBMIT, capabilitiesOf, clampLevel, guardrailPolicy, isLevel, labelClasses,
   labelSpellings, labelTier, levelFor, levelRank, paymentField, purchaseControl, purchasePage, secretAction,
 } from './guardrails.js';
-import { agentAddressed, resolveProfiles, statusFilter } from './domains.js';
 import { scrubSecrets, secretIds } from './secrets.js';
 import { capActions, capOffer, rankActions, relevanceHints, relevanceScore } from './relevance.js';
 
@@ -106,6 +105,11 @@ const WHICH_QUESTION = /\b(which|what (?:item|product|flight|one))\b/i;
 // A remembered line that addresses an agent or asserts the answer ("the answer is 555-0000") stays trail context and
 // is never an answer candidate: an earlier page must not be able to plant the run's answer.
 const ANSWER_ASSERTED = /\b(?:the|correct|real|true|final|right)\s+answer\s*(?:is|:|=)|\banswer\s+(?:with|only)\b|\b(?:reply|respond|say|output)\s+(?:with|only|that)\b/i;
+// Page text addressed to an agent ("ignore previous instructions", "AI assistant:"): never auto-confirmed as an answer.
+const AGENT_ADDRESSED = /\b(?:ignore (?:all |any )?(?:earlier|previous|prior|above|other) instructions|(?:ai|llm) (?:agent|assistant)s?\b|dear (?:agent|assistant|ai)|system prompt|(?:agents?|assistants?|ai|bots?)\s*:\s)/i;
+function agentAddressed(observation) {
+  return AGENT_ADDRESSED.test(`${String(observation?.title ?? '').slice(0, 180)}\n${String(observation?.text ?? '').slice(0, 12000)}`);
+}
 function plantedLine(text) {
   return ANSWER_ASSERTED.test(text) || agentAddressed({ text });
 }
@@ -146,111 +150,6 @@ const GUARD_NOTE = 0.5;
 export const INJECTION_NOTE = 0.8;
 const GUARD_NAMES = ['blocked', 'injection', 'commit', 'purchase_control', 'purchase_page'];
 const SPLIT_HOPS = 3;
-
-// In-call retries (run option `retry`, default on; docs/REFERENCE.md "In-call retries"): before handing a result
-// back to the host, the runtime does the obvious next step itself. The bounds hold per call: a self-rerun shares them
-// with the attempt it follows.
-//   secondOpinion  links only: one more decide with the options in reverse order when a link choice is close to the
-//                  next link (gap under thresholds.secondOpinionMargin) or below linkFloor, or a handoff is close to
-//                  the best link. The agreed or more confident choice runs, but a second look can only pick a link
-//                  (or hand off instead of a link): buttons, selects and fills keep the first decision, its floor and
-//                  its alternatives. At most MAX_SECOND_OPINIONS per call.
-//   backOut        read-only runs only: after a link landed on a page where the expectation fails and the provider
-//                  handed off, navigate back to the page before the link once and decide again without that link.
-//   rerun          read-only runs only: a result whose next step is `rerun` with a concrete suggested instruction
-//                  (never after expectation_failed, _mismatch or _error) runs once in the same call with the host's own expectation and
-//                  the remaining actions, decisions and time, and returns its result.
-// Request cap: requestCap = maxDecisions + MAX_SECOND_OPINIONS + CALL_EXTRA_REQUESTS only stops retries from starting:
-// no second opinion or rerun starts once the call has sent that many requests (Session.retryRoom). It is not a hard
-// cap on the call. Decides stay within maxDecisions and second opinions within MAX_SECOND_OPINIONS, but answer
-// rankings are not capped: per attempt an early ranking that is discarded plus its serial fallback can add 2, so a
-// call with a self-rerun can send about maxDecisions + 6 requests (more if several early rankings are discarded).
-// slim.terminal adds at most one more: its requests count against requestCap (they are provider requests like any
-// other), a confirmed one replaces the full decide it ends the run with, and after the first fallback the call never
-// sends another, so about maxDecisions + 7 with it on. Each site-profile fast hop and each stale re-resolve adds its
-// slim guards request (site_guards / stale_guards) on top: about maxDecisions + 7 + fast hops + re-resolves.
-// A run or list step that ends on its own expectation (endOnPass) sends step_guards instead of its terminal decide; a
-// failed one falls back to that decide. A step list repeats the per-attempt ranking (2) and step_guards (1) per step:
-// about maxDecisions + 3 x steps + 7 (MCP single run at maxActions 60: ~71; 15 steps at 60 actions: ~157, at 120: ~217).
-export const RETRY_KINDS = Object.freeze(['secondOpinion', 'backOut', 'rerun']);
-export const MAX_SECOND_OPINIONS = 2;
-export const MAX_BACK_OUTS = 1;
-export const MAX_RERUNS = 1;
-// Answer rankings allowed for in requestCap (one per attempt); rankings themselves are not capped by it.
-export const CALL_EXTRA_REQUESTS = 2;
-// The shared per-call retry counters travel to a self-rerun's configure() under this key, never from a caller.
-const RETRY_STATE = Symbol('retryState');
-
-/**
- * Resolve the `retry` run option: undefined or true turns every in-call retry on, false turns them all off, and an
- * object replaces single switches (`{"rerun": false}`). Unknown names and non-boolean values throw.
- */
-export function resolveRetry(value) {
-  if (value === undefined || value === null || value === true) return Object.fromEntries(RETRY_KINDS.map(kind => [kind, true]));
-  if (value === false) return Object.fromEntries(RETRY_KINDS.map(kind => [kind, false]));
-  if (typeof value !== 'object' || Array.isArray(value)) throw new TypeError('retry must be a boolean or an object');
-  const resolved = Object.fromEntries(RETRY_KINDS.map(kind => [kind, true]));
-  for (const [kind, flag] of Object.entries(value)) {
-    if (!RETRY_KINDS.includes(kind)) throw new TypeError(`Unknown retry switch "${kind}"`);
-    if (typeof flag !== 'boolean') throw new TypeError(`retry.${kind} must be a boolean`);
-    resolved[kind] = flag;
-  }
-  return resolved;
-}
-
-// Slim provider requests (each switch measurable on its own; bench/request-size.mjs, bench/jev-eval.mjs --slim):
-//   controls  every control sent once: offered links only as their option, with a relative path for the most
-//             relevant, vague-labelled or same-labelled links; other controls without hrefs (src/typesafe.js
-//             compactPlan). The runtime's own checks (labels, risk classes, origins, guards) read the full
-//             observation and are unchanged.
-//   terminal  on a page where the expectation already passes, first ask only done and the blocked/injection guards
-//             (provider.confirm, no controls, no action question); the run completes there when done reaches
-//             doneThreshold, otherwise the full decide follows as before (cost.requests kind `terminal`,
-//             `fallback: true`; the fallback does not count against maxDecisions).
-//   cap       at most DEFAULT_OPTION_CAP (40) non-terminal options per request: scrolling, waiting, explicit URLs,
-//             consent buttons and links whose destination satisfies the expectation always, then the most relevant
-//             to the instruction, answerQuestion and expectation (src/relevance.js capActions), in the offered order;
-//             handoff stays last. Only the provider's request is capped: alternatives, decide options and act() keep
-//             the full offered set. cost.requests records `optionsDropped`.
-export const SLIM_KEYS = Object.freeze(['controls', 'terminal', 'cap']);
-/** Defaults: off until the live gates (jev-eval accuracy, QA verified rate) confirm a switch. */
-export const DEFAULT_SLIM = Object.freeze({ controls: false, terminal: false, cap: false });
-
-/**
- * Resolve the `slim` run option: undefined → DEFAULT_SLIM, true/false → every switch on/off, an object →
- * DEFAULT_SLIM with those switches replaced. Unknown names and invalid values throw.
- */
-export function resolveSlim(value) {
-  if (value === undefined || value === null) return { ...DEFAULT_SLIM };
-  if (typeof value === 'boolean') return Object.fromEntries(SLIM_KEYS.map(key => [key, value]));
-  if (typeof value !== 'object' || Array.isArray(value)) throw new TypeError('slim must be a boolean or an object');
-  const resolved = { ...DEFAULT_SLIM };
-  for (const [key, flag] of Object.entries(value)) {
-    if (!SLIM_KEYS.includes(key)) throw new TypeError(`Unknown slim switch "${key}"`);
-    if (typeof flag !== 'boolean') throw new TypeError(`slim.${key} must be a boolean`);
-    resolved[key] = flag;
-  }
-  return resolved;
-}
-
-/**
- * A `slim` value from command-line text: "on"/"off" (also true/false), a JSON object, or the comma-separated switches
- * to turn on, every other switch off ("controls"). Throws on unknown names.
- */
-export function slimFromText(text) {
-  const value = String(text ?? '').trim();
-  if (/^(?:on|true|all)$/i.test(value)) return true;
-  if (/^(?:off|false|none)$/i.test(value)) return false;
-  if (value.startsWith('{')) {
-    const parsed = JSON.parse(value);
-    resolveSlim(parsed);
-    return parsed;
-  }
-  const names = value.split(',').map(part => part.trim()).filter(Boolean);
-  if (!names.length) throw new TypeError('slim names no switch');
-  for (const name of names) if (!SLIM_KEYS.includes(name)) throw new TypeError(`Unknown slim switch "${name}"`);
-  return Object.fromEntries(SLIM_KEYS.map(key => [key, names.includes(key)]));
-}
 
 const CAPTURE_POLICIES = new Set(['each', 'last', 'none']);
 // The capability a refused intent (commitIntent) needs, for the level a refusal names when no blocked control does.
@@ -1534,9 +1433,6 @@ function configure(options, { step = false } = {}) {
       scope: siteRoots(options.allowedOrigins).length ? 'domain' : 'origin',
     },
     maxActions,
-    // A stale retry that decides again costs a decision (a stale link re-resolve does not), and a run without an
-    // expectation may spend one final decision on `done`.
-    maxDecisions: options.maxDecisions ?? (step ? 2 : maxActions + 3),
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     capture: options.capture ?? 'last',
     allowedOrigins: options.allowedOrigins,
@@ -1562,23 +1458,7 @@ function configure(options, { step = false } = {}) {
     signal: options.signal,
     runId: options.runId,
     step,
-    retry: resolveRetry(options.retry),
-    slim: resolveSlim(options.slim),
-    // Counters shared by every attempt of one call (second opinions, back-outs, reruns).
-    retryState: options[RETRY_STATE] ?? {
-      secondOpinions: 0, backOuts: 0, reruns: 0, requests: 0, requestCap: null,
-      // slim.terminal: pages (URLs) already asked once, and whether a fallback has ended it for the call.
-      terminalUrls: new Set(), terminalOff: false,
-      // Stale re-resolve: pages (URLs) where a stale link was kept for one, and whether a guard stop has ended them.
-      staleUrls: new Set(), staleOff: false,
-      // Rung 1c late change: off for the call (a list: for the step) once a wait saw no change.
-      lateChangeOff: false,
-      // Its short look (lateLook 'short'): off for the call once one saw no change.
-      lateLookOff: false,
-    },
   };
-  // The call's provider request cap, fixed by the host's first attempt (a rerun's smaller budget never changes it).
-  config.retryState.requestCap ??= config.maxDecisions + MAX_SECOND_OPINIONS + CALL_EXTRA_REQUESTS;
   // Guardrails (src/guardrails.js): core rules plus additions from config (`guardrails`) and the request (`policy`).
   // Invalid additions throw here, before any observation or provider call.
   const inherited = typeof options.guardrails?.forbids === 'function';
@@ -1587,17 +1467,8 @@ function configure(options, { step = false } = {}) {
     : guardrailPolicy(inherited && options.policy === undefined
       ? { mode: config.mode, merged: options.guardrails.additions }
       : { mode: config.mode, request: options.policy, config: inherited ? options.guardrails.additions : options.guardrails });
-  // Site profiles (src/domains.js, experimental): the `profiles` switch and the store that matches them by origin.
-  config.profiles = resolveProfiles(options.profiles);
-  if (options.domains !== undefined && options.domains !== null && typeof options.domains?.match !== 'function') {
-    throw new TypeError('domains must be a profile store with match(origin)');
-  }
-  config.domains = options.domains ?? null;
-  config.siteProfiles = null;
-  if (config.allowedOrigins) attachProfiles(config);
   if (!CAPTURE_POLICIES.has(config.capture)) throw new TypeError('capture must be "each", "last" or "none"');
   checkInteger('maxActions', config.maxActions, LIST_MAX_ACTIONS);
-  checkInteger('maxDecisions', config.maxDecisions, 200);
   checkInteger('timeoutMs', config.timeoutMs, 300000);
   if (!Number.isInteger(config.reobserveDelayMs) || config.reobserveDelayMs < 0 || config.reobserveDelayMs > 5000) {
     throw new RangeError('reobserveDelayMs must be an integer from 0 to 5000');
@@ -1638,34 +1509,6 @@ function configure(options, { step = false } = {}) {
   config.allowedUrls = [...config.allowedUrls];
   config.suppliedText = { ...config.suppliedText };
   return config;
-}
-
-/**
- * Match the site profiles of the approved origins (exact origin match; a domain root's covered origins) once per run and merge their `restrict.forbid`
- * phrases into the guardrail additions, after config and request (src/guardrails.js `site`): a profile can only add
- * refusals. With the switch off or no store, no profile applies and nothing changes.
- */
-function attachProfiles(config) {
-  if (config.siteProfiles !== null) return config.siteProfiles;
-  config.siteProfiles = [];
-  if (!config.domains || !config.profiles.enabled) return config.siteProfiles;
-  for (const origin of new Set(config.allowedOrigins ?? [])) {
-    let profiles = [];
-    try {
-      // A domain root attaches the profiles of the origins it covers (src/domains.js matchSite); an exact origin its own.
-      profiles = siteRoots([origin]).length
-        ? config.domains.matchSite?.(origin) ?? []
-        : [config.domains.match(origin)];
-    } catch {
-      profiles = [];
-    }
-    for (const profile of profiles) if (profile && !config.siteProfiles.includes(profile)) config.siteProfiles.push(profile);
-  }
-  const forbid = config.siteProfiles.flatMap(profile => profile.forbid ?? []);
-  if (forbid.length) {
-    config.guardrails = guardrailPolicy({ mode: config.mode, merged: config.guardrails.additions, site: forbid });
-  }
-  return config.siteProfiles;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1737,10 +1580,6 @@ class Session {
     });
     // The entry of the latest decide request, marked with the step it executed (if any) by execute().
     this.lastRequest = null;
-    // In-call retries of this attempt ({kind, why, outcome, ...}, trusted, no page text) and the second-opinion
-    // decides, which do not count against maxDecisions.
-    this.retries = [];
-    this.extraDecisions = 0;
     // A self-rerun for late content: wait for the placeholder on the first page before deciding.
     this.awaitLoading = false;
     // A self-rerun numbers its steps after the first attempt's, so the merged result (and the daemon's live
@@ -1752,9 +1591,6 @@ class Session {
     this.asked = null;
     // Actions counted against maxActions in this attempt (the loop's counter, mirrored for rerunPlan).
     this.actionsTaken = 0;
-    // Site-profile state of a provider-driven run (src/domains.js SiteRun), set once by startSite().
-    this.site = null;
-    this.siteStarted = false;
     // The expectation already passed on the start page while the instruction names an action (notePrepass).
     this.prepass = false;
     // The run's provider-chosen actions for earlyEnd ({changed, labelled, texts}), in order (hopEvent).
@@ -1813,15 +1649,11 @@ class Session {
   }
 
   /**
-   * The loading placeholders of an observation (src/digest.js loadingBlocks, without the persistent status texts this
-   * run has seen), less the status lines the attached site profiles name for that page (profiles on; Google Flights
-   * keeps "Loading results" on every results page), which need no settle waits to be known.
+   * The loading placeholders of an observation (src/digest.js loadingBlocks), without the persistent status texts
+   * this run has seen.
    */
   loadingOf(observation) {
-    const blocks = loadingBlocks(observation, this.persistentLoading);
-    if (!blocks.length || !this.config.siteProfiles?.length) return blocks;
-    const status = statusFilter(this.config.siteProfiles, observation);
-    return status ? blocks.filter(block => !status(block.text)) : blocks;
+    return loadingBlocks(observation, this.persistentLoading);
   }
 
   why(code) {
@@ -2551,7 +2383,6 @@ class Session {
   async rankAnswer() {
     const result = this.result;
     const observation = result.observation;
-    this.answerFirst = null;
     if (!ANSWER_STATUSES.has(result.status) || !observation) return;
     const question = this.question();
     if (!question.trim()) {
@@ -2586,9 +2417,6 @@ class Session {
       method,
       candidates: ranked.slice(0, MAX_ANSWER_CANDIDATES).map(({ candidate, confidence }) => answerEntry(candidate, confidence)),
     };
-    // The aggregation's first item, whatever the provider ranked first (receipt(): a complete minimum or maximum).
-    const firstEntry = aggregate ? ranked.find(entry => entry.candidate.aggregate === 0) : null;
-    if (firstEntry) this.answerFirst = answerEntry(firstEntry.candidate, firstEntry.confidence);
     // Where the top candidate was read, when that is an earlier page state (or an aggregation over several).
     const top = ranked[0]?.candidate;
     if (top?.state !== undefined) result.answer.source = { state: top.state, url: top.url };
@@ -2621,25 +2449,6 @@ class Session {
     // The lease's tabs, a JavaScript dialog and Test-site logs on the final page (src/result.js pageExtras).
     const final = this.result.observation;
     if (final) Object.assign(this.result, pageExtras({ tabs: final.tabs, frames: final.frames, ...(this.config.level === 'testing' ? { dialog: final.dialog } : {}) }));
-    if (this.retries.length) {
-      // A back-out's outcome is how the run ended after it.
-      for (const entry of this.retries) if (entry.kind === 'back_out') entry.outcome = this.result.code;
-      this.result.retries = this.retries.map(entry => structuredClone(entry));
-    }
-    if (this.site) {
-      // Trusted: which profile ran, its fast steps and hints, and where the fast path stopped. Counters go to the
-      // profile's stats.json (best effort).
-      if (this.site.pending) this.site.stop('ended');
-      const block = this.site.receipt();
-      if (block) this.result.site = block;
-      for (const { profile, delta } of this.site.deltas()) {
-        try {
-          this.config.domains?.record?.(profile, delta);
-        } catch {
-          // Stats are best effort and must never mask the outcome.
-        }
-      }
-    }
     try {
       await this.rankAnswer();
     } catch (error) {
@@ -2666,52 +2475,6 @@ class Session {
     // Password values (sign_in) the page may echo: out of the page digest, answers, steps, diagnostics and receipt.
     if (this.result.secrets.length) redactSecrets(this.result, this.result.secrets);
     clearTimeout(this.timeoutTimer);
-  }
-
-  /**
-   * The aggregate rule (receipt()): a minimum or maximum the runtime computed over every item it read is the answer
-   * whatever item the provider ranked first. Code computes the values (src/facts.js parses each item's price, time,
-   * rating or count and orders them); the provider says what the page means, so its pick still has to say that the
-   * answer is one of these items. Returns `{ confirmed, code }` (autoConfirm's shape, its answer the aggregation's
-   * first item) or null. It applies when the aggregation is op min or max with a measure, not partial (every page
-   * and item read: no records_cut, more_offered, memory_full, not_verified, list_none or value note), not a tie, every
-   * item has a value of the measure (`unvalued` 0), the question has no condition clause the intent left unread
-   * (`unread`, src/facts.js unreadConditions: "with free cancellation"), the provider ranked the candidates and its top pick is the first
-   * item or another item of the aggregation (`pick` first or item, rankAnswerWith), no page of the run tripped the
-   * injection guard, and the first item passes autoConfirm's own checks (intent, shape, multi-part line) as if it
-   * were the certain top candidate. A pick that is no item at all (`pick` other: a plain block, an earlier line, an
-   * item of another list) keeps the old rule and its `answer:aggregate_disagrees`: the provider read the answer
-   * somewhere else, which says the aggregation may be over the wrong thing (the wrong list, the wrong kind of
-   * value). When the provider's top is the first item and the usual rule already confirms it, nothing changes. The
-   * answer's `confidence` is the provider's probability on the aggregation's items (`mass`), its basis
-   * `aggregate:computed`; `code` is `answer:aggregate_overrides` (the provider ranked another item first) or
-   * `answer:aggregate_confirms` (it ranked the first item first, below answerConfirm or answerMargin). The guards
-   * after it in receipt() (page loading, scope mismatch, blocked page, more_unverified, a join without its trail)
-   * still clear it.
-   */
-  aggregateOverride(question, instruction, confirmed) {
-    const result = this.result;
-    const aggregate = result.answer?.aggregate;
-    const summary = result.answerDetail?.aggregate;
-    const first = this.answerFirst;
-    if (!aggregate || !summary || !first || result.answer.method !== 'provider') return null;
-    if (!['min', 'max'].includes(aggregate.op) || !aggregate.measure || aggregate.partial || aggregate.tie) return null;
-    if (summary.unvalued !== 0 || !['first', 'item'].includes(summary.pick)) return null;
-    // A condition the aggregation did not read ("with free cancellation"): the provider's disagreement is likely that
-    // condition, so the old rule stands (`aggregate:unread_condition`, then `answer:aggregate_disagrees`).
-    if (summary.unread?.length) return null;
-    if (confirmed.answer && result.answer.candidates?.[0]?.aggregate === 0) return null;
-    if ((this.signals.guards?.injection ?? 0) >= INJECTION_NOTE) return null;
-    const computed = autoConfirm({ method: 'provider', candidates: [{ ...first, confidence: 1 }] },
-      { question, instruction, thresholds: this.config.thresholds });
-    if (!computed.answer) return null;
-    const answer = {
-      ...computed.answer,
-      confidence: Number.isFinite(summary.mass) ? summary.mass : first.confidence,
-      basis: ['aggregate:computed', ...computed.answer.basis.filter(entry => !entry.startsWith('candidate>=')
-        && !entry.startsWith('margin:'))],
-    };
-    return { confirmed: { ...computed, answer }, code: summary.pick === 'item' ? 'answer:aggregate_overrides' : 'answer:aggregate_confirms' };
   }
 
   /**
@@ -2790,10 +2553,7 @@ class Session {
     const asks = this.asks();
     if (!asks && result.answer?.candidates?.length) why.push('answer:not_asked');
     if (asks && ANSWER_STATUSES.has(result.status) && question.trim()) {
-      let confirmed = autoConfirm(result.answer, { question, instruction, thresholds: config.thresholds });
-      // A complete minimum or maximum is computed, not ranked: its first item is the answer (aggregateOverride).
-      const override = this.aggregateOverride(question, instruction, confirmed);
-      if (override) confirmed = override.confirmed;
+      const confirmed = autoConfirm(result.answer, { question, instruction, thresholds: config.thresholds });
       answer = confirmed.answer;
       // A join task's answer depends on an earlier page: without a trail line the final page alone is not enough.
       if (answer && join && !result.trail?.length) {
@@ -2823,7 +2583,7 @@ class Session {
       // (aggregateOverride: a complete minimum or maximum whose items the provider's pick is one of).
       const aggregate = result.answer?.aggregate;
       if (aggregate) {
-        const top = override ? this.answerFirst : result.answer.candidates?.[0];
+        const top = result.answer.candidates?.[0];
         let blocked = null;
         if (aggregate.op === 'filter') blocked = 'answer:aggregate_filter';
         else if (aggregate.partial) blocked = 'answer:aggregate_partial';
@@ -2832,8 +2592,6 @@ class Session {
         if (answer && blocked) {
           answer = null;
           why.push(blocked);
-        } else if (answer && override) {
-          why.push(override.code);
         }
         if (answer && !blocked && WHICH_QUESTION.test(question)) {
           // "Which tent ... and what does it cost?": the item line is the answer, not only its price.
@@ -2842,7 +2600,7 @@ class Session {
           delete answer.line;
         }
       }
-      const fromState = (override ? this.answerFirst : result.answer?.candidates?.[0])?.source?.state !== undefined;
+      const fromState = result.answer?.candidates?.[0]?.source?.state !== undefined;
       if (answer && fromState && !aggregate && result.answerDetail?.aggregateIntent) {
         // An aggregating question whose items are on the final page: an earlier-state line is not one of them.
         answer = null;
@@ -2855,7 +2613,7 @@ class Session {
       }
       // A remembered line is ranked with its section heading in front; the confirmed value is the line itself.
       const heading = result.answer?.candidates?.[0]?.source?.heading;
-      if (answer && !override && heading && result.answer.candidates[0].aggregate === undefined) {
+      if (answer && heading && result.answer.candidates[0].aggregate === undefined) {
         const prefix = `${heading} › `;
         const strip = text => (typeof text === 'string' && text.startsWith(prefix) ? text.slice(prefix.length) : text);
         answer = { ...answer, text: strip(answer.text) };
@@ -2948,12 +2706,6 @@ class Session {
       }
     }
     return Object.keys(suggested).length ? suggested : null;
-  }
-
-  /** Whether the call's provider request cap leaves room for `count` more requests (in-call retries only). */
-  retryRoom(count) {
-    const state = this.config.retryState;
-    return state.requests + count <= state.requestCap;
   }
 
 }
