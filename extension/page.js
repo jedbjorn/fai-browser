@@ -45,7 +45,7 @@
   const SAFE_SUBMIT = /^(?:search(?:\s+(?:for\s+)?[\p{L}\p{N}'-]+)?|find|go|filters?|apply(?:\s+filters?)?|sort(?:\s+results)?|refine(?:\s+search)?|show(?:\s+(?:more|all|results))?|(?:see|view|load)\s+more|more\s+results|update\s+results|next(?:\s+page)?|prev(?:ious)?(?:\s+page)?)[\s.!]*$/iu;
   const PAYMENT_AUTOCOMPLETE = /(?:^|\s)cc-[a-z-]+(?:\s|$)/i;
   const PAYMENT_FIELD = /(?:^|[^a-z])(?:card[\s_.-]*(?:number|num|no)|cc[\s_.-]*(?:number|num|exp\w*|csc|cvc|cvv)|(?:credit|debit)[\s_.-]*card|card[\s_.-]*(?:expir\w*|exp)|expir(?:y|ation)[\s_.-]*(?:date|month|year)|exp[\s_.-]*(?:date|month|year)|cvc|cvv2?|csc|card[\s_.-]*(?:security|verification)[\s_.-]*code|security[\s_.-]*code|iban|kartennummer|n[uú]mero[\s_.-]*de[\s_.-]*(?:la[\s_.-]*)?tarjeta)(?![a-z])/i;
-  // The intent tiers (src/guardrails.js labelTier): the ambiguous words Jev may clear; byte copies (drift check).
+  // The intent tiers (src/guardrails.js labelTier): the ambiguous words; byte copies (drift check).
   const AMBIGUOUS_SUBMIT = /\b(?:save|confirm|send|invite|publish)\b/gi;
   const AMBIGUOUS_PURCHASE = /^(?:order|book|reserve|upgrade)[\s.!]*$|\b(?:book|reserve)\s+(?:a|an|the)\b/gi;
   // The Approve gate (src/guardrails.js, byte copies; drift check in test/guardrails-drift.test.js).
@@ -1572,9 +1572,9 @@
     if (paymentField(el)) worst = severer(worst, 'purchase');
     if (el.tagName === 'INPUT' && el.type === 'password') worst = severer(worst, 'sign_in');
     if (worst) {
-      // A button, option or menu item refused only for ambiguous label words (the intent tier, labelTier) is marked,
-      // so a click the runtime cleared with Jev (action.intentCleared) may run: never a form submit, a payment or password
-      // field, a consent dialog's control, a control with any name in the hard tier, or on a page with such fields.
+      // A button, option or menu item refused only for ambiguous label words (the intent tier, labelTier) is marked
+      // `ambiguous` (diagnostic only; it never lifts the block): never a form submit, a payment or password field, a
+      // consent dialog's control, a control with any name in the hard tier, or on a page with such fields.
       const ambiguous = worst === fromLabels && (worst === 'submit' || worst === 'purchase')
         && (role === 'button' || role === 'tab' || role === 'option' || MENU_ITEM_ROLES.has(role)) && !consentKind
         && !((el.type === 'submit' || el.type === 'image') && el.form)
@@ -1617,14 +1617,6 @@
     // A consent reject and a nag overlay's close control (detectOverlay) are dispatched at every level.
     return Boolean(risk) && (permits(risk.cls)
       || ((risk.consentReject === true || risk.overlayDismiss === true) && risk.cls === 'reversible'));
-  }
-
-  // A click the runtime cleared with Jev (src/runtime.js intentVerdict) on a control this script marked ambiguous:
-  // allowed with the capability the cleared class needs ('controls' for a selection or a view, 'submit' for a
-  // submission), which the granted capabilities must hold. Never a point click, never any other action.
-  function clearedClick(action, risk) {
-    return action.type === 'click' && !action.point && risk?.ambiguous === true
-      && (action.intentCleared === 'controls' || action.intentCleared === 'submit') && currentAllow.has(action.intentCleared);
   }
 
   // --- Approve gate (docs/REFERENCE.md "Approve gate") ---------------------------------------------------------
@@ -2744,7 +2736,7 @@
     }
     roots.sort((a, b) => (a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
     // The views in the viewport share VIEW_TEXT characters of the text, in document order, so they cannot crowd out
-    // the rest of the page (Jev reads the first 6000). A view that no longer fits keeps its raw text (display null).
+    // the rest of the page (the digest reads the first 6000). A view that no longer fits keeps its raw text (display null).
     let remaining = VIEW_TEXT;
     for (const root of roots) {
       if (root.kind === 'grid') {
@@ -5012,7 +5004,7 @@
       risk: wireRisk(risk),
       bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
     };
-    // Refused only for ambiguous label words (riskOf): the runtime may ask Jev what the control does.
+    // Refused only for ambiguous label words (riskOf): marked as a diagnostic; the block holds.
     if (risk.ambiguous) control.ambiguous = true;
     if (offscreen) control.offscreen = true;
     if (consentKind) control.consent = true;
@@ -5476,7 +5468,7 @@
         throw new PageError('blocked_risky', 'A file is uploaded only once the user approves it in the FAI Browser window');
       }
       const inert = action.type === 'hover' || action.type === 'press' || action.type === 'upload';
-      if (!inert && !dispatchable(risk) && !clearedClick(action, risk) && !approved) throw new PageError('blocked_risky', blockedMessage(risk?.cls));
+      if (!inert && !dispatchable(risk) && !approved) throw new PageError('blocked_risky', blockedMessage(risk?.cls));
     } else if (!permits('navigation')) {
       throw new PageError('blocked_risky', blockedMessage('navigation'));
     }

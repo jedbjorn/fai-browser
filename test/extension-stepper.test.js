@@ -8,7 +8,6 @@ import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
 import { headlessEnv } from '../scripts/headless-env.mjs';
 import { legalActions } from '../src/runtime.js';
-import { namedControls, nameableControl } from '../src/relevance.js';
 
 const PAGE_SCRIPT = new URL('../extension/page.js', import.meta.url).pathname;
 const STEPPER = await readFile(new URL('../fixtures/stepper.html', import.meta.url), 'utf8');
@@ -94,22 +93,3 @@ test('a read-only picker textbox is flagged `opens` and offered as a click at re
     assert.ok(result.observation.text.includes('Choose a date'), 'the date dialog opened');
   });
 
-test('derived direction labels never make a button nameable, also when the instruction spells the label', async t => {
-  const observation = await observe(await load(t));
-  const offered = legalActions(observation, { mode: 'reversible' });
-  const arrows = offered.filter(action => / \(unlabelled\)$/.test(action.label));
-  assert.ok(arrows.length >= 4, arrows.map(action => action.label).join(' | '));
-  for (const action of arrows) {
-    assert.equal(action.unnamed, true, action.label);
-    assert.equal(nameableControl(action), false, action.label);
-  }
-  // The same label without the `unnamed` mark (an SDK bridge) is still refused by its "(unlabelled)" suffix.
-  assert.equal(nameableControl({ ...arrows[0], unnamed: undefined }), false);
-  for (const instruction of [
-    'Click the next-value button after Departure',
-    'Click next-value button after "Departure" (unlabelled)',
-    'Press the next button',
-  ]) {
-    assert.deepEqual(namedControls(instruction, offered), [], instruction);
-  }
-});

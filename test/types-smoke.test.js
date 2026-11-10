@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import * as api from '../src/index.js';
 
 const PUBLIC = [
-  'BrowserRuntime', 'legalActions', 'providerPayload', 'redactorFor', 'buildDigest', 'pickAnswerCandidates',
+  'BrowserRuntime', 'legalActions', 'redactorFor', 'buildDigest', 'pickAnswerCandidates',
   'EXPECTATION_FIELDS', 'describeExpectation', 'evaluateExpectation', 'validateExpectation', 'verifyExpectation',
   'RECOVERABLE_CODES', 'RESULT_VERSION', 'STATUSES', 'bridgeError', 'LEASE_MESSAGES', 'agentResult', 'leanObserve',
   'DEFAULT_THRESHOLDS', 'checkOriginEntry', 'originCovered',

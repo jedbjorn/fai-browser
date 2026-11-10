@@ -287,7 +287,7 @@ export const redactUrl = secretRedactUrl;
 export const secretPage = secretPageSignal;
 
 // ---------------------------------------------------------------------------------------------------------------
-// Daemon side: the defense-in-depth pass over results, provider payloads, traces and log lines.
+// Daemon side: the defense-in-depth pass over results, traces and log lines.
 // ---------------------------------------------------------------------------------------------------------------
 
 // A placeholder the page script tagged but no worker numbered (a bridge without the extension worker).

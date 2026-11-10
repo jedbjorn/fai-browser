@@ -71,7 +71,7 @@ const NEXT = 'Restart your coding agent so it loads the new MCP server and skill
  * `remoteOk`, `root`, `requests`, `currentVersion`.
  */
 export async function updateCommand(flags, { home, env: rawEnv = process.env, ...options } = {}) {
-  // No FAI secret (the Jev key, a pairing-secret override, a client token) reaches anything this command starts.
+  // No FAI secret (a pairing-secret override, a client token) reaches anything this command starts.
   const env = scrubbedEnv(rawEnv);
   if (flags.finish) return { value: await finishInstall({ env }), exitCode: 0 };
   const paths = homePaths({ home, env });

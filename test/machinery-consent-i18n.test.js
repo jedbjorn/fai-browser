@@ -7,9 +7,7 @@ import { headlessEnv } from '../scripts/headless-env.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
-import {
-  CONSENT_ACCEPT, CONSENT_REJECT, CONSENT_SETTINGS, CONSENT_WITHOUT_ACCEPT, consentRejectActions, isRejectLabel,
-} from '../src/oversight.js';
+import { CONSENT_ACCEPT, CONSENT_REJECT, CONSENT_SETTINGS, CONSENT_WITHOUT_ACCEPT } from '../src/oversight.js';
 
 const PAGE_SCRIPT = new URL('../extension/page.js', import.meta.url).pathname;
 const PAGE_SOURCE = await readFile(PAGE_SCRIPT, 'utf8');
@@ -30,22 +28,6 @@ const LANGUAGES = {
   pt: { reject: ['Rejeitar', 'Rejeitar todos'], accept: ['Aceitar', 'Aceitar todos'], settings: ['Definições', 'Personalizar'] },
   nl: { reject: ['Weigeren', 'Alleen noodzakelijk'], accept: ['Accepteren', 'Alles accepteren'], settings: ['Instellingen', 'Aanpassen'] },
 };
-
-test('runtime label rule: rejects in six languages, accepts never (also "accept" inside a reject phrase)', () => {
-  for (const [language, sets] of Object.entries(LANGUAGES)) {
-    for (const label of sets.reject) assert.ok(isRejectLabel(label), `${language}: "${label}" is a reject`);
-    for (const label of sets.accept) {
-      assert.ok(CONSENT_ACCEPT.test(label), `${language}: "${label}" is an accept`);
-      assert.ok(!isRejectLabel(label), `${language}: "${label}" is never a reject`);
-    }
-    for (const label of sets.settings) assert.ok(CONSENT_SETTINGS.test(label), `${language}: "${label}" is settings`);
-  }
-  assert.ok(!isRejectLabel('Akzeptieren und abonnieren'));
-  assert.ok(!isRejectLabel('Reject and subscribe'), 'a commit label is never a reject');
-  // Without page-script kinds the fallback rule offers only the reject.
-  const actions = consentRejectActions({ buttons: [{ id: '1', label: 'Alle akzeptieren' }, { id: '2', label: 'Alle ablehnen' }] });
-  assert.deepEqual(actions.map(action => action.label), ['Alle ablehnen']);
-});
 
 let browser;
 test.before(async () => {
@@ -90,8 +72,6 @@ for (const [language, sets] of Object.entries(LANGUAGES)) {
     assert.equal(kinds[sets.settings[0]], 'settings');
     const accept = observation.controls.find(control => control.label === sets.accept[0]);
     assert.equal(accept.risk, 'consent_accept', 'accept is its own class, refused below full by the page script');
-    const rejects = consentRejectActions(observation.consent);
-    assert.deepEqual(rejects.map(action => action.label), [sets.reject[0]]);
   });
 }
 

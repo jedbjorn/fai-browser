@@ -10,7 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createDaemon } from '../src/daemon.js';
 import { GATE_MAX_WAIT_MS, MAX_BATCH_FILLS, MAX_TYPED_CHARS, TOOLS } from '../src/mcp.js';
 import { MAX_BATCH_FILLS as RUNTIME_BATCH, MAX_TYPED_CHARS as RUNTIME_CHARS, pressKey } from '../src/runtime.js';
-import { directMessage, directNext } from '../src/result.js';
+import { directNext } from '../src/result.js';
 import { levelRefusalText } from '../src/oversight.js';
 import { createFakeHub } from './helpers/fake-hub.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
@@ -286,12 +286,9 @@ test('approve-gate wording states the real wait and how to resume; no direct tex
   assert.match(next.text, /returns at once if they already approved/);
   assert.match(next.text, /actionId a4 and revision "r9"/);
   assert.doesNotMatch(next.text, /waits up to 5 minutes/);
-  const level = directMessage(levelRefusalText({ granted: 'full', needed: 'interactive' }), 'req-1');
+  const level = levelRefusalText({ granted: 'full', needed: 'interactive' });
   assert.match(level, /fai_browser_observe with mode "interactive"/);
-  const origin = directMessage('The tab is on https://b.example, which this request does not cover. If https://b.example is a '
-    + 'consent or redirect page the task needs, call fai_browser_run again with https://b.example added to origins.', 'req-1');
-  assert.match(origin, /call fai_browser_open with requestId req-1 and https:\/\/b\.example added to origins/);
-  assert.doesNotMatch(origin + level, /fai_browser_run/);
+  assert.doesNotMatch(level, /fai_browser_run/);
 });
 
 test('no direct-mode output names fai_browser_run: results, needs, next, errors', async t => {

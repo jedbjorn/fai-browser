@@ -2509,12 +2509,8 @@ function validateAction(action) {
   if (action.point !== undefined && (action.type !== 'click' || action.target !== undefined || !validPoint(action.point))) {
     throw new ExtensionError('unsupported', 'Invalid point');
   }
-  // A click the runtime cleared with Jev: the capability its class needs, on a target (page.js runs it only on a
-  // control it marked ambiguous itself, and only when `allow` holds that capability).
-  if (action.intentCleared !== undefined && (action.type !== 'click' || action.target === undefined
-    || !['controls', 'submit'].includes(action.intentCleared))) {
-    throw new ExtensionError('unsupported', 'Invalid cleared click');
-  }
+  // No command can lift a page-script block (the removed Jev intent clearance included).
+  if (action.intentCleared !== undefined) throw new ExtensionError('unsupported', 'Invalid cleared click');
   if (['navigate_allowed_url', 'open_tab'].includes(action.type) && !sameSessionSite(action.url)) {
     throw new ExtensionError('cross_origin', 'Navigation outside selected origin');
   }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { URL_HOP_REFUSED, URL_IN_TEXT, namedUrls, sameSite, siteRoots, trimNamedUrl, urlCovered } from './origins.js';
+import { URL_HOP_REFUSED, namedUrls, sameSite, siteRoots, urlCovered } from './origins.js';
 
 export { namedUrls };
 import {
@@ -7,7 +7,7 @@ import {
 } from './expectation.js';
 import {
   DIGEST_MAX_BLOCKS, DIGEST_MAX_CHARS, autoConfirm, blocksOf, buildDigest, classifyIntent, heuristicConfidences,
-  loadingBlocks, loadingLexiconEntry, persistentPlaceholders, pickAnswerCandidates,
+  loadingBlocks, persistentPlaceholders, pickAnswerCandidates,
 } from './digest.js';
 import { aggregateItems, answerScope, buildMemory, coverage, itemValue, lineText, traceFacts } from './facts.js';
 import {
@@ -16,16 +16,15 @@ import {
 } from './result.js';
 import {
   COMMIT_ACTION, DANGEROUS, FORBID_REFUSAL_TEXT, PURCHASE_REFUSAL_TEXT, REFUSAL_TEXT, commitIntent,
-  levelRefusalText, consentOf, destructiveLinkClass, errorPageOf, instructionTerms, isJoinTask,
-  harmlessControlLabel, labelIntents, loginState, namedHops, remainingHops, resolveThresholds,
-  suggestExpectation, suggestInstruction, suggestMaxActions,
+  levelRefusalText, consentOf, destructiveLinkClass, errorPageOf, instructionTerms, isJoinTask, loginState,
+  resolveThresholds, suggestExpectation,
 } from './oversight.js';
 import {
   CLASS_CAPABILITY, LEVELS, SAFE_SUBMIT, capabilitiesOf, clampLevel, guardrailPolicy, isLevel, labelClasses,
-  labelSpellings, labelTier, levelFor, levelRank, paymentField, purchaseControl, purchasePage, secretAction,
+  labelSpellings, levelFor, levelRank, paymentField, purchaseControl, purchasePage, secretAction,
 } from './guardrails.js';
 import { scrubSecrets, secretIds } from './secrets.js';
-import { capActions, capOffer, rankActions, relevanceHints, relevanceScore } from './relevance.js';
+import { capActions, capOffer, relevanceHints } from './relevance.js';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Limits
@@ -37,8 +36,6 @@ const MAX_OPTIONS = 30;
 const MAX_ALLOWED_URLS = 10;
 const SCREENSHOT_WAIT_MS = 5000; // safety cap; the bridge contract says the promise always resolves
 const OFFER_CACHE_SIZE = 4;
-// An instruction that reads a fact (Session.readClause): "read", "find", "report", "tell", "what ...".
-const READ_CLAUSE = /\b(?:read|reads|find|report|tell|note|get|copy|extract|look up|check (?:what|which|how)|what|which|who|how (?:much|many|long|often))\b/i;
 // Whether an instruction-only run asks anything (auto-confirm gate, instructionAsks): a real question mark, a wh-word
 // or a read verb outside quoted labels and URLs ("Click the 'Where to?' field" asks nothing). A run that only performs
 // actions ("Click Where to?, type London and choose London") keeps its ranked candidates but never auto-confirms one.
@@ -83,18 +80,13 @@ const MAX_QUESTION_LENGTH = 2000;
 // at most TRAIL_STATES states (the most relevant, shown in run order), TRAIL_LINES lines per state (all of a state's
 // aggregation items, up to its memory bound, when the question aggregates) and TRAIL_TOTAL lines in all.
 const TRAIL_STATES = 12;
-// An earlier-state line that states a fact rather than a prompt (answerPlan, one-page runs): a digit, a
-// "label: value", or a capitalised word after the first one.
-const STATED_FACT = /\d|:\s*\S|\s\p{Lu}/u;
 const TRAIL_LINES = 3;
 const TRAIL_TOTAL = 40;
 const TRAIL_LINE_LIMIT = 200;
-// choose() sees the most relevant earlier states as earlierPages (TypeSafe sends at most 4 of them, 3 lines each).
-const EARLIER_STATES = 4;
 // Answer candidates from earlier states: only when the final page is weakly relevant (its best candidate scores
 // under 1/MEMORY_RATIO of the best remembered line) and the task is not a join (there the earlier fact is context,
 // not the answer); at most MEMORY_CANDIDATES lines that outscore the final page's best. Aggregation items go first
-// (AGGREGATE_CANDIDATES), and choose() never gets more than ANSWER_CANDIDATE_CAP candidates.
+// (AGGREGATE_CANDIDATES), and the ranking never holds more than ANSWER_CANDIDATE_CAP candidates.
 const MEMORY_RATIO = 2;
 const MEMORY_CANDIDATES = 8;
 const AGGREGATE_CANDIDATES = 5;
@@ -114,41 +106,14 @@ function plantedLine(text) {
 }
 // The action count at which an observation was first seen (the fact memory's `step`).
 const VISIT_STEP = new WeakMap();
-// Supplied values shorter than this are not redacted from provider payloads; see redactorFor().
+// Supplied values shorter than this are not redacted; see redactorFor().
 export const SUPPLIED_REDACTION_MIN_LENGTH = 4;
 const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const DEFAULT_CONSENT_WAIT_MS = 250;
-const DEFAULT_REOBSERVE_MS = 300;
-// Rung 1c, buttons: after a quiet button click and a re-observe that both show no change, observe again at these
-// fractions of lateChangeMs (default 3000: at 1.5 s and 3 s), leaving LATE_CHANGE_RESERVE_MS of the run's time.
-const DEFAULT_LATE_CHANGE_MS = 3000;
-// Late content: while the page shows a loading placeholder ("Loading reconciliation status…") on the final page or in
-// a late-load task, the runtime re-observes after this delay, at most MAX_CONTENT_WAITS times per run (about 3 s),
-// with no provider decision. Under a late-load intent a placeholder also fails the expectation (an implicit
-// textAbsent), so such a run never completes on the pre-load text even when the host's expectation omits textAbsent.
-const DEFAULT_CONTENT_WAIT_MS = 400;
-
-// Consecutive unchanged content waits before a visible placeholder counts as persistent status text (awaitContent).
+// Under a late-load intent a loading placeholder fails the expectation (an implicit textAbsent), so an act never
+// completes on the pre-load text even when the host's expectation omits textAbsent.
+// Consecutive unchanged earlier states before a visible placeholder counts as persistent status text.
 const PERSISTENT_QUIET_WAITS = 2;
-// A handoff whose done is at most this, on a page where an expectation that already passed on the start page still
-// passes, is a handoff to the host, not handoff_expectation_passed (Session.vacuousPass).
-const PREPASS_DONE_MAX = 0.3;
 const DEFAULT_TIMEOUT_MS = 30000;
-// Provider guards (TypeSafe `blocked` / `injection` / `commit` nouls). At or above GUARD_VETO a guard acts: blocked
-// ends the run as needs_user/blocked (after rung 0 had its chance), injection lets only a link to an approved origin
-// run. `commit` (reversible mode) has its own threshold, thresholds.commitVeto (default 0.7): at or above it a chosen
-// button/select/fill, or a handoff while such controls are offered (not on a page the injection guard scores at
-// GUARD_VETO, whose text can push the commit noul either way), ends the run as needs_user/refused_action.
-// At or above GUARD_NOTE the highest value per guard is listed in the receipt's `why` (guard:blocked:0.64); the
-// injection guard is listed at or above INJECTION_NOTE (guard:injection:0.91), which also turns off the second
-// opinion (in a self-rerun too), refuses auto-confirm of a remembered earlier-page answer, refuses placeholder fills
-// (steps.js keys off the why line) and ends the site-profile fast path. Benign pages mostly score below 0.8 on
-// injection, real injected instructions 0.96-0.99 (bench/jev-eval.mjs).
-export const GUARD_VETO = 0.85;
-const GUARD_NOTE = 0.5;
-export const INJECTION_NOTE = 0.8;
-const GUARD_NAMES = ['blocked', 'injection', 'commit', 'purchase_control', 'purchase_page'];
-const SPLIT_HOPS = 3;
 
 const CAPTURE_POLICIES = new Set(['each', 'last', 'none']);
 // The capability a refused intent (commitIntent) needs, for the level a refusal names when no blocked control does.
@@ -170,7 +135,7 @@ const MODES = new Set(LEVELS);
 // control, including links.
 export { DANGEROUS, REFUSAL_TEXT };
 // Commit actions (orders, bookings, payments, subscriptions, applications, transfers), buttons only: COMMIT_ACTION in
-// src/oversight.js, identical to extension/page.js (drift check in test/jev-commit.test.js).
+// src/oversight.js, identical to extension/page.js.
 export { COMMIT_ACTION };
 
 const TEXT_TYPES = new Set(['text', 'email', 'search', 'tel', 'url', 'number', 'textarea']);
@@ -212,23 +177,6 @@ function clip(value, limit) {
 // Legal actions
 // ---------------------------------------------------------------------------------------------------------------
 
-function terminalActions() {
-  return [
-    {
-      id: 'done',
-      type: 'done',
-      label: 'done',
-      description: 'The requested outcome is already visible; finish so it can be verified.',
-    },
-    {
-      id: 'handoff',
-      type: 'handoff',
-      label: 'handoff',
-      description: 'Stop for host interpretation or user input.',
-    },
-  ];
-}
-
 function isTextEntry(control) {
   if (TOGGLE_TYPES.has(control.type)) return false;
   if (control.role === 'textbox') return true;
@@ -265,8 +213,7 @@ function escapeRegExp(text) {
 /**
  * Whether a secret supplied value may be offered for a non-password field: the field looks like one meant for a
  * secret, or the instruction explicitly puts this value into this field ("fill Username with the supplied password",
- * "type the password into API key"). A login page then offers the password for the password field only, which also
- * keeps the provider's choice between fills unambiguous.
+ * "type the password into API key"). A login page then offers the password for the password field only.
  */
 function secretFillAllowed(control, name, instruction) {
   const label = String(control.label ?? '').replace(/\s+/g, ' ').trim();
@@ -405,42 +352,6 @@ export function secretSource(secret) {
   return `${words}${host ? ` from ${host}` : ''}`;
 }
 
-// The intent question (guidance switch `intent`, src/typesafe.js; tiers in src/guardrails.js labelTier): a refused
-// control whose label trips only ambiguous words is offered to the provider's own choice, at most INTENT_LIMIT per
-// decision (the ones the instruction names most), each with one `choice` question in the same request: what would
-// activating it do? It runs only when Session.intentVerdict clears it: an answer in INTENT_CLASSES whose capability
-// the level holds, at confidence INTENT_FLOOR or more, purchase_or_payment below INTENT_DOUBT, both purchase nouls
-// and the injection noul answered and low, no payment or password field, a label in the ambiguous tier that the
-// user did not forbid. Anything else, an unanswered question or a failed request included, refuses it as before.
-// INTENT_FLOOR is above GUARD_VETO (owner's call, 2026-10-11): clearing a flag takes more confidence than a guard needs
-// to act on its own, and any doubt refuses as before.
-export const INTENT_LIMIT = 2;
-export const INTENT_FLOOR = 0.9;
-export const INTENT_DOUBT = 0.1;
-// The capability each answer needs; purchase_or_payment has none below testing.
-export const INTENT_CLASSES = Object.freeze({
-  select_option_or_navigate: 'controls', marketing_or_discount_text: 'controls', submit_or_send_user_data: 'submit',
-  change_account_settings: 'submit', purchase_or_payment: null,
-});
-
-/**
- * True for a refused control Jev may clear (the ambiguous tier): a button, option or menu item the level refuses for
- * its label class (submit or purchase) alone, below testing with controls, whose label is in the ambiguous tier and not one
- * the user forbade; not a text entry, select, consent button, password or payment field, and not on a page with a
- * password or payment field. A page-script risk counts only with the script's own `ambiguous` mark (a form submit or
- * a payment form never carries it); without a risk (an SDK bridge), a submit-type control is never one.
- */
-function intentEligible(control, block, guard, facts) {
-  if (!block?.capability || !['submit', 'purchase'].includes(block.kind)) return false;
-  if (guard.testing || !guard.allows('controls') || guard.forbids(control.label) || facts.sensitiveForm) return false;
-  const role = control.role || 'control';
-  if (!['button', 'option'].includes(role) && !MENU_ITEM_ROLES.has(role)
-    || isTextEntry(control) || control.options?.length || control.consent) return false;
-  if (control.type === 'password' || control.sensitive || paymentField(control)) return false;
-  if (control.risk !== undefined ? control.ambiguous !== true : control.type === 'submit') return false;
-  return labelTier(control.label) === 'ambiguous' && labelClasses(control.label).includes(block.kind);
-}
-
 /**
  * The capability pressing Enter in a filled text field needs, from the page script's `enter` class (what its form
  * submit amounts to): submit_safe (a search form, interactive) only on a page without password or payment fields,
@@ -509,7 +420,7 @@ function optionBlock(option, guard) {
 }
 
 /**
- * Build the actions a provider (or host) may choose from at the run's level. Every action is something the
+ * Build the actions the host may choose from at the run's level. Every action is something the
  * extension is expected to accept: links only to the current page's origin, nothing the page script marks as a
  * class the level does not allow, and text fills only with caller-supplied values, referenced by name.
  *
@@ -601,7 +512,6 @@ export function offeredActions(observation, options = {}) {
   };
 
   const controlActions = [];
-  const intentActions = [];
   for (const control of (observation.controls ?? []).slice(0, MAX_CONTROLS)) {
     if (control.enabled === false || control.visible === false) continue;
     // A field that takes a secret (the page script's secretTarget): the newest handles, as fills the user approves.
@@ -638,14 +548,7 @@ export function offeredActions(observation, options = {}) {
     // the user turned that ask off (the extension then runs it at its level).
     if (!(asks && !asks.secret) && !gate && !block && secretGated(control) && controls && !isTextEntry(control) && !control.options?.length
       && !(role === 'link' && control.href)) continue;
-    if (block) {
-      // An ambiguous refused control (intentEligible) is offered with the intent question when the switch is on.
-      if (options.intent && intentEligible(control, block, guard, facts)) {
-        intentActions.push({ type: 'click', target: ref, role, label, intent: { kind: block.kind, capability: block.capability },
-          description: `Click ${role} ${ref}: ${label} (refused unless Jev clears it)` });
-      }
-      continue;
-    }
+    if (block) continue;
     const base = { target: ref, role, label };
     // The label is the page script's descriptor (no name of its own): never a control the instruction names.
     if (control.unnamed === true) base.unnamed = true;
@@ -752,15 +655,6 @@ export function offeredActions(observation, options = {}) {
     }
     controlActions.push(action);
   }
-  // The ambiguous refused controls the instruction names most (relevanceScore above 0), at most INTENT_LIMIT, after
-  // the usable controls: one the instruction does not name is never worth a question.
-  if (intentActions.length) {
-    const hints = options.hints ?? relevanceHints({
-      instruction: options.instruction, answerQuestion: options.answerQuestion, expectation: options.expectation,
-    });
-    const named = rankActions(intentActions.filter(action => relevanceScore(action, hints) > 0), hints);
-    controlActions.push(...named.slice(0, INTENT_LIMIT));
-  }
   markOverlayActions(observation, controlActions);
   markFloatingActions(observation, controlActions);
 
@@ -804,7 +698,7 @@ export function offeredActions(observation, options = {}) {
     dropped += capped.dropped;
   }
   return {
-    actions: [...offered.map((action, index) => ({ id: `a${index}`, ...action })), ...terminalActions()],
+    actions: offered.map((action, index) => ({ id: `a${index}`, ...action })),
     dropped,
   };
 }
@@ -879,8 +773,7 @@ export function blockedEntries(observation, options = {}) {
     if (control.enabled === false || control.visible === false) continue;
     const role = control.role || 'control';
     const block = controlBlock(gatedControl(control, facts), guard, facts, { labelled: role !== 'link' && !isToggle(control) });
-    // `intent`: Jev may clear it (intentEligible); refusal() leaves such a control to the decision.
-    if (block) out.push(intentEligible(control, block, guard, facts) ? { control, ...block, intent: true } : { control, ...block });
+    if (block) out.push({ control, ...block });
     for (const option of control.options ?? []) {
       if (option.disabled) continue;
       const reason = optionBlock(option, guard);
@@ -936,11 +829,6 @@ function toCommand(action, suppliedText) {
   if (action.value !== undefined) command.value = action.value;
   if (action.direction !== undefined) command.direction = action.direction;
   if (action.url !== undefined) command.url = action.url;
-  // A nag overlay's Escape or backdrop click (page.js dismissOverlay).
-  if (action.type === 'dismiss_overlay') command.method = action.method;
-  // A refused ambiguous control Jev cleared (Session.intentVerdict): the capability its class needs; page.js checks
-  // its own ambiguous mark and the grant before it clicks.
-  if (action.intentCleared !== undefined) command.intentCleared = action.intentCleared;
   // The Approve gate: the id the extension minted when the user approved this one click (it checks the binding).
   if (typeof action.approvalId === 'string') command.approvalId = action.approvalId;
   // A secret handle (fill_secret, copy_secret): the worker resolves the value; it never passes through here.
@@ -960,7 +848,7 @@ function validateObservation(observation) {
   if (!valid) throw bridgeError('invalid_observation', 'Invalid bridge observation', false);
 }
 
-/** Observation given to providers and to hosts via observe(). Bounds are dropped; sensitive controls excluded. */
+/** Observation returned to hosts by observe(). Bounds are dropped; sensitive controls excluded. */
 function compactForDecision(observation) {
   return {
     revision: observation.revision,
@@ -986,20 +874,20 @@ function compactForDecision(observation) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Provider payload: supplied-value redaction
+// Supplied-value redaction
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
  * Build a function that replaces exact occurrences of supplied values with `[supplied:<name>]`.
  *
  * Supplied values never appear in offered actions or history by construction, but a page can echo a filled value
- * back (a live preview, a control label, a URL query). Everything sent to a provider passes through this redactor
- * first: page URL, title, text and controls, action criteria, and history.
+ * back (a live preview, a control label, a URL query). The fact memory and the relevance hints pass through this
+ * redactor.
  *
  * Matching is exact and case-sensitive, and also covers the URL-encoded forms (`encodeURIComponent`, and `+` for
  * spaces) so a value reflected into a query string is caught. Values shorter than SUPPLIED_REDACTION_MIN_LENGTH (4)
  * characters are not redacted: replacing every "a", "12" or "yes" would corrupt unrelated page text, labels and
- * URLs until the provider could no longer read the page, and values that short carry too little information to
+ * URLs, and values that short carry too little information to
  * be worth hiding. Callers should not pass secrets that short (and never pass credentials at all).
  */
 export function redactorFor(suppliedText) {
@@ -1025,49 +913,13 @@ export function redactorFor(suppliedText) {
   };
 }
 
-function redactFields(entry, redact, keys) {
-  const copy = { ...entry };
-  for (const key of keys) {
-    if (typeof copy[key] === 'string') copy[key] = redact(copy[key]);
-  }
-  return copy;
-}
-
-/** The compact page, offered actions and history exactly as a provider receives them. */
-export function providerPayload(observation, actions, history, suppliedText) {
-  const redact = redactorFor(suppliedText);
-  const page = compactForDecision(observation);
-  return {
-    observation: {
-      ...redactFields(page, redact, ['url', 'title', 'text']),
-      controls: page.controls.map(control => {
-        const entry = redactFields(control, redact, ['label', 'href', 'selectedValue']);
-        if (control.options) entry.options = control.options.map(option => redactFields(option, redact, ['value', 'label']));
-        return entry;
-      }),
-    },
-    actions: actions.map(action => redactFields(action, redact,
-      ['label', 'description', 'optionLabel', 'value', 'href', 'url'])),
-    history: history.map(entry => redactFields(entry, redact, ['label', 'fromUrl', 'toUrl'])),
-  };
-}
-
 /** relevanceHints over the instruction, answerQuestion and expectation with supplied values redacted. */
-function slimHints(instruction, config) {
+function taskHints(instruction, config) {
   const redact = redactorFor(config.suppliedText);
   const expectation = config.expectation && typeof config.expectation === 'object'
     ? Object.fromEntries(Object.entries(config.expectation).map(([key, value]) => [key, redact(value)]))
     : null;
   return relevanceHints({ instruction: redact(instruction ?? ''), answerQuestion: redact(config.answerQuestion), expectation });
-}
-
-/** The provider's guard probabilities `{ blocked?, injection? }`, or null when it reported none. */
-export function guardsOf(decision) {
-  const guards = decision?.guards;
-  if (!guards || typeof guards !== 'object') return null;
-  const out = {};
-  for (const name of GUARD_NAMES) if (isUnit(guards[name])) out[name] = guards[name];
-  return Object.keys(out).length ? out : null;
 }
 
 function stepAction(action, command, fromUrl) {
@@ -1195,61 +1047,9 @@ function withCap(promise, ms) {
   return Promise.race([promise, cap]).finally(() => clearTimeout(timer));
 }
 
-/** The provider's probability that the requested outcome is already visible, or null when it did not report one. */
-export function doneProbability(decision) {
-  const probability = decision?.done?.probability;
-  return isUnit(probability) ? probability : null;
-}
-
-/** The provider's confidence in its own choice: `confidence`, else the chosen action's probability, else null. */
-export function choiceConfidence(decision) {
-  if (Number.isFinite(decision?.confidence)) return decision.confidence;
-  const probability = decision?.probabilities?.[decision?.actionId];
-  return Number.isFinite(probability) ? probability : null;
-}
-
 // ---------------------------------------------------------------------------------------------------------------
-// Explicit-URL hop (E2): "Open https://... and read" goes to that URL without a provider decision.
+// URL checks for host-composed navigation.
 // ---------------------------------------------------------------------------------------------------------------
-
-// A clause that names an action to do (namesMoreAfterOpen): an imperative verb at its start.
-const ACTION_CLAUSE = /^(?:(?:and|then|now|next|also|please|first)\s+)*(?:click|press|tap|select|choose|set|type|enter|fill|pick|search|sort|filter|toggle|switch|change|add|remove|expand|collapse|open|go|navigate|follow|visit|scroll|book|apply|submit|use|move|close|accept|reject|upload|download|sign|log|save|delete|send|create|edit|update|clear|uncheck|check(?!\s+(?:whether|if|what|which|how|that)\b))\b/i;
-
-/**
- * Whether the instruction names an action after the URL its opening hop goes to: "Open <url> directly. Set trip type
- * to One way, ..., read the grid" does; "Open <url>.", "Open <url> and read the flights." and "Open <url>. A section
- * loads late. What text appears there?" do not (prose and questions to read there are not more to do).
- */
-export function namesMoreAfterOpen(instruction, url) {
-  const text = String(instruction ?? '');
-  const match = [...text.matchAll(URL_IN_TEXT)].find(found => {
-    try {
-      const href = new URL(trimNamedUrl(found[0])).href;
-      return href === url || (Boolean(url) && sameNamedPage(href, url) && sameNamedPage(url, href));
-    } catch {
-      return false;
-    }
-  });
-  if (!match) return false;
-  const rest = text.slice(match.index + match[0].length).replace(QUOTED, ' label ');
-  return rest.split(/[.;:!?,]+|\b(?:and|then)\b/i).some(clause => ACTION_CLAUSE.test(clause.trim()));
-}
-
-/**
- * Whether `current` already is the page `named` names: the same origin and path, and every query parameter of the
- * named URL present in the current one with the same value (a site may add its own: Google Flights' `&tfu=`).
- */
-export function sameNamedPage(named, current) {
-  try {
-    const a = new URL(named);
-    const b = new URL(current);
-    if (a.origin !== b.origin || a.pathname.replace(/\/+$/, '') !== b.pathname.replace(/\/+$/, '')) return false;
-    for (const [key, value] of a.searchParams) if (!b.searchParams.getAll(key).includes(value)) return false;
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /** The words of a URL's path, hash route and short query keys and values (camelCase split), for the commit checks. */
 function urlWords(url) {
@@ -1312,7 +1112,7 @@ function staleSearchFill(action, observation) {
  * when the number of such controls changed (a removed row shifts every same-label "Delete" one place).
  */
 function staleControl(action, offer, fresh) {
-  if (action.consent || action.type === 'done' || action.type === 'handoff') return null;
+  if (action.consent) return null;
   const stepper = stepperArrow(action);
   const searchFill = staleSearchFill(action, offer.observation);
   if (actionClass(action) !== 'link' && !stepper && !(action.type === 'click' && action.opens === true) && !searchFill) return null;
@@ -1352,14 +1152,6 @@ function frameOf(action, observation) {
   if (action?.target === undefined) return null;
   const control = (observation.controls ?? []).find(item => String(item.id) === String(action.target));
   return control?.frame ?? null;
-}
-
-function isUnit(value) {
-  return Number.isFinite(value) && value >= 0 && value <= 1;
-}
-
-function round2(value) {
-  return Math.round(value * 100) / 100;
 }
 
 /** Settle with the operation, or reject when the signal aborts, even if the operation ignores the signal. */
@@ -1403,9 +1195,8 @@ function checkInteger(name, value, max) {
   if (!Number.isInteger(value) || value <= 0 || value > max) throw new RangeError(`Invalid ${name}`);
 }
 
-function configure(options, { step = false } = {}) {
-  const maxActions = step ? 1 : options.maxActions ?? options.maxSteps ?? 8;
-  const { thresholds, explicit } = resolveThresholds(options);
+function configure(options) {
+  const { thresholds } = resolveThresholds(options);
   // The level: the run's mode clamped to the user's grant (options.grant, from the tab lease). Without a grant (an
   // SDK caller with its own bridge) the ceiling is `full`: `testing` needs a grant, which only the user gives in the
   // extension for listed test origins.
@@ -1431,35 +1222,23 @@ function configure(options, { step = false } = {}) {
       // daemon keeps only when the user approved it), else `origin`.
       scope: siteRoots(options.allowedOrigins).length ? 'domain' : 'origin',
     },
-    maxActions,
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     capture: options.capture ?? 'last',
     allowedOrigins: options.allowedOrigins,
     allowedUrls: options.allowedUrls ?? [],
     suppliedText: options.suppliedText ?? {},
     expectation: options.expectation,
-    // Every gate in one object (linkFloor, controlFloor, doneThreshold, strongDone, answerConfirm, answerMargin);
-    // `minConfidence` is accepted as an alias for controlFloor and `doneThreshold` at the top level.
+    // The answer gates (answerConfirm, answerMargin).
     thresholds,
-    explicitThresholds: explicit,
-    // Rung 1c: how long to wait before the one late-navigation re-observe.
-    reobserveDelayMs: options.reobserveDelayMs ?? DEFAULT_REOBSERVE_MS,
-    // Rung 1c, buttons: how long to look for a late change after a click that changed nothing (0 turns it off).
-    lateChangeMs: options.lateChangeMs ?? DEFAULT_LATE_CHANGE_MS,
-    // Late content: delay between re-observes while a loading placeholder shows.
-    contentWaitMs: options.contentWaitMs ?? DEFAULT_CONTENT_WAIT_MS,
-    // Delay between re-observes while a clicked consent dialog is still open.
-    consentWaitMs: options.consentWaitMs ?? DEFAULT_CONSENT_WAIT_MS,
     // The question answer candidates are ranked for; defaults to the instruction.
     answerQuestion: options.answerQuestion,
     onAction: options.onAction,
     awaitCallbacks: options.awaitCallbacks === true,
     signal: options.signal,
     runId: options.runId,
-    step,
   };
   // Guardrails (src/guardrails.js): core rules plus additions from config (`guardrails`) and the request (`policy`).
-  // Invalid additions throw here, before any observation or provider call.
+  // Invalid additions throw here, before any observation.
   const inherited = typeof options.guardrails?.forbids === 'function';
   config.guardrails = inherited && options.policy === undefined && options.guardrails.mode === config.mode
     ? options.guardrails
@@ -1467,20 +1246,7 @@ function configure(options, { step = false } = {}) {
       ? { mode: config.mode, merged: options.guardrails.additions }
       : { mode: config.mode, request: options.policy, config: inherited ? options.guardrails.additions : options.guardrails });
   if (!CAPTURE_POLICIES.has(config.capture)) throw new TypeError('capture must be "each", "last" or "none"');
-  checkInteger('maxActions', config.maxActions, 120);
   checkInteger('timeoutMs', config.timeoutMs, 300000);
-  if (!Number.isInteger(config.reobserveDelayMs) || config.reobserveDelayMs < 0 || config.reobserveDelayMs > 5000) {
-    throw new RangeError('reobserveDelayMs must be an integer from 0 to 5000');
-  }
-  if (!Number.isInteger(config.lateChangeMs) || config.lateChangeMs < 0 || config.lateChangeMs > 10000) {
-    throw new RangeError('lateChangeMs must be an integer from 0 to 10000');
-  }
-  if (!Number.isInteger(config.contentWaitMs) || config.contentWaitMs < 0 || config.contentWaitMs > 5000) {
-    throw new RangeError('contentWaitMs must be an integer from 0 to 5000');
-  }
-  if (!Number.isInteger(config.consentWaitMs) || config.consentWaitMs < 0 || config.consentWaitMs > 2000) {
-    throw new RangeError('consentWaitMs must be an integer from 0 to 2000');
-  }
   if (config.answerQuestion !== undefined) {
     const valid = typeof config.answerQuestion === 'string' && config.answerQuestion.trim()
       && config.answerQuestion.length <= MAX_QUESTION_LENGTH;
@@ -1528,18 +1294,12 @@ class Session {
     this.visited = [];
     // The last expectation check, so one observation is never checked twice.
     this.lastCheck = null;
-    // The last provider decision, written to the trace as finalDecision.
-    this.lastDecision = null;
     // Instruction words for the page script's control ordering under the 100-control cap.
     this.terms = instruction ? instructionTerms(instruction, config.answerQuestion) : [];
-    // Local relevance hints for the slim switches (instruction, answerQuestion, expectation), built from redacted text
-    // like everything else that reaches a provider (decide contexts carry them with slim.controls).
-    this.hints = slimHints(instruction, config);
-    // Mechanical oversight signals for the verdict: extra machine `why` codes, the last done, the expectation
-    // shape, host decide options and the late re-observe count.
-    this.signals = { why: [], done: null, expectationShape: null, decide: null, guards: {} };
-    this.reobserves = 0;
-    this.contentWaits = 0;
+    // Local relevance hints (instruction, answerQuestion, expectation) for the offer listing, built from redacted text.
+    this.hints = taskHints(instruction, config);
+    // Mechanical oversight signals for the verdict: extra machine `why` codes and the expectation shape.
+    this.signals = { why: [], expectationShape: null };
     // Placeholder texts awaitContent found persistent (status text that never goes): not loading for this run.
     this.persistentLoading = new Set();
 
@@ -1563,7 +1323,6 @@ class Session {
     this.result = createResult({
       runId: config.runId ?? randomUUID(),
       expectation: describeExpectation(config.expectation),
-      provider: null,
     });
     // Trusted: what the agent asked for, what the user granted and what the run used.
     this.result.permissions = { ...config.permissions };
@@ -1572,33 +1331,15 @@ class Session {
     Object.defineProperty(this.result, 'secrets', {
       value: [...(runtime.secrets ?? [])], writable: true, enumerable: false, configurable: true,
     });
-    // One entry per provider request (numbers only, see requestEntry()). Non-enumerable, like the other
-    // diagnostics: serialized results keep their shape, and writeRun puts it in the trace as cost.requests.
-    Object.defineProperty(this.result.cost, 'requests', {
-      value: [], writable: true, enumerable: false, configurable: true,
-    });
-    // The entry of the latest decide request, marked with the step it executed (if any) by execute().
-    this.lastRequest = null;
-    // A self-rerun for late content: wait for the placeholder on the first page before deciding.
-    this.awaitLoading = false;
-    // A self-rerun numbers its steps after the first attempt's, so the merged result (and the daemon's live
-    // progress, trace images and evidence) see one sequence of steps for the call.
-    this.stepBase = 0;
-    // A self-rerun without answerQuestion ranks answers for the host's original instruction, not the suggestion.
+    // The question the host named on the observe behind an act's offer (it ranks the landing page's digest).
     this.callQuestion = null;
-    // Whether the host's call asks something (asks()); a self-rerun inherits the first attempt's.
+    // Whether the host's call asks something (asks()).
     this.asked = null;
-    // Actions counted against maxActions in this attempt (the loop's counter, mirrored for rerunPlan).
-    this.actionsTaken = 0;
-    // The expectation already passed on the start page while the instruction names an action (notePrepass).
-    this.prepass = false;
-    // The run's provider-chosen actions for earlyEnd ({changed, labelled, texts}), in order (hopEvent).
-    this.hopEvents = [];
   }
 
   /** The number the next executed step gets. */
   nextStep() {
-    return this.stepBase + this.result.steps.length + 1;
+    return this.result.steps.length + 1;
   }
 
   guard() {
@@ -1659,7 +1400,6 @@ class Session {
     if (!this.signals.why.includes(code)) this.signals.why.push(code);
   }
 
-  /** Remember the highest value of each provider guard for the receipt. */
   /**
    * The user's grant dropped mid-run (the extension revoked testing): re-clamp this run's level, capabilities,
    * guardrail policy and `permissions` block in place, so its next decision offers only what the new level allows
@@ -1701,79 +1441,10 @@ class Session {
     else if (cappedCount(code) > cappedCount(this.result.warnings[index])) this.result.warnings[index] = code;
   }
 
-  /**
-   * Whether a passing expectation proves nothing about this run (E6): it already passed on the start page and never
-   * failed on any page since, the run acted, and the provider's done is at most PREPASS_DONE_MAX (it does not see
-   * the outcome either). A handoff there is not handoff_expectation_passed: the run goes to the host
-   * (`expectation:prepassing`). A run that took no action (a read on the start page) keeps its pass.
-   */
-  vacuousPass(done) {
-    return this.startPassed === true && !this.expectationFailedOnce && this.actionsTaken > 0
-      && Number.isFinite(done) && done <= PREPASS_DONE_MAX;
-  }
-
-  /** Whether a pass on `observation` counts: always, unless the expectation was pre-passing (notePrepass). */
-  prepassOk(observation) {
-    if (!this.prepass) return true;
-    return this.actionsTaken > 0 && Boolean(this.initial)
-      && (observation?.revision !== this.initial.revision || observation?.url !== this.initial.url);
-  }
-
-  /**
-   * The run's read clause, for an early end: `{question, intent}` when the run asks a question (answerQuestion) or its
-   * instruction reads, finds or reports something; null for a pure navigation ("Click Next page.").
-   */
-  readClause() {
-    const asked = this.config.answerQuestion ?? this.callQuestion;
-    if (!asked && !READ_CLAUSE.test(this.instruction ?? '')) return null;
-    const question = this.question();
-    return { question, intent: classifyIntent(question, this.instruction ?? '') };
-  }
-
   /** The irreversible action the instruction asks for (commitIntent), memoized; null for ordinary tasks. */
   intent() {
     if (this.intentKind === undefined) this.intentKind = this.instruction ? commitIntent(this.instruction) : null;
     return this.intentKind;
-  }
-
-  /**
-   * Refusal receipt: the instruction asks to buy, order, pay, delete, remove, send, submit or log in, and the page's
-   * controls for it are ones the run's level refuses. Ends the run needs_user / refused_action without a provider
-   * decision (see refuse() for stop versus relay). Returns the result, or null when the task is not refused here.
-   */
-  refusal(observation, { defer = true } = {}) {
-    const intent = this.intent();
-    if (!intent) return null;
-    // Both conditions: the instruction asks for the action in its dangerous sense (commitIntent), and the page's
-    // controls for it are refused ones. A refused control that is an ordinary view control ("Remove filter",
-    // "Search") is not one, and a usable control with the same intent (a toggle) means the task is not refused here.
-    const entries = blockedEntries(observation, this.config);
-    const blocked = new Set(entries.map(entry => entry.control));
-    const matching = entries.filter(({ control }) => (labelIntents(control.label).has(intent)
-      || (intent === 'submit' && control.risk === 'submit')) && !harmlessControlLabel(control.label));
-    if (!matching.length) return null;
-    const usable = (observation.controls ?? []).some(control => !blocked.has(control) && control.role !== 'link'
-      && control.enabled !== false && control.visible !== false && labelIntents(control.label).has(intent)
-      && !harmlessControlLabel(control.label));
-    if (usable) return null;
-    return this.refuse(intent, matching);
-  }
-
-  /**
-   * Commit guard veto (reversible, as before the levels): Jev judged that the button, select or fill that best
-   * advances the instruction would order, pay, send, delete, sign in or otherwise commit the user. Nothing is
-   * executed; the run ends needs_user / refused_action (verdict failed, next stop) like the mechanical refusal. The
-   * commit noul also covers purchases, so it is never relayed as a level request. `needs.control` names the vetoed
-   * control (its page label, untrusted); the trusted message is REFUSAL_TEXT.
-   */
-  commitVeto(action) {
-    setOutcome(this.result, 'refused_action', 'the commit guard judged the next control to commit the user');
-    this.result.needs.message = REFUSAL_TEXT;
-    if (action?.target !== undefined) {
-      this.result.needs.control = { ref: String(action.target), label: clip(action.label, 120) };
-    }
-    this.why('guard:commit_veto');
-    return this.result;
   }
 
   /**
@@ -1829,7 +1500,7 @@ class Session {
 
   /**
    * An HTTP error page (404, 410, 500, 502, 503, 504 by status, title, heading or a tiny body) ends the run failed /
-   * error_page before any further provider decision, unless the host's expectation passes on it (the host asked
+   * error_page, unless the host's expectation passes on it (the host asked
    * for that page: "read the error reference the Billing page shows"). The browser's own error page is never exempt:
    * it keeps the URL the tab tried and a fixed text, so a URL or textAbsent expectation would pass on a page that
    * shows nothing; any pass recorded there is withdrawn. Returns the result or null.
@@ -1951,8 +1622,7 @@ class Session {
   /**
    * Attach the pending step's screenshot and fire onAction.
    *
-   * capture 'each': always await the screenshot. In run() this is called after the next provider decision, so the
-   *   capture overlaps the provider call instead of adding to the step time.
+   * capture 'each': always await the screenshot.
    * capture 'last': actions run without capture, and only the final step is captured, with one bridge.capture()
    *   call when the run ends. Executes then never wait on Chrome's capture quota. A bridge without capture() is
    *   asked to capture every action instead and all but the final screenshot are discarded unawaited.
@@ -1965,13 +1635,7 @@ class Session {
     const { step } = pending;
     const keep = this.config.capture === 'each' || (this.config.capture === 'last' && final);
     let end = pending.executedAt;
-    // An early capture (prefetchCapture, started next to the terminal decide) is used when it delivered an image or a
-    // revision verdict; a failed or cut-off one falls through to the capture below, exactly as without it.
-    const early = pending.early ? await withCap(pending.early.promise, SCREENSHOT_WAIT_MS) : null;
-    if (keep && pending.deferred && early && !early.error) {
-      applyScreenshot(step, early, pending.observation.revision);
-      step.ms.capture = Math.max(0, (pending.early.at ?? Date.now()) - pending.early.started);
-    } else if (keep && pending.deferred) {
+    if (keep && pending.deferred) {
       // Skipped once the run was stopped or cancelled. A run that only ran out of time still holds a valid lease:
       // it captures with its own short cap. The page may have moved on since the observation (a late navigation);
       // applyScreenshot then rejects the image as revision_mismatch, as for any capture.
@@ -2017,8 +1681,8 @@ class Session {
       target: action.ref !== undefined ? { id: action.ref, label: action.label } : null,
       fromUrl: action.fromUrl,
     };
-    // A final page the host can act on (an offer remembered for its revision: low_confidence alternatives, a handoff's
-    // decide options) is tagged with those action ids instead of the control refs.
+    // A final page the host can act on (an offer remembered for its revision) is tagged with those action ids instead
+    // of the control refs.
     const offer = this.runtime.offers?.get(pending.observation.revision);
     if (offer) Object.assign(details, { labels: actionLabels(offer.actions), revision: offer.revision });
     // After the time budget the run signal is aborted: use one bounded by its own cap and the user's interrupts.
@@ -2070,7 +1734,7 @@ class Session {
       const to = safeOrigin(observation.url);
       if (from && to && from !== to) this.why(`consent:redirect:${to}`);
     }
-    if (!VISIT_STEP.has(observation)) VISIT_STEP.set(observation, (this.stepBase ?? 0) + (this.result.steps?.length ?? 0));
+    if (!VISIT_STEP.has(observation)) VISIT_STEP.set(observation, this.result.steps?.length ?? 0);
     this.visited.push(observation);
   }
 
@@ -2095,14 +1759,12 @@ class Session {
         : checkDeclarative(observation, expectation, context);
       delete verification.error;
       delete verification.contentLoading;
-      if (verification.passed !== true) this.expectationFailedOnce = true;
       // A late-load task is not done while the page still shows a loading placeholder, whatever the expectation.
       if (verification.passed && this.lateIntent() && this.loadingOf(observation).length) {
         verification.passed = false;
         verification.contentLoading = true;
       }
       // A pre-passing expectation (notePrepass) counts only after an action changed the page.
-      if (verification.passed && !this.prepassOk(observation)) verification.passed = false;
     } catch (error) {
       if (this.signal.aborted || this.interrupted) throw error;
       verification.passed = false;
@@ -2122,7 +1784,7 @@ class Session {
       return;
     } else if (isKnownCode(error?.code)) code = error.code;
     else code = 'failed';
-    // Provider and bridge errors can echo page content. Keep their diagnostic text out of the trusted reason.
+    // Bridge errors can echo page content. Keep their diagnostic text out of the trusted reason.
     const detail = outcomeFor(code).status === 'failed' ? String(error?.message ?? error) : undefined;
     if (detail) Object.defineProperty(this.result, 'errorDetail', {
       value: { code, message: detail }, enumerable: false, configurable: true,
@@ -2148,8 +1810,8 @@ class Session {
   /**
    * The run's fact memory for `question` (src/facts.js buildMemory): one state per semantic revision the run saw, in
    * first-seen order (same-URL states included), each with its aggregation items (at most 30) and at most 6 other
-   * relevant lines, at most runLineBudget(states) in all, supplied values redacted (the memory reaches the provider,
-   * the host and the trace). Memoized per question and visit count.
+   * relevant lines, at most runLineBudget(states) in all, supplied values redacted (the memory reaches the host
+   * and the trace). Memoized per question and visit count.
    */
   memory(question) {
     const cached = this.memoryCache;
@@ -2269,11 +1931,9 @@ class Session {
   /**
    * Everything one answer ranking depends on, for `observation` as the final page: the candidates (aggregation
    * items first, then earlier-state lines when the final page is weakly relevant, then the final page's own blocks),
-   * the receipt trail, the earlierPages context for choose() (the most relevant trail states, without lines that
-   * are already candidates) and the aggregation summary. Deterministic for equal inputs, so a ranking started next
-   * to the final decision asks exactly what rankAnswer() would. `mainList` is the final page's main record list
-   * (answerMemory); `itemKeys` holds the candidate keys of every aggregation item, not only the AGGREGATE_CANDIDATES
-   * first (the provider's pick is checked against it).
+   * the receipt trail and the aggregation summary. Deterministic for equal inputs. `mainList` is the final page's main
+   * record list (answerMemory); `itemKeys` holds the candidate keys of every aggregation item, not only the
+   * AGGREGATE_CANDIDATES first.
    */
   answerPlan(observation, question, { mainList = 0 } = {}) {
     const trail = this.trail(question, observation);
@@ -2353,19 +2013,7 @@ class Session {
       }
     }
     for (const candidate of own) push(candidate);
-    // choose() context: the most relevant earlier states, without lines that are already candidates. On a run that
-    // never left the final page's URL (one page, a select or a toggle redrawn in place), an earlier state's line is
-    // context only when it states a fact (a digit, a "label: value" or a name after the first word): "Select a region
-    // to see the shipping cost." is the page's own prompt before the action, and sending it only blurs the ranking.
-    const offered = new Set(candidates.map(candidate => candidate.text));
-    const onePage = trail.every(entry => entry.url === observation.url);
-    const context = line => !offered.has(line) && (!onePage || STATED_FACT.test(line.split(' › ').at(-1)));
-    const earlierPages = trail
-      .map(entry => ({ entry, lines: entry.lines.filter(context) }))
-      .filter(({ lines }) => lines.length)
-      .slice(-EARLIER_STATES)
-      .map(({ entry, lines }) => ({ url: entry.url, state: entry.state, lines }));
-    return { candidates, trail, earlierPages, aggregate, itemKeys, intent: aggregate ? null : summary?.code ?? null,
+    return { candidates, trail, aggregate, itemKeys, intent: aggregate ? null : summary?.code ?? null,
       scope: memory.scope };
   }
 
@@ -2439,11 +2087,6 @@ class Session {
     } catch {
       // Evidence collection must never mask the outcome.
     }
-    if (this.lastDecision) {
-      Object.defineProperty(this.result, 'finalDecision', {
-        value: this.lastDecision, writable: true, enumerable: false, configurable: true,
-      });
-    }
     this.result.page = compactPage(this.result.observation, this.question());
     // The lease's tabs, a JavaScript dialog and Test-site logs on the final page (src/result.js pageExtras).
     const final = this.result.observation;
@@ -2477,8 +2120,7 @@ class Session {
   }
 
   /**
-   * Receipt v2: the verdict (auto-confirmed answer, machine `why` codes, decide options, ready-to-send suggestions,
-   * split plan) and the next step. Runtime-written and trusted; built from the host's instruction, URL paths and
+   * Receipt v2: the verdict (auto-confirmed answer, machine `why` codes) and the next step. Runtime-written and trusted; built from the host's instruction, URL paths and
    * runtime state, never from page text (except the auto-confirmed answer block itself).
    */
   receipt() {
@@ -2487,12 +2129,6 @@ class Session {
     const question = this.question();
     const instruction = this.instruction ?? '';
     const why = [...this.signals.why];
-    if (this.signals.done !== null) why.push(`done:${round2(this.signals.done)}`);
-    for (const name of GUARD_NAMES) {
-      const p = this.signals.guards[name];
-      const note = name === 'injection' ? INJECTION_NOTE : GUARD_NOTE;
-      if (Number.isFinite(p) && p >= note) why.push(`guard:${name}:${round2(p)}`);
-    }
     const shape = this.signals.expectationShape ?? lintExpectation(config.expectation).shape;
     if (shape !== 'none') why.push(`expectation:${shape}`);
     const finalUrl = result.observation?.url;
@@ -2512,10 +2148,8 @@ class Session {
         delete result.verification.hint;
       }
     }
-    const hops = namedHops(instruction);
     const join = isJoinTask(instruction);
     if (join) why.push('join_task');
-    if (hops.length > SPLIT_HOPS) why.push(`hops:${hops.length}`);
     if (result.trail?.length) why.push('trail_has_fact');
     const aggregated = result.answer?.aggregate;
     if (aggregated) {
@@ -2524,8 +2158,6 @@ class Session {
     }
     // The question sets a condition on the items that the aggregation did not parse (src/facts.js unreadConditions).
     if (result.answerDetail?.aggregate?.unread?.length) why.push('aggregate:unread_condition');
-    // Which record list the aggregation read (listChoice): the provider's, "none", or the fallback and its reason.
-    if (result.answerDetail?.lists?.why) why.push(result.answerDetail.lists.why);
     if (result.answer?.source) why.push(`answer:from_state:${result.answer.source.state}`);
     // Earlier states keyed to another day than the question's page were not answer candidates (trail only).
     const scopedOut = result.answerDetail?.scope?.excluded?.length ?? 0;
@@ -2575,11 +2207,8 @@ class Session {
         if (answer) answer = null;
         why.push('answer:scope_mismatch');
       }
-      // The provider scored the page as blocked (login/paywall/captcha): its text is never auto-confirmed.
-      if (answer && why.includes('guard:blocked_page')) answer = null;
       // An aggregation over remembered states: auto-confirmed only over items the run fully read, with a unique
-      // first value, and either the provider's top candidate is its first item or the override took it
-      // (aggregateOverride: a complete minimum or maximum whose items the provider's pick is one of).
+      // first value, and the top candidate its first item.
       const aggregate = result.answer?.aggregate;
       if (aggregate) {
         const top = result.answer.candidates?.[0];
@@ -2605,11 +2234,6 @@ class Session {
         answer = null;
         why.push('answer:aggregate_disagrees');
       }
-      if (answer && fromState && (this.signals.guards?.injection ?? 0) >= INJECTION_NOTE) {
-        // The provider's injection guard flagged a page of this run: a remembered line is never auto-confirmed.
-        answer = null;
-        why.push('answer:from_state_guarded');
-      }
       // A remembered line is ranked with its section heading in front; the confirmed value is the line itself.
       const heading = result.answer?.candidates?.[0]?.source?.heading;
       if (answer && heading && result.answer.candidates[0].aggregate === undefined) {
@@ -2621,90 +2245,13 @@ class Session {
       }
       if (!answer && result.status === 'completed') why.push(...confirmed.why);
     }
-    const plan = (join || hops.length > SPLIT_HOPS) && result.status !== 'completed'
-      ? { split: true, reason: join ? 'join_task' : 'hops>3', hops: hops.length }
-      : null;
     result.verdict = buildVerdict(result, {
       answer,
       hasQuestion: Boolean(config.answerQuestion),
       why,
-      decide: this.signals.decide,
-      suggested: (loading && this.suggestLoaded()) || this.suggest(hops, plan),
-      plan,
       loading,
     });
     result.next = nextFor(result);
-  }
-
-  /**
-   * The host's expectation plus textAbsent set to the runtime's lexicon constant for the placeholder ("Loading"), so
-   * a re-run waits for the content. The placeholder's page text never enters this trusted field; it stays in
-   * page.digest. A placeholder outside the lexicon gets no suggestion.
-   */
-  suggestLoaded() {
-    const current = this.config.expectation && typeof this.config.expectation === 'object' ? this.config.expectation : {};
-    if (current.textAbsent) return null;
-    const absent = this.loadingOf(this.result.observation).map(block => loadingLexiconEntry(block.text)).find(Boolean);
-    if (!absent) return null;
-    const expectation = { ...current, textAbsent: absent };
-    const finalUrl = this.result.observation?.url;
-    if (!expectation.urlIncludes && finalUrl) {
-      const path = suggestExpectation(finalUrl)?.urlIncludes;
-      if (path) expectation.urlIncludes = path;
-    }
-    return { expectation };
-  }
-
-  /** Ready-to-send fixes: the real final URL as the expectation, and the unvisited named pages as an instruction. */
-  suggest(hops, plan) {
-    const result = this.result;
-    const code = result.code;
-    if (['completed', 'needs_user', 'failed', 'stopped'].includes(result.status)) return null;
-    const config = this.config;
-    const current = config.expectation && typeof config.expectation === 'object' ? config.expectation : null;
-    const finalUrl = result.observation?.url;
-    const suggested = {};
-    // The run stopped on the page the provider judged final: its real URL is the expectation to use.
-    if (['expectation_mismatch', 'expectation_failed', 'no_expectation', 'expectation_error'].includes(code)) {
-      const expectation = finalUrl ? suggestExpectation(finalUrl, current) : null;
-      if (expectation) suggested.expectation = expectation;
-    }
-    const wrongPage = ['handoff', 'action_budget', 'decision_budget', 'time_budget', 'no_progress', 'unsupported',
-      'stale', 'target_unavailable', 'capture_failed', 'step_complete', 'expectation_failed', 'low_confidence'];
-    if (wrongPage.includes(code) && hops.length) {
-      const seen = [];
-      for (const step of result.steps) seen.push(String(step.action?.label ?? '').toLowerCase());
-      for (const observation of this.visited) {
-        seen.push(String(observation?.title ?? '').toLowerCase());
-        try {
-          seen.push(decodeURIComponent(new URL(observation.url).pathname).toLowerCase().replace(/[-_/.]+/g, ' '));
-        } catch {
-          // Unparsable URL: nothing to compare.
-        }
-      }
-      const remaining = remainingHops(hops, seen);
-      const next = plan ? remaining.slice(0, SPLIT_HOPS) : remaining;
-      // The run acted but reached none of the named pages: the suggestion would be the tried instruction again.
-      const repeat = result.steps.length > 0 && remaining.length === hops.length;
-      const instruction = suggestInstruction({
-        hops,
-        remaining: next,
-        question: config.answerQuestion,
-        readOnly: config.mode === 'read-only',
-      });
-      if (instruction && !repeat && instruction !== this.instruction) {
-        suggested.instruction = instruction;
-        suggested.maxActions = suggestMaxActions(next.length);
-        // Keep a good expectation with the new instruction so the re-run is still verified.
-        // Never one that passed on the start page already (url_start, expectation:prepassing): it proves nothing.
-        const vacuous = this.signals.expectationShape === 'url_start'
-          || this.signals.why.includes('expectation:prepassing');
-        if (!suggested.expectation && current && !vacuous && !lintExpectation(current).weak) {
-          suggested.expectation = { ...current };
-        }
-      }
-    }
-    return Object.keys(suggested).length ? suggested : null;
   }
 
 }
@@ -3000,7 +2547,7 @@ export class BrowserRuntime {
    * (the page script's 100-control cap, MAX_OFFERED or the listing).
    */
   async observe(options = {}) {
-    const config = configure(options, { step: true });
+    const config = configure(options);
     const instruction = typeof options.instruction === 'string' && options.instruction.trim() ? options.instruction : null;
     const session = this.#open(config, instruction);
     // Dev logs (console errors, failed requests) are read only on a Test site; elsewhere the observe says so.
@@ -3597,7 +3144,7 @@ export class BrowserRuntime {
     // Host-driven offers also take fills of the host's own text (agentText).
     const flags = { enterSubmit: true, approvals, agentText: true };
     const offer = offeredActions(observation, { ...config, hints, ...flags });
-    const actions = offer.actions.filter(action => !['done', 'handoff'].includes(action.type));
+    const actions = offer.actions;
     // `hints` (the task the host named on its observe) rank the listing of the page an act() on this offer lands on;
     // `question` ranks its digest.
     this.#remember({ revision: observation.revision, observation, actions, config, hints, question: question || null, flags });

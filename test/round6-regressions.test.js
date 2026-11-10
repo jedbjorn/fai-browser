@@ -14,8 +14,6 @@ import { chromium } from 'playwright-core';
 import { headlessEnv } from '../scripts/headless-env.mjs';
 import { startSite } from '../bench/serve-site.mjs';
 import { startQaSite } from '../bench/qa/serve.mjs';
-import { autoConfirm, classifyIntent } from '../src/digest.js';
-import { actionHops, boundedImperative, hopsDoneInOrder } from '../src/oversight.js';
 import { PageBridge } from './helpers/page-bridge.js';
 
 let site;
@@ -43,28 +41,6 @@ async function open(t, origin, path, level = 'read-only') {
 // ---------------------------------------------------------------------------------------------------------------
 // 1. billing-office-hours: no early end, and no auto-confirm, on a page that cannot answer an hours question
 // ---------------------------------------------------------------------------------------------------------------
-
-const LISBON = 'Open the Contact page and read the opening hours of the Lisbon office.';
-const LISBON_Q = 'What are the opening hours of the Lisbon office?';
-
-test('billing-office-hours: hours questions have the hours shape; a line naming the office is never confirmed', () => {
-  assert.equal(classifyIntent(LISBON_Q), 'hours');
-  assert.equal(classifyIntent("What are the office's opening hours?"), 'hours');
-  // The host's first call: "who" no longer makes it a name question that "Elif Demir" satisfies.
-  const first = 'What are the opening hours of the office led by the team member who handles billing and plans?';
-  assert.equal(classifyIntent(first), 'hours');
-  const ranked = text => ({ method: 'provider', candidates: [{ text, confidence: 0.95 }, { text: 'Oslo office', confidence: 0.02 }] });
-  const wrong = autoConfirm(ranked('Lisbon office — led by Elif Demir'), { question: LISBON_Q });
-  assert.equal(wrong.answer, null);
-  assert.ok(wrong.why.includes('answer:shape_hours'));
-  assert.equal(autoConfirm(ranked('Elif Demir'), { question: first }).answer, null);
-  assert.equal(autoConfirm(ranked('Opening hours: 09:00–17:30 WET'), { question: LISBON_Q }).answer.text, '09:00–17:30 WET');
-  // The read clause's entity is not a hop: only Contact is, and only an action's label or landing page does it.
-  assert.deepEqual(boundedImperative(LISBON), ['Contact']);
-  assert.deepEqual(actionHops('Click Contact, then the Lisbon office. Read its opening hours.'), ['Contact', 'Lisbon office']);
-  assert.equal(hopsDoneInOrder(['Contact', 'Lisbon office'], [['contact', 'contact us', '/contact.html']]), false,
-    'a Contact page whose text mentions the Lisbon office does not do the Lisbon hop');
-});
 
 // ---------------------------------------------------------------------------------------------------------------
 // 2. catalog-plan-price: the join fact stays in the trail on an aggregate-intent question

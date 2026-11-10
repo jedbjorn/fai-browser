@@ -1,41 +1,24 @@
-// Mechanical oversight helpers (docs/design/OVERSIGHT-SPEC.md sections 1-3): thresholds, the rung 0 page classification
-// (consent dialog, login wall), instruction hops and the ready-to-send `suggested` fixes. Pure, synchronous and
-// model-free. Nothing here returns page text inside a trusted field: suggestions are built from the host's own
-// instruction and question and from URL paths only.
+// Mechanical oversight helpers (docs/design/OVERSIGHT-SPEC.md sections 1-3): answer thresholds, the page
+// classification (consent dialog, login wall, error page) and refusal texts. Pure, synchronous and model-free.
+// Nothing here returns page text inside a trusted field.
 import {
-  COMMIT_ACTION, COMMIT_OTHER, DANGEROUS, DELETE_WORDS, PURCHASE, SIGN_IN_WORDS, SUBMIT_WORDS, commitOtherClass, labelSpellings,
+  COMMIT_ACTION, COMMIT_OTHER, DANGEROUS, DELETE_WORDS, PURCHASE, SIGN_IN_WORDS, SUBMIT_WORDS, commitOtherClass,
 } from './guardrails.js';
 
-/** One config object for every gate, so a later pass can tune them together (config.json `thresholds`). */
+/** The answer gates (config.json `thresholds`): when an answer candidate is auto-confirmed as verdict.answer. */
 export const DEFAULT_THRESHOLDS = Object.freeze({
-  linkFloor: 0, // click confidence below which a link choice is returned to the host (0 = never)
-  controlFloor: 0.5, // the same for buttons, selects and fills (reversible mode)
-  doneThreshold: 0.5, // done at or above which a passing expectation completes the run
-  strongDone: 0.8, // done at or above which a failing expectation is re-observed; a mismatch on handoff/done or twice
   answerConfirm: 0.8, // top candidate confidence for an auto-confirmed verdict.answer
   answerMargin: 0.5, // and its margin over the second candidate
-  // Step lists at read-only and reversible: a {{answer:N}} placeholder may also fill from step N's top candidate when
-  // it is at least placeholderFloor and leads the second by placeholderMargin (and passes every fill check); the
-  // receipt marks it stepResults[N].answerSource "likely", never as a confirmed answer (src/steps.js likelyValue).
-  placeholderFloor: 0.35,
-  placeholderMargin: 0.15,
-  // Reversible mode: the provider's `commit` guard at or above which a chosen button/select/fill (or a handoff while
-  // one is offered) is refused (guard:commit_veto, needs_user/refused_action). The daemon lets a run lower it, never
-  // raise it. 0.7, not the 0.85 of the other guards: in bench/jev-eval the true commits scored 0.83-0.96 depending on
-  // the policy wording and the harmless generic controls at most 0.49 (docs/design/PROPOSAL.md "Guardrail pass").
-  commitVeto: 0.7,
-  // In-call retries (run option `retry`): a link choice, or a handoff, whose probability leads the best other link or
-  // control by less than this gets one second-opinion decide with the options reordered. A choice below its floor
-  // (linkFloor, controlFloor/minConfidence) gets one whatever the gap.
-  secondOpinionMargin: 0.2,
 });
 
 export const THRESHOLD_NAMES = Object.freeze(Object.keys(DEFAULT_THRESHOLDS));
+// Gates of the removed Jev autopilot: accepted in an older config.json and ignored.
+const RETIRED_THRESHOLDS = new Set(['linkFloor', 'controlFloor', 'doneThreshold', 'strongDone', 'placeholderFloor',
+  'placeholderMargin', 'commitVeto', 'secondOpinionMargin']);
 
 /**
- * The thresholds for a run: defaults, then `options.thresholds`, then the older top-level names (`doneThreshold`,
- * and `minConfidence` as an alias for `controlFloor`). Returns `{ thresholds, explicit }` where `explicit` lists
- * the names the caller set (a floor set explicitly also gates choices that report no confidence).
+ * The thresholds: defaults, then `options.thresholds`. Returns `{ thresholds, explicit }` where `explicit` lists the
+ * names the caller set.
  */
 export function resolveThresholds(options = {}) {
   const thresholds = { ...DEFAULT_THRESHOLDS };
@@ -44,26 +27,16 @@ export function resolveThresholds(options = {}) {
   if (given !== undefined && given !== null) {
     if (typeof given !== 'object' || Array.isArray(given)) throw new TypeError('thresholds must be an object');
     for (const [name, value] of Object.entries(given)) {
+      if (RETIRED_THRESHOLDS.has(name)) continue;
       if (!THRESHOLD_NAMES.includes(name)) throw new TypeError(`Unknown threshold "${name}"`);
       if (value === undefined) continue;
       thresholds[name] = value;
       explicit.add(name);
     }
   }
-  if (options.doneThreshold !== undefined) {
-    thresholds.doneThreshold = options.doneThreshold;
-    explicit.add('doneThreshold');
-  }
-  if (options.minConfidence !== undefined) {
-    thresholds.controlFloor = options.minConfidence;
-    explicit.add('controlFloor');
-  }
   for (const name of THRESHOLD_NAMES) {
     const value = thresholds[name];
-    if (typeof value !== 'number' || !(value >= 0 && value <= 1)) {
-      const label = name === 'controlFloor' && options.minConfidence !== undefined ? 'minConfidence' : name;
-      throw new RangeError(`${label} must be a number from 0 to 1`);
-    }
+    if (typeof value !== 'number' || !(value >= 0 && value <= 1)) throw new RangeError(`${name} must be a number from 0 to 1`);
   }
   return { thresholds, explicit };
 }
@@ -83,24 +56,11 @@ export const CONSENT_ACCEPT = /\baccept|\bagree|\ballow|\bgot it\b|\bok(?:ay)?\b
 export const CONSENT_SETTINGS = /settings|manage|customi|options|preferences|einstellungen|anpassen|verwalten|paramètres|personnaliser|gérer|configur|ajustes|preferencias|impostazioni|personalizza|gestisci|definições|personalizar|gerir|instellingen|aanpassen|beheren/i;
 /** "Continue without accepting" in each language: a reject, although it contains the accept verb. */
 export const CONSENT_WITHOUT_ACCEPT = /without accepting|ohne (?:zu )?(?:akzeptieren|zustimmen)|sans accepter|sin aceptar|senza accettare|sem aceitar|zonder (?:te )?accepteren/i;
-const CONSENT_TEXT_LIMIT = 120;
-const NOT_REJECT = /non[- ]?(essential|necessary)/i;
-const ACCEPT = CONSENT_ACCEPT;
-const NECESSARY_ONLY = /^(?:accept|allow|agree(?: to)?)\s+(?:only\s+)?(?:strictly\s+)?(?:necessary|essential|required)(?:\s+cookies)?(?:\s+only)?[.!]?$/i;
 
 // COMMIT_ACTION and DANGEROUS (composed) and their split sets live in src/guardrails.js, the guardrail policy's core
-// (the single source of truth for the mechanical check and the Jev policy text); re-exported here for the existing
+// (the single source of truth for the mechanical check); re-exported here for the existing
 // importers.
 export { COMMIT_ACTION, COMMIT_OTHER, DANGEROUS, DELETE_WORDS, PURCHASE, SIGN_IN_WORDS, SUBMIT_WORDS };
-
-/** The reject label rule with the page script's safety exceptions. */
-export function isRejectLabel(label) {
-  const text = String(label ?? '');
-  const accepting = ACCEPT.test(text) && !CONSENT_WITHOUT_ACCEPT.test(text);
-  const necessaryOnly = NECESSARY_ONLY.test(text.trim()) && /\bonly\b/i.test(text);
-  return CONSENT_REJECT.test(text) && !NOT_REJECT.test(text) && !labelSpellings(text).some(text => COMMIT_ACTION.test(text))
-    && (!accepting || necessaryOnly);
-}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Destructive links, refused tasks and error pages (machinery pass)
@@ -153,20 +113,6 @@ export function destructiveLinkClass(label) {
   if (PURCHASE.test(text)) return 'purchase';
   const other = text.match(COMMIT_OTHER);
   return other ? commitOtherClass(other[0]) : 'purchase';
-}
-
-const NAV_SHAPE = /^[\p{L}\p{N}][\p{L}\p{N} &'’·:,.()/-]*$/u;
-const NAV_NOISE = /\b(?:agent|assistant|ai|ignore|instructions?|must|required|requires?|urgent|immediately|first|now|click|press|tap|verify|confirm|proceed|allow|grant|enable|download|install|run)\b/i;
-
-/**
- * A plain navigation label (the only kind of decide option kept while the injection guard is at or above the veto):
- * at most 4 words, letters, digits and light punctuation, and no action or instruction word anywhere.
- */
-export function plainNavLabel(label) {
-  const text = words(label);
-  if (!text || text.split(' ').length > MAX_GATED_LINK_WORDS || !NAV_SHAPE.test(text)) return false;
-  return !DANGEROUS.test(text) && !COMMIT_ACTION.test(text) && !LINK_DANGER_LEAD.test(text) && !NAV_NOISE.test(text)
-    && !/\b(?:delete|remove|unsubscribe|cancel|sign ?out|log ?out)\b/i.test(text);
 }
 
 // Imperative clauses of the host's instruction that ask for something FAI Browser never does. Matched at the start
@@ -257,7 +203,7 @@ export const LEVEL_NAMES = Object.freeze({
 /**
  * The trusted message for a refusal a higher level would lift. `granted` is the user's grant for the tab and
  * `needed` the lowest level that allows the action. When the grant already covers it, the agent asked for too
- * low a mode itself and is told to run again with that mode instead of asking the user.
+ * low a mode itself and is told to observe again with that mode instead of asking the user.
  */
 export function levelRefusalText({ granted, needed }) {
   const want = LEVEL_NAMES[needed] ?? needed;
@@ -338,99 +284,6 @@ export function consentOf(observation) {
   const consent = observation?.consent;
   if (!consent || typeof consent !== 'object' || !Array.isArray(consent.buttons)) return null;
   return consent;
-}
-
-/**
- * The consent dialog's reject / necessary-only buttons as offered actions (no ids yet): `kind: "reject"` from the
- * page script, or, without kinds, a label matching CONSENT_REJECT minus the page script's exceptions.
- */
-export function consentRejectActions(consent) {
-  const actions = [];
-  const seen = new Set();
-  for (const button of consent?.buttons ?? []) {
-    if (button?.id === undefined || button.id === null) continue;
-    const label = String(button.label ?? '').replace(/\s+/g, ' ').trim();
-    // The page script's kind is authoritative (it also excludes "non-essential" and "allow all and necessary");
-    // the label rule is only a fallback for observations without kinds.
-    if (button.kind !== undefined ? button.kind !== 'reject' : !isRejectLabel(label)) continue;
-    // Defence in depth for an older page script: a commit label is never a reject, whatever its kind says.
-    if (labelSpellings(label).some(text => COMMIT_ACTION.test(text))) continue;
-    const target = String(button.id);
-    if (seen.has(target)) continue;
-    seen.add(target);
-    actions.push({
-      type: 'click',
-      target,
-      role: 'button',
-      label: label.slice(0, 180),
-      consent: true,
-      description: `Dismiss the cookie dialog with button ${target}: ${label.slice(0, 180)}`,
-    });
-  }
-  return actions;
-}
-
-/**
- * The consent dialog's accept buttons as offered actions (no ids yet), for a level with `consent_accept` (full and
- * above) when the dialog has no usable reject button: `kind: "accept"` from the page script, or, without kinds, a
- * label matching CONSENT_ACCEPT that is not a reject. A commit label ("Accept and subscribe") is never offered.
- */
-export function consentAcceptActions(consent) {
-  const actions = [];
-  const seen = new Set();
-  for (const button of consent?.buttons ?? []) {
-    if (button?.id === undefined || button.id === null) continue;
-    const label = String(button.label ?? '').replace(/\s+/g, ' ').trim();
-    const accepting = button.kind !== undefined ? button.kind === 'accept'
-      : ACCEPT.test(label) && !CONSENT_WITHOUT_ACCEPT.test(label) && !isRejectLabel(label);
-    if (!accepting) continue;
-    if (labelSpellings(label).some(text => COMMIT_ACTION.test(text))) continue;
-    const target = String(button.id);
-    if (seen.has(target)) continue;
-    seen.add(target);
-    actions.push({
-      type: 'click',
-      target,
-      role: 'button',
-      label: label.slice(0, 180),
-      consent: true,
-      accept: true,
-      description: `Accept the cookie dialog with button ${target}: ${label.slice(0, 180)}`,
-    });
-  }
-  return actions;
-}
-
-/** Identity of a consent button across observations (ids are renumbered): its normalized label. */
-export function consentKey(action) {
-  return String(action?.label ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
-}
-
-/**
- * The origin a consent wall on its own host (consent.google.com, consent.youtube.com, any consent.* host) continues
- * to once answered: its `continue` parameter's origin, or null. Built from the URL, never from page text.
- */
-export function consentContinueOrigin(url) {
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-  if (!/^consent\./i.test(parsed.hostname)) return null;
-  const next = parsed.searchParams.get('continue');
-  if (!next) return null;
-  try {
-    const target = new URL(next);
-    return /^https?:$/.test(target.protocol) ? target.origin : null;
-  } catch {
-    return null;
-  }
-}
-
-/** The dialog text for the host, at most 120 characters. Untrusted page text. */
-export function consentText(consent) {
-  return String(consent?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, CONSENT_TEXT_LIMIT);
 }
 
 const SIGN_IN = /sign in|log in|login/i;
@@ -532,108 +385,6 @@ export function isJoinTask(instruction) {
   return JOIN.test(String(instruction ?? ''));
 }
 
-function tokens(text) {
-  return String(text ?? '').toLowerCase().match(/[\p{L}\p{N}]{3,}|\d+/gu) ?? [];
-}
-
-/** True when at least two thirds of the hop name's words appear in one of the visited haystacks. */
-function visitedHop(name, haystacks) {
-  const words = tokens(name).filter(word => !TERM_STOPWORDS.has(word));
-  if (!words.length) return true;
-  return haystacks.some(hay => words.filter(word => hay.includes(word)).length * 3 >= words.length * 2);
-}
-
-/**
- * The hops still to visit: those after the last named hop the run reached. `visited` are lower-cased strings that
- * describe pages the run saw (step labels, titles, URL paths); they are compared, never echoed.
- */
-export function remainingHops(hops, visited) {
-  let last = -1;
-  hops.forEach((hop, index) => {
-    if (visitedHop(hop, visited)) last = index;
-  });
-  return hops.slice(last + 1);
-}
-
-// Short function words that never identify a hop ("through the pages", "Terms of the service").
-const HOP_STOPWORDS = new Set('the and for you see its are was all any our via per but not out has can get'.split(' '));
-
-/** The words that identify a hop: its tokens minus stopwords, or all of them when nothing else is left ("Next"). */
-function hopWords(name) {
-  const all = tokens(name);
-  const kept = all.filter(word => !TERM_STOPWORDS.has(word) && !HOP_STOPWORDS.has(word));
-  return kept.length ? kept : all;
-}
-
-/**
- * Whether `hay` (a lower-cased label, title or URL path) holds the hop's words: at least two thirds of them, each as a
- * whole word or a word prefix ("plan" in "plans", never "art" in "start"; numbers exactly).
- */
-function hopMatches(words, hay) {
-  if (!words.length) return true;
-  const hayWords = tokens(hay);
-  const hit = word => hayWords.some(candidate => candidate === word
-    || (!/^\d+$/.test(word) && candidate.startsWith(word)));
-  return words.filter(hit).length * 3 >= words.length * 2;
-}
-
-/**
- * True when every named hop is matched by one of `haystacks` (lower-cased labels, page titles or URL paths), in any
- * order (notePrepass: is the start page the last named page). An empty haystack list matches nothing.
- */
-export function hopsDone(hops, haystacks) {
-  if (!haystacks.length) return false;
-  return hops.every(name => haystacks.some(hay => hopMatches(hopWords(name), hay)));
-}
-
-/**
- * True when the run's actions did every named hop, in order, one action per hop: `events` are the run's own
- * actions in order, each a list of lower-cased texts (the action's label, and the title and path of the page it
- * landed on). Hop i must match an action after the one that matched hop i-1, so "Click Next, then Next" needs two
- * Next clicks and "Open Settings, then Billing" is not done by a Settings page whose title mentions billing.
- */
-export function hopsDoneInOrder(hops, events) {
-  let next = 0;
-  for (const name of hops) {
-    const words = hopWords(name);
-    let found = -1;
-    for (let index = next; index < events.length && found < 0; index++) {
-      if (events[index].some(hay => hopMatches(words, hay))) found = index;
-    }
-    if (found < 0) return false;
-    next = found + 1;
-  }
-  return true;
-}
-
-// A purpose clause names the click's result, not another action: "click 'Date grid' to open the date grid".
-const PURPOSE = /\s+(?:in order\s+)?to\s+(?:open|show|see|view|reveal|expand|display|load)\b[^,.;!?]*/gi;
-
-/** namedHops for hop completion (src/runtime.js earlyEnd): the hops the instruction's actions name, purpose clauses left out. */
-export function actionHops(instruction) {
-  return namedHops(String(instruction ?? '').replace(PURPOSE, ''));
-}
-
-// An instruction that loops or scans ("every page", "each day", "until", "all 13 pages") is never a bounded imperative.
-// Repeat counts ("twice", "3 times", "again") and keep/while/scan/browse wording are open-ended for this purpose too.
-export const OPEN_ENDED = /\b(?:each|every|until|repeat(?:edly)?|one by one|in turn|while|keep|as long as|twice|thrice|again|\d+\s+times|(?:two|three|four|five)\s+times|scan|browse|through\s+(?:all|the|every)|all\s+(?:the\s+)?(?:\d+\s+)?(?:pages|days|items|results|rows|steps|entries|products))\b/i;
-// A leading place phrase before the verb: "On the Google Flights results page, click ...".
-const PLACE_PREFIX = /^(?:on|in|from|at)\s+[^,.;]{1,80},\s*/i;
-
-/**
- * The named targets of a bounded imperative instruction ("Click the 'Date grid' button.", "Open Pricing, then
- * Enterprise."): it starts with an action verb (after an optional place phrase), names one or two clicks or pages
- * (namedHops) and does not loop or scan. Returns the hop names, or null for any other instruction. A run with such an
- * instruction ends as soon as every named target was clicked or reached and its expectation passes (src/runtime.js).
- */
-export function boundedImperative(instruction) {
-  const text = String(instruction ?? '').trim();
-  if (!text || OPEN_ENDED.test(text)) return null;
-  if (!NAV_VERB.test(text.replace(PLACE_PREFIX, ''))) return null;
-  const hops = actionHops(text);
-  return hops.length >= 1 && hops.length <= 2 ? hops : null;
-}
-
 // ---------------------------------------------------------------------------------------------------------------
 // Suggested fixes
 // ---------------------------------------------------------------------------------------------------------------
@@ -661,26 +412,3 @@ export function suggestExpectation(url, current) {
   return suggestion;
 }
 
-function listHops(hops) {
-  if (hops.length === 1) return `visit ${hops[0]}`;
-  return `visit ${hops.slice(0, -1).join(', then ')}, then ${hops.at(-1)}`;
-}
-
-/**
- * A sharper instruction for a re-run from the current page: the unvisited named hops, then the question, then the
- * read-only reminder. Built only from the host's instruction and question. Null when nothing is left to name.
- */
-export function suggestInstruction({ hops, remaining, question, readOnly = true }) {
-  if (!remaining.length) return null;
-  const parts = [`From the current page, ${listHops(remaining)}, in that order.`];
-  const ask = String(question ?? '').replace(/\s+/g, ' ').trim();
-  if (ask) parts.push(`Read the answer to: ${ask.slice(0, 300)}${/[.?!]$/.test(ask) ? '' : '.'} Stop there.`);
-  else parts.push(`Stop on the ${remaining.at(-1)} page.`);
-  if (readOnly) parts.push('Do not type into or submit forms.');
-  return parts.join(' ').slice(0, 1000);
-}
-
-/** maxActions for a re-run: about two per remaining click, at least 3, at most 8. */
-export function suggestMaxActions(remaining) {
-  return Math.min(8, Math.max(3, 2 * remaining));
-}

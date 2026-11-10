@@ -117,7 +117,7 @@ export async function loadDaemonSettings(envPath, { env = process.env, generateS
 // yields the defaults here (the daemon reports config.json errors itself).
 // ---------------------------------------------------------------------------------------------------------------
 
-// A host-driven task (observe/act steps, several reruns, a long step list) needs far more than the first defaults
+// A host-driven task (many observe/act steps) needs far more than the first defaults
 // (6 calls, 2 minutes): 50 calls and 20 minutes per tab request. The popup's Setup & connection section lets the user
 // change both (BUDGET_LIMITS bounds every source: popup, config.json and the host's per-call maxCalls/maxMs).
 export const DEFAULT_BUDGET = Object.freeze({ maxCalls: 50, maxMs: 1_200_000 });

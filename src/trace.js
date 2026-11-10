@@ -244,12 +244,7 @@ export async function writeRun(result, {
   // The run's fact memory: the relevant lines of every page state it saw (bounded, supplied values redacted).
   if (Array.isArray(result.facts) && result.facts.length) diagnostics.facts = result.facts.map(entry => structuredClone(entry));
   if (result.errorDetail) diagnostics.errorDetail = result.errorDetail;
-  if (result.finalDecision) diagnostics.finalDecision = traceDecision(result.finalDecision);
-  // In-call self-rerun: the first attempt's outcome, verdict codes and step count (its steps lead `steps`).
-  if (Array.isArray(result.attempts)) diagnostics.attempts = result.attempts.map(attempt => ({ ...attempt }));
-  // Step list: each step's filled instruction, outcome, verdict codes, final URL, step count and cost.
-  if (Array.isArray(result.stepRuns)) diagnostics.stepRuns = result.stepRuns.map(entry => structuredClone(entry));
-  // Per-request provider usage (non-enumerable on the result): numbers and fixed codes only, for bench aggregation.
+  // Per-request usage (non-enumerable on the result, from older runs): numbers and fixed codes only.
   if (Array.isArray(result.cost?.requests)) {
     diagnostics.cost = { ...result.cost, requests: result.cost.requests.map(entry => ({ ...entry })) };
   }

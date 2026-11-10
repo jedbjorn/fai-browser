@@ -3,16 +3,9 @@
 // state.policy; the commit guard question is asked only in reversible mode when a button, select or fill is offered.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  COMMIT_ACTION, COMMIT_OTHER, CORE_RULES, DANGEROUS, GUARDRAIL_LIMITS, PURCHASE, commitCandidate, forbidPattern,
-  guardrailPolicy, mergeAdditions, normalizeAdditions,
-} from '../src/guardrails.js';
+import { COMMIT_ACTION, COMMIT_OTHER, CORE_RULES, DANGEROUS, GUARDRAIL_LIMITS, PURCHASE, forbidPattern, guardrailPolicy, mergeAdditions, normalizeAdditions } from '../src/guardrails.js';
 import * as oversight from '../src/oversight.js';
 import * as guardrails from '../src/guardrails.js';
-
-const button = (id, target, label) => ({ id, type: 'click', target, role: 'button', label, description: `Click button ${target}: ${label}` });
-const link = (id, target, label) => ({ id, type: 'click', target, role: 'link', label, description: `Click link ${target}: ${label}` });
-const handoff = { id: 'handoff', type: 'handoff', label: 'handoff', description: 'Stop.' };
 
 test('core: the exact regexes moved here and oversight.js re-exports the same objects', () => {
   assert.equal(oversight.COMMIT_ACTION, COMMIT_ACTION);
@@ -104,16 +97,5 @@ test('guardrailPolicy: core first, additions for every label, wire() strings onl
   assert.throws(() => guardrailPolicy({ request: { allow: ['Place order'] } }), /unknown key "allow"/);
   assert.throws(() => guardrailPolicy({ config: ['Pay.*'] }), /config\.json guardrails/);
   assert.ok(Object.isFrozen(policy) && Object.isFrozen(policy.additions.forbid));
-});
-
-test('commitCandidate: buttons, selects and fills; not links, page actions or consent buttons', () => {
-  assert.equal(commitCandidate(button('a0', '1', 'Yes')), true);
-  assert.equal(commitCandidate({ id: 'a1', type: 'select', target: '2', role: 'combobox', value: 'x' }), true);
-  assert.equal(commitCandidate({ id: 'a2', type: 'fill_supplied_text', target: '3', role: 'textbox' }), true);
-  assert.equal(commitCandidate(link('a3', '4', 'Next')), false);
-  assert.equal(commitCandidate({ id: 'a4', type: 'scroll', direction: 'down' }), false);
-  assert.equal(commitCandidate({ id: 'a5', type: 'navigate_allowed_url', url: 'https://x.test/' }), false);
-  assert.equal(commitCandidate({ ...button('c0', '9', 'Reject'), consent: true }), false);
-  assert.equal(commitCandidate(handoff), false);
 });
 

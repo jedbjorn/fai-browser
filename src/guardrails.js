@@ -140,9 +140,8 @@ export function secretAction(label) {
 /** The gate classes, in priority order, and the capability each one stands in for (secret: none, it asks anyway). */
 export const GATE_CLASSES = Object.freeze(['purchase', 'secret', 'delete', 'submit']);
 
-// The intent tiers (guidance switch `intent`, src/typesafe.js): which refused labels Jev may clear. A false positive
-// costs a handoff, a false negative on a purchase costs money, so the ambiguous tier is narrow and Jev only ever
-// clears a flag, never adds a permission the level lacks for the control's real class.
+// The intent tiers (labelTier): which refused labels are ambiguous (page.js marks such controls `ambiguous`, as a
+// diagnostic only; nothing lifts the block). The ambiguous tier is narrow.
 //
 //   ambiguous  every class the label trips comes from these words alone, in either safety spelling:
 //              SUBMIT_WORDS save, confirm, send, invite, publish (AMBIGUOUS_SUBMIT; never "submit");
@@ -294,7 +293,7 @@ export function labelSpellings(label) {
 }
 
 /**
- * The core rules. `text`-less records: `enforced` names the code that enforces the rule whatever Jev answers, and
+ * The core rules. `text`-less records: `enforced` names the code that enforces the rule, and
  * `lifted` the lowest level that lifts it (null: never, at any level).
  */
 export const CORE_RULES = Object.freeze([
@@ -314,7 +313,7 @@ export const GUARDRAIL_LIMITS = Object.freeze({ maxForbid: 20, maxPhraseLength: 
 // spaces and a little punctuation that real control labels carry ("Add-ons", "Gift & wrap", "Save 20%").
 const METACHARACTERS = /[\\^$.|?*+()[\]{}]/;
 const PHRASE = /^[\p{L}\p{N}\p{M}][\p{L}\p{N}\p{M} '’&/:,!#%@-]*$/u;
-// Control, format (zero-width, bidi overrides), private-use and unassigned code points: a note is plain text Jev reads
+// Control, format (zero-width, bidi overrides), private-use and unassigned code points: a note is plain text stored
 // verbatim, so nothing invisible or direction-changing gets in.
 const NOTE_CONTROL = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}]/u;
 
@@ -431,16 +430,6 @@ export function forbidPattern(phrases) {
     }
   }
   return parts.length ? new RegExp(`(?<![\\p{L}\\p{N}])(?:${parts.join('|')})(?![\\p{L}\\p{N}])`, 'iu') : null;
-}
-
-
-/**
- * True for an offered action the commit and purchase guards judge (and may veto): a button, select or fill. Not a
- * link, a page action (scroll, wait, allowed URL) or a consent button, which have their own rules.
- */
-export function commitCandidate(action) {
-  return action?.target !== undefined && !action.consent && action.role !== 'link'
-    && ['click', 'select', 'fill_supplied_text', 'submit_field'].includes(action.type);
 }
 
 /** The label classes a text trips, in priority order (purchase, forbid, sign_in, delete, submit). */

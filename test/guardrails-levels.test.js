@@ -8,11 +8,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  CAPABILITIES, CAPABILITY_NAMES, COMMIT_OTHER, DELETE_WORDS, LEVELS, PAYMENT_AUTOCOMPLETE, PAYMENT_FIELD,
-  PURCHASE, SAFE_SUBMIT, SIGN_IN_WORDS, SUBMIT_WORDS, capabilitiesOf, clampLevel, guardrailPolicy,
-  DANGEROUS, labelClasses, normalizeAdditions, paymentField,
-} from '../src/guardrails.js';
+import { CAPABILITIES, CAPABILITY_NAMES, COMMIT_OTHER, DELETE_WORDS, LEVELS, PAYMENT_AUTOCOMPLETE, PAYMENT_FIELD, PURCHASE, SAFE_SUBMIT, SIGN_IN_WORDS, SUBMIT_WORDS, capabilitiesOf, clampLevel, guardrailPolicy, DANGEROUS, labelClasses, normalizeAdditions, paymentField } from '../src/guardrails.js';
 import { legalActions } from '../src/runtime.js';
 import { createHub } from '../src/bridge.js';
 import { createDaemon } from '../src/daemon.js';

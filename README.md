@@ -81,17 +81,9 @@ references; the task benchmark below includes the contents actually read.
 
 Measured 2026-11-06 on local fixtures, two repeats per task. Values are per-task averages of
 per-task medians. Wall time is host spawn to exit. Host tokens are full vendor usage; cost is
-host-only pricing from `bench/prices.json`, not a subscription invoice. Bars are labeled directly;
-lower time, token and cost bars are better, while higher pass counts are better. The charts also
-show the experimental Jev autopilot, which has since been removed.
-
-#### Text workflows · Sol 6.1 medium
-
-![Text workflow benchmark: Playwright MCP, FAI Agent direct and FAI Jev autopilot compared on passes, wall time, raw host tokens and host-only cost](site/media/benchmark-text.svg)
-
-#### Visual workflows · Claude Sonnet 5.5 medium
-
-![Visual workflow benchmark: Playwright MCP, FAI Agent direct and FAI Jev autopilot compared on passes, wall time, raw host tokens and host-only cost](site/media/benchmark-visual.svg)
+host-only pricing from `bench/prices.json`, not a subscription invoice. Lower time, token and cost
+are better; higher pass counts are better. Text workflows ran on Sol 6.1 medium, visual workflows on
+Claude Sonnet 5.5 medium.
 
 | Workflow set | Metric | Playwright MCP | FAI Agent direct |
 |---|---|---:|---:|
