@@ -285,9 +285,10 @@ and exit code.
 - **Local service and traces.** Agent direct makes no FAI provider calls. The optional Jev
   autopilot sends observations to its provider and uses your locally stored Jev key to authenticate
   those requests. Supplied values are redacted before provider requests; traces are pruned
-  (50 runs, 500 MB, 7 days). The only other outbound request is the daily update check, an
-  anonymous GET to GitHub's releases API (with a `git ls-remote` fallback on your clone's remote if
-  the API does not answer for the repository; `FAI_UPDATE_CHECK=0` turns it off).
+  (50 runs, 500 MB, 7 days). Besides the daily update check, an anonymous GET to GitHub's releases
+  API (with a `git ls-remote` fallback on your clone's remote if the API does not answer for the
+  repository; `FAI_UPDATE_CHECK=0` turns it off), FAI only contacts GitHub and Mozilla to download
+  Firefox, the add-on or an update you asked for.
 
 Details: [Policies and providers](docs/REFERENCE.md#policies-and-providers),
 [Guardrails](docs/REFERENCE.md#guardrails) and [Traces and
@@ -380,10 +381,11 @@ Issues and pull requests are welcome. Before you open a PR:
   following the terms of every site you use it on.
 - **No warranty.** FAI is provided as-is under the [MIT license](LICENSE). The authors are not responsible for how you
   use it or for what an agent does with it.
-- **Your data stays with you.** Settings, the pairing secret, screenshots, traces and task history stay on your machine
-  and are never sent to the authors. Keeping that machine and those files secure is up to you; traces and screenshots
-  are pruned automatically (50 runs, 500 MB, 7 days by default). Page content does go to your coding agent's model
-  provider, and to the Jev provider if you turn the autopilot on.
+- **Your data.** Settings, the pairing secret, screenshots, traces and task history are stored only on your machine.
+  Keeping that machine and those files secure is up to you; traces and screenshots are pruned automatically (50 runs,
+  500 MB, 7 days by default). FAI never sends your data to us; data goes only to the providers you configure. Page
+  text and any screenshots the agent asks for go to your agent's model provider; with the Jev autopilot on, page
+  content and the Jev key go to the Jev provider.
 
 This is a plain-language summary, not legal advice.
 
