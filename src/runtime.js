@@ -1,87 +1,33 @@
 import { randomUUID } from 'node:crypto';
-import {
-  URL_HOP_REFUSED, URL_IN_TEXT, namedUrls, originCovered, sameSite, siteEntryFor, siteHost, siteRoots, trimNamedUrl,
-  urlCovered,
-} from './origins.js';
+import { URL_HOP_REFUSED, URL_IN_TEXT, namedUrls, sameSite, siteRoots, trimNamedUrl, urlCovered } from './origins.js';
 
 export { namedUrls };
 import {
   checkDeclarative, describeExpectation, evaluateExpectation, expectationHint, expectationTexts, lintExpectation, validateExpectation,
 } from './expectation.js';
 import {
-  DIGEST_MAX_BLOCKS, DIGEST_MAX_CHARS, autoConfirm, blocksOf, buildDigest, classifyIntent, heuristicConfidences, loadingBlocks, loadingLexiconEntry,
-  pageHasShape, persistentPlaceholders, pickAnswerCandidates, recordListsOf, tokenize,
+  DIGEST_MAX_BLOCKS, DIGEST_MAX_CHARS, autoConfirm, blocksOf, buildDigest, classifyIntent, heuristicConfidences,
+  loadingBlocks, loadingLexiconEntry, persistentPlaceholders, pickAnswerCandidates,
 } from './digest.js';
+import { aggregateItems, answerScope, buildMemory, coverage, itemValue, lineText, traceFacts } from './facts.js';
 import {
-  aggregateIntent, aggregateItems, answerScope, buildMemory, coverage, itemValue, lineText, passesFilters, traceFacts,
-} from './facts.js';
-import {
-  ANSWER_STATUSES,
-  MAX_ANSWER_CANDIDATES,
-  RECOVERABLE_CODES,
-  bridgeError,
-  buildVerdict,
-  compactPage,
-  pageExtras,
-  compactStepObservation,
-  createResult,
-  isKnownCode,
-  nextFor,
-  outcomeFor,
-  redactSecrets,
-  setOutcome,
-  topProbabilities,
+  ANSWER_STATUSES, MAX_ANSWER_CANDIDATES, bridgeError, buildVerdict, compactPage, pageExtras,
+  compactStepObservation, createResult, isKnownCode, nextFor, outcomeFor, redactSecrets, setOutcome,
 } from './result.js';
 import {
-  COMMIT_ACTION,
-  DANGEROUS,
-  FORBID_REFUSAL_TEXT,
-  PURCHASE_REFUSAL_TEXT,
-  REFUSAL_TEXT,
-  commitIntent,
-  consentAcceptActions,
-  levelRefusalText,
-  consentContinueOrigin,
-  consentKey,
-  consentOf,
-  consentRejectActions,
-  consentText,
-  destructiveLink,
-  destructiveLinkClass,
-  errorPageOf,
-  instructionTerms,
-  isJoinTask,
-  harmlessControlLabel,
-  labelIntents,
-  loginState,
-  namedHops,
-  plainNavLabel,
-  remainingHops,
-  resolveThresholds,
-  suggestExpectation,
-  suggestInstruction,
-  suggestMaxActions,
-  actionHops,
-  boundedImperative,
-  hopsDone,
-  hopsDoneInOrder,
+  COMMIT_ACTION, DANGEROUS, FORBID_REFUSAL_TEXT, PURCHASE_REFUSAL_TEXT, REFUSAL_TEXT, commitIntent,
+  levelRefusalText, consentOf, destructiveLinkClass, errorPageOf, instructionTerms, isJoinTask,
+  harmlessControlLabel, labelIntents, loginState, namedHops, remainingHops, resolveThresholds,
+  suggestExpectation, suggestInstruction, suggestMaxActions,
 } from './oversight.js';
+import { LIST_MAX_ACTIONS } from './steps.js';
 import {
-  LIKELY_LEVELS, LIST_MAX_ACTIONS, STEP_DEFAULT_ACTIONS, checkSummary, carryExpectation, carryForward, fillStep, foldTopLevel,
-  likelyValue, listActionBudget, listTimeoutMs, placeholderValue, stepPlaceholders,
-} from './steps.js';
-import {
-  CLASS_CAPABILITY, LEVELS, SAFE_SUBMIT, capabilitiesOf, clampLevel, commitCandidate, guardrailPolicy, isLevel,
-  labelClasses, labelSpellings, labelTier, levelFor, levelRank, paymentField, purchaseControl, purchasePage, secretAction,
+  CLASS_CAPABILITY, LEVELS, SAFE_SUBMIT, capabilitiesOf, clampLevel, guardrailPolicy, isLevel, labelClasses,
+  labelSpellings, labelTier, levelFor, levelRank, paymentField, purchaseControl, purchasePage, secretAction,
 } from './guardrails.js';
-import { SiteRun, agentAddressed, mergeSite, resolveProfiles, statusFilter } from './domains.js';
+import { agentAddressed, resolveProfiles, statusFilter } from './domains.js';
 import { scrubSecrets, secretIds } from './secrets.js';
-import {
-  DEFAULT_OPTION_CAP, bareLabel, capActions, capOffer, namedControls, rankActions, relevanceHints, relevanceScore,
-} from './relevance.js';
-import {
-  MAX_OVERLAY_ACTIONS, MAX_OVERLAY_RETURNS, MAX_OVERLAY_WAITS, overlayDismissActions, overlayKey, overlayOf, overlayState,
-} from './overlay.js';
+import { capActions, capOffer, rankActions, relevanceHints, relevanceScore } from './relevance.js';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Limits
@@ -91,15 +37,8 @@ const MAX_OFFERED = 250; // non-terminal actions offered per decision, including
 const MAX_CONTROLS = 100;
 const MAX_OPTIONS = 30;
 const MAX_ALLOWED_URLS = 10;
-const MAX_RECOVERABLE_RETRIES = 2; // consecutive stale/target_unavailable retries before handing off
-const NOOP_LIMIT = 3; // consecutive actions that leave the page unchanged
 const SCREENSHOT_WAIT_MS = 5000; // safety cap; the bridge contract says the promise always resolves
 const OFFER_CACHE_SIZE = 4;
-const MAX_ALTERNATIVES = 5; // offered alternatives returned with a low_confidence handoff
-const ANSWER_TIMEOUT_MS = 3000; // cap on provider.choose(), further bounded by the run's remaining time
-const ANSWER_MIN_MS = 100; // below this much remaining time the provider is not asked
-// An early answer ranking that failed with one of these is replaced by a serial one when time remains.
-const EARLY_RETRY_CODES = new Set(['timeout', 'provider_error']);
 // An instruction that reads a fact (Session.readClause): "read", "find", "report", "tell", "what ...".
 const READ_CLAUSE = /\b(?:read|reads|find|report|tell|note|get|copy|extract|look up|check (?:what|which|how)|what|which|who|how (?:much|many|long|often))\b/i;
 // Whether an instruction-only run asks anything (auto-confirm gate, instructionAsks): a real question mark, a wh-word
@@ -138,16 +77,6 @@ export function instructionAsks(instruction) {
 }
 const LATE_CAPTURE_MS = 1000; // capture 'last' after the time budget ran out: the lease is still valid
 const MAX_QUESTION_LENGTH = 2000;
-// Doneness. With a provider that reports `done` (a probability that the requested outcome is visible), a run
-// completes when the expectation passes and done >= doneThreshold. Without an expectation, done >= this value ends
-// the run as unverified.
-const NO_EXPECTATION_DONE = 0.8;
-// Consecutive decisions where the provider reports done but the expectation fails before the run returns
-// unverified instead of spending the rest of the budget (usually a too-strict expectation).
-const DONE_BUT_FAILING_LIMIT = 2;
-// Consecutive strong-done decisions (done >= strongDone) with a failing expectation, after the late re-observe,
-// before the run ends as expectation_mismatch although the provider chose to act.
-const STRONG_FAILING_LIMIT = 2;
 // Earlier pages summarized for multi-hop answers: the most recent pages before the final one, at most two lines
 // each, and only blocks that match the question well (two rare question terms, roughly). A single common term,
 // such as "plan" on every catalog row, scores under 1.
@@ -172,15 +101,6 @@ const MEMORY_RATIO = 2;
 const MEMORY_CANDIDATES = 8;
 const AGGREGATE_CANDIDATES = 5;
 const ANSWER_CANDIDATE_CAP = 24;
-// With the `lists` question, the other lists' first items join the candidates (answerRequest): the page script sends
-// at most three lists, so at most two more lists of AGGREGATE_CANDIDATES.
-const LIST_CANDIDATE_CAP = ANSWER_CANDIDATE_CAP + 2 * AGGREGATE_CANDIDATES;
-// Which record list a question is about (the `lists` guidance switch, src/typesafe.js; see listQuestion): the
-// provider's choice of another list than the page script's best is used at this confidence or above, else the page
-// script's order stands (`lists:fallback:low_confidence`). 0.6, between doneThreshold (0.5) and answerConfirm (0.8):
-// the choice is also cross-checked, since an aggregate over the chosen list confirms only when the answer question,
-// asked in the same request, picked one of its items.
-const LIST_CHOICE_FLOOR = 0.6;
 // A question that names the item it wants ("Which flight ..."), so an aggregated answer keeps the whole item line.
 const WHICH_QUESTION = /\b(which|what (?:item|product|flight|one))\b/i;
 // A remembered line that addresses an agent or asserts the answer ("the answer is 555-0000") stays trail context and
@@ -194,112 +114,23 @@ const VISIT_STEP = new WeakMap();
 // Supplied values shorter than this are not redacted from provider payloads; see redactorFor().
 export const SUPPLIED_REDACTION_MIN_LENGTH = 4;
 const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-// Oversight ladder bounds (docs/design/OVERSIGHT-SPEC.md section 3).
-const MAX_UNSUPPORTED_RETRIES = 2; // rung 1b: retries with the unsupported action excluded, one per action
-const MAX_CONSENT_CLICKS = 2; // reject clicks per run (each on a different button) before the dialog goes to the user
-// After a reject click the dialog must close: re-observe every consentWaitMs, at most this many times (about 2 s).
-const MAX_CONSENT_WAITS = 8;
 const DEFAULT_CONSENT_WAIT_MS = 250;
-const MAX_REOBSERVES = 4; // rung 1c: re-observes per run that found no change (one per decision; refundReobserve)
 const DEFAULT_REOBSERVE_MS = 300;
-// Re-observes given back per run (refundReobserve): one per step of a 15-step list, at most 15 re-observes in all.
-const MAX_REOBSERVE_REFUNDS = 11;
 // Rung 1c, buttons: after a quiet button click and a re-observe that both show no change, observe again at these
 // fractions of lateChangeMs (default 3000: at 1.5 s and 3 s), leaving LATE_CHANGE_RESERVE_MS of the run's time.
 const DEFAULT_LATE_CHANGE_MS = 3000;
-const LATE_CHANGE_ROUNDS = Object.freeze([0.5, 1]);
-const LATE_CHANGE_RESERVE_MS = 3000;
-// Those rounds only after a click on a control that re-renders late (lateLook: a stepper arrow, a picker-open click, a
-// control in an open dialog, a site profile's pinned control). Any other button gets one look this long after the
-// re-observe, and only while the page shows work pending (its control disabled, a loading placeholder); else none.
-const LATE_LOOK_SHORT_MS = 700;
 // Late content: while the page shows a loading placeholder ("Loading reconciliation status…") on the final page or in
 // a late-load task, the runtime re-observes after this delay, at most MAX_CONTENT_WAITS times per run (about 3 s),
 // with no provider decision. Under a late-load intent a placeholder also fails the expectation (an implicit
 // textAbsent), so such a run never completes on the pre-load text even when the host's expectation omits textAbsent.
 const DEFAULT_CONTENT_WAIT_MS = 400;
-const MAX_CONTENT_WAITS = 8;
-// An in-place list expansion (completeList): "View more flights", "Show more", "Load more results", "Show 4 more";
-// never pagination ("Next page", "More results" links are links and are never clicked by it), and never a label that
-// names something other than list rows ("View more details", "Show more options", "Load more comments").
-const IN_PLACE_MORE = /^(?:show|view|see|load)\s+(?:all\s+)?(?:\d+\s+)?more(?:\s+(?:flights|results|items|products|listings|rows|entries|offers|deals|fares|departures|connections|trains|buses|hotels|stays|properties|rooms))?$/iu;
-// At most this many non-row blocks (a "Showing 10 of 24" line, a sort link) between a list's last row and its "more"
-// button (moreExtendsItems).
-const MORE_GAP_BLOCKS = 2;
-const ROW_BLOCKS = new Set(['li', 'tr', 'dt', 'dd']);
-const HEADING_BLOCKS = new Set(['h1', 'h2', 'h3', 'h4']);
 
-// The expectation fields about the URL: the ones an in-place expansion that rewrites the URL carries forward.
-const URL_FIELDS = new Set(['urlIncludes', 'urlEquals', 'urlMatches']);
-// Of the texts a page showed before the runtime's own expand click, the share that must still be there afterwards.
-const SAME_DOCUMENT_KEPT = 0.8;
-
-/**
- * Whether the page after the runtime's own expand click is plainly the document that was verified before it, with
- * only its URL rewritten in place (Google's results page turns /travel/flights?q=... into /travel/flights/search?tfs=...
- * when "View more flights" is clicked): the same origin, the same leading content (the first text block, or the title
- * when the page has no blocks, still among the first three) and nearly everything it showed before (at least
- * SAME_DOCUMENT_KEPT of the earlier blocks' distinct texts) still on it. A real navigation to another page fails
- * this: a new heading or a list that replaced the rows loses the earlier texts.
- */
-function sameDocumentExpanded(before, after) {
-  let from;
-  let to;
-  try {
-    from = new URL(String(before?.url ?? ''));
-    to = new URL(String(after?.url ?? ''));
-  } catch {
-    return false;
-  }
-  if (from.origin !== to.origin) return false;
-  const texts = observation => [...new Set(blocksOf(observation).map(block => block.text.trim()).filter(Boolean))];
-  const earlier = texts(before);
-  const later = texts(after);
-  if (!earlier.length) return Boolean(before?.title) && before.title === after?.title;
-  if (!later.slice(0, 3).includes(earlier[0])) return false;
-  const shown = new Set(later);
-  const kept = earlier.filter(text => shown.has(text)).length;
-  return kept >= Math.ceil(earlier.length * SAME_DOCUMENT_KEPT);
-}
-
-/**
- * Whether an in-place "more" button (completeList) extends the list the answer reads: the run of rows directly above
- * the button (li/tr/dt blocks or answer items, back to the section heading, at most MORE_GAP_BLOCKS other blocks
- * between the last row and the button) holds one of the memory's aggregation items, or a row the question's filters
- * leave out (a 07:35 departure for "between 10:00 and 12:00": the hidden rows may be the ones in the window). A
- * "Show 4 more flights" under a flight list the ranking does not read leaves a date grid further up the page alone
- * (QA spa-toggle-date-grid). The rows directly below the button count the same way (a button above its list). A
- * button the blocks do not show (no page-script blocks), or a page where the answer reads no item yet, keeps the click.
- */
-function moreExtendsItems(observation, action, memory, intent) {
-  const blocks = blocksOf(observation);
-  const label = String(action.label ?? '').trim().toLowerCase();
-  let at = blocks.findIndex(block => block.ref !== undefined && block.ref === String(action.target));
-  if (at < 0) at = blocks.findIndex(block => block.t === 'button' && block.text.toLowerCase() === label);
-  if (at < 0) return true;
-  const items = new Set((memory?.states ?? []).flatMap(state => state.lines.filter(line => line.item).map(line => line.key)));
-  // No answer item read anywhere: nothing shows the button belongs to another list.
-  if (!items.size) return true;
-  const row = block => ROW_BLOCKS.has(block.t) || items.has(block.text.toLowerCase());
-  const filtered = text => itemValue(text, intent) !== null && !passesFilters(text, intent);
-  // The run of rows on one side of the button (step -1: above, the usual place; step 1: below, a button over its list).
-  const extends_ = step => {
-    let i = at + step;
-    const inside = () => i >= 0 && i < blocks.length;
-    for (let gap = 0; inside() && gap < MORE_GAP_BLOCKS && !row(blocks[i]) && !HEADING_BLOCKS.has(blocks[i].t); gap++) i += step;
-    for (; inside() && row(blocks[i]); i += step) if (items.has(blocks[i].text.toLowerCase()) || filtered(blocks[i].text)) return true;
-    return false;
-  };
-  return extends_(-1) || extends_(1);
-}
 // Consecutive unchanged content waits before a visible placeholder counts as persistent status text (awaitContent).
 const PERSISTENT_QUIET_WAITS = 2;
 // A handoff whose done is at most this, on a page where an expectation that already passed on the start page still
 // passes, is a handoff to the host, not handoff_expectation_passed (Session.vacuousPass).
 const PREPASS_DONE_MAX = 0.3;
 const DEFAULT_TIMEOUT_MS = 30000;
-const LONG_TASK_TIMEOUT_MS = 45000; // default for instructions that name 4 or more pages
-const MAX_DECIDE_OPTIONS = 5;
 // Provider guards (TypeSafe `blocked` / `injection` / `commit` nouls). At or above GUARD_VETO a guard acts: blocked
 // ends the run as needs_user/blocked (after rung 0 had its chance), injection lets only a link to an approved origin
 // run. `commit` (reversible mode) has its own threshold, thresholds.commitVeto (default 0.7): at or above it a chosen
@@ -314,7 +145,6 @@ export const GUARD_VETO = 0.85;
 const GUARD_NOTE = 0.5;
 export const INJECTION_NOTE = 0.8;
 const GUARD_NAMES = ['blocked', 'injection', 'commit', 'purchase_control', 'purchase_page'];
-const LONG_TASK_HOPS = 4;
 const SPLIT_HOPS = 3;
 
 // In-call retries (run option `retry`, default on; docs/REFERENCE.md "In-call retries"): before handing a result
@@ -346,16 +176,8 @@ export const RETRY_KINDS = Object.freeze(['secondOpinion', 'backOut', 'rerun']);
 export const MAX_SECOND_OPINIONS = 2;
 export const MAX_BACK_OUTS = 1;
 export const MAX_RERUNS = 1;
-const SECOND_OPINION_MIN_MS = 1000; // remaining run time below which no second opinion is asked
-const BACK_OUT_MIN_MS = 2000; // remaining run time below which the runtime does not back out
-const RERUN_MIN_MS = 5000; // remaining run time below which no self-rerun starts
-// Step lists (run option `steps`, src/steps.js): below this much of the call's time no further step starts.
-const LIST_STEP_MIN_MS = 1000;
 // Answer rankings allowed for in requestCap (one per attempt); rankings themselves are not capped by it.
 export const CALL_EXTRA_REQUESTS = 2;
-// Step classes after which a back-out or a self-rerun is still free of side effects: links, scrolling, waiting and the
-// runtime's consent reject clicks and nag-overlay dismissals. Any button, select or fill in the run rules both out.
-const SIDE_EFFECT_FREE = new Set(['link', 'page', 'consent', 'dismiss']);
 // The shared per-call retry counters travel to a self-rerun's configure() under this key, never from a caller.
 const RETRY_STATE = Symbol('retryState');
 
@@ -467,30 +289,6 @@ function allowedOrigin(url, origins) {
   return urlCovered(url, origins ?? []);
 }
 
-/**
- * A consent reject button the runtime may click: it is one of the observation's controls, the page script does
- * not refuse it (accept buttons carry risk 'destructive'), and a link form stays on an approved origin
- * (script links such as href="javascript:void(0)" or "#" are fine; they do not navigate away).
- */
-function consentClickable(action, observation, config) {
-  const control = (observation.controls ?? []).find(item => String(item?.id) === action.target);
-  if (!control) return false;
-  if (control.risk === 'submit' || control.risk === 'destructive') return false;
-  // An accept button (risk consent_accept from the page script) only at a level with consent_accept (full).
-  if (control.risk === 'consent_accept' && !config.capabilities?.has('consent_accept')) return false;
-  if (control.risk !== undefined && !['reversible', 'navigation', 'consent_accept'].includes(control.risk)) return false;
-  if (control.href) {
-    let url;
-    try {
-      url = new URL(control.href, observation.url);
-    } catch {
-      return false;
-    }
-    if (/^https?:$/.test(url.protocol) && !originCovered(url.origin, config.allowedOrigins ?? [])) return false;
-  }
-  return true;
-}
-
 function safeOrigin(url) {
   try {
     return originOf(url);
@@ -503,14 +301,6 @@ function safeOrigin(url) {
 function consentContinueHost(url) {
   try {
     return /^consent\./i.test(new URL(url).hostname);
-  } catch {
-    return false;
-  }
-}
-
-function sameOrigin(url, origin) {
-  try {
-    return originOf(url) === origin;
   } catch {
     return false;
   }
@@ -1159,30 +949,6 @@ export function actionKey(action) {
   return `${action.type}:${action.target ?? action.url ?? action.direction ?? ''}:${action.value ?? action.suppliedName ?? ''}`;
 }
 
-/** The lower-cased title and path (not "/") of a page, for hop matching (earlyEnd). */
-function pageTexts(observation) {
-  const out = [];
-  if (observation?.title) out.push(String(observation.title).toLowerCase());
-  const path = urlPath(observation?.url);
-  if (path && path !== '/') out.push(path.toLowerCase());
-  return out;
-}
-
-function controlLabel(action) {
-  return String(action?.label ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
-}
-
-/** A record of a clicked control, matched against later offers by sameControl (key, or type and label). */
-function toggleRecord(action, url) {
-  return { key: actionKey(action), type: action.type, label: controlLabel(action), url };
-}
-
-/** Whether an offered action is the recorded control: the same stable key, or the same type and (non-empty) label. */
-function sameControl(action, record) {
-  if (actionKey(action) === record.key) return true;
-  return Boolean(record.label) && action.type === record.type && controlLabel(action) === record.label;
-}
-
 /**
  * The gate class of an action: link (navigation), control (button/select/fill), page (scroll/wait), consent or
  * dismiss (the runtime closing a nag overlay, src/overlay.js).
@@ -1296,109 +1062,6 @@ function validateObservation(observation) {
   if (!valid) throw bridgeError('invalid_observation', 'Invalid bridge observation', false);
 }
 
-/**
- * What a page says, independent of where it is scrolled: the title, every block's text (on screen or not, live
- * regions included) and every control's identity and state, each as a sorted list, so an order the viewport set does
- * not count. Null when the observation cannot tell (no blocks, or blocks or controls capped: what was left out
- * depends on the scroll position), and the revision decides instead.
- */
-function contentKey(observation) {
-  const parts = contentParts(observation);
-  return parts === null ? null : JSON.stringify([parts.title, parts.blocks, parts.controls]);
-}
-
-/** contentKey's parts, each serialised on its own so that contentDiff can name the one that differs. */
-function contentParts(observation) {
-  if (!Array.isArray(observation?.blocks) || observation.blocksTruncated
-    || observation.warnings?.some(code => String(code).startsWith('controls_capped'))) return null;
-  const blocks = observation.blocks.map(block => `${block.t}:${block.text}`).sort();
-  const controls = observation.controls.map(control => JSON.stringify([control.role, control.label, control.checked,
-    control.filled, control.value, control.selectedValue, control.href, control.frame])).sort();
-  return { title: JSON.stringify(observation.title), blocks: JSON.stringify(blocks), controls: JSON.stringify(controls) };
-}
-
-/**
- * How long rung 1c looks for a late change after a quiet button click that changed nothing: 'full' (the
- * LATE_CHANGE_ROUNDS) for a control that re-renders seconds later, a derived-label stepper arrow (previous / next /
- * decrease / increase, with or without -value), a picker-open click, a control in an open dialog or one a site
- * profile pins (Google Flights' date arrows and grid); 'short' (one look) for any other button while the page shows work pending, the clicked control now
- * disabled or a loading placeholder; else null, no wait.
- */
-function lateLook(chosen, before, fresh, session) {
-  // Any direction descriptor the page script derives (describeUnnamed): `next-value button after "Departure"`, and
-  // `next button after "Departure"` when the control's own attributes say next (the live-like flights fixture).
-  const stepper = stepperArrow(chosen);
-  const control = before.controls?.find(candidate => String(candidate.id) === String(chosen.target));
-  if (stepper || chosen.opens === true || control?.dialog === true || session.site?.pinned(before)?.(chosen)) {
-    return 'full';
-  }
-  const now = fresh.controls?.find(candidate => candidate.role === control?.role && candidate.label === control?.label);
-  if (now?.enabled === false || session.loadingOf(fresh).length) return 'short';
-  return null;
-}
-
-/**
- * Whether the page moved between two observations: another URL, or other content. A change of scroll position alone
- * (a click that scrolled its offscreen target into view) does not count, nor a revision that only the scroll moved,
- * and a live region that filled in does (the semantic revision leaves live regions out).
- */
-function pageMoved(before, after) {
-  return contentDiff(before, after) !== null;
-}
-
-/**
- * What differs between two observations, as pageMoved reads them: 'url', else the content parts that differ
- * ('title', 'blocks', 'controls', joined with '+'), else 'revision' when the content cannot tell and the revision
- * moved; null when nothing did. A rung 1c click step records it as `moved`, so a missed late change is diagnosable.
- */
-function contentDiff(before, after) {
-  if (before.url !== after.url) return 'url';
-  const a = contentParts(before);
-  const b = a === null ? null : contentParts(after);
-  if (a === null || b === null) return before.revision !== after.revision ? 'revision' : null;
-  const differing = ['title', 'blocks', 'controls'].filter(part => a[part] !== b[part]);
-  return differing.length ? differing.join('+') : null;
-}
-
-/**
- * Whether two observations' blocks differ only by one-for-one replacements: no more blocks were added than removed
- * (a live-region clock "Updated 3s ago" -> "Updated 4s ago", an ad that rotated). An append adds more than it removes.
- */
-function blockChurn(before, after) {
-  const counts = new Map();
-  for (const block of before.blocks ?? []) {
-    const key = `${block.t}:${block.text}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  let added = 0;
-  for (const block of after.blocks ?? []) {
-    const key = `${block.t}:${block.text}`;
-    if (counts.get(key)) counts.set(key, counts.get(key) - 1);
-    else added++;
-  }
-  const removed = [...counts.values()].reduce((sum, n) => sum + n, 0);
-  return added <= removed;
-}
-
-/**
- * Whether a click on a control in an open dialog closed that dialog and changed nothing else: same URL, no dialog
- * control left, and every other control as it was (identity and state, as contentKey reads them). The flights-live
- * calendar's Done on a results page; a Done that also wrote the day into the form's Departure field moved the page.
- * False when the controls were capped (what was left out depends on the scroll position).
- */
-function onlyDialogClosed(chosen, before, after) {
-  const clicked = before.controls?.find(candidate => String(candidate.id) === String(chosen.target));
-  if (clicked?.dialog !== true || before.url !== after.url || after.controls?.some(control => control.dialog === true)) {
-    return false;
-  }
-  const capped = observation => observation.warnings?.some(code => String(code).startsWith('controls_capped'));
-  if (capped(before) || capped(after)) return false;
-  const outside = observation => JSON.stringify(observation.controls.filter(control => control.dialog !== true)
-    .map(control => JSON.stringify([control.role, control.label, control.checked, control.filled, control.value,
-      control.selectedValue, control.href, control.frame])).sort());
-  return outside(before) === outside(after);
-}
-
 /** Observation given to providers and to hosts via observe(). Bounds are dropped; sensitive controls excluded. */
 function compactForDecision(observation) {
   return {
@@ -1491,50 +1154,6 @@ export function providerPayload(observation, actions, history, suppliedText) {
   };
 }
 
-/**
- * The decision as recorded on a step. `probabilities` (top five) is non-enumerable: readable by SDK callers and
- * written to the trace by writeRun, but left out of serialized results, where it only costs host tokens.
- */
-function decisionRecord(by, decision) {
-  const record = { by, actionId: decision.actionId };
-  if (Number.isFinite(decision.confidence)) record.confidence = decision.confidence;
-  const done = doneProbability(decision);
-  if (done !== null) record.done = done;
-  const probabilities = topProbabilities(decision.probabilities);
-  if (probabilities) {
-    Object.defineProperty(record, 'probabilities', {
-      value: probabilities, enumerable: false, writable: true, configurable: true,
-    });
-  }
-  const guards = guardsOf(decision);
-  if (guards) record.guards = Object.fromEntries(Object.entries(guards).map(([name, p]) => [name, round3(p)]));
-  if (decision.model) record.model = decision.model;
-  if (decision.requestId) record.requestId = decision.requestId;
-  if (Number.isFinite(decision.latencyMs)) record.latencyMs = decision.latencyMs;
-  return record;
-}
-
-/** Guard probabilities rounded to three decimals, as on a decision record. */
-function roundedGuards(guards) {
-  return Object.fromEntries(Object.entries(guards).map(([name, p]) => [name, round3(p)]));
-}
-
-/**
- * A stale re-resolve's step decision: the stale decide's record (its non-enumerable probabilities included) with the
- * re-resolved action id and `reason: "stale_reresolve"`, without that decide's guards, which scored the page before
- * the new content; the loop sets the fresh guards when the stale_guards request answers.
- */
-function reresolveRecord(previous, actionId) {
-  const record = { ...previous, actionId, reason: 'stale_reresolve' };
-  delete record.guards;
-  if (previous.probabilities) {
-    Object.defineProperty(record, 'probabilities', {
-      value: previous.probabilities, enumerable: false, writable: true, configurable: true,
-    });
-  }
-  return record;
-}
-
 /** relevanceHints over the instruction, answerQuestion and expectation with supplied values redacted. */
 function slimHints(instruction, config) {
   const redact = redactorFor(config.suppliedText);
@@ -1544,23 +1163,6 @@ function slimHints(instruction, config) {
   return relevanceHints({ instruction: redact(instruction ?? ''), answerQuestion: redact(config.answerQuestion), expectation });
 }
 
-const SIZE_KEY = /^[A-Za-z]{1,24}$/;
-
-/** A provider's reported request size (`{ chars, options, controls }`), reduced to non-negative integers, or null. */
-function requestSizesOf(request) {
-  if (!request || typeof request !== 'object' || !request.chars || typeof request.chars !== 'object') return null;
-  const chars = {};
-  for (const [key, value] of Object.entries(request.chars)) {
-    if (SIZE_KEY.test(key) && Number.isSafeInteger(value) && value >= 0) chars[key] = value;
-  }
-  if (!Number.isSafeInteger(chars.total)) return null;
-  const out = { chars };
-  for (const key of ['options', 'controls', 'named']) {
-    if (Number.isSafeInteger(request[key]) && request[key] >= 0) out[key] = request[key];
-  }
-  return out;
-}
-
 /** The provider's guard probabilities `{ blocked?, injection? }`, or null when it reported none. */
 export function guardsOf(decision) {
   const guards = decision?.guards;
@@ -1568,18 +1170,6 @@ export function guardsOf(decision) {
   const out = {};
   for (const name of GUARD_NAMES) if (isUnit(guards[name])) out[name] = guards[name];
   return Object.keys(out).length ? out : null;
-}
-
-/** True for a link action whose destination is on an approved origin (the only kind an injection guard lets run). */
-function approvedLink(action, observation, config) {
-  if (actionClass(action) !== 'link') return false;
-  const href = action.type === 'navigate_allowed_url' ? action.url : action.href;
-  if (!href) return false;
-  try {
-    return originCovered(new URL(href, observation.url).origin, config.allowedOrigins ?? []);
-  } catch {
-    return false;
-  }
 }
 
 function stepAction(action, command, fromUrl) {
@@ -1602,21 +1192,6 @@ function stepAction(action, command, fromUrl) {
   if (command.direction !== undefined) entry.direction = command.direction;
   if (command.url !== undefined) entry.url = command.url;
   if (command.method !== undefined) entry.method = command.method;
-  return entry;
-}
-
-/** History sent to the provider: what was done and where, never supplied text. */
-function historyEntry(step) {
-  const entry = {
-    i: step.i,
-    type: step.action.type,
-    label: step.action.label,
-    fromUrl: step.action.fromUrl,
-    toUrl: step.action.toUrl,
-    changed: step.changed,
-  };
-  if (step.action.ref !== undefined) entry.ref = step.action.ref;
-  if (step.action.suppliedName !== undefined) entry.suppliedName = step.action.suppliedName;
   return entry;
 }
 
@@ -1722,10 +1297,6 @@ function withCap(promise, ms) {
   return Promise.race([promise, cap]).finally(() => clearTimeout(timer));
 }
 
-function isRecoverable(error) {
-  return Boolean(error && (error.recoverable === true || RECOVERABLE_CODES.has(error.code)));
-}
-
 /** The provider's probability that the requested outcome is already visible, or null when it did not report one. */
 export function doneProbability(decision) {
   const probability = decision?.done?.probability;
@@ -1737,34 +1308,6 @@ export function choiceConfidence(decision) {
   if (Number.isFinite(decision?.confidence)) return decision.confidence;
   const probability = decision?.probabilities?.[decision?.actionId];
   return Number.isFinite(probability) ? probability : null;
-}
-
-/**
- * Up to five executable offered actions the host may pass to act(), most likely first. Uses the provider's
- * probabilities when it reported them, else only the chosen action. `description` is runtime-written but embeds
- * the control's page label, so it is untrusted page text.
- */
-function alternativesFor(decision, actions, confidence) {
-  const byId = new Map(actions.map(action => [action.id, action]));
-  const entry = (action, probability) => ({ id: action.id, description: action.description, probability });
-  const ranked = Object.entries(decision?.probabilities ?? {})
-    .filter(([id, probability]) => byId.has(id) && Number.isFinite(probability))
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, MAX_ALTERNATIVES)
-    .map(([id, probability]) => entry(byId.get(id), probability));
-  if (!ranked.length && byId.has(decision?.actionId)) ranked.push(entry(byId.get(decision.actionId), confidence));
-  return ranked;
-}
-
-/** The destination of a link action, resolved against the page URL, or null. */
-function linkHref(action, base) {
-  const href = action?.type === 'navigate_allowed_url' ? action.url : action?.href;
-  if (!href) return null;
-  try {
-    return new URL(href, base).href;
-  } catch {
-    return null;
-  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1829,19 +1372,6 @@ export function urlHopRefused(url, guardrails) {
   } catch {
     return true;
   }
-}
-
-/**
- * Stale re-resolve: the one offered link with the stale choice's type, destination, label and frame, or null when
- * there is none or more than one (two same-label links to one place are ambiguous: the provider decides again).
- */
-function staleMatch(stale, offered, observation, config) {
-  if (!staleResolvable(stale.href, observation.url)) return null;
-  const { chosen } = stale;
-  const matches = offered.filter(candidate => candidate.type === chosen.type && actionClass(candidate) === 'link'
-    && candidate.label === chosen.label && linkHref(candidate, observation.url) === stale.href
-    && frameOf(candidate, observation) === stale.frame);
-  return matches.length === 1 && approvedLink(matches[0], observation, config) ? matches[0] : null;
 }
 
 /** The labels of the controls listed just before and after control `ref` in an observation (its neighbours). */
@@ -1919,24 +1449,6 @@ function staleControl(action, offer, fresh) {
   return matches.length === 1 ? matches[0] : null;
 }
 
-/**
- * A stale link destination a re-resolve may follow: a real href to another document. `href="#"`, `href=""` and
- * fragment links resolve to the page itself, so the destination says nothing about what the click does (an "OK" that
- * moved into a "Confirm delete?" dialog): those always decide again.
- */
-function staleResolvable(href, pageUrl) {
-  if (!href) return false;
-  try {
-    const target = new URL(href);
-    const page = new URL(pageUrl);
-    target.hash = '';
-    page.hash = '';
-    return target.href !== page.href;
-  } catch {
-    return false;
-  }
-}
-
 /** The 1-based same-origin frame index of an offered control action's control (extension/page.js), or null. */
 function frameOf(action, observation) {
   if (action?.target === undefined) return null;
@@ -1944,25 +1456,8 @@ function frameOf(action, observation) {
   return control?.frame ?? null;
 }
 
-/** A URL's path for retry records (no query, no fragment), or null. */
-function urlPath(url) {
-  try {
-    return new URL(url).pathname;
-  } catch {
-    return null;
-  }
-}
-
-function providerName(provider) {
-  return provider?.model ?? provider?.name ?? null;
-}
-
 function isUnit(value) {
   return Number.isFinite(value) && value >= 0 && value <= 1;
-}
-
-function round3(value) {
-  return Math.round(value * 1000) / 1000;
 }
 
 function round2(value) {
@@ -1980,16 +1475,6 @@ function abandonable(operation, signal) {
       .then(resolve, reject)
       .finally(() => signal.removeEventListener('abort', abort));
   });
-}
-
-/** What a choose() request depends on besides the run's instruction: equal keys make equal requests. */
-function rankingKey(question, candidates, trail, lists = null) {
-  return JSON.stringify([question, candidates.map(candidate => candidate.text), trail, lists]);
-}
-
-/** A candidate's identity across answer plans (the plan's dedupe key). */
-function candidateKey(candidate) {
-  return String(candidate.key ?? candidate.text).toLowerCase();
 }
 
 function answerEntry(candidate, confidence) {
@@ -2010,60 +1495,6 @@ function answerEntry(candidate, confidence) {
 function stateKey(observation) {
   if (observation?.revision) return String(observation.revision);
   return `${observation?.url ?? ''}\u0000${observation?.title ?? ''}\u0000${String(observation?.text ?? '')}`;
-}
-
-/**
- * Rank candidates with a provider reply: the chosen one first with the provider's confidence (else its
- * probability, else the heuristic), the rest by the provider's probabilities when it reported them, else by the
- * heuristic capped at the remaining mass. Throws when the choice is not one of the offered ids.
- */
-function rankWithReply(reply, candidates, ids, heuristic) {
-  const chosen = ids.indexOf(reply?.choice);
-  if (chosen < 0) throw new Error('Provider chose an answer outside the offered candidates');
-  const probabilities = {};
-  for (const [id, p] of Object.entries(reply.probabilities ?? {})) if (ids.includes(id) && isUnit(p)) probabilities[id] = p;
-  const hasProbabilities = Object.keys(probabilities).length > 0;
-  const top = isUnit(reply.confidence) ? reply.confidence : probabilities[ids[chosen]] ?? heuristic[chosen];
-  const ranked = candidates.map((candidate, i) => {
-    let confidence;
-    if (i === chosen) confidence = top;
-    else if (hasProbabilities) confidence = probabilities[ids[i]] ?? 0;
-    else confidence = Math.min(heuristic[i], round3(1 - top));
-    return { candidate, confidence: round3(confidence), i };
-  });
-  ranked.sort((a, b) => (b.i === chosen) - (a.i === chosen) || b.confidence - a.confidence || a.i - b.i);
-  return { ranked, probabilities: hasProbabilities ? probabilities : undefined };
-}
-
-/**
- * Which record list the answer aggregates over, from the `lists` question's reply (listQuestion, guidance switch
- * `lists`): `{ list, none?, detail }`, `detail` the trace entry `{ lists, choice?, confidence?, list, why }` whose
- * `why` goes to verdict.why. The provider's list is used when it names an offered list at LIST_CHOICE_FLOOR or above
- * (`lists:provider:<n>`, n the page script's list number, 0 its best). "None of these" at the floor keeps the page
- * script's best list but marks the aggregation partial (`lists:none`, `aggregate:partial:list_none`): the provider
- * read none of the lists as the question's items, and the runtime has no other list to offer, so it never confirms an
- * item of one. Every other case keeps the page script's best list, as without the switch: `lists:fallback:<reason>`
- * with off (the switch), no_choose / single_candidate / no_time / cancelled (choose() not called), timeout /
- * provider_error / failed (it failed), no_reply (the provider did not answer the question), invalid, low_confidence.
- */
-function listChoice(listing, outcome, skipped) {
-  const detail = { lists: listing.lists.length, list: 0 };
-  const fallback = reason => ({ list: 0, detail: { ...detail, why: `lists:fallback:${reason}` } });
-  if (!listing.ask) return fallback('off');
-  if (!outcome) return fallback(skipped ?? 'no_choose');
-  if (outcome.detail?.skipped) return fallback(outcome.detail.skipped);
-  if (outcome.detail?.error) return fallback(outcome.detail.error.code ?? 'failed');
-  const reply = outcome.lists;
-  if (!reply) return fallback('no_reply');
-  const known = reply.choice === 'none' || listing.lists.some(entry => entry.list === reply.choice);
-  if (reply.error || !known) return fallback('invalid');
-  detail.choice = reply.choice;
-  const id = reply.choice === 'none' ? 'none' : `list${reply.choice}`;
-  const confidence = isUnit(reply.confidence) ? reply.confidence : reply.probabilities?.[id];
-  if (isUnit(confidence)) detail.confidence = round3(confidence);
-  if (!(confidence >= LIST_CHOICE_FLOOR)) return { list: 0, detail: { ...detail, why: 'lists:fallback:low_confidence' } };
-  if (reply.choice === 'none') return { list: 0, none: true, detail: { ...detail, why: 'lists:none' } };
-  return { list: reply.choice, detail: { ...detail, list: reply.choice, why: `lists:provider:${reply.choice}` } };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -2245,11 +1676,8 @@ class Session {
   constructor(runtime, config, instruction) {
     this.runtime = runtime;
     this.bridge = runtime.bridge;
-    this.provider = runtime.provider;
     this.config = config;
     this.instruction = instruction;
-    // Only provider-driven runs and steps ask the provider to rank the answer; act() and observe() never do.
-    this.answerProvider = instruction ? runtime.provider : null;
     this.started = Date.now();
     this.pending = null;
     // Baseline for changedSinceStart: the first observation of a run or step, or the observation behind an offer.
@@ -2293,7 +1721,7 @@ class Session {
     this.result = createResult({
       runId: config.runId ?? randomUUID(),
       expectation: describeExpectation(config.expectation),
-      provider: providerName(this.provider),
+      provider: null,
     });
     // Trusted: what the agent asked for, what the user granted and what the run used.
     this.result.permissions = { ...config.permissions };
@@ -2309,11 +1737,6 @@ class Session {
     });
     // The entry of the latest decide request, marked with the step it executed (if any) by execute().
     this.lastRequest = null;
-    // The answer ranking started next to a decision that may end the run (speculateAnswer), and the promises of
-    // discarded ones, settled before the run closes so their cost.requests entries are complete.
-    this.speculation = null;
-    this.discardedRankings = [];
-    this.earlyRankingOff = false;
     // In-call retries of this attempt ({kind, why, outcome, ...}, trusted, no page text) and the second-opinion
     // decides, which do not count against maxDecisions.
     this.retries = [];
@@ -2336,35 +1759,6 @@ class Session {
     this.prepass = false;
     // The run's provider-chosen actions for earlyEnd ({changed, labelled, texts}), in order (hopEvent).
     this.hopEvents = [];
-  }
-
-  /**
-   * Attach the approved origins' site profiles (once the origins are known) and, for a run with a declarative
-   * expectation, start the fast path and hints. Steps, act() and observe() never use them.
-   */
-  startSite() {
-    if (this.siteStarted) return;
-    this.siteStarted = true;
-    const profiles = attachProfiles(this.config);
-    const expectation = this.config.expectation;
-    if (!profiles.length || !this.instruction || this.config.step || !expectation || typeof expectation !== 'object') return;
-    // The fast path needs the provider's slim done-and-guards request (confirm) for the pages it leaves.
-    this.site = new SiteRun(profiles, {
-      expectation,
-      instruction: this.instruction,
-      // The host's own text (before a list filled its placeholders; a re-run's runtime-written instruction is not
-      // it): a shortcut value must appear there, never only in what a page supplied (src/shortcuts.js target).
-      template: { instruction: this.hopTemplate ?? this.instruction, expectation: this.expectationTemplate ?? expectation },
-      fastPath: this.config.profiles.fastPath && typeof this.provider?.confirm === 'function',
-      hints: this.config.profiles.hints,
-      // Profile shortcuts (a built-in rewrite of the current URL, src/shortcuts.js) from reversible up.
-      shortcuts: levelRank(this.config.level) >= levelRank('reversible'),
-    });
-    // The route's link words (and the pinned control labels) join the instruction terms, so those controls survive the
-    // page script's control cap.
-    if (this.site.fastPath || this.site.hints) {
-      for (const term of this.site.terms()) if (!this.terms.includes(term)) this.terms.push(term);
-    }
   }
 
   /** The number the next executed step gets. */
@@ -2412,76 +1806,6 @@ class Session {
     return observation;
   }
 
-  /** Rung 1c: wait briefly and observe once more, for navigations that start after the action settled. */
-  async reobserve() {
-    if (this.reobserves >= MAX_REOBSERVES) return null;
-    this.reobserves++;
-    const delay = this.config.reobserveDelayMs;
-    if (delay > 0) {
-      await this.bounded(() => new Promise(resolve => {
-        const timer = setTimeout(resolve, delay);
-        timer.unref?.();
-      }));
-    }
-    const observation = await this.observe();
-    this.visit(observation);
-    return observation;
-  }
-
-  /**
-   * A rung 1c re-observe that found the page moved (a late navigation, or a late change it led to) was no waste: give
-   * it back. The cap bounds re-observes of clicks that changed nothing; a date stepper whose every click lands late
-   * (flights-live-form-arrows, one arrow per day for a week) spent all four by the fifth day and stopped waiting.
-   */
-  refundReobserve() {
-    // A hard ceiling: a page that keeps changing late (a stepper on a page with a ticking region) gets at most
-    // MAX_REOBSERVES + MAX_REOBSERVE_REFUNDS re-observes per run.
-    if ((this.reobserveRefunds ?? 0) >= MAX_REOBSERVE_REFUNDS) return;
-    this.reobserveRefunds = (this.reobserveRefunds ?? 0) + 1;
-    this.reobserves = Math.max(0, this.reobserves - 1);
-  }
-
-  /**
-   * Late change (rung 1c, buttons): after a button click whose settle and re-observe both show the page unchanged,
-   * observe again at LATE_CHANGE_ROUNDS fractions of `lateChangeMs` (1.5 s and 3 s by default) until the URL or
-   * content moves. Returns `{ observation, ms }` for the first changed observation, else null. A wait that saw no
-   * change turns the wait off for the rest of the call (a button that really does nothing costs it once). `look`
-   * 'short' (lateLook) is one look at LATE_LOOK_SHORT_MS, with no `why`; one that saw nothing turns later short looks
-   * off for the call, as a full one that saw nothing turns full ones off.
-   */
-  async awaitLateChange(unchanged, look = 'full') {
-    const total = this.config.lateChangeMs;
-    const state = this.config.retryState;
-    if (total <= 0 || (look === 'full' ? state.lateChangeOff : state.lateLookOff)) return null;
-    const started = Date.now();
-    let waited = 0;
-    const rounds = look === 'full' ? LATE_CHANGE_ROUNDS.map(share => Math.round(total * share))
-      : [Math.min(LATE_LOOK_SHORT_MS, total)];
-    for (const at of rounds) {
-      const delay = at - waited;
-      // Never past the run's own deadline: the decision after it needs time too.
-      if (this.remainingMs() < delay + LATE_CHANGE_RESERVE_MS) break;
-      await this.bounded(() => new Promise(resolve => {
-        const timer = setTimeout(resolve, delay);
-        timer.unref?.();
-      }));
-      waited += delay;
-      const observation = await this.observe();
-      this.visit(observation);
-      if (pageMoved(unchanged, observation)) {
-        return { observation, ms: Date.now() - started };
-      }
-    }
-    // A short look that saw nothing turns short looks off (a control that stays disabled, a lasting placeholder).
-    if (look !== 'full') {
-      state.lateLookOff = true;
-      return null;
-    }
-    state.lateChangeOff = true;
-    this.why('late_change:none');
-    return null;
-  }
-
   /** Whether the task asks for late-loaded content (question or instruction), memoized. */
   lateIntent() {
     this.late ??= classifyIntent(this.question(), this.instruction ?? '') === 'late';
@@ -2498,96 +1822,6 @@ class Session {
     if (!blocks.length || !this.config.siteProfiles?.length) return blocks;
     const status = statusFilter(this.config.siteProfiles, observation);
     return status ? blocks.filter(block => !status(block.text)) : blocks;
-  }
-
-  /**
-   * Late content: while the observation shows a loading placeholder, wait and observe again, up to
-   * MAX_CONTENT_WAITS per run. No provider decision is spent. Returns the latest observation (the same object when
-   * nothing was loading).
-   */
-  async awaitContent(observation) {
-    let current = observation;
-    let previous = null;
-    let quiet = 0;
-    for (let placeholders = this.loadingOf(current); placeholders.length; placeholders = this.loadingOf(current)) {
-      // Persistent status text (the same visible placeholder after PERSISTENT_QUIET_WAITS consecutive settle waits, on
-      // a page whose rows did not change; never on the first observation, where it gets the normal waiting): not
-      // loading. A hidden one next to rows never gets here (loadingBlocks). It is remembered for the rest of the run
-      // (and the list's later steps), so neither the checks below nor the receipt treat it as a placeholder again.
-      quiet = persistentPlaceholders(previous, current, placeholders) ? quiet + 1 : 0;
-      if (quiet >= PERSISTENT_QUIET_WAITS) {
-        for (const block of placeholders) this.persistentLoading.add(String(block.text).trim());
-        this.why('content_status:persistent');
-        break;
-      }
-      if (this.contentWaits >= MAX_CONTENT_WAITS) {
-        this.why('content_loading');
-        break;
-      }
-      this.contentWaits++;
-      this.why('content_wait');
-      const delay = this.config.contentWaitMs;
-      if (delay > 0) {
-        await this.bounded(() => new Promise(resolve => {
-          const timer = setTimeout(resolve, delay);
-          timer.unref?.();
-        }));
-      }
-      previous = current;
-      current = await this.observe();
-      this.visit(current);
-    }
-    return current;
-  }
-
-  /**
-   * After a consent reject click: re-observe every consentWaitMs (at most MAX_CONSENT_WAITS times, about 2 s) until
-   * the dialog closes. Banners often close after a fade or a network round trip, so
-   * the observation right after the click can still show them (booking.com). Records `consent:rejected` when it
-   * closed, else sets consentPersisted and records `consent:persisted`. Returns the latest observation.
-   */
-  async awaitConsentClosed(observation, clicked) {
-    const open = current => Boolean(consentOf(current));
-    let current = observation;
-    for (let waits = 0; open(current) && waits < MAX_CONSENT_WAITS; waits++) {
-      const delay = this.config.consentWaitMs;
-      if (delay > 0) {
-        await this.bounded(() => new Promise(resolve => {
-          const timer = setTimeout(resolve, delay);
-          timer.unref?.();
-        }));
-      }
-      current = await this.observe();
-      this.visit(current);
-    }
-    this.consentPersisted = open(current);
-    if (current !== observation) this.why('consent:wait');
-    this.why(this.consentPersisted ? 'consent:persisted' : 'consent:rejected');
-    return current;
-  }
-
-  /**
-   * After a nag overlay dismissal: re-observe every consentWaitMs (at most MAX_OVERLAY_WAITS times) until the overlay
-   * with this key is gone (a closing animation, a fade). Returns the latest observation.
-   */
-  async awaitOverlayClosed(observation, key) {
-    const open = current => {
-      const overlay = overlayOf(current);
-      return Boolean(overlay) && overlayKey(overlay) === key;
-    };
-    let current = observation;
-    for (let waits = 0; open(current) && waits < MAX_OVERLAY_WAITS; waits++) {
-      const delay = this.config.consentWaitMs;
-      if (delay > 0) {
-        await this.bounded(() => new Promise(resolve => {
-          const timer = setTimeout(resolve, delay);
-          timer.unref?.();
-        }));
-      }
-      current = await this.observe();
-      this.visit(current);
-    }
-    return current;
   }
 
   why(code) {
@@ -2617,12 +1851,6 @@ class Session {
     return true;
   }
 
-  noteGuards(guards) {
-    for (const [name, p] of Object.entries(guards ?? {})) {
-      if (!(this.signals.guards[name] >= p)) this.signals.guards[name] = p;
-    }
-  }
-
   warn(code) {
     this.result.warnings ??= [];
     if (!this.result.warnings.includes(code)) this.result.warnings.push(code);
@@ -2642,55 +1870,6 @@ class Session {
     else if (cappedCount(code) > cappedCount(this.result.warnings[index])) this.result.warnings[index] = code;
   }
 
-  /** Rung 0 annotations on the first observation: password field, controls cap, expectation lint. */
-  precheck(observation) {
-    const login = loginState(observation);
-    if (login.passwordField && !login.wall) this.warn('password_field');
-    this.noteCapped(observation);
-    const lint = lintExpectation(this.config.expectation, observation);
-    this.signals.expectationShape = lint.shape;
-    if (lint.weak) this.warn('expectation_weak');
-  }
-
-  /**
-   * Pre-passing expectation (rung 0, first observation): a declarative text or title expectation (no URL field)
-   * already passes on the start page while the instruction names a click or page the run has not reached (the page's
-   * title and path do not match the
-   * last named one). Such a pass proves nothing: a textIncludes of a toggle's label passes before and after the
-   * click. It is recorded (`expectation_prepassing` in warnings and why), and from then on a pass counts only after at
-   * least one action of this run and on a page whose revision or URL differs from the start (prepassOk). A task that
-   * names no action ("read the price on this page"), or whose named page is the start page, keeps its pass.
-   */
-  notePrepass(observation) {
-    const expectation = this.config.expectation;
-    if (!this.instruction || !expectation || typeof expectation !== 'object') return;
-    // Any declarative expectation (URL fields included) that passes on the start page: a later handoff on a page
-    // where it still passes proves nothing unless the check failed somewhere in between (vacuousPass).
-    try {
-      this.startPassed = checkDeclarative(observation, expectation, { initial: observation }) === true;
-    } catch {
-      this.startPassed = false;
-    }
-
-    // A URL check names the page itself: a start page that matches it is the destination. Only text and title checks
-    // (which a page can show before the click, like a toggle's own label) are gated.
-    if (['urlIncludes', 'urlEquals', 'urlMatches'].some(field => field in expectation)) return;
-    let passes = false;
-    try {
-      passes = checkDeclarative(observation, expectation, { initial: observation }) === true;
-    } catch {
-      return;
-    }
-    if (!passes) return;
-    const hops = namedHops(this.instruction);
-    if (!hops.length) return;
-    const here = [String(observation.title ?? '').toLowerCase(), (urlPath(observation.url) ?? '').toLowerCase()].filter(Boolean);
-    if (hopsDone(hops.slice(-1), here)) return;
-    this.prepass = true;
-    this.warn('expectation_prepassing');
-    this.why('expectation_prepassing');
-  }
-
   /**
    * Whether a passing expectation proves nothing about this run (E6): it already passed on the start page and never
    * failed on any page since, the run acted, and the provider's done is at most PREPASS_DONE_MAX (it does not see
@@ -2702,140 +1881,11 @@ class Session {
       && Number.isFinite(done) && done <= PREPASS_DONE_MAX;
   }
 
-  /**
-   * The opening URL hop landed on a page where the expectation passes while the instruction names more to do
-   * (namesMoreAfterOpen): from here the landing page is the start page for vacuousPass, so a later handoff that never
-   * saw the expectation fail and pass again is reported as a pre-pass (`expectation:prepassing`, `url_landing`).
-   */
-  holdLanding() {
-    this.landingHeld = true;
-    this.startPassed = true;
-    this.expectationFailedOnce = false;
-    this.why('expectation:url_landing');
-  }
-
-  /** Records a vacuous pass (vacuousPass) in the receipt: why, warning and, for a urlIncludes, the url_start shape. */
-  noteVacuous() {
-    this.why('expectation:prepassing');
-    this.warn('expectation_prepassing');
-    this.warn('expectation_weak');
-    if (this.signals.expectationShape === 'url_path') this.signals.expectationShape = 'url_start';
-  }
-
-  /**
-   * E2, the explicit-URL hop: the first URL the instruction names right after a navigation verb ("Open <url>", "go
-   * to", "navigate to", "load", "visit") that is not the current page (sameNamedPage) runs as a navigation without a
-   * provider decision. Only a URL on the approved site (the allowedUrls entry for it, else the literal URL when it is
-   * same-site within the granted origins), never one whose words sign out, unsubscribe, submit or trip a guardrail
-   * class (urlHopRefused), never on a consent dialog, and each URL at most once per run. Only the first named URL:
-   * a later one ("open A, click X, then open B") is the provider's, after the work on A. A list step's or re-run's
-   * URLs count only when the host wrote them (`hopTemplate`, namedUrls). Returns the action or null.
-   */
-  urlHop(observation, offered) {
-    const config = this.config;
-    this.urlHops ??= new Set();
-    for (const url of namedUrls(this.instruction, this.hopTemplate).slice(0, 1)) {
-      if (this.urlHops.has(url)) continue;
-      this.urlHops.add(url);
-      // Already there (the named page, maybe with the site's own extra parameters): nothing to do for this URL.
-      if (sameNamedPage(url, observation.url)) continue;
-      if (urlHopRefused(url, config.guardrails)) {
-        this.why('url:refused');
-        continue;
-      }
-      const listed = offered.find(candidate => candidate.type === 'navigate_allowed_url' && !candidate.newTab
-        && sameNamedPage(candidate.url, url) && sameNamedPage(url, candidate.url));
-      if (listed) return listed;
-      let origin = null;
-      try {
-        origin = originOf(observation.url);
-      } catch {
-        return null;
-      }
-      if (!sameSite(observation.url, url, config.allowedOrigins ?? [origin])) {
-        this.why('url:outside_origins');
-        continue;
-      }
-      return { id: 'url', type: 'navigate_allowed_url', url, label: url,
-        description: `Navigate to the URL the instruction names: ${url}` };
-    }
-    return null;
-  }
-
   /** Whether a pass on `observation` counts: always, unless the expectation was pre-passing (notePrepass). */
   prepassOk(observation) {
     if (!this.prepass) return true;
     return this.actionsTaken > 0 && Boolean(this.initial)
       && (observation?.revision !== this.initial.revision || observation?.url !== this.initial.url);
-  }
-
-  /**
-   * Whether a run may end on a passing expectation right after an action, whatever the provider's done says:
-   * a list step (its expectation is the host's check for that hop) whose named clicks or pages, if any, are done, or a
-   * run whose instruction is a bounded imperative (one or two named actions, src/oversight.js boundedImperative)
-   * once every named target was clicked or reached. "Done" is a conjunction over every named hop, in the
-   * instruction's order, one of the run's own provider-chosen actions per hop (hopsDoneInOrder over hopEvents: the
-   * action's label, or the title or path of the page it landed on; an action that changed nothing and a consent
-   * click do no hop). A list step that names no click or page ends only when the action made the expectation pass
-   * (`flipped`): an expectation that passed before the action and still passes proves nothing about that action.
-   */
-  earlyEnd(observation, { flipped }) {
-    const hops = this.config.listStep ? actionHops(this.instruction) : boundedImperative(this.instruction);
-    if (!hops) return false;
-    if (!hops.length) return flipped;
-    // The page the last action landed on may have settled since it was recorded (awaitContent).
-    const last = this.hopEvents.at(-1);
-    if (last?.changed) last.texts = [...last.texts.slice(0, last.labelled ? 1 : 0), ...pageTexts(observation)];
-    return hopsDoneInOrder(hops, this.hopEvents.map(event => event.texts));
-  }
-
-  /** Records a provider-chosen action for earlyEnd: its label (a select's option too) and its landing page, unless it changed nothing. */
-  hopEvent(action, step, observation) {
-    const changed = step.changed === true && !action.consent;
-    // A select's text is its control label and the option it chose ("Delivery speed Standard (3-5 days)").
-    const text = [action.label, action.type === 'select' ? action.optionLabel : null].filter(Boolean).join(' ');
-    const label = changed && text ? [text.toLowerCase()] : [];
-    this.hopEvents.push({ changed, labelled: label.length > 0, texts: changed ? [...label, ...pageTexts(observation)] : [] });
-  }
-
-  /**
-   * End the run on a passing expectation after its own action (earlyEnd), without the terminal decide. The page
-   * guards are still asked: with the provider's slim done-and-guards request (confirm), next to the answer ranking
-   * (cost.requests kind `step_guards`, one request like the terminal decide it replaces, with no action to choose), and
-   * a blocked score marks the result `guard:blocked_page` as the terminal decide would. When the provider has no
-   * confirm() (custom SDK providers; TypeSafe and local SystemOne have it) or that request fails, returns false and
-   * the terminal decide follows as before, so the page guards are never skipped.
-   */
-  async endOnPass(observation, history) {
-    if (typeof this.provider?.confirm !== 'function') return false;
-    // The read clause first: a price, count or hours question on a page with no line of that shape is not answered
-    // here (the named page was reached, but the fact sits one page further: "Open Contact and read the opening hours
-    // of the Lisbon office"). The done-gated terminal decide follows instead.
-    const read = this.readClause();
-    if (read && !pageHasShape(observation, read.intent)) {
-      this.why('early_end:read_unmet');
-      return false;
-    }
-    // The answer ranking runs next to the guards request, with or without answerQuestion (the instruction is then
-    // the question, and the run's end ranks it anyway): never serially after it.
-    this.speculateAnswer(observation);
-    this.prefetchCapture();
-    const stop = await this.siteGuards(observation, history, 'step_guards');
-    if (stop === 'guard_error') {
-      this.discardSpeculation();
-      return false;
-    }
-    // A bounded imperative that reads a fact ends here only when the ranked answer passes the autoConfirm gates;
-    // otherwise the done-gated terminal decide judges the page (the ranking stays for it when it ends here).
-    if (read && !this.config.listStep && !(await this.earlyAnswerConfirmed(observation, read))) {
-      this.why('early_end:read_unmet');
-      return false;
-    }
-    const signInPage = this.config.capabilities.has('sign_in') && loginState(observation).passwordField;
-    if (stop === 'blocked' && !signInPage) this.why('guard:blocked_page');
-    this.why(this.config.listStep ? 'step:expectation_end' : 'early_end:named_actions');
-    setOutcome(this.result, 'expectation_passed');
-    return true;
   }
 
   /**
@@ -2847,84 +1897,6 @@ class Session {
     if (!asked && !READ_CLAUSE.test(this.instruction ?? '')) return null;
     const question = this.question();
     return { question, intent: classifyIntent(question, this.instruction ?? '') };
-  }
-
-  /**
-   * Whether the answer ranking started for `observation` (speculateAnswer) has a top candidate at or above the
-   * autoConfirm gates (confidence, shape for the question's intent, margin). No ranking (one candidate, no choose(),
-   * a local provider) never auto-confirms anything, so it does not hold the early end back; a failed ranking does.
-   */
-  async earlyAnswerConfirmed(observation, read) {
-    const speculation = this.speculation;
-    if (!speculation || speculation.discarded || speculation.observation !== observation) return true;
-    const outcome = await speculation.promise;
-    if (speculation.discarded) return false;
-    if (!outcome?.ranked) return false;
-    const answer = {
-      method: 'provider',
-      candidates: outcome.ranked.map(({ candidate, confidence }) => ({
-        text: candidate.text, confidence, t: candidate.t, items: candidate.items,
-      })),
-    };
-    return autoConfirm(answer, { question: read.question, instruction: this.instruction ?? '',
-      thresholds: this.config.thresholds }).answer !== null;
-  }
-
-  /**
-   * cross_origin naming the origin the tab is on (a URL origin, not page text), or `onward`: the approved-origin
-   * gap a consent wall would redirect to once answered.
-   */
-  crossOrigin(observation, onward) {
-    setOutcome(this.result, 'cross_origin');
-    if (onward) {
-      this.result.needs.message = `The tab is on a consent page that continues to ${onward}, which this request does `
-        + `not cover. Call fai_browser_run again with ${onward} added to origins, or ask the user to answer the `
-        + 'consent page themselves.';
-      this.why(`origin:${onward}`);
-      this.why('consent:continue_not_approved');
-      return this.result;
-    }
-    let origin = '';
-    try {
-      origin = originOf(observation.url);
-    } catch {
-      // Unparsable URL: the generic message stands.
-    }
-    if (origin && origin !== 'null') {
-      this.result.needs.message = `The tab is on ${origin}, which this request does not cover. Ask the user to return `
-        + `to an approved page. ${this.siteAdvice(origin)}`;
-      this.why(`origin:${origin}`);
-    }
-    return this.result;
-  }
-
-  /** What would cover `origin` (URL-derived, never page text): the domain root of a sibling subdomain, or the origin. */
-  siteAdvice(origin) {
-    const allowed = this.config.allowedOrigins ?? [];
-    // A consent wall's host is requested exactly (README: Google needs https://consent.google.com), never as a root.
-    const entry = consentContinueHost(origin) ? null : siteEntryFor(origin);
-    // A sibling subdomain of an approved https origin (also when the user approved a requested root for one origin
-    // only: the lease then lists that origin, and asking again with the root opens a new approval).
-    if (entry && allowed.some(item => siteHost(item) && siteEntryFor(item) === entry)) {
-      return `If the task needs it, call fai_browser_run again with ${entry} in origins (it covers every https `
-        + `subdomain of ${entry.slice('https://*.'.length)}).`;
-    }
-    return `If ${origin} is a consent or redirect page the task needs, call fai_browser_run again with ${origin} added `
-      + 'to origins.';
-  }
-
-  /** A consent dialog the runtime cannot dismiss with a reject / necessary-only button. */
-  consentBlocked(consent) {
-    setOutcome(this.result, 'consent_banner');
-    const text = consentText(consent);
-    if (text) this.result.needs.dialog = text;
-    if (this.consentPersisted) {
-      this.result.needs.message = 'The cookie dialog stayed open after FAI Browser clicked its reject button. Ask the '
-        + 'user to dismiss it in the tab (reject or necessary only), then run again with the requestId.';
-    } else {
-      this.why('consent:no_reject');
-    }
-    return this.result;
   }
 
   /** The irreversible action the instruction asks for (commitIntent), memoized; null for ordinary tasks. */
@@ -2953,139 +1925,7 @@ class Session {
       && control.enabled !== false && control.visible !== false && labelIntents(control.label).has(intent)
       && !harmlessControlLabel(control.label));
     if (usable) return null;
-    // With the intent question on, a control Jev may clear (intentEligible) that the instruction names goes to the
-    // decision first; a decision that does not run it refuses as here (the handoff path calls this with `defer` off).
-    if (defer && this.intentOn() && matching.some(entry => entry.intent && relevanceScore(entry.control, this.hints) > 0)) {
-      this.why('intent:deferred');
-      return null;
-    }
     return this.refuse(intent, matching);
-  }
-
-  /** The intent question applies: the provider's `intent` switch is on, below testing, at a level with controls. */
-  intentOn() {
-    return this.provider?.guidance?.intent === true && this.config.level !== 'testing'
-      && this.config.capabilities.has('controls');
-  }
-
-  /**
-   * Whether the decision clears `action`, an ambiguous refused control offered with the intent question (its
-   * `intent`). Resolves `{ cleared: <class>, capability }` or `{ kept: <reason> }`; every missing or doubtful signal
-   * keeps it (fail closed): no answer (the switch off, an invalid reply), purchase_or_payment, a label outside the
-   * ambiguous tier or forbidden by the user, a payment or password field on the page, a purchase noul unanswered or
-   * at commitVeto, the injection noul unanswered or at INJECTION_NOTE, the commit noul (reversible) at commitVeto,
-   * purchase_or_payment at INTENT_DOUBT, confidence under INTENT_FLOOR, or a class whose capability the level lacks.
-   */
-  intentVerdict(decision, action, observation) {
-    const answer = decision?.intents?.[action.id];
-    if (!answer || typeof answer.choice !== 'string' || !Object.hasOwn(INTENT_CLASSES, answer.choice)) return { kept: 'unanswered' };
-    if (answer.choice === 'purchase_or_payment') return { kept: 'purchase_or_payment' };
-    if (labelTier(action.label) !== 'ambiguous') return { kept: 'hard_tier' };
-    if (this.config.guardrails.forbids(action.label)) return { kept: 'forbid' };
-    const facts = pageFacts(observation);
-    if (facts.payment) return { kept: 'payment_field' };
-    if (facts.password) return { kept: 'password_field' };
-    const guards = guardsOf(decision) ?? {};
-    const veto = this.config.thresholds.commitVeto;
-    const low = (p, limit) => Number.isFinite(p) && p < limit;
-    if (!low(guards.purchase_control, veto) || !low(guards.purchase_page, veto)) return { kept: 'purchase_guard' };
-    if (!low(guards.injection, INJECTION_NOTE)) return { kept: 'injection' };
-    if (this.config.level === 'reversible' && Number.isFinite(guards.commit) && guards.commit >= veto) return { kept: 'commit_guard' };
-    const doubt = answer.probabilities?.purchase_or_payment;
-    if (Number.isFinite(doubt) && doubt >= INTENT_DOUBT) return { kept: 'purchase_doubt' };
-    if (!(Number.isFinite(answer.confidence) && answer.confidence >= INTENT_FLOOR)) return { kept: 'low_confidence' };
-    const capability = INTENT_CLASSES[answer.choice];
-    if (!this.config.capabilities.has(capability)) return { kept: answer.choice, capability };
-    return { cleared: answer.choice, capability };
-  }
-
-  /**
-   * End the run as refused_action for an ambiguous control the intent question did not clear, as the mechanical
-   * refusal would have: a purchase (the label's class, or Jev's purchase_or_payment) stops, a submission relays the
-   * level it needs (the class Jev named, else the label's). `intent:kept:<reason>` is listed in the receipt's why.
-   */
-  intentKept(action, verdict) {
-    this.why(`intent:kept:${verdict.kept}`);
-    const purchase = verdict.kept === 'purchase_or_payment' || (action.intent?.kind === 'purchase' && !verdict.capability);
-    const kind = purchase ? 'purchase' : 'submit';
-    const capability = purchase ? 'purchase' : verdict.capability ?? action.intent?.capability ?? 'submit';
-    const control = { id: String(action.target), role: action.role, label: action.label };
-    this.refuse(kind, [{ control, kind, capability }]);
-    this.result.needs.control = { ref: String(action.target), label: clip(action.label, 120) };
-    return this.result;
-  }
-
-  /**
-   * The chosen ambiguous control, cleared or refused: the action to run (marked `intentCleared` with the capability
-   * of its class, which page.js checks against its own mark and the grant), or the refused result.
-   */
-  intentGate(decision, action, observation) {
-    const verdict = this.intentVerdict(decision, action, observation);
-    if (verdict.kept) return { result: this.intentKept(action, verdict) };
-    this.why(`intent:cleared:${verdict.cleared}`);
-    const { intent, ...rest } = action;
-    return { action: { ...rest, intentCleared: verdict.capability } };
-  }
-
-  /** The purchase guard (purchase_control or purchase_page) is at or above thresholds.commitVeto, below testing. */
-  purchaseHigh(decision) {
-    if (this.config.level === 'testing' || !this.config.capabilities.has('controls')) return false;
-    const guards = guardsOf(decision);
-    const veto = this.config.thresholds.commitVeto;
-    return [guards?.purchase_control, guards?.purchase_page].some(p => Number.isFinite(p) && p >= veto);
-  }
-
-  /** The broad commit guard is at or above thresholds.commitVeto for this decision (reversible only). */
-  commitHigh(decision) {
-    if (this.config.level !== 'reversible') return false;
-    const p = guardsOf(decision)?.commit;
-    return Number.isFinite(p) && p >= this.config.thresholds.commitVeto;
-  }
-
-  /**
-   * True when `action` is a button the instruction names as a click target and the run has not used up yet
-   * (src/relevance.js namedControls over the offered actions and the provider history: plain buttons whose labels
-   * trip no guardrail class, the user's forbid phrases included, never a link, never in a negated clause).
-   */
-  namedChoice(action, offered, history) {
-    if (!action || action.type !== 'click' || !this.config.capabilities.has('controls')) return false;
-    const named = namedControls(this.instruction, offered, { forbid: this.config.guardrails.additions.forbid, history });
-    return named.some(entry => entry.ids.includes(action.id));
-  }
-
-  /**
-   * True when the instruction names at least one offered button as a click target and the run has clicked each as
-   * often as the instruction names it (namedControls without and with the history).
-   */
-  namedClicksDone(offered, history) {
-    if (!this.config.capabilities.has('controls')) return false;
-    const forbid = this.config.guardrails.additions.forbid;
-    const named = namedControls(this.instruction, offered, { forbid });
-    if (!named.length || namedControls(this.instruction, offered, { forbid, history }).length) return false;
-    // At least one of those clicks changed the page: a named click that did nothing on a start page where the
-    // expectation already passed must not turn a doubtful choice into a completion.
-    const keys = new Set(named.map(entry => bareLabel(entry.label).toLowerCase()));
-    return history.some(entry => entry?.type === 'click' && entry.changed === true && keys.has(bareLabel(entry.label).toLowerCase()));
-  }
-
-  /** Either guard would veto a button, select or fill on this decision. */
-  controlVeto(decision) {
-    return this.purchaseHigh(decision) || this.commitHigh(decision);
-  }
-
-  /**
-   * Purchase guard veto (below testing): Jev judged that the button, select or fill that best advances the
-   * instruction would pay, order, book, subscribe or move money, or that the page is a checkout or confirmation
-   * step. Nothing is executed; the run ends needs_user / refused_action, verdict failed, next stop.
-   */
-  purchaseVeto(action) {
-    setOutcome(this.result, 'refused_action', 'the purchase guard judged the next control to be a purchase');
-    this.result.needs.message = PURCHASE_REFUSAL_TEXT;
-    if (action?.target !== undefined) {
-      this.result.needs.control = { ref: String(action.target), label: clip(action.label, 120) };
-    }
-    this.why('guard:purchase_veto');
-    return this.result;
   }
 
   /**
@@ -3193,193 +2033,10 @@ class Session {
   }
 
   /**
-   * The context for provider.decide(): instruction, history and run id, plus the level (as `mode` and `level`), its
-   * capabilities and any guardrail additions so the provider renders state.policy (src/guardrails.js) and asks the
-   * purchase guard below testing and the commit guard in reversible mode. The
-   * additions are host- or config-written plain phrases, never page text.
-   */
-  decideContext(instruction, history, { withSite = false, observation = null } = {}) {
-    const context = {
-      instruction,
-      history,
-      runId: this.result.runId,
-      mode: this.config.level,
-      level: this.config.level,
-      capabilities: [...this.config.capabilities],
-    };
-    const { forbid, note } = this.config.guardrails.additions;
-    if (forbid.length || note) context.guardrails = { forbid: [...forbid], note };
-    // slim.controls: the provider sends every control once (TypeSafeProvider compactPlan). `hints` rank the links
-    // whose path stays in their option; they are host-written and the provider never sends them.
-    if (this.config.slim.controls) {
-      context.compact = true;
-      context.hints = this.hints;
-    }
-    // A site-profile hint for a full decide only (never the slim terminal or guards request) (fixed templates over filtered plain phrases; src/domains.js renderSite).
-    // On the profile's pages it also carries the profile's notes (src/domains.js SiteRun.context).
-    const site = withSite ? this.site?.context(observation) : null;
-    if (site) context.site = site;
-    return context;
-  }
-
-  async decide(observation, actions, history, instruction = this.instruction, kind = 'decide') {
-    let decision;
-    this.pairedRequest = null;
-    const started = Date.now();
-    // slim.cap: the provider sees at most DEFAULT_OPTION_CAP options; the caller keeps the full offered set.
-    let dropped = 0;
-    // A site profile's pinned controls (date arrows, Date grid) are kept like essential options.
-    if (this.config.slim.cap && kind !== 'guard') {
-      ({ actions, dropped } = capActions(actions, DEFAULT_OPTION_CAP, this.hints, this.site?.pinned(observation) ?? null));
-    }
-    // A site profile's plain names for page-script names of unnamed controls ("next-value button after ..."), in
-    // copies; ids unchanged.
-    if (this.site && kind !== 'guard') ({ observation, actions } = this.site.present(observation, actions));
-    try {
-      // Supplied values echoed by the page are redacted here, the single provider boundary.
-      const payload = providerPayload(observation, actions, history, this.config.suppliedText);
-      const redact = redactorFor(this.config.suppliedText);
-      decision = await this.bounded(() => this.provider.decide(
-        payload.observation,
-        payload.actions,
-        this.decideContext(redact(instruction), payload.history, { withSite: kind === 'decide', observation }),
-        this.signal,
-      ));
-    } catch (error) {
-      const aborted = this.signal.aborted || this.interrupted;
-      this.lastRequest = this.noteRequest(kind, started, null, aborted ? 'cancelled' : 'provider_error');
-      if (dropped) this.lastRequest.optionsDropped = dropped;
-      if (aborted) throw error;
-      const wrapped = bridgeError('provider_error', String(error?.message ?? error), false);
-      wrapped.cause = error;
-      throw wrapped;
-    }
-    const cost = this.result.cost;
-    cost.decisions++;
-    this.addUsage(decision?.usage);
-    this.lastRequest = this.noteRequest(kind, started, decision);
-    // The trace marker of a capped request: how many offered options the provider did not see.
-    if (dropped) this.lastRequest.optionsDropped = dropped;
-    if (decision?.model) cost.provider = decision.model;
-    if (decision && typeof decision === 'object') this.lastDecision = decisionRecord('provider', decision);
-    return decision;
-  }
-
-  /**
-   * slim.terminal: ask the provider only whether the outcome is visible (done) and the blocked/injection guards on a
-   * page where the expectation already passes (provider.confirm). Resolves the reply when done reaches doneThreshold,
-   * else null after marking its cost.requests entry `fallback` (the caller then sends the full decide, which does not
-   * count against maxDecisions). A failed request is a fallback too; only an abort is thrown.
-   */
-  async confirmTerminal(observation, history) {
-    const started = Date.now();
-    let reply;
-    try {
-      const payload = providerPayload(observation, [], history, this.config.suppliedText);
-      const redact = redactorFor(this.config.suppliedText);
-      reply = await this.bounded(() => this.provider.confirm(
-        payload.observation,
-        this.decideContext(redact(this.instruction), payload.history),
-        this.signal,
-      ));
-    } catch (error) {
-      const aborted = this.signal.aborted || this.interrupted;
-      const entry = this.noteRequest('terminal', started, null, aborted ? 'cancelled' : 'provider_error');
-      if (aborted) throw error;
-      entry.fallback = true;
-      return null;
-    }
-    const cost = this.result.cost;
-    cost.decisions++;
-    this.addUsage(reply?.usage);
-    const entry = this.noteRequest('terminal', started, reply);
-    if (reply?.model) cost.provider = reply.model;
-    const done = doneProbability(reply);
-    if (done !== null && done >= this.config.thresholds.doneThreshold) {
-      this.lastRequest = entry;
-      this.lastDecision = decisionRecord('provider', { ...reply, actionId: 'done' });
-      return reply;
-    }
-    entry.fallback = true;
-    // The full decide that follows replaces this request in the decision budget.
-    this.extraDecisions++;
-    return null;
-  }
-
-  /**
-   * The page guards for a page a site-profile fast hop leaves: the provider's slim done-and-guards request (confirm),
-   * recorded in cost.requests as `site_guards` (not a decision) and fed into the run-wide guard signals. Resolves the
-   * fallback reason that ends the fast path ('blocked' at GUARD_VETO, 'injection' at INJECTION_NOTE, 'guard_error' when the
-   * request failed) or null. Never rejects. A stale re-resolve (the run loop) sends the same request as `stale_guards`.
-   */
-  async siteGuards(observation, history, kind = 'site_guards', onGuards = null) {
-    const started = Date.now();
-    try {
-      const payload = providerPayload(observation, [], history, this.config.suppliedText);
-      const redact = redactorFor(this.config.suppliedText);
-      const reply = await this.bounded(() => this.provider.confirm(
-        payload.observation,
-        this.decideContext(redact(this.instruction), payload.history),
-        this.signal,
-      ));
-      this.addUsage(reply?.usage);
-      this.noteRequest(kind, started, reply);
-      const guards = guardsOf(reply);
-      if (guards) this.noteGuards(guards);
-      onGuards?.(guards);
-      if (guards?.blocked >= GUARD_VETO) return 'blocked';
-      if (guards?.injection >= INJECTION_NOTE) return 'injection';
-      return null;
-    } catch {
-      this.noteRequest(kind, started, null, this.signal.aborted || this.interrupted ? 'cancelled' : 'provider_error');
-      return 'guard_error';
-    }
-  }
-
-  /** Add a provider reply's reported token usage to the run totals. */
-  addUsage(usage) {
-    if (!usage) return;
-    this.result.cost.inputTokens += Number(usage.input_tokens ?? usage.inputTokens) || 0;
-    this.result.cost.outputTokens += Number(usage.output_tokens ?? usage.outputTokens) || 0;
-  }
-
-  /**
-   * Record one provider request in cost.requests: `kind` (decide, choose, or guard for act()'s purchase guard),
-   * `ms` (wall time as the runtime waited for it, retries included), `inputTokens`/`outputTokens` when the provider
-   * reported usage, `providerMs` when it reported its own latency, and `error` (a fixed code) when it failed.
-   * execute() adds `step` to a decide whose choice ran. With a provider that reports its body size (TypeSafeProvider
-   * requestSizes): `chars` (JSON characters by section: total, instruction, policy, page, text, controls, history,
-   * options, questions, ...), `options` (choices offered) and `controls` (controls sent in the page).
-   * Numbers and fixed codes only: no payloads, no page text.
-   */
-  noteRequest(kind, started, reply, error) {
-    const entry = { kind, ms: Date.now() - started };
-    const usage = reply?.usage;
-    if (usage) {
-      const input = Number(usage.input_tokens ?? usage.inputTokens);
-      const output = Number(usage.output_tokens ?? usage.outputTokens);
-      if (Number.isFinite(input)) entry.inputTokens = input;
-      if (Number.isFinite(output)) entry.outputTokens = output;
-    }
-    if (Number.isFinite(reply?.latencyMs)) entry.providerMs = reply.latencyMs;
-    const sizes = requestSizesOf(reply?.request);
-    if (sizes) Object.assign(entry, sizes);
-    if (error) entry.error = error;
-    // Any provider failure in this run stops early answer rankings for the rest of it (a failed slim terminal
-    // request is followed at once by the full decide, which decides that).
-    if (error && error !== 'cancelled' && kind !== 'terminal') this.earlyRankingOff = true;
-    this.result.cost.requests.push(entry);
-    this.config.retryState.requests++;
-    return entry;
-  }
-
-  /**
    * Execute one legal action. The step is recorded before the bridge call so an interrupted action still appears
    * in the trace. The screenshot promise is stored as pending and awaited later by finalizePending().
    */
   async execute(action, before, decision, decisionStart, decisionMs) {
-    // An action changes the page: an answer ranking started for this one can no longer be the final one.
-    this.discardSpeculation();
     const command = toCommand(action, this.config.suppliedText);
     // A value filled into a password input is a secret: redacted from the receipt and the trace at close().
     if (action.sensitive && typeof command.text === 'string' && !this.result.secrets.includes(command.text)) {
@@ -3421,13 +2078,6 @@ class Session {
     }
 
     const executedAt = Date.now();
-    // The decide request whose choice this step ran (a terminal or vetoed decide never gets a step).
-    if (decision?.by === 'provider' && ['decide', 'second_opinion'].includes(this.lastRequest?.kind)
-      && this.lastRequest.step === undefined) {
-      this.lastRequest.step = step.i;
-      if (this.pairedRequest && this.pairedRequest.step === undefined) this.pairedRequest.step = step.i;
-    }
-    this.pairedRequest = null;
     const after = execution.observation;
     step.action.toUrl = after.url;
     step.settle = execution.settle?.reason ?? 'none';
@@ -3514,23 +2164,6 @@ class Session {
     await this.notify(step, pending.observation);
   }
 
-  /**
-   * capture 'last': start the pending step's final capture now, next to the decision that is likely the last (the
-   * expectation already passes on this page), instead of serially in close(). finalizePending() uses the result when
-   * the run ends here, and otherwise waits for it before the next action (so no capture overlaps an execute) and drops
-   * it. At most one per pending step.
-   */
-  prefetchCapture() {
-    const pending = this.pending;
-    if (!pending?.deferred || pending.early || this.signal.aborted) return;
-    const early = { started: Date.now(), at: null, promise: null };
-    early.promise = this.captureNow(pending).then(value => {
-      early.at = Date.now();
-      return value;
-    });
-    pending.early = early;
-  }
-
   /** 'each' always; 'last' only when the bridge cannot capture on demand; never for 'none'. */
   capturesEachAction() {
     if (this.config.capture === 'none') return false;
@@ -3582,205 +2215,6 @@ class Session {
       return;
     }
     Promise.resolve().then(invoke).catch(() => {});
-  }
-
-  /**
-   * Make `fresh` (a later observation of the final page) the run's final observation when the expectation still
-   * passes on it; otherwise keep `before` and its verification. Returns whether `fresh` was adopted.
-   */
-  async adoptFinal(fresh, before) {
-    const result = this.result;
-    const hasExpectation = this.config.expectation !== undefined && this.config.expectation !== null;
-    const saved = structuredClone(result.verification);
-    const passed = !hasExpectation || await this.expectationFor(fresh);
-    if (passed && allowedOrigin(fresh.url, this.config.allowedOrigins)) {
-      result.observation = fresh;
-      return true;
-    }
-    result.verification = saved;
-    result.observation = before;
-    this.lastCheck = null;
-    return false;
-  }
-
-  /**
-   * Adopt the page the runtime's own expand click (completeList) left: as adoptFinal when the expectation passes
-   * there ('passed'). When it fails only because the page rewrote its own URL in place (a "Show more" that
-   * history.replaceState's or pushState's the URL while the document stays: same origin, the same leading content and
-   * nearly everything it showed before, sameDocumentExpanded), the URL conditions the page passed before the click
-   * are carried forward and the text and title conditions are verified on the expanded page ('carried';
-   * `verification.carried` lists the carried fields). Null when nothing is adopted: the earlier observation stays
-   * final. Only the runtime's own click calls this, never a provider's or a host's navigation, and a real navigation
-   * to another page (a new heading, a new list) fails the same-document check and never passes a URL expectation.
-   */
-  async adoptExpanded(fresh, before) {
-    const result = this.result;
-    const passedBefore = result.verification?.passed === true;
-    if (await this.adoptFinal(fresh, before)) return 'passed';
-    const expectation = this.config.expectation;
-    if (!passedBefore || !expectation || typeof expectation !== 'object' || fresh.url === before.url) return null;
-    const carried = Object.keys(expectation).filter(key => URL_FIELDS.has(key));
-    if (!carried.length || !allowedOrigin(fresh.url, this.config.allowedOrigins) || !sameDocumentExpanded(before, fresh)) return null;
-    const rest = Object.fromEntries(Object.entries(expectation).filter(([key]) => !URL_FIELDS.has(key)));
-    if (!checkDeclarative(fresh, rest, { initial: this.initial })) return null;
-    if (this.lateIntent() && this.loadingOf(fresh).length) return null;
-    result.observation = fresh;
-    const verification = { ...result.verification, passed: true, carried };
-    for (const key of ['hint', 'error', 'contentLoading']) delete verification[key];
-    result.verification = verification;
-    this.lastCheck = { observation: fresh, passed: true };
-    return 'carried';
-  }
-
-  /**
-   * Before the final answer ranking of a completed run whose question aggregates over a list ("the cheapest flight
-   * between 10:00 and 12:00"): (1) when the final page's items look half-rendered (an item with only a time and no
-   * name, or a loading placeholder as loadingOf reads it, with content waits left), wait one content wait and observe once
-   * more (`answer:settle_wait`), and (2) when the final page offers an in-place "View more" / "Show more" button
-   * (never a link, never "Next page"), click it once (`more:expanded`) and let the content settle, so the ranking sees
-   * the whole list rather than reporting `partial:more_offered`. Only at a level with controls (reversible and up),
-   * with one action of the budget and some time left, once per page URL per call. A click the page refuses, or a page
-   * whose expectation no longer passes afterwards, leaves the run's final observation as it was. Never fails the run.
-   */
-  async completeList() {
-    const result = this.result;
-    const config = this.config;
-    if (result.status !== 'completed' || !result.observation || this.interrupted || this.signal.aborted) return;
-    const question = this.question();
-    if (!aggregateIntent(question)) return;
-    const atFinal = observation => {
-      const memory = this.answerMemory(question, observation);
-      const key = stateKey(observation);
-      return memory.states.find(state => state.key === key) ?? null;
-    };
-    // The final observation and its verification before the runtime's own click, while that click is unsettled.
-    let clicked = null;
-    try {
-      let observation = result.observation;
-      let final = atFinal(observation);
-      // A half-rendered row is a time with no name at all ("10:47 AM – 4:05 PM"); `unnamed_item` alone also marks a
-      // fully rendered short row ("10:40 AM – 11:45 AM · easyJet · Nonstop · €100") and costs no wait.
-      const nameless = text => !String(text ?? '').replace(/\b\d{1,2}[:.]\d{2}\s*(?:[ap]\.?m\.?)?/giu, ' ')
-        .replace(/\b[ap]\.?m\.?(?![\p{L}])/giu, ' ').replace(/[^\p{L}]+/gu, '').length;
-      const half = final?.lines.some(line => line.item && line.notes?.includes('unnamed_item') && nameless(line.text))
-        // As in awaitContent (F1): hidden status text next to rows and persistent status text are not loading.
-        || this.loadingOf(observation).length > 0;
-      if (half && this.contentWaits < MAX_CONTENT_WAITS && this.remainingMs() > 2 * config.contentWaitMs + 500) {
-        this.contentWaits++;
-        this.why('answer:settle_wait');
-        const delay = config.contentWaitMs;
-        if (delay > 0) {
-          await this.bounded(() => new Promise(resolve => {
-            const timer = setTimeout(resolve, delay);
-            timer.unref?.();
-          }));
-        }
-        const fresh = await this.observe();
-        this.visit(fresh);
-        if (await this.adoptFinal(fresh, observation)) {
-          observation = fresh;
-          final = atFinal(observation);
-        }
-      }
-      if (result.steps.length >= config.maxActions || this.remainingMs() < 3000) return;
-      // A "more" click needs controls (reversible and up); scrolling a lazy list (scrollToLoad) needs none.
-      const controls = config.capabilities.has('controls');
-      const state = config.retryState;
-      state.moreUrls ??= new Set();
-      if (state.moreUrls.has(observation.url)) return;
-      // Only when the list has items here: a "Show more" on a page without any is not the list the question reads.
-      if (!final?.lines.some(line => line.item)) return;
-      // The provider's injection guard flagged a page of this run: no click the model did not choose.
-      if ((this.signals.guards?.injection ?? 0) >= INJECTION_NOTE) return;
-      const { actions } = controls ? offeredActions(observation, { ...config, hints: this.hints }) : { actions: [] };
-      // A plain button of the page itself: not in a consent dialog, not a form submit or riskier class, not in a frame.
-      const plain = action => {
-        const control = (observation.controls ?? []).find(item => String(item.id) === String(action.target));
-        return Boolean(control) && !control.consent && control.frame === undefined
-          && (control.risk === undefined || control.risk === 'reversible');
-      };
-      const more = actions.find(action => action.type === 'click' && action.role !== 'link' && !action.href
-        && IN_PLACE_MORE.test(String(action.label ?? '').trim()) && plain(action));
-      if (!more) {
-        // No "more" button: a list that loads as its end scrolls into view (an infinite feed) is scrolled instead.
-        clicked = { observation, verification: structuredClone(result.verification) };
-        await this.scrollToLoad(observation, state.moreUrls);
-        clicked = null;
-        return;
-      }
-      // Only a button under the rows the answer ranks: another list's "more" leaves the answer as it is.
-      if (!moreExtendsItems(observation, more, this.answerMemory(question, observation), aggregateIntent(question))) {
-        this.why('more:other_list');
-        return;
-      }
-      state.moreUrls.add(observation.url);
-      await this.finalizePending(false);
-      this.guard();
-      const before = observation;
-      clicked = { observation: before, verification: structuredClone(result.verification) };
-      let executed;
-      try {
-        executed = await this.execute({ id: 'more', ...more }, before, { by: 'runtime', actionId: 'more', reason: 'expand_more' },
-          Date.now(), 0);
-      } catch (error) {
-        if (this.interrupted || this.signal.aborted) throw error;
-        this.why('more:failed');
-        result.observation = before;
-        return;
-      }
-      this.visit(executed.observation);
-      const settled = await this.awaitContent(executed.observation);
-      const adopted = await this.adoptExpanded(settled, before);
-      this.why(adopted ? 'more:expanded' : 'more:unverified');
-      if (adopted === 'carried') this.why('more:url_carried');
-      clicked = null;
-    } catch (error) {
-      // Best effort: an interrupt still ends the run as it would have; anything else leaves the outcome alone. A
-      // click that ran but did not settle (the run budget ran out in its content waits) is reported, and the final
-      // observation is the verified one from before it.
-      if (clicked) {
-        result.observation = clicked.observation;
-        result.verification = clicked.verification;
-        this.lastCheck = null;
-        this.why('more:failed');
-        return;
-      }
-      if (this.interrupted || this.signal.aborted) return;
-      this.why('more:failed');
-    }
-  }
-
-  /**
-   * completeList for a lazy list: when the final page's document ends within two viewports below the view (the page
-   * script's `scroll {top, height}`), scroll down as a runtime page step (`decision.reason: "scroll_more"`) and settle,
-   * at most three times while the document keeps growing and actions are left. A scroll after which the document grew
-   * and the expectation still passes becomes the final observation (`more:scrolled`); otherwise the earlier
-   * observation stays final. Observations without `scroll` (older page scripts, SDK bridges) are never scrolled.
-   */
-  async scrollToLoad(observation, tried) {
-    const config = this.config;
-    let before = observation;
-    let grew = false;
-    for (let round = 0; round < 3; round++) {
-      const scroll = before.scroll;
-      const height = Number(before.viewport?.height);
-      if (!scroll || !Number.isFinite(scroll.top) || !Number.isFinite(scroll.height) || !(height > 0)) break;
-      const left = scroll.height - (scroll.top + height);
-      if (left <= 0 || left > 2 * height) break;
-      if (this.result.steps.length >= config.maxActions || this.remainingMs() < 2000) break;
-      tried.add(observation.url);
-      await this.finalizePending(false);
-      this.guard();
-      const action = { id: 'more', type: 'scroll', direction: 'down', label: 'scroll down', description: 'Scroll down to load more of the list' };
-      const executed = await this.execute(action, before, { by: 'runtime', actionId: 'more', reason: 'scroll_more' }, Date.now(), 0);
-      this.visit(executed.observation);
-      const settled = await this.awaitContent(executed.observation);
-      if (!(Number(settled.scroll?.height) > scroll.height) || !(await this.adoptFinal(settled, before))) break;
-      grew = true;
-      before = settled;
-    }
-    if (grew) this.why('more:scrolled');
-    else this.result.observation = observation;
   }
 
   /** Remember an observation for the earlier-page trail. */
@@ -3844,13 +2278,6 @@ class Session {
       verification.error = String(error?.message ?? error);
     }
     return verification.passed;
-  }
-
-  async finishDone(observation) {
-    const passed = await this.checkExpectation(observation);
-    if (passed === null) return setOutcome(this.result, 'no_expectation');
-    if (passed) return setOutcome(this.result, 'expectation_passed');
-    return setOutcome(this.result, this.result.verification.error ? 'expectation_error' : 'expectation_failed');
   }
 
   /** Map an error to an outcome. User interrupts and budgets take precedence over whatever error surfaced. */
@@ -4111,98 +2538,17 @@ class Session {
       scope: memory.scope };
   }
 
-  /**
-   * The `lists` question for `observation` as the final page (guidance switch `lists`, src/typesafe.js): asked only
-   * where its answer changes something, that is when the question ranks or bounds a value (an aggregate intent with
-   * a measure: only then do the lists order the items, src/facts.js factPool) and the page has two or more record
-   * lists (src/digest.js recordListsOf, RECORD_LIST_MIN records each), and only to a provider with choose().
-   * Returns null when it does not apply, else `{ lists, ask }`: `lists` the summaries, titles redacted; `ask` false
-   * when the provider's switch is off (`lists:fallback:off`, the request unchanged).
-   */
-  listQuestion(observation, question) {
-    const provider = this.answerProvider;
-    if (typeof provider?.choose !== 'function' || !aggregateIntent(question)?.measure) return null;
-    const lists = recordListsOf(observation);
-    if (lists.length < 2) return null;
-    const redact = redactorFor(this.config.suppliedText);
-    return {
-      lists: lists.map(entry => ({ ...entry, titles: entry.titles.map(title => redact(title)) })),
-      ask: provider.guidance?.lists !== false,
-    };
-  }
-
-  /**
-   * The choose() request for `observation` as the final page: the answer plan over the page script's best list, and,
-   * when the `lists` question is asked, its lists and the first AGGREGATE_CANDIDATES items of every other list's
-   * aggregation after the plan's own candidates (each other list's plan has them as its own first items), so the
-   * answer question can pick an item of whichever list holds the answer and the runtime can check that pick against
-   * the list the `lists` question chose. `keys` are the sent candidates' identities (candidateKey).
-   */
+  /** The answer plan for `observation` as the final page and its candidates (without their keys). */
   answerRequest(observation, question) {
     const plan = this.answerPlan(observation, question);
-    const listing = this.listQuestion(observation, question);
-    const keys = plan.candidates.map(candidateKey);
-    const candidates = plan.candidates.map(({ key, ...candidate }) => candidate);
-    if (listing?.ask) {
-      const seen = new Set(keys);
-      for (const entry of listing.lists) {
-        if (entry.list === 0) continue;
-        const other = this.answerPlan(observation, question, { mainList: entry.list });
-        for (const candidate of other.candidates) {
-          if (candidate.aggregate === undefined) continue;
-          const key = candidateKey(candidate);
-          if (seen.has(key) || candidates.length >= LIST_CANDIDATE_CAP) continue;
-          seen.add(key);
-          keys.push(key);
-          const { key: _, aggregate, ...rest } = candidate;
-          candidates.push(rest);
-        }
-      }
-    }
-    const lists = listing?.ask ? listing.lists : null;
-    return { plan, listing, candidates, keys, lists, key: rankingKey(question, candidates, plan.earlierPages, lists) };
+    return { plan, candidates: plan.candidates.map(({ key, ...candidate }) => candidate) };
   }
 
   /**
    * Rank answer candidates for completed, unverified and checkpoint results. Candidates are page blocks chosen by
-   * pickAnswerCandidates; nothing is generated, so the host can only confirm page text. With two or more
-   * candidates and a provider that implements choose(), the provider picks one (bounded by the run's remaining
-   * time and 3 s); otherwise, and whenever the provider fails, the heuristic order stands.
+   * pickAnswerCandidates and ordered by the heuristic; nothing is generated, so the host can only confirm page text.
    */
   async rankAnswer() {
-    // A ranking started next to the final decision is used only when it asked exactly what is asked here;
-    // otherwise it is discarded and everything below runs as if it had never started.
-    const speculation = this.speculation;
-    this.speculation = null;
-    try {
-      await this.rankAnswerWith(speculation);
-    } finally {
-      this.discardSpeculation(speculation);
-      await Promise.all(this.discardedRankings);
-    }
-  }
-
-  /**
-   * A step list's placeholder may take a likely answer (src/steps.js likelyValue). A lone candidate is never sent to the
-   * provider by rankAnswerWith (single_candidate), so its confidence is only the heuristic share; here the provider
-   * ranks it once when it can, and result.answer then carries that ranking (method provider).
-   */
-  async rankSingle(question) {
-    const result = this.result;
-    const detail = result.answerDetail;
-    const provider = this.answerProvider;
-    if (result.answer?.method === 'provider' || detail?.skipped !== 'single_candidate' || detail.candidates?.length !== 1
-      || typeof provider?.choose !== 'function') return;
-    const { id, heuristic, ...candidate } = detail.candidates[0];
-    const outcome = await this.chooseAnswer(provider, question, [candidate], [id], [heuristic],
-      this.answerPlan(result.observation, question).earlierPages);
-    if (!outcome.ranked) return;
-    result.answer = { method: 'provider',
-      candidates: outcome.ranked.slice(0, MAX_ANSWER_CANDIDATES).map(({ candidate: c, confidence }) => answerEntry(c, confidence)) };
-    result.answerDetail = { ...detail, method: 'provider', skipped: undefined, ranked: 'placeholder', ...outcome.detail };
-  }
-
-  async rankAnswerWith(speculation) {
     const result = this.result;
     const observation = result.observation;
     this.answerFirst = null;
@@ -4213,8 +2559,8 @@ class Session {
       return;
     }
     const request = this.answerRequest(observation, question);
-    let plan = request.plan;
-    const { trail, earlierPages } = plan;
+    const plan = request.plan;
+    const { trail } = plan;
     if (trail.length) result.trail = trail;
     const { candidates } = request;
     if (!candidates.length) {
@@ -4231,86 +2577,11 @@ class Session {
     // The question aggregates but its items are on the final page only (no aggregate summary): remembered lines are
     // not items, so one of them is never auto-confirmed (see receipt()). Independent of the scope above.
     if (plan.intent) detail.aggregateIntent = plan.intent;
-    let ranked = candidates.map((candidate, i) => ({ candidate, confidence: heuristic[i], i }));
-    let method = 'heuristic';
-    let outcome = null;
-    const provider = this.answerProvider;
-    if (typeof provider?.choose !== 'function') {
-      detail.skipped = 'no_choose';
-    } else if (candidates.length < 2) {
-      detail.skipped = 'single_candidate';
-    } else {
-      // The same observation, question, candidates, trail and lists make the same choose() request.
-      const same = speculation && !speculation.discarded && speculation.observation === observation
-        && speculation.key === request.key;
-      if (same) speculation.used = true;
-      else this.discardSpeculation(speculation);
-      outcome = same ? await speculation.promise : null;
-      // `early` (trace only, answerDetail): used, or fallback when the early ranking failed upstream (it may have
-      // been slowed by running next to the decide) and a fresh serial one ran in its place, or off when early
-      // rankings were stopped for this run after a provider error.
-      if (same) detail.early = 'used';
-      else if (this.earlyRankingOff) detail.early = 'off';
-      if (outcome && EARLY_RETRY_CODES.has(outcome.detail?.error?.code)
-        && this.config.timeoutMs - (Date.now() - this.started) >= ANSWER_MIN_MS) {
-        detail.early = 'fallback';
-        outcome = null;
-      }
-      outcome ??= await this.chooseAnswer(provider, question, candidates, ids, heuristic, earlierPages, null, request.lists);
-      Object.assign(detail, outcome.detail);
-      if (outcome.ranked) {
-        ranked = outcome.ranked;
-        method = 'provider';
-      }
-    }
-    // The record list the question is about (listQuestion): the provider's choice when it is usable, else the page
-    // script's best list. The aggregation and the candidates are then the chosen list's plan; the ranking sent over
-    // the wider request keeps its order, without the other lists' items.
-    if (request.listing) {
-      const choice = listChoice(request.listing, outcome, detail.skipped);
-      detail.lists = choice.detail;
-      if (choice.list !== 0) plan = this.answerPlan(observation, question, { mainList: choice.list });
-      if (choice.none && plan.aggregate) {
-        plan.aggregate.why.push('list_none');
-        plan.aggregate.partial = true;
-      }
-    }
+    const ranked = candidates.map((candidate, i) => ({ candidate, confidence: heuristic[i], i }));
+    const method = 'heuristic';
+    detail.skipped = 'no_choose';
     const aggregate = plan.aggregate;
     if (aggregate) detail.aggregate = aggregate;
-    // The provider's top pick against the aggregation (trace, and the receipt's aggregate rule): `first` (its first
-    // item), `item` (another of its items) or `other` (not an item: a plain block, an earlier line, another list's
-    // item), and `mass`, the provider's probability on the aggregation's items (its top confidence without
-    // probabilities).
-    if (aggregate && method === 'provider') {
-      const first = plan.candidates.find(candidate => candidate.aggregate === 0);
-      const topKey = request.keys[ranked[0].i];
-      aggregate.pick = first && topKey === candidateKey(first) ? 'first' : plan.itemKeys.has(topKey) ? 'item' : 'other';
-      const mass = detail.probabilities
-        ? ranked.filter(entry => plan.itemKeys.has(request.keys[entry.i])).reduce((sum, entry) => sum + entry.confidence, 0)
-        : aggregate.pick === 'other' ? 0 : ranked[0].confidence;
-      aggregate.mass = round3(Math.min(1, mass));
-    }
-    if (request.listing?.ask) {
-      // The final candidates are the chosen plan's: provider order where it ranked them, the rest after them.
-      const finals = plan.candidates.map(({ key, ...candidate }) => candidate);
-      const finalKeys = plan.candidates.map(candidateKey);
-      if (method === 'provider') {
-        const at = new Map(finalKeys.map((key, i) => [key, i]));
-        const used = new Set();
-        const mapped = [];
-        for (const entry of ranked) {
-          const i = at.get(request.keys[entry.i]);
-          if (i === undefined || used.has(i)) continue;
-          used.add(i);
-          mapped.push({ candidate: finals[i], confidence: entry.confidence, i });
-        }
-        finals.forEach((candidate, i) => { if (!used.has(i)) mapped.push({ candidate, confidence: 0, i }); });
-        ranked = mapped;
-      } else {
-        const own = heuristicConfidences(finals);
-        ranked = finals.map((candidate, i) => ({ candidate, confidence: own[i], i }));
-      }
-    }
     result.answer = {
       method,
       candidates: ranked.slice(0, MAX_ANSWER_CANDIDATES).map(({ candidate, confidence }) => answerEntry(candidate, confidence)),
@@ -4333,132 +2604,6 @@ class Session {
       if (aggregate.tie) result.answer.aggregate.tie = true;
     }
     result.answerDetail = { method, ...detail };
-  }
-
-  /**
-   * Start the answer ranking for `observation` next to a decision that may end the run there (the expectation
-   * already passes on it), so a completed run does not wait for one more provider round trip after the loop. It
-   * builds exactly the choose() request rankAnswer() would build if the run ended on this observation; rankAnswer()
-   * uses its outcome only in that case and discards it otherwise (an executed action discards it at once). The
-   * decision never waits for it or sees it. A discarded request that had already answered still counts in cost
-   * (its tokens were spent) and is marked `discarded` in cost.requests.
-   */
-  speculateAnswer(observation) {
-    const current = this.speculation;
-    // Best effort, like the ranking in close(): nothing here may fail the run or leave a rejection unhandled.
-    try {
-      // The same request is already running for this page (an early end fell back to the terminal decide): keep it.
-      if (current && !current.discarded && current.observation === observation) {
-        if (current.key === this.answerRequest(observation, this.question()).key) return;
-      }
-    } catch {
-      // Fall through to a fresh ranking.
-    }
-    this.discardSpeculation();
-    try {
-      const provider = this.answerProvider;
-      // A local SystemOne server may serve one request at a time, so a parallel ranking could delay the decision.
-      if (typeof provider?.choose !== 'function' || provider.local === true) return;
-      // After a provider error in this run, rankings wait for the loop to end (no parallel load on the provider).
-      if (this.earlyRankingOff) return;
-      const question = this.question();
-      if (!question.trim()) return;
-      const request = this.answerRequest(observation, question);
-      const { candidates, lists } = request;
-      if (candidates.length < 2) return;
-      const trail = request.plan.earlierPages;
-      const heuristic = heuristicConfidences(candidates);
-      const ids = candidates.map((_, i) => `c${i}`);
-      const speculation = {
-        observation,
-        key: request.key,
-        abort: new AbortController(),
-        discarded: false,
-        used: false,
-        entry: null,
-        promise: null,
-      };
-      speculation.promise = this.chooseAnswer(provider, question, candidates, ids, heuristic, trail, speculation, lists)
-        .catch(() => ({ detail: { error: { code: 'failed', message: 'Answer ranking failed' } } }));
-      this.speculation = speculation;
-    } catch {
-      this.speculation = null;
-    }
-  }
-
-  /** Abandon a speculative ranking (default: the current one). Idempotent; never awaits. */
-  discardSpeculation(speculation = this.speculation) {
-    if (!speculation || speculation.discarded || speculation.used) return;
-    if (this.speculation === speculation) this.speculation = null;
-    speculation.discarded = true;
-    if (speculation.entry) speculation.entry.discarded = true;
-    speculation.abort.abort(new DOMException('Answer ranking discarded', 'AbortError'));
-    this.discardedRankings.push(speculation.promise);
-  }
-
-  /**
-   * Whether the expectation passes on `observation`, without recording anything (declarative expectations only;
-   * a predicate is never run early). It only decides whether to start the answer ranking early.
-   */
-  expectationHint(observation) {
-    if (this.lastCheck?.observation === observation) return this.lastCheck.passed === true;
-    const expectation = this.config.expectation;
-    if (!expectation || typeof expectation !== 'object') return false;
-    if (!this.prepassOk(observation)) return false;
-    try {
-      return checkDeclarative(observation, expectation, { initial: this.initial }) === true;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * One provider.choose() call. Resolves `{ ranked?, detail }` and never rejects. With `speculation`, its abort
-   * signal can abandon the call and its cost.requests entry is kept on it (marked `discarded` if it is).
-   */
-  async chooseAnswer(provider, question, candidates, ids, heuristic, trail = [], speculation = null, lists = null) {
-    const budget = Math.min(ANSWER_TIMEOUT_MS, this.config.timeoutMs - (Date.now() - this.started));
-    if (budget < ANSWER_MIN_MS) return { detail: { skipped: 'no_time' } };
-    if (this.interrupted || this.callerSignal?.aborted) return { detail: { skipped: 'cancelled' } };
-    const timeout = new AbortController();
-    const timer = setTimeout(() => timeout.abort(new DOMException('Answer time budget reached', 'TimeoutError')), budget);
-    const signal = AbortSignal.any([timeout.signal, this.interruptSignal, ...(this.callerSignal ? [this.callerSignal] : []),
-      ...(speculation ? [speculation.abort.signal] : [])]);
-    // The provider boundary: supplied values the page echoes are redacted, exactly as for decide().
-    const redact = redactorFor(this.config.suppliedText);
-    const offered = candidates.map((candidate, i) => ({ id: ids[i], text: redact(candidate.text) }));
-    const started = Date.now();
-    try {
-      const request = { instruction: redact(this.instruction), question: redact(question), candidates: offered, signal };
-      // Trail lines and URLs are already redacted by trail().
-      if (trail.length) request.earlierPages = trail;
-      // The `lists` question's input (listQuestion): titles already redacted.
-      if (lists) request.lists = lists;
-      const reply = await abandonable(() => provider.choose(request), signal);
-      const { ranked, probabilities } = rankWithReply(reply, candidates, ids, heuristic);
-      this.addUsage(reply.usage);
-      this.noteRanking(speculation, this.noteRequest('choose', started, reply));
-      const detail = { choice: reply.choice, ms: Date.now() - started };
-      if (isUnit(reply.confidence)) detail.confidence = reply.confidence;
-      if (probabilities) detail.probabilities = probabilities;
-      if (reply.model) detail.model = reply.model;
-      if (reply.requestId) detail.requestId = reply.requestId;
-      if (Number.isFinite(reply.latencyMs)) detail.latencyMs = reply.latencyMs;
-      return { ranked, detail, lists: reply.lists };
-    } catch (error) {
-      const code = timeout.signal.aborted ? 'timeout' : signal.aborted ? 'cancelled' : 'provider_error';
-      this.noteRanking(speculation, this.noteRequest('choose', started, null, code));
-      return { detail: { error: { code, message: String(error?.message ?? error) }, ms: Date.now() - started } };
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  /** Keep a speculative ranking's cost.requests entry on it, marked if it was already discarded. */
-  noteRanking(speculation, entry) {
-    if (!speculation) return;
-    speculation.entry = entry;
-    if (speculation.discarded) entry.discarded = true;
   }
 
   async close() {
@@ -4811,488 +2956,6 @@ class Session {
     return state.requests + count <= state.requestCap;
   }
 
-  /** Milliseconds left in this attempt's time budget. */
-  remainingMs() {
-    return this.config.timeoutMs - (Date.now() - this.started);
-  }
-
-  /**
-   * Whether a second opinion could change what this decision does, and why: `floor` (the choice is below its
-   * confidence floor, so it would go to the host as low_confidence), `handoff_close` (a handoff whose lead over the
-   * best link or control is under secondOpinionMargin) or `close` (a link whose lead over the next link or control is
-   * under it). Null when the switch is off, the per-call bound is used up, the provider reported no probabilities,
-   * or the page or decision is one a retry must not second-guess (consent dialog, injection or commit guard).
-   */
-  secondOpinionReason(decision, action, offered, { consent, budgetLeft }) {
-    const config = this.config;
-    if (!config.retry.secondOpinion || config.retryState.secondOpinions >= MAX_SECOND_OPINIONS) return null;
-    if (consent || !budgetLeft || this.remainingMs() < SECOND_OPINION_MIN_MS) return null;
-    const probabilities = decision?.probabilities;
-    if (!probabilities || typeof probabilities !== 'object') return null;
-    const guards = guardsOf(decision);
-    if ((guards?.injection ?? 0) >= INJECTION_NOTE || this.controlVeto(decision)) return null;
-    if (!this.retryRoom(1)) return null;
-    // Links only: a button, select or fill keeps its first decision, its floor and its alternatives.
-    if (action.type !== 'handoff' && actionClass(action) !== 'link') return null;
-    const p = id => (isUnit(probabilities[id]) ? probabilities[id] : 0);
-    const top = choiceConfidence(decision) ?? p(action.id);
-    // Rivals are links only: a second opinion never swaps a handoff for a control, scrolling or waiting.
-    const rival = offered
-      .filter(candidate => candidate.id !== action.id && actionClass(candidate) === 'link')
-      .reduce((best, candidate) => Math.max(best, p(candidate.id)), 0);
-    if (rival <= 0) return null;
-    const margin = config.thresholds.secondOpinionMargin;
-    if (action.type === 'handoff') return top - rival < margin ? 'handoff_close' : null;
-    const floor = config.thresholds.linkFloor;
-    if (floor > 0 && choiceConfidence(decision) !== null && top < floor) return 'floor';
-    return top - rival < margin ? 'close' : null;
-  }
-
-  /**
-   * In-call retry 1, the second opinion: ask the provider once more with the non-terminal options in reverse order
-   * (handoff stays last). The same choice keeps the more confident of the two decisions; a different choice wins only
-   * with a higher confidence. Guards are merged by their maximum, so a second opinion can add a veto but never lift
-   * one. Returns `{ decision, action }` to continue with. A failed request keeps the first decision.
-   */
-  async secondOpinion(decision, action, offered, observation, history, reason) {
-    const state = this.config.retryState;
-    state.secondOpinions++;
-    const firstRequest = this.lastRequest;
-    const firstRecord = this.lastDecision;
-    const terminal = offered.filter(candidate => candidate.type === 'done' || candidate.type === 'handoff');
-    const reordered = [...offered.filter(candidate => !terminal.includes(candidate)).reverse(), ...terminal];
-    const c1 = choiceConfidence(decision);
-    const entry = {
-      kind: 'second_opinion', why: reason, step: this.nextStep(), first: { p: c1 === null ? null : round3(c1) },
-    };
-    this.retries.push(entry);
-    const keepFirst = outcome => {
-      entry.outcome = outcome;
-      this.lastRequest = firstRequest;
-      this.lastDecision = firstRecord;
-      this.why(`retry:second_opinion:${outcome}`);
-      return { decision, action };
-    };
-    let second;
-    try {
-      second = await this.decide(observation, reordered, history, this.instruction, 'second_opinion');
-    } catch (error) {
-      if (this.signal.aborted || this.interrupted) throw error;
-      return keepFirst('error');
-    }
-    this.extraDecisions++;
-    const secondAction = offered.find(candidate => candidate.id === second?.actionId);
-    if (!secondAction) return keepFirst('invalid');
-    const secondGuards = guardsOf(second);
-    if (secondGuards) this.noteGuards(secondGuards);
-    const c2 = choiceConfidence(second);
-    entry.second = { p: c2 === null ? null : round3(c2), same: secondAction.id === action.id };
-    const higher = (c2 ?? -1) > (c1 ?? -1);
-    // A different choice may only be a link, or a handoff instead of a link: never a control, scroll or wait.
-    const switchable = actionClass(secondAction) === 'link' || (secondAction.type === 'handoff' && action.type !== 'handoff');
-    let use = decision;
-    let chosen = action;
-    if (secondAction.id === action.id) {
-      entry.outcome = 'agreed';
-      if (higher) use = second;
-    } else if (higher && switchable) {
-      entry.outcome = 'changed';
-      use = second;
-      chosen = secondAction;
-    } else {
-      entry.outcome = 'kept';
-    }
-    // Both requests asked the guard questions about this page: the higher value of each counts.
-    const merged = { ...(guardsOf(decision) ?? {}) };
-    for (const [name, value] of Object.entries(secondGuards ?? {})) if (!(merged[name] >= value)) merged[name] = value;
-    if (use === decision) this.lastRequest = firstRequest;
-    // The second decide's choice runs: the first decide's entry gets the step as well (execute()).
-    else this.pairedRequest = firstRequest;
-    use = Object.keys(merged).length ? { ...use, guards: merged } : use;
-    this.lastDecision = decisionRecord('provider', use);
-    this.lastDecision.secondOpinion = { why: reason, outcome: entry.outcome };
-    this.why(`retry:second_opinion:${entry.outcome}`);
-    return { decision: use, action: chosen };
-  }
-
-  /**
-   * In-call retry 2, the back-out target: on a read-only run whose steps so far are free of side effects, the page
-   * reached by the last link (followed only by scrolling or waiting) fails the expectation and is none of the pages
-   * the instruction names. Returns the link step and the URL before it, or null. The caller has already established
-   * that the provider handed off (or chose below its floor) on this page.
-   */
-  async backOutTarget(observation, { budgetLeft }) {
-    const config = this.config;
-    if (!config.retry.backOut || config.retryState.backOuts >= MAX_BACK_OUTS) return null;
-    if (config.level !== 'read-only' || config.step || !budgetLeft) return null;
-    if (config.expectation === undefined || config.expectation === null) return null;
-    if (this.result.cost.decisions - this.extraDecisions >= config.maxDecisions) return null;
-    if (this.remainingMs() < BACK_OUT_MIN_MS) return null;
-    const steps = this.result.steps;
-    if (!steps.length || !steps.every(step => SIDE_EFFECT_FREE.has(step.class) && !step.interrupted)) return null;
-    let index = steps.length - 1;
-    while (index >= 0 && steps[index].class === 'page') index--;
-    const link = steps[index];
-    if (!link || link.class !== 'link' || link.decision?.by !== 'provider') return null;
-    const from = link.action.fromUrl;
-    if (!from || from === link.action.toUrl || observation.url !== link.action.toUrl) return null;
-    if (!sameOrigin(from, safeOrigin(observation.url)) || !allowedOrigin(from, config.allowedOrigins)) return null;
-    // Clearly not the target: the instruction names its pages, and neither the link nor the page it reached is one
-    // of them (a handoff on a named intermediate page goes to the rerun suggestion instead). Without named pages
-    // the runtime cannot tell a wrong link from an unnamed intermediate hop, so it does not back out.
-    const hops = namedHops(this.instruction ?? '');
-    if (!hops.length) return null;
-    let path = '';
-    try {
-      path = decodeURIComponent(new URL(observation.url).pathname).toLowerCase().replace(/[-_/.]+/g, ' ');
-    } catch {
-      // Unparsable URL: the label and the title still count.
-    }
-    const seen = [String(link.action.label ?? '').toLowerCase(), String(observation.title ?? '').toLowerCase(), path];
-    if (hops.some(hop => !remainingHops([hop], seen).length)) return null;
-    if (await this.expectationFor(observation) !== false) return null;
-    return { link, from };
-  }
-
-  /**
-   * In-call retry 3, the self-rerun plan: after close(), the next step is `rerun` with a concrete suggestion (a
-   * suggested instruction, or the same instruction with an expectation that waits for late content), the run asked
-   * no one for anything (no needs.level, no relay) and changed nothing (no button, select or fill ran), and enough
-   * time is left. Returns `{ instruction, expectation, maxActions, why }` or null.
-   */
-  rerunPlan() {
-    const { config, result } = this;
-    if (!config.retry.rerun || config.step || config.retryState.reruns >= MAX_RERUNS) return null;
-    // Read-only only: a suggested instruction does not carry the host's constraints for controls and forms.
-    if (config.level !== 'read-only') return null;
-    // Never after an expectation verdict: the suggestion there swaps the host's expectation for the page that just
-    // failed it, which would verify the wrong page.
-    if (['expectation_failed', 'expectation_mismatch', 'expectation_error'].includes(result.code)) return null;
-    if (this.interrupted || this.callerSignal?.aborted || this.timeoutSignal.aborted) return null;
-    if (result.next?.kind !== 'rerun' || !result.verdict?.suggested) return null;
-    if (result.code === 'refused_action' || result.needs?.level || result.needs?.who === 'user') return null;
-    if (!result.steps.every(step => SIDE_EFFECT_FREE.has(step.class) && !step.interrupted)) return null;
-    if (this.remainingMs() < RERUN_MIN_MS) return null;
-    // The host's budgets cover the whole call: the rerun gets what the first attempt left.
-    const actionsLeft = config.maxActions - this.actionsTaken;
-    const decisionsLeft = config.maxDecisions - (result.cost.decisions - this.extraDecisions);
-    if (actionsLeft < 1 || decisionsLeft < 1 || !this.retryRoom(1)) return null;
-    const suggested = result.verdict.suggested;
-    const hostExpectation = config.expectation;
-    const loading = Boolean(result.verdict.why?.includes('content_loading') && suggested.expectation && !suggested.instruction);
-    let expectation = hostExpectation;
-    if (loading) {
-      // The one change allowed to the host's expectation: wait for the placeholder (textAbsent), nothing else.
-      if (!hostExpectation || typeof hostExpectation !== 'object' || !suggested.expectation.textAbsent) return null;
-      expectation = { ...hostExpectation, textAbsent: suggested.expectation.textAbsent };
-    }
-    if (!suggested.instruction && !loading) return null;
-    const same = text => String(text ?? '').trim().toLowerCase();
-    if (suggested.instruction && same(suggested.instruction) === same(this.instruction)) return null;
-    return {
-      instruction: suggested.instruction ?? this.instruction,
-      expectation,
-      maxActions: Math.min(suggested.maxActions ?? actionsLeft, actionsLeft),
-      maxDecisions: decisionsLeft,
-      why: result.code,
-      loading,
-    };
-  }
-
-  /**
-   * Rung 4: after a handoff, up to five offered actions whose labels contain a question or instruction term, most
-   * likely first. Two or more make a `choose` receipt; the host passes one id to act() with the revision.
-   */
-  decideOptions(decision, offered, observation) {
-    const terms = new Set(tokenize(`${this.question()} ${this.instruction ?? ''}`, { query: true }));
-    if (!terms.size) return null;
-    const probabilities = decision?.probabilities ?? {};
-    let executable = offered.filter(action => !['done', 'handoff', 'scroll', 'wait'].includes(action.type));
-    // The page looks like it carries injected instructions: only plain navigation links to approved origins remain
-    // (the same thing the injection veto lets run), so the host is never told to act on what the page asked for.
-    const injection = Math.max(guardsOf(decision)?.injection ?? 0, this.signals.guards.injection ?? 0);
-    if (injection >= GUARD_VETO) {
-      executable = executable.filter(action => approvedLink(action, observation, this.config) && plainNavLabel(action.label));
-      this.why('decide:injection_filtered');
-    }
-    // The commit guard is high: no button, select or fill is offered to the host either.
-    if (this.controlVeto(decision) && executable.some(commitCandidate)) {
-      executable = executable.filter(action => !commitCandidate(action));
-      this.why('decide:commit_filtered');
-    }
-    const matching = executable
-      .map((action, index) => ({ action, index, p: Number.isFinite(probabilities[action.id]) ? probabilities[action.id] : null }))
-      .filter(({ action }) => tokenize(action.label ?? '').some(term => terms.has(term)))
-      .sort((a, b) => (b.p ?? -1) - (a.p ?? -1) || a.index - b.index)
-      .slice(0, MAX_DECIDE_OPTIONS);
-    if (matching.length < 2) return null;
-    const ask = clip(String(this.config.answerQuestion ?? this.instruction ?? '').replace(/\s+/g, ' ').trim(), 160);
-    return {
-      question: `Which offered action leads toward: ${ask}`,
-      options: matching.map(({ action, p }) => {
-        const option = { id: action.id, label: clip(action.label, 120) };
-        if (p !== null) option.p = round3(p);
-        return option;
-      }),
-      revision: observation.revision,
-      executable,
-    };
-  }
-
-  /** True when off-screen blocks or links contain an instruction term (scroll nudge before a handoff). */
-  offscreenMatch(observation) {
-    const terms = new Set(tokenize(`${this.question()} ${this.instruction ?? ''}`, { query: true }));
-    if (!terms.size) return false;
-    const hit = text => tokenize(text).some(term => terms.has(term));
-    if (blocksOf(observation).some(block => block.offscreen && hit(block.text))) return true;
-    return (observation.controls ?? []).some(control => control.offscreen === true && hit(control.label));
-  }
-}
-
-/**
- * The first attempt of a self-rerun as the trace keeps it: outcome, verdict codes and suggestion. Its steps are the
- * first `steps` entries of the merged result's steps.
- */
-function attemptRecord(session) {
-  const result = session.result;
-  return {
-    attempt: 1,
-    instruction: session.instruction,
-    status: result.status,
-    code: result.code,
-    why: [...(result.verdict?.why ?? [])],
-    suggested: result.verdict?.suggested ? structuredClone(result.verdict.suggested) : null,
-    finalUrl: result.observation?.url ?? null,
-    steps: result.steps.length,
-    cost: { ...result.cost },
-  };
-}
-
-/** Fold the first attempt of a self-rerun into the second's result (see BrowserRuntime #rerun). */
-function mergeAttempts(first, second, plan) {
-  const a = first.result;
-  const b = second.result;
-  const cost = b.cost;
-  cost.decisions += a.cost.decisions;
-  cost.inputTokens += a.cost.inputTokens;
-  cost.outputTokens += a.cost.outputTokens;
-  cost.elapsedMs = Date.now() - first.started;
-  cost.requests = [
-    ...a.cost.requests.map(entry => ({ ...entry, attempt: 1 })),
-    ...cost.requests.map(entry => ({ ...entry, attempt: 2 })),
-  ];
-  // Every action this call ran, in order: the first attempt's steps (its final one carries the screenshot capture
-  // 'last' took when it closed) and the rerun's, which continue its numbering (Session.stepBase).
-  b.steps = [...a.steps, ...b.steps];
-  const rerun = {
-    kind: 'rerun',
-    why: plan.why,
-    outcome: b.code,
-    status: b.status,
-    first: { status: a.status, code: a.code, steps: a.steps.length, url: urlPath(a.observation?.url) },
-  };
-  if (plan.instruction !== first.instruction) rerun.instruction = plan.instruction;
-  if (plan.expectation && typeof plan.expectation === 'object'
-    && JSON.stringify(plan.expectation) !== JSON.stringify(first.config.expectation)) {
-    rerun.expectation = structuredClone(plan.expectation);
-  }
-  rerun.maxActions = plan.maxActions;
-  b.retries = [...(a.retries ?? []), rerun, ...(b.retries ?? [])];
-  for (const warning of a.warnings ?? []) {
-    b.warnings ??= [];
-    if (!b.warnings.includes(warning)) b.warnings.push(warning);
-  }
-  // The site-profile block covers both attempts (the first attempt's fast steps stay on the receipt).
-  const site = mergeSite([a.site, b.site]);
-  if (site) b.site = site;
-  Object.defineProperty(b, 'attempts', { value: [attemptRecord(first)], enumerable: false, writable: true, configurable: true });
-}
-
-/**
- * Whether a list step lets the next one start: completed with its expectation passing, and a result the host would
- * accept as is (next answer or answer_from_digest; not a page the provider scored as blocked or still loading).
- */
-function listStepPassed(result) {
-  return listStepHeld(result) === null && result.status === 'completed' && result.verification?.passed === true;
-}
-
-/**
- * Why a list step whose expectation passed still stops the list, or null: `guard:blocked_page` (the provider scored
- * the page blocked), or `next:<kind>` when its verdict is not one the host would accept as is. A page that still
- * shows a placeholder does not stop it once the step's own expectation passed (a late-load step's expectation never
- * passes while one shows, checkExpectation); the receipt keeps `content_loading`.
- */
-function listStepHeld(result) {
-  if (result.status !== 'completed' || result.verification?.passed !== true) return null;
-  const why = result.verdict?.why ?? [];
-  if (why.includes('guard:blocked_page')) return 'guard:blocked_page';
-  const kind = result.next?.kind;
-  if (['answer', 'answer_from_digest'].includes(kind)) return null;
-  if (why.includes('content_loading') && kind === 'rerun') return null;
-  return `next:${kind ?? 'none'}`;
-}
-
-/**
- * One step of a list as the receipt's `stepResults` carries it, kept small: `{i, status, code, passed}` plus, when the
- * step asked a question, `asked`, its auto-confirmed `answer` (`{text, line?, exact?}`), its `url` and (an earlier
- * step without a confirmed answer) its top two `candidates`. The step a list stopped at also has `kind` (its verdict
- * kind), `expectation` and `url`. Codes are trusted; `answer`, `candidates` and `url` are page text.
- */
-function listEntry(result, index, spec, { last, stopping, likely }) {
-  const entry = { i: index + 1, status: result.status, code: result.code, passed: result.verification?.passed === true };
-  // Its expectation passed, but the list did not accept the step (listStepHeld): the list stops here, at this step.
-  const held = stopping ? listStepHeld(result) : null;
-  if (held) entry.held = held;
-  const answer = result.verdict?.answer;
-  if (spec.answerQuestion) {
-    entry.asked = true;
-    // A likely answer filled a later step's placeholder: trusted marker; the value itself stays among the candidates.
-    if (likely) entry.answerSource = 'likely';
-    if (answer) {
-      entry.answer = { text: answer.text };
-      if (typeof answer.line === 'string' && answer.line !== answer.text) entry.answer.line = answer.line;
-      if (answer.exact === false) entry.answer.exact = false;
-    } else if (!last && result.answer?.candidates?.length) {
-      // Its page is no longer the final page (the last step's candidates are the result's own answer.candidates).
-      entry.candidates = result.answer.candidates.slice(0, 2).map(candidate => ({ text: candidate.text, confidence: candidate.confidence }));
-    }
-  }
-  if (stopping) {
-    entry.kind = result.verdict?.kind ?? null;
-    entry.expectation = result.verification?.expectation ?? null;
-  }
-  if ((stopping || entry.asked) && result.page?.url) entry.url = result.page.url;
-  return entry;
-}
-
-/**
- * A step list's answer when every step that asked a question has an auto-confirmed one: `{ text, confidence, basis,
- * steps, exact? }`, where `text` is one "step N: <answer>" line per step, `confidence` the lowest of them, `steps`
- * each step's `{ i, text, line?, exact? }` (trusted structure; the values are page text, as every answer is) and
- * `exact: false` when any step's answer is a whole page line.
- */
-function listAnswer(results, specs) {
-  const steps = [];
-  let confidence = 1;
-  let exact = true;
-  results.forEach((item, index) => {
-    const answer = item.verdict?.answer;
-    if (!specs[index]?.answerQuestion || !answer) return;
-    const entry = { i: index + 1, text: answer.text };
-    if (typeof answer.line === 'string' && answer.line !== answer.text) entry.line = answer.line;
-    if (answer.exact === false) {
-      entry.exact = false;
-      exact = false;
-    }
-    confidence = Math.min(confidence, Number(answer.confidence) || 0);
-    steps.push(entry);
-  });
-  const out = {
-    text: steps.map(entry => `step ${entry.i}: ${entry.text}`).join('\n'),
-    confidence: Math.round(confidence * 1000) / 1000,
-    basis: [`steps:answers:${steps.length}`],
-    steps,
-  };
-  if (!exact) out.exact = false;
-  return out;
-}
-
-/**
- * Fold the steps a list ran into one result (the stopping or last step's, mutated): every action in order, summed
- * cost (cost.requests marked with `listStep`), merged warnings and retries, `stepResults` for every step (`not_run`
- * for those that did not start) and the call's outcome. Verification passes only when every step ran and passed;
- * `stop` ({before, code, why}) is a stop decided between steps (placeholder, time, actions, decisions, interrupt),
- * which becomes the outcome while the page, answer candidates and trail stay the last step's. The trace keeps each
- * step's filled instruction and outcome under `stepRuns`.
- */
-function composeList(sessions, specs, filled, stop, started, values, usedLikely = new Set(), finalExpectation = null) {
-  const count = specs.length;
-  const results = sessions.map(session => session.result);
-  const ran = results.length;
-  const result = results.at(-1);
-  const entries = specs.map((spec, index) => {
-    if (index < ran) {
-      return listEntry(results[index], index, spec, { last: index === ran - 1,
-        stopping: !stop && index === ran - 1 && !listStepPassed(results[index]), likely: usedLikely.has(index + 1) });
-    }
-    const entry = { i: index + 1, status: 'not_run', code: stop && index === stop.before ? stop.code : 'not_run' };
-    if (stop && index === stop.before && stop.why?.length) entry.why = [...stop.why];
-    return entry;
-  });
-  const runs = results.map((item, index) => ({
-    step: index + 1,
-    instruction: filled[index]?.instruction,
-    status: item.status,
-    code: item.code,
-    why: [...(item.verdict?.why ?? [])],
-    finalUrl: item.observation?.url ?? null,
-    steps: item.steps.length,
-    ...(usedLikely.has(index + 1) ? { answerSource: 'likely' } : {}),
-    cost: { ...item.cost },
-    ...(Array.isArray(item.attempts) ? { attempts: item.attempts } : {}),
-  }));
-  const cost = result.cost;
-  const requests = results.flatMap((item, index) => (item.cost.requests ?? []).map(entry => ({ ...entry, listStep: index + 1 })));
-  cost.decisions = results.reduce((sum, item) => sum + item.cost.decisions, 0);
-  cost.inputTokens = results.reduce((sum, item) => sum + item.cost.inputTokens, 0);
-  cost.outputTokens = results.reduce((sum, item) => sum + item.cost.outputTokens, 0);
-  cost.elapsedMs = Date.now() - started;
-  cost.requests = requests;
-  result.steps = results.flatMap(item => item.steps);
-  const retries = results.flatMap((item, index) => (item.retries ?? []).map(entry => ({ ...entry, listStep: index + 1 })));
-  if (retries.length) result.retries = retries;
-  const warnings = [...new Set(results.flatMap(item => item.warnings ?? []))];
-  if (warnings.length) result.warnings = warnings;
-  // Site-profile blocks of every step, merged (fast steps, path, hints, the first fallback).
-  const site = mergeSite(results.map(item => item.site));
-  if (site) result.site = site;
-  const passed = results.filter(listStepPassed).length;
-  const stepNumber = stop ? stop.before + 1 : ran;
-  // A receipt the runtime could not compute (receiptError) falls back to the code-only verdict.
-  result.verdict ??= buildVerdict(result);
-  if (stop) {
-    setOutcome(result, stop.code);
-    result.reason = `Step ${stepNumber} of ${count} did not start: ${result.reason}`;
-    result.verification = { ...result.verification, passed: false };
-    result.verdict = buildVerdict(result, {
-      why: [...(stop.why ?? []), `steps:stopped_before:${stepNumber}`, `steps:${passed}/${count}`],
-      hasQuestion: Boolean(specs[stop.before].answerQuestion),
-    });
-  } else if (ran < count || passed < count) {
-    result.reason = `Step ${stepNumber} of ${count}: ${result.reason}`;
-    if (ran < count) result.verification = { ...result.verification, passed: false };
-    // The last step's own expectation passed, but the list held it: the call's verification says why it failed.
-    const held = entries[ran - 1]?.held;
-    if (held) result.verification = { ...result.verification, passed: false, held: `step:${ran}:${held}` };
-    result.verdict.why.push(`steps:stopped_at:${stepNumber}`, `steps:${passed}/${count}`);
-  } else {
-    result.reason = `All ${count} steps passed: ${result.reason}`;
-    result.verdict.why.push(`steps:${count}/${count}`);
-    // Answers from more than one step (or from an earlier step only): with every asked step auto-confirmed, the
-    // call's verdict.answer lists them (listAnswer); otherwise the host replies from stepResults and the digest, and
-    // the last step's own answer alone would mislead as the call's.
-    const asked = entries.filter(entry => entry.asked);
-    if (asked.length > 1 || (asked.length === 1 && asked[0].i !== count)) {
-      const confirmed = asked.every(entry => entry.answer);
-      const kind = confirmed ? 'answer' : 'answer_from_digest';
-      result.verdict.kind = 'verified';
-      result.verdict.oversight = confirmed ? 'none' : 'confirm';
-      result.verdict.suggested = null;
-      result.verdict.answer = confirmed ? listAnswer(results, specs) : null;
-      Object.defineProperty(result.verdict, 'nextKind', { value: kind, enumerable: false, writable: true, configurable: true });
-    }
-  }
-  result.stepResults = entries;
-  // A likely answer filled a later step's instruction or question (trusted marker; never a confirmed answer).
-  for (const n of [...usedLikely].sort((a, b) => a - b)) {
-    if (!result.verdict.why.includes(`steps:likely_fill:${n}`)) result.verdict.why.push(`steps:likely_fill:${n}`);
-  }
-  // The steps the host sends to continue (renumbered, earlier answers written in): next.steps, with the call's own
-  // top-level expectation in the last of them (or, when a field conflicts, next.expectation to send alongside).
-  const from = stop ? stop.before : ran < count || passed < count ? ran - 1 : null;
-  result.next = nextFor(result, from === null ? {} : carryExpectation(carryForward(specs, from, values), finalExpectation));
-  Object.defineProperty(result, 'stepRuns', { value: runs, enumerable: false, writable: true, configurable: true });
-  return result;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -5528,10 +3191,9 @@ function didLine(action) {
 }
 
 export class BrowserRuntime {
-  constructor({ bridge, provider, asks } = {}) {
+  constructor({ bridge, asks } = {}) {
     if (!bridge) throw new TypeError('A browser bridge is required');
     this.bridge = bridge;
-    this.provider = provider;
     // The Approve gate's asks the extension reported (a function: the daemon's latest), so offers say "(asks the
     // user)" only for what the extension will ask about.
     this.asks = typeof asks === 'function' ? asks : () => APPROVAL_ASKS;
@@ -5576,14 +3238,6 @@ export class BrowserRuntime {
     }
     if (this.lastOffer && levelRank(this.lastOffer.config.level) > levelRank(level)) this.lastOffer = null;
     this.active?.lowerGrant(level);
-  }
-
-  step(instruction, options = {}) {
-    return this.#drive(instruction, options, true);
-  }
-
-  run(instruction, options = {}) {
-    return this.#drive(instruction, options, false);
   }
 
   /**
@@ -5742,25 +3396,9 @@ export class BrowserRuntime {
         return session.result;
       }
       const started = Date.now();
-      // The purchase guard on host-driven control, as for a run's own choice (below testing, with controls): the
-      // provider is asked about the button, select or fill the host picked before it runs. A guard at the veto
-      // refuses it; a failed provider call fails the act (nothing is dispatched). Without a provider, or with a
-      // custom one that reports no guards, only the mechanical checks apply (they already shaped the offer).
-      // An ambiguous refused control the offer carried (the intent question) runs only when this guard request clears
-      // it (Session.intentGate); without a provider it is refused. hostGuard returns `{ result }` or `{ action }`.
-      const hostGuard = async (page, chosen) => {
-        if (!this.provider || !commitCandidate(chosen) || config.level === 'testing' || !config.capabilities.has('controls')) {
-          return chosen?.intent ? { result: session.intentKept(chosen, { kept: 'unanswered' }) } : { action: chosen };
-        }
-        const offered = [{ ...chosen }, { id: 'handoff', type: 'handoff', description: 'None of these: stop here' }];
-        const label = chosen.description ?? chosen.label ?? chosen.type;
-        const decision = await session.decide(page, offered, [], `The host chose this control: ${label}`, 'guard');
-        const guards = guardsOf(decision);
-        if (guards) session.noteGuards(guards);
-        if (session.purchaseHigh(decision)) return { result: session.purchaseVeto(chosen) };
-        if (session.commitHigh(decision)) return { result: session.commitVeto(chosen) };
-        return chosen.intent ? session.intentGate(decision, chosen, page) : { action: chosen };
-      };
+      // The host's own choice runs as chosen: the mechanical checks (level, purchase, forbid, Approve gate) already
+      // shaped the offer it came from.
+      const hostGuard = async (page, chosen) => ({ action: chosen });
       let decision = { by: 'host', actionId };
       // A refusal of a composed act keeps the host going: the page it ends on, with its actions and revision.
       const offerAgain = page => {
@@ -6201,14 +3839,12 @@ export class BrowserRuntime {
    * allowed URLs and the consent dialog's buttons always listed). Shared by observe() and an act() landing page.
    */
   #offerOn(observation, config, hints, question = null) {
-    // The intent switch: ambiguous refused controls are listed too; act() runs one only when its guard request clears it.
-    const intent = this.provider?.guidance?.intent === true && config.level !== 'testing';
     // Host-driven offers also press Enter in a filled field (a search box), gated like the form submit it is.
     // The Approve gate: gated controls are offered (marked needsApproval) when the bridge can ask the user.
     const approvals = typeof this.bridge.approve === 'function' && levelRank(config.level) >= levelRank('reversible')
       ? cleanAsks(this.asks()) : false;
     // Host-driven offers also take fills of the host's own text (agentText).
-    const flags = { intent, enterSubmit: true, approvals, agentText: true };
+    const flags = { enterSubmit: true, approvals, agentText: true };
     const offer = offeredActions(observation, { ...config, hints, ...flags });
     const actions = offer.actions.filter(action => !['done', 'handoff'].includes(action.type));
     // `hints` (the task the host named on its observe) rank the listing of the page an act() on this offer lands on;
@@ -6262,1102 +3898,4 @@ export class BrowserRuntime {
     return session;
   }
 
-  async #drive(instruction, options, step) {
-    if (instruction && typeof instruction === 'object') {
-      options = { ...instruction, ...options };
-      instruction = options.instruction;
-    }
-    if (options.steps !== undefined && options.steps !== null) {
-      if (step) throw new Error('A step list runs with run(), not step()');
-      // An instruction next to steps is the task summary: checked, never sent to the provider (each step's is).
-      checkSummary(instruction);
-      return this.#driveList(options);
-    }
-    if (typeof instruction !== 'string' || !instruction.trim()) throw new Error('An instruction is required');
-    if (!this.provider) throw new Error('A decision provider is required for run() and step()');
-    // Long instructions (4 or more named pages) get 45 s instead of 30 s unless the caller set a timeout.
-    if (options.timeoutMs === undefined && namedHops(instruction).length >= LONG_TASK_HOPS) {
-      options = { ...options, timeoutMs: LONG_TASK_TIMEOUT_MS };
-    }
-    const config = configure(options, { step });
-    // legalActions reads it to decide whether a secret supplied value may go into a non-password field.
-    config.instruction = instruction;
-    let session = this.#open(config, instruction);
-    try {
-      await this.#attempt(session);
-      // In-call retry 3: the result's next step is a rerun FAI can send itself. The first session stays active
-      // until the rerun opens, so a pause or stop in between still lands (and rerunPlan then sees it).
-      const plan = session.rerunPlan();
-      if (plan) session = await this.#rerun(session, plan, options, step);
-    } finally {
-      this.active = null;
-    }
-    return session.result;
-  }
-
-  async #attempt(session) {
-    try {
-      await this.#loop(session);
-      await session.completeList();
-    } catch (error) {
-      session.fail(error);
-    } finally {
-      await session.close();
-    }
-  }
-
-  /**
-   * Run `plan` (a verdict.suggested the first attempt's next step pointed to) as a second attempt in the same call:
-   * the same origins, level, grant, guardrails, supplied values and answer question, the remaining time, the shared
-   * retry bounds and no further rerun. Its result is returned with both attempts merged: cost and cost.requests
-   * (each entry marked with its attempt) cover both, `retries` lists the first attempt's retries, the rerun and the
-   * second attempt's own, and the trace keeps the first attempt's outcome under `attempts`.
-   */
-  async #rerun(first, plan, options, step) {
-    const prior = first.config;
-    const timeoutMs = Math.max(1000, Math.floor(first.remainingMs()));
-    let config;
-    try {
-      config = configure({
-        ...options,
-        instruction: undefined,
-        expectation: plan.expectation,
-        maxActions: plan.maxActions,
-        maxDecisions: plan.maxDecisions,
-        timeoutMs,
-        runId: first.result.runId,
-        mode: prior.permissions.requested,
-        grant: prior.grant ? { level: prior.grant.level, tabMode: prior.grant.tabMode } : options.grant,
-        permissions: prior.permissions,
-        allowedOrigins: prior.allowedOrigins,
-        guardrails: prior.guardrails,
-        policy: undefined,
-        retry: { ...prior.retry, rerun: false },
-        [RETRY_STATE]: prior.retryState,
-      }, { step });
-    } catch {
-      // A suggestion the options cannot carry (it never should) leaves the first attempt's result to the host.
-      return first;
-    }
-    prior.retryState.reruns++;
-    config.instruction = plan.instruction;
-    config.listStep = prior.listStep === true;
-    const second = new Session(this, config, plan.instruction);
-    this.active = second;
-    // The pages the first attempt saw feed the second's earlier-page trail and its suggestions.
-    second.visited.push(...first.visited);
-    // The pages carried from earlier list steps stay marked (answerPlan never aggregates a step's question over them).
-    if (first.carried) second.carried = first.carried;
-    // The re-run's instruction is the runtime's (with the host's question in it): only the host's URLs may hop.
-    second.hopTemplate = first.hopTemplate ?? first.instruction;
-    second.expectationTemplate = first.expectationTemplate ?? first.config.expectation;
-    for (const text of first.persistentLoading) second.persistentLoading.add(text);
-    second.why('retry:rerun');
-    second.awaitLoading = plan.loading;
-    second.stepBase = first.stepBase + first.result.steps.length;
-    second.callQuestion = first.question();
-    second.asked = first.asks();
-    await this.#attempt(second);
-    mergeAttempts(first, second, plan);
-    return second;
-  }
-
-  /**
-   * A step list (`steps`, src/steps.js): each step runs as its own attempt, in order, in the same tab, with the call's
-   * origins, level, grant (lowered if the user lowered it), guardrails, supplied values and retry switches, and with
-   * what is left of the call's actions, decisions and time. Each step is verified by its own expectation and may get
-   * its own in-call retries. The list stops at the first step that does not complete verified (or whose page the host
-   * must confirm), before a step whose placeholder has no auto-confirmed answer, or when time, actions or decisions
-   * run out between steps; composeList() folds everything into one result for the stopping (or last) step.
-   */
-  async #driveList(options) {
-    if (!this.provider) throw new Error('A decision provider is required for run() and step()');
-    // A top-level expectation or question goes to the last step, or (a different expectation) is checked at the end.
-    const { steps, finalExpectation, warnings: foldWarnings } = foldTopLevel(options.steps,
-      { expectation: options.expectation, answerQuestion: options.answerQuestion, maxActions: 100 });
-    const { steps: _steps, instruction: _instruction, expectation: _expectation, answerQuestion: _question, ...base } = options;
-    const count = steps.length;
-    const perStep = steps.map(spec => spec.maxActions ?? STEP_DEFAULT_ACTIONS);
-    // The list's total action budget: the steps' maxActions summed, at most 60 unless the caller set it (up to 120).
-    const totalActions = options.maxActions ?? listActionBudget(steps);
-    const totalDecisions = options.maxDecisions ?? Math.min(200, totalActions + 3 * count);
-    const timeoutMs = options.timeoutMs
-      ?? (count > 1 ? listTimeoutMs(count)
-        : namedHops(steps[0].instruction).length >= LONG_TASK_HOPS ? LONG_TASK_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
-    // The call-wide options, validated once before anything runs (guardrail additions included), as for one run.
-    const call = configure({ ...base, expectation: steps[0].expectation, maxActions: totalActions,
-      maxDecisions: totalDecisions, timeoutMs });
-    const runId = call.runId ?? randomUUID();
-    const started = Date.now();
-    const sessions = [];
-    const filled = [];
-    const values = new Map();
-    const reasons = new Map();
-    // Step number -> a likely (not auto-confirmed) answer a placeholder may still take at read-only and reversible;
-    // the steps whose likely answer did fill a placeholder (stepResults answerSource "likely").
-    const likely = new Map();
-    const usedLikely = new Set();
-    const referenced = new Set(steps.flatMap(spec => stepPlaceholders(spec).map(({ n }) => n)));
-    let stop = null;
-    let actionsUsed = 0;
-    let decisionsUsed = 0;
-    try {
-      for (let index = 0; index < count; index++) {
-        const prev = sessions.at(-1);
-        if (prev) {
-          // A pause, stop or cancel that arrived after the previous step closed (it is still the active session).
-          if (prev.interrupted || prev.callerSignal?.aborted) {
-            stop = { before: index, code: prev.interrupted ?? 'cancelled' };
-            break;
-          }
-          if (timeoutMs - (Date.now() - started) < LIST_STEP_MIN_MS) {
-            stop = { before: index, code: 'time_budget' };
-            break;
-          }
-          if (totalActions - actionsUsed < 1) {
-            stop = { before: index, code: 'action_budget' };
-            break;
-          }
-          if (totalDecisions - decisionsUsed < 1) {
-            stop = { before: index, code: 'decision_budget' };
-            break;
-          }
-        }
-        const fill = fillStep(steps[index], values, reasons, likely);
-        for (const n of fill.likely ?? []) usedLikely.add(n);
-        if (fill.missing) {
-          stop = { before: index, code: 'placeholder_unconfirmed',
-            why: fill.missing.map(({ n, why }) => `placeholder:answer:${n}:${why}`) };
-          break;
-        }
-        const spec = fill.step;
-        filled.push(spec);
-        const grant = this.#listGrant(prev?.config.grant ?? call.grant);
-        const config = configure({
-          ...base,
-          expectation: spec.expectation,
-          answerQuestion: spec.answerQuestion,
-          maxActions: Math.min(perStep[index], totalActions - actionsUsed),
-          maxDecisions: Math.min(perStep[index] + 3, totalDecisions - decisionsUsed),
-          timeoutMs: Math.max(1000, Math.floor(timeoutMs - (Date.now() - started))),
-          runId,
-          mode: call.permissions.requested,
-          grant: grant ? { level: grant.level, tabMode: grant.tabMode } : undefined,
-          permissions: call.permissions,
-          allowedOrigins: call.allowedOrigins,
-          guardrails: (prev?.config ?? call).guardrails,
-          policy: undefined,
-          // One set of retry bounds for the whole list (cap: the list's decisions + 4), and one slim.terminal memo.
-          [RETRY_STATE]: call.retryState,
-        });
-        // The late-change waits are off only for the step that saw a wait come to nothing: a calendar Done on the day
-        // already shown changes nothing, and the next step's Done on another day lands 1.5 s later (bench/long
-        // flights-live-landing-calendar b broke at step 2 in every run with the wait off for the rest of the list).
-        config.retryState.lateChangeOff = false;
-        config.retryState.lateLookOff = false;
-        config.instruction = spec.instruction;
-        // A list step ends as soon as its own expectation passes after its own action (#loop, endOnPass).
-        config.listStep = true;
-        let session = new Session(this, config, spec.instruction);
-        // The host's step text before its placeholders were filled: only its URLs may hop (urlHop).
-        session.hopTemplate = steps[index].instruction;
-        session.expectationTemplate = steps[index].expectation;
-        this.active = session;
-        session.stepBase = sessions.reduce((sum, done) => sum + done.result.steps.length, 0);
-        // Earlier steps' pages feed this step's earlier-page trail (a later question may join a fact from them); they
-        // are marked carried, so this step's own question never aggregates over them (answerPlan).
-        if (prev) {
-          session.carried = new Set(prev.visited);
-          session.visited.push(...prev.visited);
-        }
-        // Status text an earlier step found persistent is not loading on this step's pages either.
-        if (prev) for (const text of prev.persistentLoading) session.persistentLoading.add(text);
-        await this.#attempt(session);
-        const plan = session.rerunPlan();
-        if (plan) session = await this.#rerun(session, plan, { ...base, answerQuestion: spec.answerQuestion }, false);
-        sessions.push(session);
-        actionsUsed += session.result.steps.length;
-        decisionsUsed += session.result.cost.decisions;
-        const answer = placeholderValue(session.result);
-        if (answer.value !== undefined) values.set(index + 1, answer.value);
-        else {
-          // Below the auto-confirm floor: at read-only and reversible (the call's level), a clearly leading answer
-          // may still fill a placeholder (thresholds.placeholderFloor / placeholderMargin), never confirmed for the host.
-          // Only for a step a later placeholder names; a lone unranked candidate is ranked by the provider first.
-          const wanted = answer.why === 'answer_not_confirmed' && spec.answerQuestion && referenced.has(index + 1);
-          if (wanted && LIKELY_LEVELS.has(call.level)) await session.rankSingle(spec.answerQuestion);
-          const fallback = wanted
-            ? likelyValue(session.result, { question: spec.answerQuestion, instruction: spec.instruction,
-              level: call.level, thresholds: session.config.thresholds })
-            : answer;
-          if (fallback.value !== undefined) likely.set(index + 1, fallback.value);
-          else reasons.set(index + 1, fallback.why);
-        }
-        if (!listStepPassed(session.result)) break;
-      }
-    } finally {
-      this.active = null;
-    }
-    const last = sessions.at(-1)?.result;
-    // The call's own expectation is checked whenever the list reached its last step, whatever that step's outcome
-    // (a blocked or still-loading page included): verification never passes without it.
-    if (finalExpectation && !stop && sessions.length === count
-      && !checkDeclarative(last.observation ?? {}, finalExpectation, { initial: sessions[0].initial })) {
-      if (last.verification?.passed === true) {
-        // The last step's own check passed, but the page is not what the host asked for: the call failed.
-        const before = (last.verdict?.why ?? []).filter(code => code !== last.code);
-        setOutcome(last, 'expectation_failed');
-        last.verification = { ...last.verification, passed: false };
-        last.verdict = buildVerdict(last, { why: [...before, 'steps:final_expectation_failed'],
-          hasQuestion: Boolean(steps.at(-1).answerQuestion) });
-        last.next = nextFor(last);
-      } else if (last.verdict?.why) {
-        last.verdict.why.push('steps:final_expectation_failed');
-      }
-    }
-    const result = composeList(sessions, steps, filled, stop, started, values, usedLikely, finalExpectation);
-    if (foldWarnings.length) result.warnings = [...new Set([...(result.warnings ?? []), ...foldWarnings])];
-    return result;
-  }
-
-  /** The grant a list step runs under: the previous step's (lowered in place by lowerGrant), never above the ceiling. */
-  #listGrant(grant) {
-    if (!this.grantCeiling) return grant;
-    if (!grant || levelRank(this.grantCeiling) < levelRank(grant.level)) return { level: this.grantCeiling };
-    return grant;
-  }
-
-  /**
-   * The decision loop. Completion depends on whether the provider reports `done` (the probability that the
-   * requested outcome is already visible on the current page):
-   *
-   * - With done: a run completes when the expectation passes and done >= doneThreshold. A passing expectation with
-   *   a lower done continues, so a loose expectation that matches an intermediate page no longer ends the run there.
-   *   When the action budget runs out with the expectation passing, the run completes as
-   *   budget_reached_expectation_passed. A handoff on a page where the expectation passes completes it as
-   *   handoff_expectation_passed. Without an expectation, done >= 0.8 ends the run as unverified.
-   * - Without done (custom providers): the expectation is checked after every action and a pass completes the run;
-   *   a `done` choice ends it, verified by the expectation when there is one.
-   */
-  async #loop(session) {
-    const { config, result } = session;
-    const thresholds = config.thresholds;
-    // With the origins known up front (the daemon's lease), the profile is attached before the first observe, so its
-    // route words order the first page's controls too; otherwise right after the origins default to the first page's.
-    if (config.allowedOrigins) session.startSite();
-    let observation = await session.observe();
-    session.initial = observation;
-    session.resolveOrigins(observation);
-    session.startSite();
-    session.visit(observation);
-    session.precheck(observation);
-    session.notePrepass(observation);
-    const hasExpectation = config.expectation !== undefined && config.expectation !== null;
-    const history = [];
-    let actionsTaken = 0;
-    let noops = 0;
-    // The last click that changed nothing, as `url, target, label` (a repeat of it ends the run).
-    let lastNoop = null;
-    let retries = 0;
-    let doneAware = false; // the provider's latest decision reported done
-    let passing = false; // the expectation passed on the current observation (done-aware runs)
-    let doneButFailing = 0;
-    let strongFailing = 0; // consecutive decisions with done >= strongDone and a failing expectation
-    let consentClicks = 0;
-    const consentClicked = new Set(); // consentKey() of every consent button clicked this run
-    const overlays = overlayState(); // nag overlay dismissals this run (#overlay)
-    let unsupportedRetries = 0;
-    let nudged = false;
-    const excluded = new Set(); // rung 1b: actions the browser reported unsupported
-    const avoided = new Set(); // in-call back-out: destinations of links the run backed out of, never offered again
-    const linkHrefs = new Map(); // step number -> destination of the link that step clicked
-    // Rung 1, stale re-resolve: a provider-chosen link the page refused as stale (it changed after it was observed,
-    // as MDN does when it adds ad and sign-in links after load) is kept for the fresh observation, where the same link
-    // runs without a new decide. At most once per page (URL), and never again in the call after a guard stop.
-    // The tried pages and the guard stop live in retryState, so a self-rerun or a later list step keeps them.
-    let staleRetry = null;
-    // The control whose click made the expectation pass ({key, type, label, url}), excluded from later offers on that
-    // page while the expectation still passes (sameControl).
-    let toggled = null;
-    const staleState = config.retryState;
-    const live = () => !session.interrupted && !session.signal.aborted;
-    // Named-control done rule: page revisions on which a done claim did not count because the provider chose a button
-    // the instruction names (namedChoice); at most one per revision.
-    const namedPending = new Set();
-
-    for (;;) {
-      session.guard();
-      // A kept stale choice is for the observation right after it only: a Rung 0 detour (a consent click) drops it.
-      const stale = staleRetry;
-      staleRetry = null;
-      // Rung 0, on every page: approved origin, login wall, consent dialog. No provider call is spent on them. Each of
-      // them also ends the site-profile fast path for the run.
-      if (!allowedOrigin(observation.url, config.allowedOrigins)) {
-        session.site?.stop('cross_origin');
-        return session.crossOrigin(observation);
-      }
-      // Refusal receipt: the task itself asks for a purchase, deletion, message, submission or sign-in.
-      if (session.refusal(observation)) return result;
-      // A login wall stops the run unless the level has sign_in (testing), where the password field is a fill target.
-      if (!config.capabilities.has('sign_in') && loginState(observation).wall) {
-        session.site?.stop('login');
-        setOutcome(result, 'login');
-        // The agent asked for testing (sign-in on a test environment) but the user's grant is lower, for example
-        // because the testing environment was removed mid-session: say which level would let FAI sign in.
-        if (config.permissions.requested === 'testing') session.needLevel('testing');
-        return result;
-      }
-      const consent = consentOf(observation);
-      let consentActions = null;
-      if (consent) {
-        session.site?.stop('consent');
-        // A consent wall on its own host (consent.google.com) continues to its `continue` URL once answered. When
-        // that origin is not approved, the click would leave the lease: name the origin instead of clicking.
-        const onward = consentContinueOrigin(observation.url);
-        if (onward && !allowedOrigin(onward, config.allowedOrigins)) return session.crossOrigin(observation, onward);
-        // Never the same consent button twice: one that did not close the dialog will not close it on a retry.
-        const rejects = consentRejectActions(consent)
-          .filter(action => consentClickable(action, observation, config) && !consentClicked.has(consentKey(action)));
-        // With consent_accept (full and above) and no usable reject button, the accept buttons are offered to the
-        // provider (the policy's consent line still prefers rejecting); a reject is always clicked first.
-        const accepts = !rejects.length && config.capabilities.has('consent_accept')
-          ? consentAcceptActions(consent)
-            .filter(action => consentClickable(action, observation, config) && !consentClicked.has(consentKey(action)))
-          : [];
-        if ((!rejects.length && !accepts.length) || consentClicks >= MAX_CONSENT_CLICKS) return session.consentBlocked(consent);
-        if (rejects.length === 1 && !accepts.length) {
-          // Exactly one reject / necessary-only button: click it mechanically, then continue the task.
-          consentClicks++;
-          consentClicked.add(consentKey(rejects[0]));
-          try {
-            observation = await this.#mechanical(session, { id: 'consent', ...rejects[0] }, observation, history);
-            observation = await session.awaitConsentClosed(observation, rejects[0]);
-          } catch (error) {
-            if (live() && isRecoverable(error) && retries < MAX_RECOVERABLE_RETRIES) {
-              retries++;
-              observation = await session.observe();
-              session.visit(observation);
-              continue;
-            }
-            if (live() && (error?.code === 'blocked_risky' || error?.code === 'unsupported')) {
-              return session.consentBlocked(consent);
-            }
-            throw error;
-          }
-          if (session.consentPersisted) return session.consentBlocked(consentOf(observation) ?? consent);
-          continue;
-        }
-        consentActions = (rejects.length ? rejects : accepts).map((action, index) => ({ id: `c${index}`, ...action }));
-      }
-      // A nag overlay (sign-in, newsletter, promo, app or permission prompt) over the page: one dismissal step, then
-      // Rung 0 again on what it left (#overlay). Not on a cookie dialog, which goes first.
-      if (!consentActions) {
-        const dismissed = await this.#overlay(session, observation, history, overlays);
-        if (dismissed) {
-          observation = dismissed;
-          continue;
-        }
-      }
-      // An HTTP error page ends the run before any further provider decision (unless the expectation passes on it).
-      if (!consentActions && await session.errorPage(observation, hasExpectation)) {
-        session.site?.stop('error_page');
-        return result;
-      }
-      // Late content on the final page (or in a late-load task): wait for the placeholder to go before deciding.
-      if (!consentActions && (passing || session.lateIntent() || session.awaitLoading)) {
-        // A self-rerun for late content waits for the placeholder on its first page as well.
-        session.awaitLoading = false;
-        const settled = await session.awaitContent(observation);
-        if (settled !== observation) {
-          observation = settled;
-          if (!allowedOrigin(observation.url, config.allowedOrigins)) return session.crossOrigin(observation);
-          if (hasExpectation) passing = Boolean(await session.expectationFor(observation));
-        }
-      }
-      // Second-opinion decides (in-call retries) do not count against the decision budget; they have their own bound.
-      // A stale re-resolve spends no decision, so it may still run the last decision's link (checked below).
-      const decisionsSpent = result.cost.decisions - session.extraDecisions >= config.maxDecisions;
-      if (decisionsSpent && !stale) {
-        return setOutcome(result, doneAware && passing ? 'budget_reached_expectation_passed' : 'decision_budget');
-      }
-      const budgetLeft = actionsTaken < config.maxActions;
-      if (!budgetLeft && hasExpectation) {
-        // The expectation was already checked after the last action; no further decision can complete the run.
-        return setOutcome(result, doneAware && passing ? 'budget_reached_expectation_passed' : 'action_budget');
-      }
-      // Without an expectation, allow one final terminal-only decision so the provider can still report done.
-      // On a consent dialog with several reject buttons, only those buttons are offered.
-      let offered;
-      if (!budgetLeft) offered = terminalActions();
-      else if (consentActions) offered = [...consentActions, ...terminalActions()];
-      else {
-        let dropped;
-        ({ actions: offered, dropped } = offeredActions(observation, { ...config, exclude: excluded, hints: session.hints,
-          intent: session.intentOn(),
-          pinned: session.site?.pinned(observation) ?? null }));
-        session.noteCapped(observation, dropped);
-      }
-      if (avoided.size && !consentActions && budgetLeft) {
-        offered = offered.filter(candidate => !avoided.has(linkHref(candidate, observation.url)));
-      }
-      // The last click's late change was already waited for (settle late_change) and the page shows nothing loading:
-      // no wait is offered on this decision. Jev, told to "wait for the new results", otherwise split between the
-      // next control and a wait the runtime had just done (flights-live, both tasks: low_confidence).
-      if (budgetLeft && !consentActions && result.steps.at(-1)?.settle === 'late_change'
-        && !session.loadingOf(observation).length && offered.some(candidate => candidate.type === 'wait')) {
-        offered = offered.filter(candidate => candidate.type !== 'wait');
-        session.why('wait_excluded');
-      }
-
-      // The expectation already passes here (read from the check recorded for this very observation, or a
-      // side-effect-free declarative check, so a `passing` left from an earlier page never counts).
-      const passingHere = hasExpectation && !consentActions && session.expectationHint(observation);
-      // A control whose click made the expectation pass is not offered again while it still passes on that page: a
-      // second click on a toggle (Date grid, Show more) would close what the first opened.
-      if (toggled && passingHere && budgetLeft && observation.url === toggled.url) {
-        const before = offered.length;
-        // A button the instruction names again and the run has not used up ("click Show more, then Show more") stays.
-        offered = offered.filter(candidate => !sameControl(candidate, toggled)
-          || session.namedChoice(candidate, offered, history));
-        if (offered.length < before) session.why('toggle_excluded');
-      }
-      // Stale re-resolve: on the same URL, with the expectation state unchanged, exactly one offered link with the same
-      // type, destination and label as the stale choice runs as that choice. Anything else decides again.
-      const reresolve = stale && !consentActions && budgetLeft && observation.url === stale.url
-        && Boolean(passingHere) === stale.passingHere
-        ? staleMatch(stale, offered, observation, config)
-        : null;
-      if (decisionsSpent && !reresolve) {
-        return setOutcome(result, doneAware && passing ? 'budget_reached_expectation_passed' : 'decision_budget');
-      }
-      // Site profile fast path (src/domains.js): when the expectation names a page type of this origin's profile and
-      // the current page proves a page type with a route to it, the route's next hop runs without a decision. It is
-      // one of `offered` (a link whose href is on this page), never a button, select, fill or submit; never on a
-      // consent dialog, in a step, on a page where the expectation already passes, or with the last action of the
-      // budget, so the landing page always gets a decision of its own. Rung 0 has already run on this page.
-      // A profile shortcut (src/domains.js SiteRun.shortcut) goes first: the step names a value (a departure date) the
-      // current page's URL does not hold, so the page cannot be the step's outcome even where the expectation passes;
-      // the runtime-built URL keeps this page's origin and path and must be on an approved origin.
-      const siteStep = !reresolve && session.site && !consentActions && budgetLeft && actionsTaken + 1 < config.maxActions;
-      const fast = siteStep
-        ? session.site.shortcut(observation, url => allowedOrigin(url, config.allowedOrigins))
-          ?? (passingHere ? null : session.site.next(observation, offered, session.nextStep()))
-        : null;
-      // E2: an instruction that says to open a URL that is not this page goes there without a decision (urlHop), with
-      // an action left for the landing page's own decision.
-      const urlHop = !reresolve && !fast && !consentActions && budgetLeft && actionsTaken + 1 < config.maxActions
-        ? session.urlHop(observation, offered)
-        : null;
-      let chosen;
-      let record = null;
-      let decisionStart = Date.now();
-      let decisionMs = 0;
-      if (reresolve) {
-        // The stale decide's own choice, resolved again: no request, nothing charged to maxDecisions. Its decide
-        // entry in cost.requests (marked `stale`) gets this step.
-        chosen = reresolve;
-        record = reresolveRecord(stale.record, reresolve.id);
-        session.why('retry:stale_reresolve');
-      } else if (fast?.shortcut) {
-        chosen = fast.action;
-        record = { by: 'profile', actionId: fast.action.id, reason: 'site_shortcut', shortcut: fast.shortcut };
-        session.why('site:shortcut');
-      } else if (fast) {
-        chosen = fast.action;
-        record = { by: 'profile', actionId: fast.action.id, reason: 'site_fast', edge: fast.edge.id };
-        session.why('site:fast');
-      } else if (urlHop) {
-        chosen = urlHop;
-        record = { by: 'url', actionId: urlHop.id, reason: 'named_url' };
-        session.why('url:direct');
-      } else {
-        // The expectation already passes here, so this decision is likely the last: rank the answer next to it.
-        // expectationHint reads the check recorded for this very observation (or a side-effect-free declarative
-        // check), so a value of `passing` left from an earlier page never starts a ranking. The final screenshot
-        // (capture 'last') is taken next to it too, instead of serially after the run ends.
-        if (passingHere) {
-          session.speculateAnswer(observation);
-          session.prefetchCapture();
-        }
-        // slim.terminal: on that page, first ask only done and the page guards. Done at the threshold completes the
-        // run exactly as the full decide's done would (the blocked guard marks it, never stops it, as below);
-        // anything else falls back to the full decide.
-        // At most once per URL, and never again in the call after a fallback: a fallback means this provider's slim
-        // answer and the expectation disagree here, and every further try would cost one more request.
-        const slimState = config.retryState;
-        if (passingHere && budgetLeft && config.slim.terminal && !session.landingHeld && typeof this.provider?.confirm === 'function'
-          && !slimState.terminalOff && !slimState.terminalUrls.has(observation.url)) {
-          slimState.terminalUrls.add(observation.url);
-          const confirmed = await session.confirmTerminal(observation, history);
-          if (!confirmed) slimState.terminalOff = true;
-          if (confirmed && await session.expectationFor(observation)) {
-            const guards = guardsOf(confirmed);
-            if (guards) session.noteGuards(guards);
-            session.signals.done = doneProbability(confirmed);
-            const signInPage = config.capabilities.has('sign_in') && loginState(observation).passwordField;
-            if (guards?.blocked >= GUARD_VETO && !signInPage) session.why('guard:blocked_page');
-            return setOutcome(result, 'expectation_passed');
-          }
-          if (confirmed) {
-            // The recorded check disagrees with the declarative hint (a late-load page still showing a loading
-            // placeholder): the full decide decides, outside the budget like any fallback.
-            session.lastRequest.fallback = true;
-            session.extraDecisions++;
-            slimState.terminalOff = true;
-          }
-        }
-        decisionStart = Date.now();
-        let decision = await session.decide(observation, offered, history);
-        decisionMs = Date.now() - decisionStart;
-
-        let action = offered.find(candidate => candidate.id === decision?.actionId);
-        if (!action) throw bridgeError('invalid_decision', 'Provider chose an action outside the offered choices', false);
-        let guards = guardsOf(decision);
-        if (guards) session.noteGuards(guards);
-        const done = doneProbability(decision);
-        doneAware = done !== null;
-        // Guard reporting and the blocked veto precede every done-based early return. A passing expectation with done
-        // at the threshold still completes, but never as verified: the verdict is likely/confirm (guard:blocked_page)
-        // and the host must check the page is not a login, paywall or captcha page before trusting the digest.
-        if (doneAware && hasExpectation) passing = Boolean(await session.expectationFor(observation));
-        // At testing (sign_in) a sign-in page with a password field is part of the task, not a blocked page.
-        const signInPage = config.capabilities.has('sign_in') && loginState(observation).passwordField;
-        if (guards?.blocked >= GUARD_VETO && !consentActions && !signInPage) {
-          if (!(doneAware && passing && done >= thresholds.doneThreshold)) return setOutcome(result, 'blocked');
-          session.signals.done = done;
-          session.why('guard:blocked_page');
-          return setOutcome(result, 'expectation_passed');
-        }
-        if (doneAware) {
-          session.signals.done = done;
-          if (hasExpectation) {
-            passing = Boolean(await session.expectationFor(observation));
-            if (passing && done >= thresholds.doneThreshold) return setOutcome(result, 'expectation_passed');
-            // Named-control done rule: "Choose Standard, then click Next" after the select reads as done (0.68-0.75)
-            // while the provider's own choice is the Next the instruction names. That choice says the outcome is one
-            // named click away, so this decision's done claim counts toward neither failing limit below; the click
-            // still meets every guard, veto and floor. Once per page revision: a Next that changes nothing counts.
-            const pendingNamed = !passing && done >= thresholds.doneThreshold && !namedPending.has(observation.revision)
-              && session.namedChoice(action, offered, history);
-            if (pendingNamed) {
-              namedPending.add(observation.revision);
-              session.why('named:done_pending');
-            } else {
-              doneButFailing = !passing && done >= thresholds.doneThreshold ? doneButFailing + 1 : 0;
-            }
-            if (!passing && done >= thresholds.strongDone && !pendingNamed) {
-              // Rung 1c: the provider is sure the outcome is visible but the expectation fails. A navigation may have
-              // started after the observation settled: look once more before reclassifying.
-              const before = observation;
-              const fresh = await session.reobserve();
-              if (fresh) {
-                observation = fresh;
-                if (!allowedOrigin(observation.url, config.allowedOrigins)) return session.crossOrigin(observation);
-                passing = Boolean(await session.expectationFor(observation));
-                if (passing) {
-                  session.why('late_reobserve');
-                  return setOutcome(result, 'expectation_passed');
-                }
-              }
-              // The run ends as a mismatch only when the provider also stopped (handoff/done), or when it was sure
-              // and wrong on two consecutive decisions. Otherwise its click still runs: a provider can be sure the
-              // answer is one click away (hn "98 comments" at done 0.93, github "Apache-2.0 license" at 0.88).
-              strongFailing++;
-              const chosenType = offered.find(candidate => candidate.id === decision?.actionId)?.type;
-              if (chosenType === 'handoff' || chosenType === 'done' || strongFailing >= STRONG_FAILING_LIMIT) {
-                return setOutcome(result, result.verification.error ? 'expectation_error' : 'expectation_mismatch');
-              }
-              if (fresh && (fresh.url !== before.url || fresh.revision !== before.revision)) {
-                // The page changed under the decision: decide again on what is there now.
-                session.why('late_reobserve');
-                continue;
-              }
-            } else if (!pendingNamed) {
-              strongFailing = 0;
-            }
-            if (doneButFailing >= DONE_BUT_FAILING_LIMIT) {
-              return setOutcome(result, result.verification.error ? 'expectation_error' : 'expectation_failed');
-            }
-          } else if (done >= NO_EXPECTATION_DONE) {
-            return setOutcome(result, 'no_expectation');
-          }
-          // The final terminal-only decision did not report done.
-          if (!budgetLeft) return setOutcome(result, 'action_budget');
-        }
-
-        // In-call retry 1: a close call (or a choice below its floor) gets one second opinion with the options
-        // reordered, before any guard veto, handoff or floor reads the decision. Never on a page where the expectation
-        // already passes: there the done logic above decides.
-        const opinion = doneAware && passing ? null
-          : session.secondOpinionReason(decision, action, offered, { consent: Boolean(consentActions), budgetLeft });
-        if (opinion) {
-          ({ decision, action } = await session.secondOpinion(decision, action, offered, observation, history, opinion));
-          guards = guardsOf(decision);
-          decisionMs = Date.now() - decisionStart;
-          // The blocked veto ran on the first decision; a second look that scores the page blocked stops here too.
-          if (guards?.blocked >= GUARD_VETO && !signInPage) return setOutcome(result, 'blocked');
-        }
-
-        // Provider guards. Rung 0 (origin, login wall, consent dialog) has already run on this page, and code-side
-        // vetoes stay authoritative: a guard can only stop an action, never allow one the runtime would refuse.
-        if (guards) {
-          if (guards.injection >= GUARD_VETO
-            && ((!['handoff', 'done'].includes(action.type) && !approvedLink(action, observation, config))
-              || (action.type === 'handoff' && session.offscreenMatch(observation)))) {
-            session.why('guard:injection_veto');
-            return setOutcome(result, 'handoff');
-          }
-        }
-        // Commit guard (reversible mode; the mechanical label checks have already run): a chosen button, select or
-        // fill the provider judges to commit the user is refused, never executed. Links, scrolling and waiting proceed.
-        const purchaseHigh = session.purchaseHigh(decision);
-        const commitHigh = purchaseHigh || session.commitHigh(decision);
-        if (purchaseHigh && commitCandidate(action)) return session.purchaseVeto(action);
-        if (commitHigh && commitCandidate(action)) return session.commitVeto(action);
-        // An ambiguous refused control (offered with the intent question) runs only when the decision clears it.
-        if (action.intent) {
-          const gate = session.intentGate(decision, action, observation);
-          if (gate.result) return gate.result;
-          action = gate.action;
-        }
-        chosen = action;
-        // A terminal choice leaves the previous step pending, so close() finalizes it as the final step.
-        if (action.type === 'handoff') {
-          // The provider sees nothing more to do on a page where the expectation passes. Common on the last page of
-          // a multi-hop task, whose answer combines facts from several pages, so done stays low.
-          if (doneAware && passing && session.vacuousPass(session.signals.done)) {
-            // The expectation passed on the start page already and never failed since, and done is low: it cannot
-            // show the task is done. The handoff goes to the host as one.
-            session.noteVacuous();
-          } else if (doneAware && passing) {
-            return setOutcome(result, 'handoff_expectation_passed');
-          }
-          // A handoff while the commit guard is high and such controls are offered: the next step is the user's, so
-          // the host is told to stop rather than steered to run the control itself (decide options, act()). Not on a
-          // page carrying injected instructions (injection guard at GUARD_VETO): its text can push the commit noul
-          // either way (a harmless "Next page" called a purchase scored 0.70 in the QA corpus), so a stop there would
-          // let the page end the task; the handoff stands, and decide options keep only approved plain links.
-          if (commitHigh && offered.some(commitCandidate) && !(guards?.injection >= GUARD_VETO)) {
-            return purchaseHigh ? session.purchaseVeto(null) : session.commitVeto(null);
-          }
-          // The task's own refusal, left to this decision for a control Jev might have cleared (refusal defer).
-          if (session.intentOn() && session.refusal(observation, { defer: false })) return result;
-          // Every visible control is refused at this level and nothing else is offered: the task cannot go on here.
-          if (config.capabilities.has('controls') && !(guards?.injection >= GUARD_VETO)
-            && !offered.some(candidate => candidate.target !== undefined || candidate.type === 'navigate_allowed_url')) {
-            const entries = blockedEntries(observation, config);
-            const blocked = new Set(entries.map(entry => String(entry.control.id)));
-            const remaining = (observation.controls ?? []).filter(control => control.enabled !== false && control.visible !== false);
-            if (remaining.length && remaining.every(control => blocked.has(String(control.id)))) {
-              return session.refuse('all_controls_blocked', entries);
-            }
-          }
-          const scroll = !nudged && budgetLeft && !consentActions && session.offscreenMatch(observation)
-            ? offered.find(candidate => candidate.type === 'scroll' && candidate.direction === 'down')
-            : null;
-          if (scroll) {
-            // Scroll nudge: what the task names is below the fold. Scroll once and let the provider decide again.
-            nudged = true;
-            session.why('scroll_nudge');
-            chosen = scroll;
-            record = { by: 'runtime', actionId: scroll.id, reason: 'scroll_nudge' };
-          } else {
-            // In-call retry 2: a read-only run that followed a wrong link goes back once instead of handing off.
-            const back = await session.backOutTarget(observation, { budgetLeft });
-            if (back) {
-              observation = await this.#backOut(session, back, observation, history, avoided, linkHrefs, 'handoff');
-              // The navigation back is an action of the call: it counts against maxActions.
-              actionsTaken++;
-              session.actionsTaken = actionsTaken;
-              passing = false;
-              continue;
-            }
-            const decide = session.decideOptions(decision, offered, observation);
-            if (decide) {
-              const { executable, ...rest } = decide;
-              this.#remember({ revision: observation.revision, observation, actions: executable, config });
-              session.signals.decide = rest;
-            }
-            return setOutcome(result, 'handoff');
-          }
-        }
-        if (chosen.type === 'done') return session.finishDone(observation);
-        if (!record) {
-          // Per-class confidence floors: links are never gated by default (linkFloor 0), buttons, selects and fills
-          // are (controlFloor 0.5). A doubtful choice goes to the host with alternatives instead of running; the offer
-          // is remembered so the host can pick one with act() without observing again.
-          const kind = actionClass(chosen);
-          const floorName = kind === 'link' ? 'linkFloor' : kind === 'control' ? 'controlFloor' : null;
-          const floor = floorName ? thresholds[floorName] : 0;
-          if (floor > 0) {
-            const confidence = choiceConfidence(decision);
-            const gated = confidence === null ? config.explicitThresholds.has(floorName) : confidence < floor;
-            // Named clicks done: on a page where the expectation passes, after the run clicked every button the
-            // instruction names ("..., then click Next" and Next ran), a doubtful further choice (the next page's own
-            // Next at 0.48-0.53) ends the run as a handoff there would: completed, handoff_expectation_passed. Nothing
-            // runs; without named clicks, or with one left, the floor returns low_confidence as before.
-            if (gated && doneAware && passing && session.namedClicksDone(offered, history)) {
-              session.why('named:clicks_done');
-              return setOutcome(result, 'handoff_expectation_passed');
-            }
-            if (gated) {
-              const back = await session.backOutTarget(observation, { budgetLeft });
-              if (back) {
-                observation = await this.#backOut(session, back, observation, history, avoided, linkHrefs, 'low_confidence');
-                // The navigation back is an action of the call: it counts against maxActions.
-                actionsTaken++;
-                session.actionsTaken = actionsTaken;
-                passing = false;
-                continue;
-              }
-              const executable = offered.filter(candidate => candidate.type !== 'done' && candidate.type !== 'handoff'
-                && !(commitHigh && commitCandidate(candidate)));
-              this.#remember({ revision: observation.revision, observation, actions: executable, config });
-              setOutcome(result, 'low_confidence');
-              result.needs.revision = observation.revision;
-              result.needs.confidence = confidence;
-              result.needs.minConfidence = floor;
-              result.needs.alternatives = alternativesFor(decision, executable, confidence);
-              session.why(`floor:${kind}`);
-              return result;
-            }
-          }
-          record = decisionRecord('provider', decision);
-        }
-      }
-      // The previous step's screenshot was being captured while the provider decided; attach it now.
-      await session.finalizePending(false);
-      session.guard();
-
-      // A fast hop skips the decide, not the page guards: the slim done-and-guards request for the page it leaves runs
-      // in parallel with the hop, and a blocked or injection score ends the fast path (applied after the landing check).
-      // A stale re-resolve gets the same request for the content that arrived after its decide (`stale_guards`): a
-      // blocked or injection score (or a failed request) switches re-resolves off for the rest of the call, so every
-      // later stale link is decided again.
-      // The re-resolved step's decision carries the guards of the page it ran on (the stale decide's were scored
-      // before the new content), set when that request answers.
-      const siteGuards = fast ? session.siteGuards(observation, history)
-        : reresolve ? session.siteGuards(observation, history, 'stale_guards', guards => {
-          if (guards) record.guards = roundedGuards(guards);
-        }) : null;
-      let executed;
-      try {
-        executed = await session.execute(chosen, observation, record, decisionStart, decisionMs);
-      } catch (error) {
-        if (fast) {
-          // A page that changed after it was observed (stale) gets the edge resolved again once on a fresh
-          // observation; a guard stop, any other error or a second stale ends the fast path.
-          const guardStop = await siteGuards;
-          if (guardStop) session.site.stop(guardStop, fast.edge);
-          else if (!(error?.code === 'stale' && live() && session.site.retry())) session.site.stop('action_error');
-        } else if (reresolve) {
-          const guardStop = await siteGuards;
-          if (guardStop) {
-            staleState.staleOff = true;
-            session.why(`retry:stale_reresolve:${guardStop}`);
-          }
-        }
-        if (error?.code === 'stale' && live() && retries < MAX_RECOVERABLE_RETRIES) {
-          // Trace marker: a stale retry, and on the decide entry whose choice the page refused, `stale: true`.
-          session.why('retry:stale');
-          if (record?.by === 'provider' && !reresolve
-            && ['decide', 'second_opinion'].includes(session.lastRequest?.kind)) session.lastRequest.stale = true;
-          // A provider-chosen link to an approved origin is kept for one re-resolve on the fresh observation, only
-          // with a provider that has the slim guards request (it checks the new content). Buttons, selects and fills
-          // always decide again.
-          const href = linkHref(chosen, observation.url);
-          if (record?.by === 'provider' && !reresolve && !staleState.staleOff && !consentActions
-            && !staleState.staleUrls.has(observation.url) && actionClass(chosen) === 'link'
-            && approvedLink(chosen, observation, config) && staleResolvable(href, observation.url)
-            && typeof this.provider?.confirm === 'function') {
-            staleState.staleUrls.add(observation.url);
-            staleRetry = { chosen, record, url: observation.url, href, frame: frameOf(chosen, observation),
-              passingHere: Boolean(passingHere) };
-          }
-        }
-        // Rung 1: stale page or vanished target: re-observe and let the provider choose again.
-        if (live() && isRecoverable(error) && retries < MAX_RECOVERABLE_RETRIES) {
-          retries++;
-          observation = await session.observe();
-          session.visit(observation);
-          continue;
-        }
-        // Rung 1b: the browser cannot perform this action (a shadow host, an unusual widget). Offer the rest.
-        if (live() && error?.code === 'unsupported' && unsupportedRetries < MAX_UNSUPPORTED_RETRIES
-          && !excluded.has(actionKey(chosen))) {
-          unsupportedRetries++;
-          excluded.add(actionKey(chosen));
-          session.why('retry:unsupported');
-          observation = await session.observe();
-          session.visit(observation);
-          continue;
-        }
-        throw error;
-      }
-      const guardStop = siteGuards ? await siteGuards : null;
-      if (reresolve && guardStop) {
-        // The hop already ran (the provider's own link, same destination and label, on an approved origin); the new
-        // content it was not decided on scored blocked or injection, so no further stale link runs without a decide.
-        staleState.staleOff = true;
-        session.why(`retry:stale_reresolve:${guardStop}`);
-      }
-      retries = 0;
-      actionsTaken++;
-      session.actionsTaken = actionsTaken;
-      if (actionClass(chosen) === 'link') linkHrefs.set(executed.step.i, linkHref(chosen, observation.url));
-      let after = executed.observation;
-      if (chosen.consent) {
-        // A reject button the provider chose among several: verify the dialog closed, as for a mechanical click.
-        consentClicks++;
-        consentClicked.add(consentKey(chosen));
-        after = await session.awaitConsentClosed(after, chosen);
-        if (session.consentPersisted) {
-          history.push(historyEntry(executed.step));
-          session.visit(after);
-          return session.consentBlocked(consentOf(after) ?? consentOf(observation));
-        }
-      }
-      // Rung 1c: a link click that settled quiet on the same URL may be a navigation that started late; so may a
-      // button click that settled quiet and changed nothing at all (an app's nav buttons that load the next page: a
-      // live run verified a step on the page it was leaving and handed off on the next). "Changed nothing" is read on
-      // the URL and the content (pageMoved), not the revision: the click on an offscreen arrow scrolls it into view,
-      // which moves the revision but is no change of the page.
-      const lateLink = actionClass(chosen) === 'link' && after.url === observation.url
-        && (executed.step.settle === 'quiet' || executed.step.navigated);
-      // A calendar's Done that only closed its dialog changed nothing either: the results land seconds later.
-      const moved = chosen.type === 'click' ? contentDiff(observation, after) : null;
-      if (moved) executed.step.moved = moved;
-      // The page's revision can stay put while its content moved (a listbox option that closed its menu and rewrote
-      // its field: Google Flights' "One way"): a click whose title, blocks or controls changed changed the page.
-      // Not a blocks-only move under an unchanged revision that only replaced blocks one for one: the revision leaves
-      // live regions and off-screen content out, so that is a ticking clock or a rotating ad (blockChurn), not this
-      // click's doing; an off-screen append (Load more) adds blocks and does count.
-      if (moved && moved !== 'revision' && !(moved === 'blocks' && after.revision === observation.revision
-        && blockChurn(observation, after))) executed.step.changed = true;
-      const lateButton = actionClass(chosen) === 'control' && executed.step.settle === 'quiet'
-        && (!moved || onlyDialogClosed(chosen, observation, after));
-      if (chosen.type === 'click' && (lateLink || lateButton)) {
-        const fresh = await session.reobserve();
-        if (fresh && pageMoved(after, fresh)) {
-          executed.step.action.toUrl = fresh.url;
-          executed.step.changed = fresh.revision !== observation.revision || fresh.url !== observation.url;
-          executed.step.lateNavigation = true;
-          session.why('late_navigation');
-          session.refundReobserve();
-          after = fresh;
-        } else if (fresh && lateButton) {
-          // Still nothing: an app that updates the URL and results seconds after the click (a date stepper). Wait
-          // longer, in bounded rounds, for a late change before deciding again on a page that only looks unchanged.
-          // Only a control that re-renders late gets the full wait; any other button one short look while work
-          // shows pending, else none (a button that does nothing paid 3 s per call: QA spa-project-owner).
-          const look = lateLook(chosen, observation, fresh, session);
-          const late = look ? await session.awaitLateChange(fresh, look) : null;
-          if (late) {
-            executed.step.action.toUrl = late.observation.url;
-            executed.step.changed = late.observation.revision !== observation.revision || late.observation.url !== observation.url;
-            executed.step.settle = 'late_change';
-            executed.step.ms.settle += late.ms;
-            session.why('late_change');
-            session.refundReobserve();
-            after = late.observation;
-          }
-        }
-      }
-      history.push(historyEntry(executed.step));
-      // The field did not keep the supplied value (the page reverted or ignored the typed text: a date picker's
-      // textbox): not progress and not success, however the page looks. The host hears which field and switches
-      // method (a URL in allowedUrls, the page's own picker) instead of the provider typing again.
-      if (executed.step.fill?.kept === false) {
-        observation = after;
-        session.visit(observation);
-        session.why('fill:not_kept');
-        return setOutcome(result, 'fill_not_kept');
-      }
-      noops = executed.step.changed ? 0 : noops + 1;
-      // The same click on the same page that changed nothing last time will change nothing again: the first repeat
-      // ends the run (no_progress) instead of the third no-change action (gf-date-grid: "Search" three times).
-      const noopKey = executed.step.changed || chosen.type !== 'click' ? null
-        : `${observation.url}\u0000${chosen.target}\u0000${executed.step.action.label ?? ''}`;
-      const repeated = noopKey !== null && noopKey === lastNoop;
-      lastNoop = noopKey;
-      observation = after;
-      session.visit(observation);
-      session.hopEvent(chosen, executed.step, observation);
-
-      if (!allowedOrigin(observation.url, config.allowedOrigins)) {
-        if (fast) session.site.land(observation, executed.step.i);
-        return session.crossOrigin(observation);
-      }
-      passing = Boolean(await session.expectationFor(observation));
-      // A late change that landed on its first paint (a placeholder where the rows go, Google Flights' date arrows) is
-      // work still in flight: waiting it out costs the bounded content waits, a decision on it a Jev request and a
-      // split between the same control again and a wait (fix 3, flights-live-form-arrows).
-      if (passing || session.lateIntent() || executed.step.settle === 'late_change') {
-        // Late content: the action landed on a page still filling in. Wait before any completion check.
-        const settled = await session.awaitContent(observation);
-        if (settled !== observation) {
-          observation = settled;
-          if (!allowedOrigin(observation.url, config.allowedOrigins)) {
-            if (fast) session.site.land(observation, executed.step.i);
-            return session.crossOrigin(observation);
-          }
-          passing = Boolean(await session.expectationFor(observation));
-        }
-      }
-      // The opening URL hop of an instruction that names more after it (namesMoreAfterOpen): a pass on the page it
-      // landed on proves the URL, not the task. The landing page counts as the start page (vacuousPass), and the run
-      // goes on to a provider decision instead of ending here (gf-date-grid: one hop, none of the instruction done).
-      const landingHold = passing && record?.by === 'url' && actionsTaken === 1
-        && namesMoreAfterOpen(session.instruction, chosen.url);
-      if (landingHold) session.holdLanding();
-      // A fast step must land on the edge's page type (URL pattern and every check). A miss ends the fast path: the
-      // normal loop decides from this page on.
-      if (fast) session.site.land(observation, executed.step.i);
-      if (fast && guardStop) session.site.stop(guardStop, fast.edge, executed.step.i);
-      // The action landed on an HTTP error page (a broken link): stop here, also for a step.
-      if (await session.errorPage(observation, hasExpectation)) return result;
-      // This click made the expectation pass: the same control is not offered again on this page while it passes.
-      // Only a click that stayed on its page is a toggle: a Next that navigated is a different page's Next. Any page
-      // change (another URL) or a failing expectation clears the record.
-      if (passing && !passingHere && chosen.type === 'click' && actionClass(chosen) === 'control'
-        && observation.url === executed.step.action.fromUrl) {
-        toggled = toggleRecord(chosen, observation.url);
-      } else if (!passing || (toggled && observation.url !== toggled.url)) {
-        toggled = null;
-      }
-      // A step has no further decision to confirm doneness, so a passing expectation completes it either way. A fast
-      // step never completes the run by itself: its landing page gets the terminal decision (done and the guards).
-      if (passing && !fast && !landingHold && (!doneAware || config.step)) return setOutcome(result, 'expectation_passed');
-      // A list step, or a bounded imperative whose named actions are done, ends on its own passing expectation
-      // whatever done says: another decide on a page that already proves the hop only risks overshooting it
-      // (a second "Next page", a second click on a toggle). A question still gets its page guards (endOnPass).
-      if (passing && !fast && !landingHold && doneAware && session.earlyEnd(observation, { flipped: !passingHere })
-        && await session.endOnPass(observation, history)) {
-        return result;
-      }
-      if (config.step) return setOutcome(result, 'step_complete');
-      if (doneAware && passing && actionsTaken >= config.maxActions) {
-        return setOutcome(result, 'budget_reached_expectation_passed');
-      }
-      if (repeated) session.why('no_progress:repeat');
-      if (noops >= NOOP_LIMIT || repeated) return setOutcome(result, 'no_progress');
-    }
-  }
-
-  /**
-   * In-call retry 2, the back-out: navigate to the URL before the wrong link (a same-origin GET to a page this run
-   * already showed; the extension refuses anything else) and never offer that link's destination again in this run.
-   * The navigation is a step (`decision.by: "runtime"`, reason `back_out`) that counts against maxActions.
-   * Returns the observation to decide on next.
-   */
-  async #backOut(session, back, observation, history, avoided, linkHrefs, why) {
-    session.config.retryState.backOuts++;
-    for (const url of [linkHrefs.get(back.link.i), back.link.action.toUrl]) if (url) avoided.add(url);
-    session.retries.push({
-      kind: 'back_out', why, step: session.nextStep(), from: urlPath(back.link.action.toUrl), to: urlPath(back.from),
-    });
-    session.why('retry:back_out');
-    await session.finalizePending(false);
-    session.guard();
-    const action = {
-      id: 'back',
-      type: 'navigate_allowed_url',
-      url: back.from,
-      label: 'Back to the page before the last link',
-      description: 'Return to the page before the last link (runtime back-out)',
-    };
-    let executed;
-    try {
-      executed = await session.execute(action, observation, { by: 'runtime', actionId: 'back', reason: 'back_out' }, Date.now(), 0);
-    } catch (error) {
-      if (!isRecoverable(error) || session.interrupted || session.signal.aborted) throw error;
-      const fresh = await session.observe();
-      session.visit(fresh);
-      return fresh;
-    }
-    history.push(historyEntry(executed.step));
-    session.visit(executed.observation);
-    return executed.observation;
-  }
-
-  /** Execute a runtime-chosen action (a consent reject click, a nag overlay dismissal) with no provider decision. */
-  async #mechanical(session, action, before, history, reason = 'consent') {
-    await session.finalizePending(false);
-    session.guard();
-    const started = Date.now();
-    const executed = await session.execute(action, before, { by: 'runtime', actionId: action.id, reason },
-      started, 0);
-    history.push(historyEntry(executed.step));
-    session.visit(executed.observation);
-    return executed.observation;
-  }
-
-  /**
-   * Rung 0 for a blocking overlay that is not a cookie dialog (src/overlay.js): a nag (sign-in, newsletter, promo,
-   * app-install, permission prompt) is dismissed with its close control, then Escape, then a click on its separate
-   * backdrop, one step at a time, each step at most once per overlay, as a `dismiss` step that needs no level (like a
-   * consent reject). Returns the observation after a step, or null when nothing was done (no overlay, not a nag, or
-   * given up on): the task then goes on, and the page script's `overlay` marks keep decisions on the main content.
-   * Why codes: overlay:dismissed and overlay:<method> on success, overlay:kept:<kind> for a task dialog, age gate or
-   * unknown dialog, overlay:user_opened for a nag the run's own click opened, overlay:undismissable when every step
-   * failed, overlay:persistent when it came back more than MAX_OVERLAY_RETURNS times.
-   */
-  async #overlay(session, observation, history, state) {
-    const overlay = overlayOf(observation);
-    if (!overlay) return null;
-    const key = overlayKey(overlay);
-    const first = !state.seen.has(key);
-    state.seen.add(key);
-    if (!overlay.nag) {
-      session.why(`overlay:kept:${overlay.kind}`);
-      return null;
-    }
-    if (state.stuck.has(key)) return null;
-    // A nag the run's own button click opened on this page (a "Save" that asks to sign in) answers that click: the
-    // provider sees it, its close control included, and decides.
-    const last = session.result.steps.at(-1);
-    if (first && last?.decision?.by === 'provider' && last.class === 'control' && last.action?.fromUrl === observation.url) {
-      state.stuck.add(key);
-      session.why('overlay:user_opened');
-      return null;
-    }
-    if ((state.dismissed.get(key) ?? 0) > MAX_OVERLAY_RETURNS) {
-      state.stuck.add(key);
-      session.why('overlay:persistent');
-      return null;
-    }
-    const tried = state.tried.get(key) ?? new Set();
-    state.tried.set(key, tried);
-    const next = overlayDismissActions(overlay, observation).find(action => !tried.has(action.key));
-    if (!next || state.actions >= MAX_OVERLAY_ACTIONS) {
-      state.stuck.add(key);
-      session.why('overlay:undismissable');
-      return null;
-    }
-    tried.add(next.key);
-    state.actions++;
-    let after;
-    try {
-      after = await this.#mechanical(session, { id: 'overlay', ...next }, observation, history, 'overlay');
-    } catch (error) {
-      if (session.interrupted || session.signal.aborted) throw error;
-      // Refused or gone before it ran (the overlay closed by itself, a stale page): look again; the step is spent.
-      if (isRecoverable(error) || ['blocked_risky', 'unsupported', 'target_unavailable', 'stale'].includes(error?.code)) {
-        const fresh = await session.observe();
-        session.visit(fresh);
-        return fresh;
-      }
-      throw error;
-    }
-    after = await session.awaitOverlayClosed(after, key);
-    const still = overlayOf(after);
-    if (!still || overlayKey(still) !== key) {
-      state.dismissed.set(key, (state.dismissed.get(key) ?? 0) + 1);
-      // The step that worked is tried first again if the overlay comes back.
-      state.tried.delete(key);
-      session.why('overlay:dismissed');
-      session.why(`overlay:${next.method}`);
-    }
-    return after;
-  }
 }
