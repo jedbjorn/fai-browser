@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CAPABILITIES, CAPABILITY_NAMES, COMMIT_OTHER, DELETE_WORDS, LEVELS, PAYMENT_AUTOCOMPLETE, PAYMENT_FIELD,
-  PURCHASE, SAFE_SUBMIT, SIGN_IN_WORDS, SUBMIT_WORDS, capabilitiesOf, clampLevel, guardrailPolicy, jevPolicy,
+  PURCHASE, SAFE_SUBMIT, SIGN_IN_WORDS, SUBMIT_WORDS, capabilitiesOf, clampLevel, guardrailPolicy,
   DANGEROUS, labelClasses, normalizeAdditions, paymentField,
 } from '../src/guardrails.js';
 import { legalActions } from '../src/runtime.js';
@@ -241,13 +241,6 @@ test('sign_in: password fields are fill targets only at testing, and marked sens
 // ---------------------------------------------------------------------------------------------------------------
 // Jev policy per level
 // ---------------------------------------------------------------------------------------------------------------
-
-test('jevPolicy: a mode line per level; level-specific user_actions', () => {
-  assert.match(jevPolicy({ mode: 'interactive' }).mode, /search, filter, sort and paging submits/);
-  assert.match(jevPolicy({ mode: 'full' }).user_actions, /^Buying, paying, subscribing and logging in belong to the user/);
-  assert.match(jevPolicy({ mode: 'testing' }).user_actions, /^This is a test environment the user controls/);
-  assert.equal(guardrailPolicy({ level: 'full' }).jev(), jevPolicy({ mode: 'full' }));
-});
 
 // ---------------------------------------------------------------------------------------------------------------
 // The daemon and the hub: lease level, grant, clamp, command args

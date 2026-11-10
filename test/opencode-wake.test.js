@@ -336,13 +336,11 @@ test('plugin: only FAI\'s exact wake texts are taken (every template src/wake.js
   await tag(hooks, SES_A);
   const send = text => talk(path, [auth, { type: 'wake', sessionID: SES_A, text }]);
   const texts = [];
-  for (const driver of ['agent', 'jev']) {
-    for (const level of ['read-only', 'interactive', 'full', 'testing']) {
-      texts.push(wakeText({ kind: 'approved', requestId: 'req_6JOZelWANLlb', level, driver }));
-      texts.push(wakeText({ kind: 'resume', requestId: 'req_a:b.c', level, driver }));
-      texts.push(wakeText({ kind: 'invite', inviteId: 'inv-979s2an0', level, driver }));
-      texts.push(wakeText({ kind: 'invite', inviteId: 'inv-979s2an0', level, driver, userText: 'Say "hi" \\ then {stop}' }));
-    }
+  for (const level of ['read-only', 'interactive', 'full', 'testing']) {
+    texts.push(wakeText({ kind: 'approved', requestId: 'req_6JOZelWANLlb', level }));
+    texts.push(wakeText({ kind: 'resume', requestId: 'req_a:b.c', level }));
+    texts.push(wakeText({ kind: 'invite', inviteId: 'inv-979s2an0', level }));
+    texts.push(wakeText({ kind: 'invite', inviteId: 'inv-979s2an0', level, userText: 'Say "hi" \\ then {stop}' }));
   }
   texts.push(wakeText({ kind: 'invite', inviteId: 'inv-1', level: 'full', userText: 'x'.repeat(600) }));
   for (const text of texts) assert.deepEqual(await send(text), { ok: true }, text);
