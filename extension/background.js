@@ -1169,6 +1169,14 @@ function reconcileSites() {
     }
     if (session && !session.sitesReleased && ['active', 'paused'].includes(session.status)) {
       for (const pattern of session.patterns ?? []) keep.add(pattern);
+      // The session's exact origins: the Firefox build's approval click (toolbar icon or popup) asks for them, and a
+      // request modal that prepared the same request may have tracked them first; without this a popup approval of a
+      // request with domain roots lost its own page's access at once, and the lease its page at the next navigation.
+      for (const entry of Array.isArray(session.origins) ? session.origins : []) {
+        if (typeof entry === 'string' && !entry.includes('*') && /^https?:/.test(entry)) {
+          try { keep.add(taskOriginPattern(entry)); } catch { /* not an origin */ }
+        }
+      }
     }
     const granted = (await chrome.permissions.getAll())?.origins ?? [];
     const drop = granted.filter(pattern => managedPattern(pattern) && tracked.has(pattern) && !keep.has(pattern));
@@ -1760,26 +1768,38 @@ async function popupAttempt(message, surface) {
   const attemptId = message.attemptId.slice(0, 64);
   const request = requests.find(item => item.requestId === message.requestId);
   const origin = request ? requestTarget(request)?.origin ?? null : null;
-  reportApproval({ requestId: message.requestId, surface, step: 'attempt', origin });
-  const entry = { requestId: message.requestId, surface, givenUp: false, timer: null, at: Date.now() };
-  entry.timer = setTimeout(() => {
-    entry.givenUp = true;
-    setTimeout(() => popupAttempts.delete(attemptId), ARM_MS);
-    // An "All of <root>" Open the worker completed itself (openFromIntent) has an outcome: its armed page.
-    const opened = [...armed.values()].some(arm => arm.requestId === entry.requestId && arm.at >= entry.at);
-    if (!opened && requests.some(item => item.requestId === entry.requestId && item.state === 'pending')) {
-      reportApproval({ requestId: entry.requestId, surface, step: 'failed', reason: 'popup_no_outcome', origin });
-    }
-  }, await siteAccessWaitMs() + POPUP_ATTEMPT_SLACK_MS);
+  // Registered before anything is awaited: with no prompt to answer (Chromium without a domain root, access already
+  // held) the popup's `start` follows at once and must find it (popupAttemptDone), or the timer would log a click with
+  // no outcome over the start's own result.
+  const entry = { requestId: message.requestId, surface, givenUp: false, done: false, timer: null, at: Date.now() };
   popupAttempts.set(attemptId, entry);
   while (popupAttempts.size > 50) popupAttempts.delete(popupAttempts.keys().next().value);
+  reportApproval({ requestId: message.requestId, surface, step: 'attempt', origin });
+  const waitMs = await siteAccessWaitMs();
+  if (entry.done) return;
+  entry.timer = setTimeout(() => {
+    if (entry.done) return;
+    entry.givenUp = true;
+    setTimeout(() => { if (popupAttempts.get(attemptId) === entry) popupAttempts.delete(attemptId); }, ARM_MS);
+    // An "All of <root>" Open the worker completed itself (openFromIntent) has an outcome: its armed page.
+    const opened = [...armed.values()].some(arm => arm.requestId === entry.requestId && arm.at >= entry.at);
+    const live = requests.find(item => item.requestId === entry.requestId);
+    // A request's click is lost while the request still waits; an ask's while the ask is still open.
+    const waiting = live && (message.ask === true ? Boolean(live.ask) && ['active', 'paused'].includes(live.state) : live.state === 'pending');
+    if (!opened && waiting) {
+      reportApproval({ requestId: entry.requestId, surface, step: 'failed',
+        reason: message.ask === true ? 'ask_no_outcome' : 'popup_no_outcome', origin });
+    }
+  }, waitMs + POPUP_ATTEMPT_SLACK_MS);
 }
 function popupAttemptDone(message) {
-  const entry = typeof message.attemptId === 'string' ? popupAttempts.get(message.attemptId.slice(0, 64)) : null;
+  const attemptId = typeof message.attemptId === 'string' ? message.attemptId.slice(0, 64) : null;
+  const entry = attemptId ? popupAttempts.get(attemptId) : null;
   if (!entry) return;
   if (entry.givenUp) throw Object.assign(new Error(POPUP_GAVE_UP), { code: 'site_access_timeout' });
+  entry.done = true;
   clearTimeout(entry.timer);
-  popupAttempts.delete(message.attemptId.slice(0, 64));
+  popupAttempts.delete(attemptId);
 }
 
 // Which approval surface an extension page is: the page request modal, the approval window or the toolbar popup.
@@ -3909,9 +3929,15 @@ function closePrompt(arm) {
 
 // The armed tab's look: no popup, ? badge, "click to approve" title, FAI ? group (never a group the user made).
 async function showArm(arm) {
+  // Each step only while the arm is still current: a tab update landing as the tab is approved (disarmed) must not
+  // put the "?" look back on the session's tab.
+  const current = () => armed.get(arm.tabId) === arm;
   try {
+    if (!current()) return;
     await chrome.action.setPopup?.({ tabId: arm.tabId, popup: '' });
+    if (!current()) return;
     await chrome.action.setBadgeText({ tabId: arm.tabId, text: '?' });
+    if (!current()) return;
     await chrome.action.setTitle?.({ tabId: arm.tabId,
       title: `FAI Browser: click to approve ${arm.client || 'the agent'}'s request (${LEVEL_NAMES[arm.level] ?? arm.level})` });
   } catch {
@@ -4196,6 +4222,9 @@ async function approveArmed(tab, access = Promise.resolve()) {
     return;
   }
   if (!connected && pairing) await waitForAttempt(CONNECT_WAIT_MS);
+  // Another click on the icon may have approved (or the arm ended) while this one waited for the connection: the arm
+  // is read again, and only the click that still finds it current goes on (disarm takes it synchronously).
+  if (armed.get(tab.id) !== arm) return;
   // Clicked while the page was still blank (its first page loading, or a redirect on the way): the click's tab
   // snapshot has no http(s) address yet. Wait for the page, then read the tab again.
   if (!/^https?:/.test(tab.url ?? '') && typeof arm.origin === 'string') {

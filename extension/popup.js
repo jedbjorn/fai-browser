@@ -248,8 +248,9 @@ function approveAsk(request, wanted, level, own) {
   const origins = [...(Array.isArray(request.ask?.origins) ? request.ask.origins : []),
     ...(Array.isArray(request.ask?.access) ? request.ask.access : [])].filter(origin => !String(origin).includes('*'));
   const asked = askSiteAccess(null, { requestId: request.requestId, level, origins, tabMode: 'multiple' });
+  const attemptId = reportAttempt(request, true);
   // askId: exactly the ask this card shows; a changed ask is refused (ask_changed) and the card shows the new one.
-  return asked.granted.then(() => send('start', { requestId: request.requestId, level, ask: true, askId: request.ask?.id,
+  return asked.granted.then(() => send('start', { requestId: request.requestId, level, ask: true, askId: request.ask?.id, attemptId,
     tabMode: own ? view.session?.tabMode ?? 'single' : tabMode.value, ...(own ? { onSessionTab: true } : {}) }));
 }
 
@@ -514,9 +515,10 @@ function approveRequest(request, level, scope, onSessionTab = false) {
 // The click for daemon.log (the worker's approval_attempt), sent after the browser's prompt opened in it: if no
 // `start` or `open` naming it follows in time (this popup closed with the prompt), the worker logs that, and refuses
 // one that comes later.
-function reportAttempt(request) {
+function reportAttempt(request, ask = false) {
   const attemptId = `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-  chrome.runtime.sendMessage({ type: 'approval_attempt', requestId: request.requestId, attemptId }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'approval_attempt', requestId: request.requestId, attemptId, ...(ask ? { ask: true } : {}) })
+    .catch(() => {});
   return attemptId;
 }
 
