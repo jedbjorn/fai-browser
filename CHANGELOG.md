@@ -7,6 +7,15 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 
 ## Unreleased
 
+### Fixed
+
+- **Approve in the request modal no longer hangs silently, or approves much later (#36).** Firefox shows the site-access prompt only in the active window; clicked while the desktop had not activated the small request window, Approve waited for a prompt nobody saw, nothing reached daemon.log, and the request was approved whenever the window later became active and the prompt was allowed. The click now brings its window forward (the prompt shows), after 5 s says where else to approve, and after 45 s gives the click up ("nothing was approved; click the FAI Browser icon on the task tab"); a late answer approves nothing.
+- **The toolbar icon on a task tab that is still blank approves it.** The armed look (no popup, `?` badge) is applied as soon as the page opens, not only after it loaded, so an icon click on the blank, loading page waits for the page and approves it, instead of opening the popup that offered to open the page again. A page that never shows the site keeps its arm and says to click again once it has loaded, instead of ending the arm.
+
+### Added
+
+- **Approval events in daemon.log.** Every approval surface shown (request modal, popup, approval window), every Approve or icon click, and why one failed or which surface a Deny came from is one `approval` line with a reason code (`site_access_timeout`, `page_not_loaded`, `moved_away`, ...), the request id and the origin only. A failed approval on the page sets the request's `approval` to `toolbar` (with `approvalIssue`), so the agent tells the user to use the toolbar icon on the task tab. See docs/REFERENCE.md "Approval events".
+
 ### Changed
 
 - **Pause and Stop come first in the popup.** While an agent holds a tab, the two buttons sit right under the header, above the tab card, new requests, paused tasks and every other card (also in the approval window), inside the popup's normal size and first in tab order, so you can release a tab at a glance. Same buttons, labels and styles; with no agent connected the popup looks as before.
