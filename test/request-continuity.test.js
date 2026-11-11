@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createDaemon } from '../src/daemon.js';
 import { bridgeError, directNext } from '../src/result.js';
+import { OTHER_SITE_TEXT, offeredActions, pointAction } from '../src/runtime.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
 import { ORIGIN, link } from './runtime-fixtures.js';
@@ -503,6 +504,35 @@ test('ask on a pending request without an agent session: the old one says it was
   assert.equal(old.code, 'request_closed');
   assert.equal(old.needs.message, 'This request was replaced by a newer request.');
   assert.doesNotMatch(old.needs.message, /approved/);
+});
+
+// After PR #35 (links to other sites): a link to an exact origin the lease lists AND the extension reports reachable is
+// an ordinary click, by action id and by point, at read-only; one the lease does not list, or lists but cannot reach,
+// stays an other_site line whose act says to ask on the same request.
+test('links: a reachable lease origin is a click (id and point, read-only); unlisted or unreachable ones are other-site lines', () => {
+  const B = 'https://partner.example.org';
+  const C = 'https://third.example.org';
+  const D = 'https://far.example.org';
+  const control = (id, label, href) => ({ id, role: 'link', label, href, enabled: true, visible: true, risk: 'navigation' });
+  const observation = { revision: 'r1', url: `${ORIGIN}/`, title: 'Home', text: 'Home', reachable: [B],
+    controls: [control('1', 'Partner page', `${B}/p`), control('2', 'Third page', `${C}/t`), control('3', 'Far page', `${D}/f`)] };
+  const config = { mode: 'read-only', allowedOrigins: [ORIGIN, B, D] };
+  const actions = offeredActions(observation, config).actions;
+  const byLabel = label => actions.find(action => action.label === label);
+  assert.equal(byLabel('Partner page').type, 'click');
+  assert.equal(byLabel('Third page').type, 'other_site', 'not in the lease');
+  assert.equal(byLabel('Far page').type, 'other_site', 'in the lease but the extension cannot reach it');
+  // The extension's list never widens the lease: reachable but unlisted stays an other-site line.
+  assert.equal(offeredActions({ ...observation, reachable: [B, C] }, config).actions.find(a => a.label === 'Third page').type, 'other_site');
+  const offer = { revision: 'r1', observation, actions, config };
+  const point = pointAction(offer, { id: null, control: { ...observation.controls[0], id: 'point' } }, { ...config, level: 'read-only', point: { x: 1, y: 1 } });
+  assert.equal(point.action?.type, 'click', 'a point on the reachable link runs like its action id');
+  const far = pointAction(offer, { id: null, control: { ...observation.controls[2], id: 'point' } }, { ...config, level: 'read-only', point: { x: 1, y: 1 } });
+  assert.equal(far.refusal?.kind, 'cross_origin');
+  // The fixed text names the same-request remedy and holds no page data.
+  assert.match(OTHER_SITE_TEXT, /fai_browser_open with this requestId, that origin in origins/);
+  assert.match(OTHER_SITE_TEXT, /the same request and tab ask for it/);
+  for (const origin of [B, C, D]) assert.ok(!OTHER_SITE_TEXT.includes(origin));
 });
 
 // --- through the spawned MCP server -----------------------------------------------------------------------------

@@ -21,6 +21,7 @@ import { headlessEnv } from '../scripts/headless-env.mjs';
 import { createDaemon } from '../src/daemon.js';
 import { FaiBrowserClient } from '../src/client.js';
 import { call } from './helpers/fake-hub.js';
+import { OTHER_SITE_TEXT } from '../src/runtime.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const sleep = ms => new Promise(done => setTimeout(done, ms));
@@ -48,10 +49,27 @@ function startSite() {
     if (path === '/child') return page('Child page', '<p>Opened by the task page.</p>');
     if (path === '/details') return page('Details page', '<p>Row details.</p><a href="/">Home</a>');
     if (path === '/partner') return page('Partner page', '<p>The partner site.</p>');
+    if (path === '/third') return page('Third page', '<p>The third site.</p>');
+    if (path === '/links') {
+      return page('Links page', `<a href="${partner}/partner">Partner page</a> <a href="http://localhost:${server.third}/third">Third page</a>
+        <a href="http://far.example.test:${port}/far">Far page</a>`);
+    }
     return page('Task page', `<p>Rows.</p><a href="/details">Details</a> <a href="${partner}/partner">Partner page</a>
       <button type="button" onclick="window.open('/child')">Open child</button>`);
   });
   return new Promise(done => server.listen(0, '127.0.0.1', () => done(server)));
+}
+
+// The third site: another port on localhost (its own origin; the manifest's host access covers it once the lease lists it).
+function startThird(main) {
+  const third = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end('<!doctype html><title>Third page</title><h1>Third page</h1><p>The third site.</p>');
+  });
+  return new Promise(done => third.listen(0, '127.0.0.1', () => {
+    main.third = third.address().port;
+    done(third);
+  }));
 }
 
 async function launch(t) {
@@ -63,6 +81,8 @@ async function launch(t) {
   });
   const site = await startSite();
   cleanup.push(() => new Promise(done => { site.closeAllConnections?.(); site.close(done); }));
+  const third = await startThird(site);
+  cleanup.push(() => new Promise(done => { third.closeAllConnections?.(); third.close(done); }));
   const port = site.address().port;
   const origin = `http://127.0.0.1:${port}`;
   const partner = `http://localhost:${port}`;
@@ -93,7 +113,8 @@ async function launch(t) {
   const page = context.pages()[0];
   await page.goto(`${origin}/`);
   const client = new FaiBrowserClient({ port: daemon.port, token: daemon.token, clientName: 'continuity-test' });
-  return { context, worker, extensionId, daemon, client, page, origin, partner };
+  return { context, worker, extensionId, daemon, client, page, origin, partner, third: `http://localhost:${site.third}`,
+    far: `http://far.example.test:${port}` };
 }
 
 // The user's approval of `requestId` on the task page's tab (startSession with that tab, as the modal's Approve does).
@@ -335,4 +356,59 @@ test('#30 an ask on an invited tab: its card shows in the FAI Browser window and
   const view = (await api('GET', `/v1/requests/${invited.requestId}`, undefined, headers)).body;
   assert.equal(view.state, 'active');
   assert.ok(view.origins.includes(env.partner), JSON.stringify(view.origins));
+});
+
+// After PR #35: a page on A links to B (the lease lists it, the extension can follow it), C (not in the lease) and D
+// (the lease lists it, the browser gives no access to it). B is a click followed in the same tab; C is an other-site
+// line whose act returns the fixed same-request remedy, and asking for C on the same request and approving it makes the
+// link followable; D leads to a site-access ask.
+test('#30 + #35: links to a reachable lease origin, an unlisted one and an unreachable one', async t => {
+  const env = await launch(t);
+  await env.page.goto(`${env.origin}/links`);
+  const { requestId } = await env.client.requestTab({ origins: [env.origin, env.partner, env.far], mode: 'reversible',
+    reason: 'Work on the links page' });
+  const approved = await env.worker.evaluate(async ({ requestId, url }) => {
+    const [tab] = await chrome.tabs.query({ url: `${url}/*` });
+    await startSession({ requestId, level: 'reversible', tabMode: 'single' }, tab);
+    return session.reachable;
+  }, { requestId, url: env.origin });
+  assert.ok(approved.includes(env.partner) && !approved.includes(env.far), JSON.stringify(approved));
+  const { leaseId, tabId } = (await env.client.getRequest(requestId)).lease;
+  const first = await env.client.observe({ requestId });
+  const kind = label => first.actions.find(action => action.label === label)?.type;
+  assert.deepEqual([kind('Partner page'), kind('Third page'), kind('Far page')], ['click', 'other_site', 'other_site'],
+    JSON.stringify(first.actions.map(action => [action.label, action.type])));
+  // B: followed in the same tab, then back.
+  const toB = await act(env, requestId, actionFor(first, 'Partner page').id);
+  assert.notEqual(toB.status, 'needs_user', JSON.stringify({ code: toB.code, needs: toB.needs }));
+  assert.equal((await env.client.observe({ requestId })).page?.title ?? (await env.client.observe({ requestId })).observation?.title, 'Partner page');
+  // Back to A by its address (A is an exact lease origin the extension can follow from B too).
+  const home = (await env.client.act({ requestId, url: `${env.origin}/links`, waitMs: 10_000 })).result;
+  assert.notEqual(home.status, 'needs_user', JSON.stringify({ code: home.code, needs: home.needs }));
+  const back = await env.client.observe({ requestId });
+  // C: an other-site line; acting on it runs nothing and says to ask on the same request.
+  assert.ok(actionFor(back, 'Third page'), JSON.stringify([(back.page ?? back.observation)?.title, back.result?.code, back.actions?.map(action => action.label)]));
+  const refusedC = await act(env, requestId, actionFor(back, 'Third page').id);
+  assert.equal(refusedC.code, 'cross_origin');
+  assert.equal(refusedC.needs.message, OTHER_SITE_TEXT);
+  // D: listed but not reachable: the ask is for its site access.
+  const askD = await env.client.ask(requestId, { origins: [env.far] });
+  assert.deepEqual([askD.asked, askD.request.ask.origins, askD.request.ask.access], [true, [], [env.far]]);
+  await env.worker.evaluate(requestId => send('deny', { requestId, ask: true }), requestId);
+  assert.ok(await until(async () => !(await env.client.getRequest(requestId)).ask), 'declined');
+  // C asked on the same request and approved on its card: the link becomes an ordinary click, followed in the same tab.
+  await env.client.ask(requestId, { origins: [env.third] });
+  const card = await faiWindow(env);
+  await card.waitForSelector('.ask-approve:not([disabled])', { timeout: 5000 });
+  await card.click('.ask-approve');
+  assert.ok(await until(async () => !(await env.client.getRequest(requestId)).ask), 'the ask is answered');
+  const view = await env.client.getRequest(requestId);
+  assert.deepEqual([view.state, view.lease.leaseId, view.lease.tabId], ['active', leaseId, tabId]);
+  const after = await env.client.observe({ requestId });
+  assert.equal(after.actions.find(action => action.label === 'Third page')?.type, 'click');
+  const toC = await act(env, requestId, actionFor(after, 'Third page').id);
+  assert.notEqual(toC.status, 'needs_user', JSON.stringify({ code: toC.code, needs: toC.needs }));
+  const there = await env.client.observe({ requestId });
+  assert.equal((there.page ?? there.observation).title, 'Third page');
+  assert.equal((await env.client.getRequest(requestId)).state, 'active');
 });
