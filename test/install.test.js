@@ -12,7 +12,8 @@ const CLI = resolve(import.meta.dirname, '..', 'src', 'cli.js');
 const NODE = process.execPath;
 
 async function sandbox(t) {
-  const root = await mkdtemp(join(tmpdir(), 'fai-install-'));
+  // realpath: macOS's tmpdir is a symlink (/var -> /private/var), and the CLI reports real paths.
+  const root = realpathSync(await mkdtemp(join(tmpdir(), 'fai-install-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const home = join(root, 'home');
   const project = join(root, 'project');

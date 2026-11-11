@@ -49,8 +49,8 @@ function homeEnv(home) {
   return { HOME: home, XDG_CONFIG_HOME: join(home, '.config'), PATH: process.env.PATH };
 }
 
-async function writeAmoEnv(home, mode = 0o600) {
-  const path = amoEnvPath(homeEnv(home), 'linux');
+async function writeAmoEnv(home, mode = 0o600, platform = 'linux') {
+  const path = amoEnvPath(homeEnv(home), platform);
   await mkdir(join(path, '..'), { recursive: true });
   await writeFile(path, `# AMO\nWEB_EXT_API_KEY=${FAKE_KEY}\nWEB_EXT_API_SECRET="${FAKE_SECRET}"\nOTHER=ignored\n`);
   await chmod(path, mode);
@@ -155,21 +155,25 @@ test('amo.env: a file group or others can read is refused, and the error carries
 
 test('sign:firefox --dry-run names the file and never prints a credential', async t => {
   const home = await scratch(t);
-  await writeAmoEnv(home);
+  // The script runs on this platform, so the file goes where this platform keeps settings.
+  const path = await writeAmoEnv(home, 0o600, process.platform);
   const run = env => spawnSync(process.execPath, [join(ROOT, 'scripts', 'sign-firefox.mjs'), '--dry-run'],
     { cwd: ROOT, env, encoding: 'utf8', timeout: 30_000 });
   const ok = run(homeEnv(home));
   assert.equal(ok.status, 0, ok.stderr);
   assert.match(ok.stdout, /web-ext@8 sign --channel unlisted/);
-  assert.match(ok.stdout, /credentials from .*\.config\/fai-browser\/amo\.env/);
+  assert.ok(ok.stdout.includes(`credentials from ${path}`), ok.stdout);
   for (const text of [ok.stdout, ok.stderr]) {
     assert.ok(!text.includes(FAKE_SECRET) && !text.includes(FAKE_KEY), 'no credential in the output');
   }
-  await chmod(join(home, '.config', 'fai-browser', 'amo.env'), 0o644);
-  const refused = run(homeEnv(home));
-  assert.equal(refused.status, 1);
-  assert.match(refused.stderr, /readable by other users/);
-  assert.ok(!refused.stderr.includes(FAKE_SECRET) && !refused.stdout.includes(FAKE_SECRET));
+  // File modes are POSIX: Windows has no group or other bits to refuse (credentialEnv skips the check there).
+  if (process.platform !== 'win32') {
+    await chmod(path, 0o644);
+    const refused = run(homeEnv(home));
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /readable by other users/);
+    assert.ok(!refused.stderr.includes(FAKE_SECRET) && !refused.stdout.includes(FAKE_SECRET));
+  }
   const none = run(homeEnv(join(home, 'empty')));
   assert.equal(none.status, 0);
   assert.match(none.stdout, /credentials missing/);
@@ -179,7 +183,7 @@ test('signFirefox: credentials reach web-ext only through its environment; the s
   const dir = await scratch(t);
   const root = await fakeRoot(dir);
   const home = join(dir, 'home');
-  await writeAmoEnv(home);
+  await writeAmoEnv(home, 0o600, process.platform);
   const calls = [];
   const fakeWebExt = signed => async (command, { env }) => {
     calls.push({ command, key: env.WEB_EXT_API_KEY, secret: env.WEB_EXT_API_SECRET });

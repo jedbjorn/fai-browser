@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +27,8 @@ const VERSION = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8')).v
 const INI = version => `[App]\nVendor=Mozilla\nName=Firefox\nVersion=${version}\nBuildID=20261001000000\n`;
 
 async function scratch(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'fai-launcher-test-'));
+  // realpath: macOS's tmpdir is a symlink (/var -> /private/var), and the launcher resolves real paths.
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'fai-launcher-test-')));
   t.after(() => rm(dir, { recursive: true, force: true }));
   return dir;
 }

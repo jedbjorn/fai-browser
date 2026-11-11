@@ -130,6 +130,8 @@ function spawnDaemon(paths, env, command) {
     const [file, ...args] = command ?? [process.execPath, DAEMON_ENTRY];
     const child = spawn(file, args, {
       detached: true,
+      // Windows: no console window for the daemon (detached alone gives it a visible one, and closing it kills it).
+      windowsHide: true,
       stdio: ['ignore', logFd, logFd],
       // The default directories need no FAI_HOME: the daemon resolves the same ones (src/paths.js). The wake channels of
       // the host that started it (FAI's OpenCode plugin token, Claude Code's messaging token) stay with that host.

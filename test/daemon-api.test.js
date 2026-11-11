@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDaemon } from '../src/daemon.js';
@@ -13,7 +13,8 @@ const KEY = 'leftover-key-must-not-be-logged-9137';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function setup(t, options = {}) {
-  const home = await mkdtemp(join(tmpdir(), 'fai-daemon-api-'));
+  // realpath: macOS's tmpdir is a symlink (/var -> /private/var), and evidence paths are real paths.
+  const home = await realpath(await mkdtemp(join(tmpdir(), 'fai-daemon-api-')));
   if (options.config) await writeFile(join(home, 'config.json'), JSON.stringify(options.config));
   const hub = createFakeHub({ bridgeOptions: options.bridgeOptions });
   const env = { ...options.env };

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Runs the test files that need no browser: every test/*.test.js that neither mentions a browser driver
-// (playwright-core, CHROMIUM_PATH, a Chromium launch) nor imports a test helper that does. The release workflow runs
-// this subset; CI and contributors run the full `npm test` with Chromium.
+// (playwright-core, CHROMIUM_PATH, a Chromium launch, a Firefox driven through Marionette) nor imports a test helper
+// that does. The release workflow and the Windows and macOS CI jobs run this subset; CI on Linux and contributors run
+// the full `npm test` with Chromium.
 //   npm run test:browserless             run them (concurrency 2, kind to small machines)
 //   node scripts/test-browserless.mjs --list
 import { spawn } from 'node:child_process';
@@ -10,7 +11,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const ROOT = resolve(import.meta.dirname, '..');
-export const BROWSER_PATTERN = /playwright|CHROMIUM_PATH|launchPersistentContext|chromium\.launch/;
+export const BROWSER_PATTERN = /playwright|CHROMIUM_PATH|launchPersistentContext|chromium\.launch|Marionette\.connect/;
 
 /** The browserless test files under `root`/test, sorted. */
 export function browserlessTests(root = ROOT) {
