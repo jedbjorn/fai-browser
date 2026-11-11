@@ -3,9 +3,10 @@
 // a value that fits no field is still offered where no other value goes.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { legalActions, suppliedFit, suppliedTargets } from '../src/runtime.js';
+import { BrowserRuntime, legalActions, offeredActions, suppliedFit, suppliedTargets, withheldWarning } from '../src/runtime.js';
 import { actionBrief } from '../src/result.js';
-import { ORIGIN } from './runtime-fixtures.js';
+import { warningLine } from '../src/mcp.js';
+import { FakeBridge, ORIGIN, link } from './runtime-fixtures.js';
 
 const field = (id, label, extra = {}) => ({ id, role: 'textbox', label, type: 'text', enabled: true, visible: true, ...extra });
 const page = controls => ({ revision: 'r1', url: `${ORIGIN}/`, title: 'Contact', text: 'Write to us', controls });
@@ -63,4 +64,34 @@ test('fields that share a label are told apart by their own placeholder, name, i
     'Code (promo)', 'Comment']);
   // The supplied fill keeps the field's own label when it is unique.
   assert.deepEqual(supplied(actions), ['fill textbox "Comment" with supplied comment']);
+});
+
+// Read-only: buttons and fields are never offered, but the host learns how many there are and which level offers them,
+// so it asks for that level at once instead of scrolling and observing again. A count only, never their labels.
+test('read-only: withheld buttons and fields are counted (controls_need_reversible), never listed or named', async () => {
+  const controls = [
+    link('1', 'Docs', '/docs'),
+    { id: '2', role: 'button', label: 'Contact', enabled: true, visible: true },
+    { id: '3', role: 'button', label: 'get in touch', enabled: true, visible: true },
+    field('4', 'Search'),
+    { id: '5', role: 'button', label: 'Delete account', enabled: true, visible: true },
+    { id: '6', role: 'button', label: 'Newsletter', enabled: true, visible: true },
+    { id: '7', role: 'button', label: 'Hidden', enabled: true, visible: false },
+  ];
+  const readOnly = offeredActions(page(controls), { mode: 'read-only', policy: { forbid: ['Newsletter'] } });
+  // Contact, get in touch and Search: the delete button needs more than reversible, Newsletter is forbidden, Hidden is hidden.
+  assert.equal(readOnly.withheld, 3);
+  assert.equal(withheldWarning(readOnly), 'controls_need_reversible:3');
+  assert.ok(!readOnly.actions.some(action => /Contact|touch|Search/.test(action.label ?? '')), 'nothing new is offered');
+  assert.equal(offeredActions(page(controls), { mode: 'reversible' }).withheld, 0);
+  assert.equal(withheldWarning(offeredActions(page([link('1', 'Docs', '/docs')]), { mode: 'read-only' })), null);
+  // Through an observe, as the host sees it: a trusted gloss naming the level and the call, and no label.
+  const runtime = new BrowserRuntime({ bridge: new FakeBridge({ pages: { '/': { title: 'Home', text: 'Get in touch', controls } } }) });
+  const observed = await runtime.observe({ mode: 'read-only' });
+  assert.ok(observed.observation.warnings.includes('controls_need_reversible:4'), observed.observation.warnings.join());
+  const line = warningLine('controls_need_reversible:4');
+  assert.match(line, /^controls_need_reversible:4 \(4 buttons or fields on this page need level reversible and are not listed; /);
+  assert.match(line, /fai_browser_open with this requestId and mode "reversible"/);
+  assert.match(warningLine('controls_need_reversible:1'), /\(1 button or field on this page/);
+  assert.equal(warningLine('password_field'), 'password_field');
 });

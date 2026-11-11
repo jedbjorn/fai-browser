@@ -678,6 +678,9 @@ export function offeredActions(observation, options = {}) {
   };
 
   const controlActions = [];
+  // Buttons, fields and selects this level does not offer but reversible would (read-only only): counted, never
+  // listed, so a host whose task needs one asks for the level at once (`controls_need_reversible:<n>`).
+  let withheld = 0;
   for (const control of (observation.controls ?? []).slice(0, MAX_CONTROLS)) {
     if (control.enabled === false || control.visible === false) continue;
     // A field that takes a secret (the page script's secretTarget): the newest handles, as fills the user approves.
@@ -750,7 +753,10 @@ export function offeredActions(observation, options = {}) {
       }
       continue;
     }
-    if (!controls) continue;
+    if (!controls) {
+      if (control.type !== 'file' && !guard.forbids(control.label)) withheld++;
+      continue;
+    }
     // A file input: only an upload of a file from the host's workspace (Act and Test site), which the user approves
     // each time (the card names the file, its size and the site); never a fill.
     if (control.type === 'file') {
@@ -883,7 +889,16 @@ export function offeredActions(observation, options = {}) {
   return {
     actions: offered.map((action, index) => ({ id: `a${index}`, ...action })),
     dropped,
+    withheld,
   };
+}
+
+/**
+ * `controls_need_reversible:<n>` for an offer that left out `n` controls only for the level (read-only), else null: a
+ * count, never their labels.
+ */
+export function withheldWarning(offer) {
+  return Number.isInteger(offer?.withheld) && offer.withheld > 0 ? `controls_need_reversible:${Math.min(offer.withheld, 999999)}` : null;
 }
 
 /**
@@ -2827,9 +2842,11 @@ export class BrowserRuntime {
         fullBlocks: maxChars > DIGEST_MAX_CHARS ? 'all' : focus ? 'matched' : null,
       });
       const capped = cappedWarning(observation, offer.dropped + listing.dropped);
+      const withheld = withheldWarning(offer);
       const warnings = [...(Array.isArray(observation.warnings) ? observation.warnings : [])
         .filter(code => typeof code === 'string' && code !== 'controls_capped')
-        .flatMap(code => (code === 'unreadable_region' ? unreadableWarnings(observation) : [code])), ...(capped ? [capped] : [])];
+        .flatMap(code => (code === 'unreadable_region' ? unreadableWarnings(observation) : [code])), ...(capped ? [capped] : []),
+      ...(withheld ? [withheld] : [])];
       if (logs && !session.wantLogs) warnings.push('logs_need_testing');
       return redactSecrets({
         observation: { ...compactForDecision(observation), warnings, consent: observation.consent ?? null,
@@ -3457,6 +3474,8 @@ export class BrowserRuntime {
   #offerAfter(session, config, observation, hints, question) {
     const { offer, actions, listing } = this.#offerOn(observation, config, hints ?? session.hints, question);
     session.noteCapped(observation, offer.dropped + listing.dropped);
+    const withheld = withheldWarning(offer);
+    if (withheld) session.warn(withheld);
     return {
       revision: observation.revision,
       actions: actions.map(action => ({ ...action })),
