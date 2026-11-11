@@ -933,7 +933,7 @@ export function approvalSteps(approval) {
 
 /** The select_tab needs.message for how the request is presented (see approvalSteps). */
 export function selectTabMessage(approval) {
-  if (approval === 'page') return `Not approved yet. Ask the user to approve: ${approvalSteps(approval)}.`;
+  if (approval === 'page' || approval === 'toolbar') return `Not approved yet. Ask the user to approve: ${approvalSteps(approval)}.`;
   return OUTCOMES.select_tab.message;
 }
 
