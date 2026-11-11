@@ -106,18 +106,30 @@ const IN_VIEW = [
   ['late-piece-covered', `${cover(WORDS.slice(0, 12).map(word => `<b>${word} </b>`).join('') + PADDING)}Sign out`],
   ['decoys-first', `${Array.from({ length: 12 }, () => '<b style="font-size:4px">.</b>').join('')}${under(PADDING)}Sign out`],
   ['middle-covered', `Sign ${cover('menu entry')} out`],
+  // The action word spelled with lookalike letters, fullwidth letters or a zero-width character inside it.
+  ['lookalike-covered', `${cover('Profile')} \u0405ign \u043eut`],
+  ['fullwidth-covered', `${cover('Profile')} \uff24\uff45\uff4c\uff45\uff54\uff45`],
+  ['zero-width-covered', `${cover('Profile')} De\u200blete`],
+  // Generated text from a nested style rule.
+  ['nested-rule-generated', '<span class="nest"></span>'],
 ];
+// A box laid over part of one text node.
+const PARTLY_COVERED = '<span style="position:relative;display:inline-block"><a id="partly-covered" href="/n/partly-covered">Profile Sign out</a>'
+  + '<span style="position:absolute;left:0;top:0;width:44px;height:100%;background:white"></span></span>';
 const BELOW = [
   ['fold-covered-word', `${cover('Profile')} Sign out`],
   ['fold-covered-padding', `${cover(PADDING)}Sign out`],
   ['fold-behind-word', `${under('Profile')} Sign out`],
 ];
 const FOLD = `<!doctype html><html><head><meta charset="utf-8"><title>Fold</title>
-<style>body { margin: 0; font: 12px sans-serif; background: white; } .r { height: 22px; overflow: hidden; white-space: nowrap; margin: 2px; } a { display: inline-block; }</style></head><body>
+<style>body { margin: 0; font: 12px sans-serif; background: white; } .r { height: 22px; overflow: hidden; white-space: nowrap; margin: 2px; } a { display: inline-block; }
+.wrap { .nest::before { content: "Sign out"; } }</style></head><body class="wrap">
 ${IN_VIEW.map(([name, inner]) => `<div class="r"><a id="${name}" href="/n/${name}">${inner}</a></div>`).join('\n')}
+<div class="r">${PARTLY_COVERED}</div>
 <div style="height:3000px"></div>
 ${BELOW.map(([name, inner]) => `<div class="r"><a id="${name}" href="/n/${name}">${inner}</a></div>`).join('\n')}
 <div class="r"><a id="fold-honest" href="/n/fold-honest"><span>Read</span> <span>the guide</span></a></div>
+<div class="r"><a id="fold-honest-action-word" href="/n/fold-honest-action-word"><b>Why</b> we <i>delete</i> old branches</a></div>
 </body></html>`;
 
 const PAGES = {
@@ -208,6 +220,7 @@ for (const engine of ENGINES) {
     const observed = await opened.look();
     const offered = offeredPaths(observed);
     for (const [name] of IN_VIEW) assert.ok(!offered.has(`/n/${name}`), `${name}: offered`);
+    assert.ok(!offered.has('/n/partly-covered'), 'partly-covered: offered');
     // Below the fold the covering is unknown at observe time: a click by id scrolls the link into view, where the page
     // script judges it again and refuses it before clicking, as it refuses any action link.
     for (const [name] of BELOW) {
@@ -220,12 +233,18 @@ for (const engine of ENGINES) {
       assert.equal(run.tab.url(), `${ORIGIN}/fold`, `${name} navigated`);
       await run.context.close();
     }
-    // An honest link below the fold is revealed and clicked once.
-    const honest = observed.actions.find(entry => entry.href === `${ORIGIN}/n/fold-honest`);
-    const result = await opened.runtime.act(honest.id, { revision: observed.observation.revision });
-    assert.equal(result.status, 'checkpoint', `${result.code}: ${result.reason}`);
-    assert.equal(opened.tab.url(), `${ORIGIN}/n/fold-honest`);
-    assert.equal(opened.bridge.executions.length, 1);
+    // Honest links below the fold (one holding an action word in a longer title) are revealed and clicked once.
+    for (const name of ['fold-honest', 'fold-honest-action-word']) {
+      const run = await open(t, 'read-only', '/fold');
+      const seen = await run.look();
+      const honest = seen.actions.find(entry => entry.href === `${ORIGIN}/n/${name}`);
+      assert.ok(honest, `${name} is offered`);
+      const result = await run.runtime.act(honest.id, { revision: seen.observation.revision });
+      assert.equal(result.status, 'checkpoint', `${name}: ${result.code}: ${result.reason}`);
+      assert.equal(run.tab.url(), `${ORIGIN}/n/${name}`);
+      assert.equal(run.bridge.executions.length, 1);
+      await run.context.close();
+    }
   });
 
   test(`${engine.name}: the button twins stay refused, and the honest links stay clickable`, { skip }, async t => {

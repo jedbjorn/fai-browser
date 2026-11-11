@@ -1859,6 +1859,10 @@
   // ::before or ::after a non-empty `content`, read once per observation; '*' when a style sheet cannot be read (another
   // origin), null when no rule does. An element in a shadow root or a frame is always read.
   const PSEUDO_PART = /::?(?:before|after)\b/i;
+  // Rules that never give an element generated content (fonts, keyframes, page boxes, declarations and the like).
+  const HARMLESS_RULES = new Set(['CSSFontFaceRule', 'CSSKeyframeRule', 'CSSNamespaceRule', 'CSSPageRule', 'CSSMarginRule',
+    'CSSCounterStyleRule', 'CSSFontFeatureValuesRule', 'CSSFontPaletteValuesRule', 'CSSPropertyRule', 'CSSLayerStatementRule',
+    'CSSPositionTryRule', 'CSSViewTransitionRule', 'CSSNestedDeclarations']);
   function pseudoSelector() {
     if (flatCache && flatCache.pseudo !== undefined) return flatCache.pseudo;
     const parts = new Set();
@@ -1866,11 +1870,27 @@
     const visit = rules => {
       for (const rule of rules) {
         if (all) return;
+        // An imported sheet is read like the others.
+        if (rule.styleSheet && !rule.selectorText) {
+          visit(rule.styleSheet.cssRules);
+          continue;
+        }
+        // A style rule with rules nested in it (CSS nesting): their selectors are relative, so any part may match.
+        if (rule.selectorText && rule.cssRules?.length) {
+          all = true;
+          return;
+        }
+        // A grouping rule (@media, @supports, @layer, @scope, @container ...): its rules.
         if (rule.cssRules && !rule.selectorText) {
           visit(rule.cssRules);
           continue;
         }
-        if (!rule.selectorText || !PSEUDO_PART.test(rule.selectorText)) continue;
+        // Anything else that is neither a style rule nor a rule known to style no element: any part may match.
+        if (!rule.selectorText) {
+          if (!HARMLESS_RULES.has(rule.constructor?.name)) all = true;
+          continue;
+        }
+        if (!PSEUDO_PART.test(rule.selectorText)) continue;
         const content = rule.style?.content;
         if (!content || /^(?:none|normal|""|''|initial|inherit|unset)$/.test(content.trim())) continue;
         for (const selector of rule.selectorText.split(',')) {
@@ -1912,13 +1932,21 @@
   // Whether what is seen can name an action the names do not: some text of the control holds an action word (as
   // rendered, as stored, reversed, or with bidirectional overrides read), its tooltip does, it has generated content of
   // its own or a part that may generate some, or it renders text from a shadow root. Otherwise its readings are its text.
+  // Whether text holds an action word, in the spellings the guard judges (lookalike, fullwidth and spaced letters,
+  // invisible formatting inside a word), as stored, reversed, and with bidirectional overrides read.
+  function holdsActionWord(text) {
+    if (typeof text !== 'string' || !text.trim()) return false;
+    const bidi = bidiReading(text);
+    for (const variant of [text, Array.from(text).reverse().join(''), ...(bidi === null ? [] : [bidi])]) {
+      if (labelSpellings(variant).some(spelling => ACTION_WORD.test(spelling))) return true;
+    }
+    return false;
+  }
+
   function seenMayAct(el, names) {
     if (names[8] || el.shadowRoot || hasFlatParts(el)) return true;
     for (const text of [names[2], names[3], el.getAttribute('title'), describedByText(el)]) {
-      if (typeof text !== 'string' || !text.trim()) continue;
-      if (ACTION_WORD.test(text) || ACTION_WORD.test(Array.from(text).reverse().join(''))) return true;
-      const bidi = bidiReading(text);
-      if (bidi !== null && ACTION_WORD.test(bidi)) return true;
+      if (holdsActionWord(text)) return true;
     }
     const selector = pseudoSelector();
     if (!selector) return false;
@@ -2002,7 +2030,7 @@
     let clipped = false;
     // Only text holding an action word can become an action name by losing some of it (to a clip, a cover): the boxes
     // are measured only then.
-    const actionText = ACTION_WORD.test(pieces.map(piece => (piece.reversed ? Array.from(piece.text).reverse().join('') : piece.text)).join(''));
+    const actionText = holdsActionWord(pieces.map(piece => (piece.reversed ? Array.from(piece.text).reverse().join('') : piece.text)).join(''));
     for (const piece of pieces) {
       piece.inside = piece.text;
       if (actionText && piece.check && piece.node.nodeType === Node.TEXT_NODE) {
@@ -2024,19 +2052,39 @@
     if (actionText && box.bottom > 0 && box.right > 0 && box.top < view.innerHeight && box.left < view.innerWidth) {
       for (const piece of pieces) {
         if (piece.node.nodeType !== Node.TEXT_NODE || !piece.inside.trim() || piece.masked) continue;
-        range.selectNodeContents(piece.node);
-        const rect = range.getClientRects()[0];
-        if (!rect) continue;
-        const x = rect.left + rect.width / 2;
-        const y = rect.top + rect.height / 2;
-        if (x < 0 || y < 0 || x >= view.innerWidth || y >= view.innerHeight) continue;
         // The element holding the text answers a hit on it (or, for slotted text, its shadow tree); anything else there
         // lies over the text. A holder that takes no pointer events cannot be tested.
         const owner = piece.node.parentElement;
         if (!owner || view.getComputedStyle(owner).pointerEvents === 'none') continue;
-        const hit = deepHit(doc, x, y);
-        if (hit && hit !== owner && !owner.shadowRoot?.contains(hit)) {
-          piece.under = true;
+        // Whether something lies over the middle of a range's first box; null when that point is off the viewport.
+        const coveredAt = () => {
+          const rect = range.getClientRects()[0];
+          if (!rect) return null;
+          const x = rect.left + rect.width / 2;
+          const y = rect.top + rect.height / 2;
+          if (x < 0 || y < 0 || x >= view.innerWidth || y >= view.innerHeight) return null;
+          const hit = deepHit(doc, x, y);
+          return Boolean(hit) && hit !== owner && !owner.shadowRoot?.contains(hit);
+        };
+        // The node at its middle, then each word at its middle: a box over part of one text node hides those words
+        // only; a word off the viewport takes the node's answer.
+        range.selectNodeContents(piece.node);
+        const whole = coveredAt();
+        const stored = piece.node.nodeValue;
+        let seen = '';
+        let at = 0;
+        let covered = false;
+        for (const word of stored.matchAll(/\S+/g)) {
+          range.setStart(piece.node, word.index);
+          range.setEnd(piece.node, word.index + word[0].length);
+          const under = coveredAt() ?? whole === true;
+          seen += stored.slice(at, word.index) + (under ? ' '.repeat(word[0].length) : word[0]);
+          at = word.index + word[0].length;
+          if (under) covered = true;
+        }
+        if (covered) {
+          seen += stored.slice(at);
+          piece.strict = piece.reversed ? Array.from(seen).reverse().join('') : seen;
           hidden = true;
         }
       }
@@ -2048,7 +2096,7 @@
       for (let count = 1; count <= MAX_GATED_LINK_WORDS && count <= words.length; count++) readings.push(words.slice(-count).join(' '));
     }
     if (clipped) readings.push(pieces.map(piece => piece.inside).join(''));
-    if (hidden) readings.push(pieces.filter(piece => !piece.masked && !piece.under).map(piece => piece.text).join(''));
+    if (hidden) readings.push(pieces.filter(piece => !piece.masked).map(piece => piece.strict ?? piece.text).join(''));
     const shown = pieces.filter(piece => piece.inside.trim());
     // Visual order: the pieces sorted by their boxes (top to bottom, left to right), when there are a few.
     if (shown.length >= 2 && shown.length <= SEEN_ORDER_PIECES) {
@@ -2084,9 +2132,8 @@
     if (worst) return worst;
     const text = cleanText(el.textContent);
     if (text.length > 2000) return null;
-    // A link of plain short text (no parts, no generated content) reads as its text, which the names judged already.
-    const plain = !el.firstElementChild && !el.shadowRoot && !names[8] && text.split(' ').length <= MAX_GATED_LINK_WORDS;
-    const readings = plain || !seenMayAct(el, names) ? [text] : seenReadings(el, Boolean(names[8]));
+    // A link whose text, tooltip and generated content cannot name an action reads as its text (seenMayAct).
+    const readings = seenMayAct(el, names) ? seenReadings(el, Boolean(names[8])) : [text];
     for (const reading of readings) judge(reading);
     // No letters or digits (an arrow, a cross, an emoji): the link shows no words, and its tooltip names it.
     if (!worst && !readings.some(reading => /[\p{L}\p{N}]/u.test(reading))) {
