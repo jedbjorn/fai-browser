@@ -983,6 +983,11 @@ test('multiple-tab approval creates a tab in the task window and group, switches
   assert.equal((await h.waitFor(m => m.type === 'result' && m.id === id)).error, undefined);
   const alien = h.command('execute', { action: { type: 'switch_tab', tab: 't99' }, expectedRevision: 'doc:1' }, { lease: multiLease });
   assert.equal((await h.waitFor(m => m.type === 'result' && m.id === alien)).error.code, 'target_unavailable');
+  // A four-digit id (a long session's later tabs) is a well-formed tab id: looked up, not refused as invalid.
+  const later = h.command('execute', { action: { type: 'switch_tab', tab: 't1000' }, expectedRevision: 'doc:1' }, { lease: multiLease });
+  const laterError = (await h.waitFor(m => m.type === 'result' && m.id === later)).error;
+  assert.equal(laterError.code, 'target_unavailable', JSON.stringify(laterError));
+  assert.match(laterError.message, /not part of this request/);
   await h.send({ type: 'stop' });
   await h.until(() => !h.groupOf.has(7) && !h.groupOf.has(9));
 });
@@ -2418,7 +2423,7 @@ test('update: a service that cannot install says so; the cleaned view keeps inst
   assert.equal(h.session.connection.update.installable, false);
 });
 
-// --- per-request budget (Setup & connection) ---------------------------------------------------------------------
+// --- per-request budget (Advanced) -------------------------------------------------------------------------------
 
 test('the hello carries the stored budget, and the daemon\'s reply says what is in effect', async () => {
   const stored = { maxCalls: 120, maxMs: 2_400_000 };
@@ -2428,6 +2433,20 @@ test('the hello carries the stored budget, and the daemon\'s reply says what is 
   await h.until(() => h.session.connection?.budget);
   assert.deepEqual(h.session.connection.budget, { ...stored, source: 'extension' });
   assert.deepEqual((await h.send({ type: 'connect' })).connection.budget, { ...stored, source: 'extension' });
+});
+
+test('budget bounds: 10000 calls is stored, reported and shown; 10001 (stored or reported by the daemon) counts as none', async () => {
+  const most = { maxCalls: 10_000, maxMs: 14_400_000 };
+  const h = harness({ local: { budget: most }, daemonBudget: { ...most, source: 'extension' } });
+  assert.deepEqual((await h.waitFor(m => m.type === 'hello')).settings.budget, most);
+  await h.until(() => h.session.connection?.budget);
+  assert.deepEqual(h.session.connection.budget, { ...most, source: 'extension' });
+  const over = { maxCalls: 10_001, maxMs: 14_400_000 };
+  const beyond = harness({ local: { budget: over }, daemonBudget: { ...over, source: 'config' } });
+  assert.equal((await beyond.waitFor(m => m.type === 'hello')).settings.budget, null);
+  await beyond.until(() => beyond.session.connection?.connected);
+  const reply = await beyond.send({ type: 'connect' });
+  assert.equal(reply.connection.budget, null, 'an out-of-bounds budget from the daemon is not shown as in effect');
 });
 
 test('a malformed stored budget is reported as none; a budget changed in the popup is sent as a settings message', async () => {

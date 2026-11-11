@@ -1199,7 +1199,7 @@ function minLevel(a, b) {
 // Exact http(s) origins only: what the popup stores is compared as typed.
 // A stored or reported budget {maxCalls, maxMs} within the bounds (extension/permissions.js BUDGET_LIMITS, the same as
 // src/settings.js), with its `source` when the daemon names one; anything else is null (not set).
-const BUDGET_BOUNDS = { maxCalls: [1, 500], maxMs: [1000, 14_400_000] };
+const BUDGET_BOUNDS = { maxCalls: [1, 10_000], maxMs: [1000, 14_400_000] };
 function cleanBudget(value) {
   if (!value || typeof value !== 'object') return null;
   const out = {};
@@ -2541,7 +2541,7 @@ function validateAction(action) {
   if (action.type === 'history' && (!HISTORY_MOVES.has(action.move) || action.target !== undefined)) {
     throw new ExtensionError('unsupported', 'Invalid history move');
   }
-  if (action.type === 'switch_tab' && (typeof action.tab !== 'string' || !/^t\d{1,3}$/.test(action.tab))) {
+  if (action.type === 'switch_tab' && (typeof action.tab !== 'string' || !/^t\d{1,5}$/.test(action.tab))) {
     throw new ExtensionError('unsupported', 'Invalid tab');
   }
   if (action.type === 'dialog' && (!['accept', 'dismiss'].includes(action.answer) || (action.text !== undefined
