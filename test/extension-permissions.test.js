@@ -280,8 +280,12 @@ test('popup: Testing appears only when every requested origin is listed, warning
   assert.match(testingDescription, new RegExp(LEVEL_TEXT.testing.description));
   assert.match(testingDescription, new RegExp(TESTING_WARNING));
   await page.click('.approve-request');
-  const start = (await page.evaluate(() => __sent)).find(message => message.type === 'start');
+  const sent = await page.evaluate(() => __sent);
+  const { attemptId, ...start } = sent.find(message => message.type === 'start');
   assert.deepEqual(start, { type: 'start', requestId: 'req_1', level: 'testing', tabMode: 'single' }, 'the pairing never rides along');
+  // The click's approval_attempt came first and names the same attempt (the worker bounds and logs it).
+  const attempt = sent.findIndex(message => message.type === 'approval_attempt' && message.attemptId === attemptId);
+  assert.ok(attempt >= 0 && attempt < sent.findIndex(message => message.type === 'start'), 'the attempt is reported first');
 });
 
 test('popup: Approve sends the preset level when the user does not change it', async t => {
