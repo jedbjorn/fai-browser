@@ -27,7 +27,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { appendFile, mkdir } from 'node:fs/promises';
-import { dirname, join, win32 } from 'node:path';
+import { dirname, join, posix, win32 } from 'node:path';
 import { promisify } from 'node:util';
 import { PACKAGE_ROOT } from './paths.js';
 import { scrubSecrets } from './secrets.js';
@@ -82,9 +82,10 @@ async function gitOrNull(git, args) {
   }
 }
 
+// realpathSync.native also expands Windows 8.3 short names (C:\Users\RUNNER~1), which git never prints.
 function samePath(a, b) {
   try {
-    return realpathSync(a) === realpathSync(b);
+    return realpathSync.native(a) === realpathSync.native(b);
   } catch {
     return false;
   }
@@ -194,12 +195,11 @@ export function firstLine(error) {
  * without one does it fall back to `npm` through cmd.exe (`shell`), with constant arguments.
  */
 export function npmCommand(execPath = process.execPath, { platform = process.platform, exists = existsSync } = {}) {
-  const dir = platform === 'win32' ? win32.dirname(execPath) : dirname(execPath);
   if (platform === 'win32') {
-    const cli = win32.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    const cli = win32.join(win32.dirname(execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
     return exists(cli) ? { file: execPath, args: [cli], shell: false } : { file: 'npm', args: [], shell: true };
   }
-  const sibling = join(dir, 'npm');
+  const sibling = posix.join(posix.dirname(execPath), 'npm');
   return { file: exists(sibling) ? sibling : 'npm', args: [], shell: false };
 }
 
