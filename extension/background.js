@@ -1745,11 +1745,13 @@ async function popupAttempt(message, surface) {
   const request = requests.find(item => item.requestId === message.requestId);
   const origin = request ? requestTarget(request)?.origin ?? null : null;
   reportApproval({ requestId: message.requestId, surface, step: 'attempt', origin });
-  const entry = { requestId: message.requestId, surface, givenUp: false, timer: null };
+  const entry = { requestId: message.requestId, surface, givenUp: false, timer: null, at: Date.now() };
   entry.timer = setTimeout(() => {
     entry.givenUp = true;
     setTimeout(() => popupAttempts.delete(attemptId), ARM_MS);
-    if (requests.some(item => item.requestId === entry.requestId && item.state === 'pending')) {
+    // An "All of <root>" Open the worker completed itself (openFromIntent) has an outcome: its armed page.
+    const opened = [...armed.values()].some(arm => arm.requestId === entry.requestId && arm.at >= entry.at);
+    if (!opened && requests.some(item => item.requestId === entry.requestId && item.state === 'pending')) {
       reportApproval({ requestId: entry.requestId, surface, step: 'failed', reason: 'popup_no_outcome', origin });
     }
   }, await siteAccessWaitMs() + POPUP_ATTEMPT_SLACK_MS);
