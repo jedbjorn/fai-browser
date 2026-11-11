@@ -2447,7 +2447,7 @@ export function checkActChoice(offer, choice, { revisionless = false } = {}) {
   if (typeof spec.actionId === 'string' && !action) return `Action ${spec.actionId} was not offered for revision ${offer.revision}.`;
   if (['url', 'openTab'].includes(kind) && (typeof spec[kind] !== 'string' || !spec[kind] || spec[kind].length > 2048)) return 'url must be a URL on the approved origins.';
   if (kind === 'nav' && !HISTORY_MOVES.has(spec.nav)) return 'nav must be back, forward or reload.';
-  if (kind === 'tab' && (typeof spec.tab !== 'string' || !/^t\d{1,3}$/.test(spec.tab))) return 'tab must be a tab id from tabs (t0, t1, ...).';
+  if (kind === 'tab' && (typeof spec.tab !== 'string' || !/^t\d{1,5}$/.test(spec.tab))) return 'tab must be a tab id from tabs (t0, t1, ...).';
   if (kind === 'dialog' && !['accept', 'dismiss'].includes(spec.dialog)) return 'dialog must be accept or dismiss.';
   if (kind === 'key') {
     if (!pressKey(spec.key)) return `Key ${String(spec.key).slice(0, 20)} is not allowed: Escape, Tab, Shift+Tab, arrows, Home, End, PageUp, PageDown, Space, Enter, or Ctrl/Cmd+letter.`;

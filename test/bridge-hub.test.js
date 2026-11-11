@@ -488,6 +488,25 @@ test('hello and settings messages carry the popup budget setting; the hub keeps 
   const http = await setup.post('/settings', { v: 3, settings: { budget: { maxCalls: 3, maxMs: 90_000 } } });
   assert.equal(http.status, 200);
   assert.deepEqual(setup.hub.extension().settings, { budget: { maxCalls: 3, maxMs: 90_000 } });
+  // The bound: 10000 calls is kept, 10001 is out of bounds (no budget).
+  await ext.request('settings', { settings: { budget: { maxCalls: 10_000, maxMs: 14_400_000 } } });
+  assert.deepEqual(setup.hub.extension().settings, { budget: { maxCalls: 10_000, maxMs: 14_400_000 } });
+  await ext.request('settings', { settings: { budget: { maxCalls: 10_001, maxMs: 14_400_000 } } });
+  assert.deepEqual(setup.hub.extension().settings, { budget: null });
+});
+
+test('the hub\'s budget bounds are src/settings.js BUDGET_LIMITS (repeated in bridge.js, which settings.js imports)', async () => {
+  const { sanitizeSettings } = await import('../src/bridge.js');
+  const { BUDGET_LIMITS } = await import('../src/settings.js');
+  const { maxCalls, maxMs } = BUDGET_LIMITS;
+  const kept = budget => sanitizeSettings({ budget }).budget;
+  assert.deepEqual(kept({ maxCalls: maxCalls.min, maxMs: maxMs.min }), { maxCalls: maxCalls.min, maxMs: maxMs.min });
+  assert.deepEqual(kept({ maxCalls: maxCalls.max, maxMs: maxMs.max }), { maxCalls: maxCalls.max, maxMs: maxMs.max });
+  assert.equal(maxCalls.max, 10_000);
+  assert.equal(kept({ maxCalls: maxCalls.max + 1, maxMs: maxMs.max }), null);
+  assert.equal(kept({ maxCalls: maxCalls.max, maxMs: maxMs.max + 1 }), null);
+  assert.equal(kept({ maxCalls: maxCalls.min - 1, maxMs: maxMs.min }), null);
+  assert.equal(kept({ maxCalls: maxCalls.min, maxMs: maxMs.min - 1 }), null);
 });
 
 test('settings carry "Open requested pages right away" only when reported as a boolean (an older extension does not)', async () => {

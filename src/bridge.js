@@ -187,9 +187,11 @@ function validateCredentials(secret, extensionId) {
 
 /**
  * The extension's popup settings as reported: `{budget, openRightAway?}` with `budget` a {maxCalls, maxMs} of
- * integers within the bounds (src/settings.js BUDGET_LIMITS; the daemon validates again) or null when the user set
- * none, and `openRightAway` (whether a request's page opens by itself, the icon click on it approving) only when the
- * extension reports it as a boolean (an older extension does not).
+ * integers within the bounds (maxCalls 1-10000, maxMs 1000-14400000: src/settings.js BUDGET_LIMITS, which imports
+ * this module, so the bounds are repeated here and test/bridge-hub.test.js checks they agree; the daemon validates
+ * again) or null when the user set none or it is out of bounds, and `openRightAway` (whether a request's page opens by
+ * itself, the icon click on it approving) only when the extension reports it as a boolean (an older extension does
+ * not).
  */
 export function sanitizeSettings(settings) {
   if (!settings || typeof settings !== 'object') return null;
@@ -197,7 +199,7 @@ export function sanitizeSettings(settings) {
   const budget = settings.budget;
   if (!budget || typeof budget !== 'object') return { budget: null, ...openRightAway };
   const { maxCalls, maxMs } = budget;
-  const ok = Number.isInteger(maxCalls) && maxCalls >= 1 && maxCalls <= 500
+  const ok = Number.isInteger(maxCalls) && maxCalls >= 1 && maxCalls <= 10_000
     && Number.isInteger(maxMs) && maxMs >= 1000 && maxMs <= 14_400_000;
   return { budget: ok ? { maxCalls, maxMs } : null, ...openRightAway };
 }

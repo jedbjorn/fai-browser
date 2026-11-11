@@ -1,6 +1,7 @@
 // Popup: pending tab requests from agents (level and, for a domain root, site scope), the active session's Pause and
-// Stop, setup state (pairing is automatic through the native host; Pair retries it), and an Advanced section
-// (approvals, test sites, budget, connection with the manual pairing fallback).
+// Stop (right under the header, before every card, while an agent holds a tab), setup state (pairing is automatic
+// through the native host; Pair retries it), and an Advanced section (approvals, test sites, budget, connection with
+// the manual pairing fallback).
 // Everything an agent wrote (reason, instruction, client, origins) is rendered with textContent only. The pairing
 // secret is never shown or put into the page: its field only ever holds what the user types, and is cleared once saved.
 import {
@@ -91,7 +92,12 @@ const STATUS_TEXT = {
   stopped: 'Stopped',
 };
 
-function showState(state) {
+// `keepText`: only the label and the controls follow (a background refresh never replaces what the status line says).
+// The status line's last text from here, so a live status change can tell it from a note (an Open note, "Request
+// denied.", an error) that it must not wipe.
+let stateText = null;
+const showingNote = () => status.textContent !== stateText;
+function showState(state, { keepText = false } = {}) {
   view.status = state;
   const testing = state === 'active' && view.session?.level === 'testing';
   stateLabel.dataset.state = testing ? 'testing' : state === 'active' ? 'active' : state === 'paused' ? 'paused' : 'idle';
@@ -100,8 +106,11 @@ function showState(state) {
     paused: 'Paused',
     stopped: 'Stopped',
   }[state] ?? (paired ? 'Ready' : 'Setup needed');
-  status.textContent = STATUS_TEXT[state]
-    ?? (paired ? state || 'Waiting for an agent request. Its page opens in a new tab.' : '');
+  if (!keepText) {
+    status.textContent = STATUS_TEXT[state]
+      ?? (paired ? state || 'Waiting for an agent request. Its page opens in a new tab.' : '');
+    stateText = status.textContent;
+  }
   render();
 }
 
@@ -608,6 +617,22 @@ const PAUSED_SHOWN = 5;
 let staleOpen = false;
 let staleAll = false;
 
+// Pause and Stop show exactly while the session is active, and follow it live (the worker's `status` in storage). The
+// row waits while the user presses anything in the popup, so it never moves a control mid-press; otherwise only its
+// own height moves the cards below. Focus on Pause or Stop when the row hides goes to the tab card (tabindex -1), which
+// does nothing on Enter or Space: a held or repeated key after a keyboard Stop must never press Update, Pair or a
+// request's button. Tab goes on from there. Focus the browser already moved to the body stays there.
+const holdRow = pressGuard(document.querySelector('.app'));
+const tabCard = document.querySelector('.tab-card');
+function renderControls(active) {
+  if (controls.hidden === !active) return;
+  if (holdRow(render)) return;
+  const focused = controls.contains(document.activeElement);
+  controls.hidden = !active;
+  pause.hidden = !active;
+  if (focused && !active) tabCard.focus({ preventScroll: true });
+}
+
 function sectionLabel(text, className) {
   return element('p', `request-section ${className}`, text);
 }
@@ -670,8 +695,7 @@ function render() {
   const firstApprove = requestList.querySelector('.approve-request:not(:disabled)');
   if (firstApprove) firstApprove.id = 'approve';
   requestsEmpty.hidden = !view.connection?.connected || visible.length > 0;
-  controls.hidden = !active;
-  pause.hidden = !active;
+  renderControls(active);
   const transport = view.connection?.connected ? view.connection.transport : 'not connected';
   transportLabel.textContent = `Connection: ${transport}`;
   renderBrowsers();
@@ -736,6 +760,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
     renderBudgetFields();
   }
   if (area === 'local' && changes.secret) paired = Boolean(changes.secret.newValue);
+  // The session started, paused or ended while this popup (or the approval window) is open: approved in the page's
+  // request modal, released by the agent, its tab closed, its budget spent. Follow it at once, then ask the worker for
+  // the session itself (its request, tab and level) with `state`, which only reads: never `connect`, which counts as
+  // the user opening the popup (it reconnects and may take the connection back from another copy of the profile). The
+  // worker also writes connection texts here. A change this popup's own Pause, Stop or Approve already applied from
+  // the worker's reply is no change here, and a note on the status line stays.
+  if (area === 'local' && changes.status && (changes.status.newValue ?? null) !== (view.status ?? null)) {
+    showState(changes.status.newValue, { keepText: showingNote() });
+    refreshState();
+  }
   if (area === 'local' && changes.permissions) {
     permissions = normalizePermissions(changes.permissions.newValue);
     renderPermissions();
@@ -772,6 +806,18 @@ secretField.addEventListener('change', () => {
   });
 });
 
+// Re-reads the worker's view after a live status change. Only the newest read applies, and none that a reply to this
+// popup's own message (send) has overtaken: an older reply never brings the row back after a stop.
+let refreshSeq = 0;
+function refreshState() {
+  const seq = ++refreshSeq;
+  chrome.runtime.sendMessage({ type: 'state' }).then(state => {
+    if (seq !== refreshSeq || !state || state.error) return;
+    applyState({ ...state, status: undefined });
+    if (state.status) showState(state.status, { keepText: true });
+  }, () => {});
+}
+
 function setBusy(value) {
   busy = value;
   for (const button of [pause, stop, pairButton, ...requestList.querySelectorAll('button, select, input')]) button.disabled = value;
@@ -782,11 +828,14 @@ async function send(type, extra = {}, note = '') {
     status.textContent = 'Pair with the FAI service first.';
     return;
   }
+  // Pause or Stop pressed from the keyboard: disabling it while the worker answers may drop focus to the body.
+  const fromRow = controls.contains(document.activeElement) ? document.activeElement : null;
   setBusy(true);
   try {
     const result = await chrome.runtime.sendMessage({ type, ...extra });
     if (result?.error) throw new Error(result.error);
     busy = false;
+    refreshSeq++;
     applyState(result);
     if (type === 'deny') status.textContent = 'Request denied.';
     if (type === 'pair') {
@@ -803,6 +852,10 @@ async function send(type, extra = {}, note = '') {
   } finally {
     setBusy(false);
     render();
+    // Back on the pressed button while the row shows (a failed Stop), else on the tab card (see renderControls).
+    if (fromRow && (!document.activeElement || document.activeElement === document.body)) {
+      (controls.hidden ? tabCard : fromRow).focus({ preventScroll: true });
+    }
   }
 }
 

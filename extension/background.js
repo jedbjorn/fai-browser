@@ -1215,7 +1215,7 @@ function minLevel(a, b) {
 // Exact http(s) origins only: what the popup stores is compared as typed.
 // A stored or reported budget {maxCalls, maxMs} within the bounds (extension/permissions.js BUDGET_LIMITS, the same as
 // src/settings.js), with its `source` when the daemon names one; anything else is null (not set).
-const BUDGET_BOUNDS = { maxCalls: [1, 500], maxMs: [1000, 14_400_000] };
+const BUDGET_BOUNDS = { maxCalls: [1, 10_000], maxMs: [1000, 14_400_000] };
 function cleanBudget(value) {
   if (!value || typeof value !== 'object') return null;
   const out = {};
@@ -2589,7 +2589,7 @@ function validateAction(action) {
   if (action.type === 'history' && (!HISTORY_MOVES.has(action.move) || action.target !== undefined)) {
     throw new ExtensionError('unsupported', 'Invalid history move');
   }
-  if (action.type === 'switch_tab' && (typeof action.tab !== 'string' || !/^t\d{1,3}$/.test(action.tab))) {
+  if (action.type === 'switch_tab' && (typeof action.tab !== 'string' || !/^t\d{1,5}$/.test(action.tab))) {
     throw new ExtensionError('unsupported', 'Invalid tab');
   }
   if (action.type === 'dialog' && (!['accept', 'dismiss'].includes(action.answer) || (action.text !== undefined
@@ -4219,6 +4219,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       if (toolbarPopup) reportUsed();
       // The daily check may have found a release since the hello (a service that knows updates said so in it).
       if (connected && updateInfo) await readUpdate().catch(() => {});
+    } else if (message.type === 'state') {
+      // An open popup re-reading the session after a status change: only the reply below (no connect, no "used").
     } else if (message.type === 'invite') {
       // "Invite agent": only the toolbar popup's click creates an invite (never a page, a content script or the
       // approval window); the daemon accepts it only over this paired channel.

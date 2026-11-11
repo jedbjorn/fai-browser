@@ -4,6 +4,7 @@ import { BrowserRuntime, checkActChoice } from '../src/runtime.js';
 import { createHub } from '../src/bridge.js';
 import { grantFor } from '../src/daemon.js';
 import { TOOLS, validateSchema } from '../src/mcp.js';
+import { pageExtras } from '../src/result.js';
 import { FakeBridge, ORIGIN } from './runtime-fixtures.js';
 
 class TabsBridge extends FakeBridge {
@@ -23,6 +24,19 @@ test('task tab grants default single and reject unknown modes', () => {
   const schema = TOOLS.find(tool => tool.name === 'fai_browser_act').inputSchema;
   assert.equal(validateSchema(schema, { requestId: 'req_tabs', openTab: ORIGIN }), null);
   assert.ok(validateSchema(schema, { requestId: 'req_tabs', openTab: ORIGIN, tabMode: 'multiple' }));
+});
+
+test('tab ids take up to five digits (a 10000-call session can open more than 999 tabs over its life)', () => {
+  const schema = TOOLS.find(tool => tool.name === 'fai_browser_act').inputSchema;
+  assert.equal(validateSchema(schema, { tab: 't1000' }), null);
+  assert.equal(validateSchema(schema, { tab: 't99999' }), null);
+  assert.ok(validateSchema(schema, { tab: 't100000' }));
+  const offer = { revision: 'r1', actions: [] };
+  assert.equal(checkActChoice(offer, { tab: 't10000' }), null);
+  assert.match(checkActChoice(offer, { tab: 't100000' }), /tab must be a tab id/);
+  const tabs = [{ id: 't0', url: ORIGIN, title: 'Home' }, { id: 't1000', url: `${ORIGIN}/a`, title: 'A', current: true },
+    { id: 't100000', url: `${ORIGIN}/b`, title: 'B' }];
+  assert.deepEqual(pageExtras({ tabs }).tabs.map(tab => tab.id), ['t0', 't1000']);
 });
 
 test('single mode cannot open or switch even when act options try to elevate the observed grant', async () => {
