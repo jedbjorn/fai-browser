@@ -674,3 +674,21 @@ test('MCP: an ask on a still-pending request names the successor id plainly; the
   const status = text(await ctx.mcp.callTool('fai_browser_status', {}));
   assert.match(status, new RegExp(`owned requests: ${successor.requestId}`));
 });
+
+test('MCP: fai_browser_wait still pending says to wait again, short, never the full approval relay', async t => {
+  const ctx = await mcpSetup(t, { pages: FORM_PAGES, approvalWaitMs: 300 });
+  const first = text(await ctx.mcp.callTool('fai_browser_open', { origins: [ORIGIN], reason: 'Contact form', task: 'write' }));
+  const requestId = /requestId: (\S+)/.exec(first)?.[1];
+  assert.match(first, /next \(relay\): Ask the user to approve/);
+  // No wake in this session: the relay names the background command, then fai_browser_wait for a caller that cannot.
+  assert.match(first, new RegExp(`Otherwise call fai_browser_wait with requestId ${requestId} \\(again while it says pending or paused\\)`));
+  for (let round = 0; round < 2; round++) {
+    const waited = text(await ctx.mcp.callTool('fai_browser_wait', { requestId, maxMs: 200 }));
+    assert.match(waited, new RegExp(`^next \\(wait\\): Still pending after \\d+ s: the user has not approved the request yet\\. `
+      + `Call fai_browser_wait with requestId ${requestId} again \\(that is waiting, not a repeated call\\)\\. Tell the user once if you have not\\.`));
+    assert.doesNotMatch(waited, /Ask the user to approve|--until active/);
+  }
+  await ctx.hub.approve(requestId, { level: 'read-only' });
+  const ready = text(await ctx.mcp.callTool('fai_browser_wait', { requestId, maxMs: 200 }));
+  assert.match(ready, /next \(observe\): The tab is ready/);
+});

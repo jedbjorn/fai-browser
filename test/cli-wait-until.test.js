@@ -351,6 +351,11 @@ test('resumeWaitCommand: absolute node and CLI paths, daemon location variables 
   assert.equal(resumeWaitText('from this result'), '');
   assert.equal(resumeWaitText("req_1; rm -rf ~"), '');
   assert.equal(withResumeWait('Do X.', undefined), 'Do X.');
+  // A session FAI wakes ends its turn; a caller that cannot (a subagent, whose wake goes to the main session) blocks on
+  // fai_browser_wait instead.
+  const woken = resumeWaitText('req_abc', { wake: 'claude-socket' });
+  assert.match(woken, /^FAI Browser wakes this session .* then end your turn\. If you cannot end your turn and be woken \(a subagent, a script\), call fai_browser_wait with requestId req_abc instead, again while it says pending or paused\.$/);
+  assert.doesNotMatch(woken, /--until active/);
 });
 
 test('a paused lease: next tells the agent to relay Resume and start the wait in the background (Agent direct)', () => {
@@ -363,7 +368,7 @@ test('a paused lease: next tells the agent to relay Resume and start the wait in
     assert.ok(next.text.includes(`start \`${command}\` that way now, if one is not already running for this request, `
       + 'and end your turn'), next.text);
     assert.match(next.text, /run_in_background/);
-    assert.match(next.text, /Otherwise ask the user to tell you when they have done it\./);
+    assert.match(next.text, /Otherwise call fai_browser_wait with requestId req_9 \(again while it says pending or paused\), or ask the user to tell you when they have done it\./);
   }
   // A pending approval names the same wait, then observe too (the request keeps the opening task for the digest).
   const pending = directNext({ status: 'needs_user', code: 'select_tab' }, { requestId: 'req_9', approval: 'page' });
