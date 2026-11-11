@@ -2129,7 +2129,10 @@ function checkedObservation(observation, tabId) {
   // The secret handles the agent may use (fill_secret, copy_secret): handles and placeholders only, never a value.
   const secrets = vaultView();
   const tabs = leaseTabsView(observation);
-  return { ...observation, tabId, ...(secrets.length ? { secrets } : {}), ...(tabs ? { tabs } : {}) };
+  // The lease's other exact origins this worker can follow (reachableOrigins): the runtime offers links and URLs there.
+  const reachable = (session?.reachable ?? []).filter(origin => origin !== session.origin);
+  return { ...observation, tabId, ...(secrets.length ? { secrets } : {}), ...(tabs ? { tabs } : {}),
+    ...(reachable.length ? { reachable } : {}) };
 }
 
 // --- Dev logs and JavaScript dialogs, Test site only (docs/REFERENCE.md "Dev logs and JavaScript dialogs") ---------

@@ -477,6 +477,23 @@ function markFloatingActions(observation, actions) {
   actions.splice(0, actions.length, ...floating, ...background);
 }
 
+/**
+ * A link or URL from `fromUrl` to `toUrl` the lease may follow: on the approved site (sameSite), or another exact origin
+ * of the lease that the extension reports it can follow (`observation.reachable`: the lease's exact origins it holds
+ * host access to, issue #30). The extension's list only narrows what the lease lists; it never adds an origin.
+ */
+function navigable(observation, fromUrl, toUrl, allowedOrigins) {
+  if (sameSite(fromUrl, toUrl, allowedOrigins)) return true;
+  if (!Array.isArray(observation?.reachable)) return false;
+  let to;
+  try {
+    to = new URL(toUrl).origin;
+  } catch {
+    return false;
+  }
+  return observation.reachable.includes(to) && allowedOrigins.includes(to);
+}
+
 export function offeredActions(observation, options = {}) {
   // The capability set of the level (src/guardrails.js) plus the additions (extra forbidden labels, every role).
   const guard = policyOf(options);
@@ -499,7 +516,7 @@ export function offeredActions(observation, options = {}) {
 
   // Links are offered only on the approved site: to the current page's origin, or (with a domain root the user
   // approved) to another https subdomain of the same root. The extension refuses any other link click.
-  const linkAllowed = href => Boolean(href) && Boolean(leaseOrigin) && sameSite(observation.url, href, allowedOrigins);
+  const linkAllowed = href => Boolean(href) && Boolean(leaseOrigin) && navigable(observation, observation.url, href, allowedOrigins);
   // A link inside an approved cross-origin frame (extension/frames.js, `frameOrigin`) that navigates only a frame
   // must land on an approved origin (the frame stays readable); one that navigates the tab (_top, or _parent from a
   // frame directly under the page) follows the page's rule above. The frame's page script checks the same again at dispatch.
@@ -674,7 +691,7 @@ export function offeredActions(observation, options = {}) {
   }
   for (const url of (options.allowedUrls ?? []).slice(0, MAX_ALLOWED_URLS)) {
     // The extension only navigates within the selected origin, or its approved domain root.
-    if (leaseOrigin && sameSite(observation.url, url, allowedOrigins)) {
+    if (leaseOrigin && navigable(observation, observation.url, url, allowedOrigins)) {
       reserved.push({
         type: 'navigate_allowed_url',
         url,
@@ -2848,7 +2865,7 @@ export class BrowserRuntime {
         session.why('url:scheme');
         return { result };
       }
-      if (!sameSite(before.url, target.href, config.allowedOrigins)) {
+      if (!navigable(before, before.url, target.href, config.allowedOrigins)) {
         setOutcome(result, 'cross_origin');
         result.needs.message = `${target.origin} is not covered by this request. If the task needs it, request the tab `
           + `again with ${target.origin} added to origins (fai_browser_open with the requestId).`;
