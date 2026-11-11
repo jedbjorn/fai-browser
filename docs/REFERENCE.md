@@ -120,8 +120,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install-fai.ps1
 `-ExecutionPolicy Bypass` applies to that one PowerShell process (Windows' default policy refuses unsigned scripts); it
 changes no setting. CI runs both installers on GitHub's `macos-latest` and `windows-latest` runners
 (`.github/workflows/ci.yml`): check-only, a fresh clone of the latest release and a rerun, and on macOS the full setup
-of the checkout under a pseudo-terminal. The installation of git and Node themselves (winget, the Command Line Tools,
-the `.pkg`) has not run in CI, and neither has a real browser on Windows.
+of the checkout under a pseudo-terminal; on Windows, setup's steps through the CLI and, in the browserless suite,
+`test/platform-install.test.js` (the native host `.bat` started through cmd.exe as Chrome starts it, pairing over its
+stdio and starting the service; the HKCU registry values; registering through an npm `claude.cmd`). The installation
+of git and Node themselves (winget, the Command Line Tools, the `.pkg`) has not run in CI, and neither has a real
+browser on Windows. Not covered on Windows: [wakes](#invites-and-wakes), and whether Firefox, which runs a native host
+in a job object, lets a service the host started outlive it (setup and the MCP server start the service anyway).
 
 ### Native messaging pairing
 
@@ -694,7 +698,9 @@ Loop stoppers: each `requestId` has a call budget (`maxCalls` act/observe calls 
 
 The user can bring a connected coding agent to a tab they already have open, and FAI wakes an idle agent when the user
 approves or resumes its tab. Claude Code, Codex and OpenCode (1.19 to 1.x, through FAI's plugin) can be woken; any
-other host gets the copy-text fallback.
+other host gets the copy-text fallback. Wakes are not supported on Windows yet: they use Unix domain sockets (Claude
+Code's messaging socket, FAI's OpenCode plugin) and look for a `codex` program without an extension, and their tests
+are skipped on the Windows CI runner; an agent there keeps the wait command and the copy line.
 
 **Agent sessions.** Every `fai-browser-mcp` process registers with the daemon right after `initialize` (it never starts
 the daemon: while none answers it retries every 2 to 30 s, and it registers again when a restarted daemon no longer
