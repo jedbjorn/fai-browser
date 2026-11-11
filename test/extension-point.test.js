@@ -279,10 +279,11 @@ test('the annotated screenshot tags each in-view offered control with its action
 
   // One tag per in-view offered control, naming its action id (a select or field would read "a3–a5").
   const inView = observation.controls.filter(c => !c.offscreen && labels[c.id]);
-  // The cap keeps 100 controls, all in view here; at reversible Delete, Buy now, the off-site link and the disabled
-  // button are not offered, so they get no tag.
-  for (const label of ['Delete', 'Buy now', 'Partner', 'Later']) assert.equal(labels[byLabel(observation, label).id], undefined, label);
-  assert.equal(inView.length, observation.controls.filter(c => !c.offscreen).length - 4);
+  // The cap keeps 100 controls, all in view here; at reversible Delete, Buy now and the disabled button are not
+  // offered, so they get no tag. The off-site link is listed with its destination (other_site), so it is tagged.
+  for (const label of ['Delete', 'Buy now', 'Later']) assert.equal(labels[byLabel(observation, label).id], undefined, label);
+  assert.equal(offer.actions.find(a => a.target === byLabel(observation, 'Partner').id)?.type, 'other_site');
+  assert.equal(inView.length, observation.controls.filter(c => !c.offscreen).length - 3);
   assert.ok(inView.length >= 95);
   const untagged = inView.filter(c => !result.tags.some(tag => tag.ref === c.id)).map(c => ({ id: c.id, label: c.label, bounds: c.bounds }));
   assert.equal(result.tags.length, inView.length, `untagged: ${JSON.stringify(untagged)}`);

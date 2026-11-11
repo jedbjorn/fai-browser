@@ -13,6 +13,7 @@ import { siteRoot } from './origins.js';
 import { LEVEL_NAMES } from './oversight.js';
 import { capOffer, relevanceHints } from './relevance.js';
 import { withResumeWait } from './resume.js';
+import { NOT_WEB_LINK_TEXT, OTHER_SITE_NEXT, OTHER_SITE_TEXT, otherSiteBrief } from './other-site.js';
 
 export const RESULT_VERSION = 2;
 
@@ -800,19 +801,51 @@ const RELAY_CODES = new Set(['login', 'blocked', 'cross_origin', 'js_dialog']);
  * cap, dropped}: the listing as `actions` [{id, description}], the rest counted in `moreActions`) or from an already
  * lean result (`revision`, `actions`, `moreActions`). Null when the result offers nothing (a run, a refused act).
  */
+/** The links the page script's control cap left out of an observation or offer (`linksDropped`), else 0. */
+function linksDroppedCount(source) {
+  const count = source?.linksDropped;
+  return Number.isInteger(count) && count > 0 ? count : 0;
+}
+
+/**
+ * Links to other sites in a listing: `shown` is the listed actions with each listed other_site line carrying how many
+ * unlisted links go to the same origin (`sameOrigin`, folded into its line); `more` counts the other-site links the
+ * listing shows nothing of (other origins, plus the ones the page script's cap left out, `offSiteDropped`), so the
+ * host knows to ask for them with a focus.
+ */
+function otherSitesOf(all, listed, source) {
+  const shownSet = new Set(listed);
+  const origins = new Set(listed.filter(action => action.type === 'other_site').map(action => action.origin));
+  const folded = new Map();
+  let more = 0;
+  for (const action of all) {
+    if (action.type !== 'other_site' || shownSet.has(action)) continue;
+    if (origins.has(action.origin)) folded.set(action.origin, (folded.get(action.origin) ?? 0) + 1);
+    else more++;
+  }
+  const dropped = source?.offSiteDropped;
+  if (Number.isInteger(dropped) && dropped > 0) more += dropped;
+  const shown = folded.size ? listed.map(action => (action.type === 'other_site' && folded.has(action.origin)
+    ? { ...action, sameOrigin: folded.get(action.origin) } : action)) : listed;
+  return { shown, more };
+}
+
 export function offerOf(result) {
   const offer = result?.offer;
   if (offer && typeof offer === 'object' && Array.isArray(offer.actions) && typeof offer.revision === 'string') {
     const listed = Array.isArray(offer.listed) ? new Set(offer.listed) : null;
     const shown = listed ? offer.actions.filter(action => listed.has(action.id)) : offer.actions;
-    const out = { revision: offer.revision, actions: shown.map(listedAction) };
-    const left = offer.actions.length - shown.length;
+    const sites = otherSitesOf(offer.actions, shown, offer);
+    const out = { revision: offer.revision, actions: sites.shown.map(listedAction) };
+    const left = offer.actions.length - shown.length + linksDroppedCount(offer);
     if (left > 0) out.moreActions = left;
+    if (left > 0 && sites.more > 0) out.moreOtherSites = sites.more;
     return out;
   }
   if (typeof result?.revision === 'string' && Array.isArray(result.actions)) {
     const out = { revision: result.revision, actions: result.actions.map(action => ({ id: action.id, description: action.description, ...(typeof action.needsApproval === 'string' ? { needsApproval: action.needsApproval } : {}) })) };
     if (Number.isInteger(result.moreActions) && result.moreActions > 0) out.moreActions = result.moreActions;
+    if (out.moreActions && Number.isInteger(result.moreOtherSites) && result.moreOtherSites > 0) out.moreOtherSites = result.moreOtherSites;
     return out;
   }
   return null;
@@ -945,6 +978,8 @@ const STATUS_NAMES = {
 // The trusted refusal texts a stop may carry (runtime-written needs.message); anything else falls back to the generic
 // one, so a stop text never repeats a message the runtime did not write.
 const REFUSAL_STOP_TEXTS = new Set([
+  // A point on a javascript:, data: or other non-web link (src/other-site.js).
+  NOT_WEB_LINK_TEXT,
   'FAI never purchases, deletes, sends or logs in. Tell the user what to do in the tab.',
   'FAI never purchases outside testing mode. Tell the user what to do in the tab.',
   'The user reserved this control for themselves. Tell the user what to do in the tab.',
@@ -1050,6 +1085,8 @@ function directNextStep(result, context = {}) {
   }
   if (code === 'select_tab') return { kind: 'relay', text: directApproveText(context.origin, ref, context.approval ?? result.approval, resumeOf(context)) };
   if (code === 'approval_pending') return { kind: 'approve', text: approvalPendingText(result, context.gateWaitMs) };
+  // An act or a point on a link to another site (src/other-site.js): the agent requests that origin itself.
+  if (code === 'cross_origin' && result.needs?.message === OTHER_SITE_TEXT) return { kind: 'relay', text: OTHER_SITE_NEXT };
   if (level && (code === 'refused_action' || code === 'login')) {
     if (result.needs?.who === 'host') {
       return { kind: 'observe', text: `The grant already covers ${level}: call fai_browser_observe with mode "${level}", then choose.` };
@@ -1130,6 +1167,7 @@ export function directResult(source) {
   if (typeof result.revision === 'string') out.revision = result.revision;
   if (Array.isArray(result.actions)) out.actions = result.actions;
   if (Number.isInteger(result.moreActions) && result.moreActions > 0) out.moreActions = result.moreActions;
+  if (out.moreActions && Number.isInteger(result.moreOtherSites) && result.moreOtherSites > 0) out.moreOtherSites = result.moreOtherSites;
   if (result.consent) out.consent = result.consent;
   if (result.overlay) out.overlay = result.overlay;
   const kind = result.next?.kind;
@@ -1363,6 +1401,10 @@ function actionBriefOf(action) {
       return 'wait';
     case 'navigate_allowed_url':
       return action.newTab ? `open ${quoted(action.label)} in this tab` : `open ${action.url}`;
+    // A link that leaves the approved site (src/other-site.js): never clicked; its destination (page data, redacted)
+    // lets the host request that origin and open the link's own address.
+    case 'other_site':
+      return otherSiteBrief(action, action.sameOrigin ?? 0);
     default:
       return String(action.description ?? action.type);
   }
@@ -1401,6 +1443,7 @@ export function leanObserve(response, options = {}) {
     listed = all.filter(action => kept.has(action));
   }
   const instruction = options.instruction || options.answerQuestion || '';
+  const sites = otherSitesOf(all, listed, page);
   const results = withResultActions(recordResultsOf(page, instruction), listed);
   const rawDigest = Array.isArray(response?.digest) ? response.digest : buildDigest(page, instruction).digest;
   const digest = withoutProjectedRows(rawDigest, results).map(digestText).filter(Boolean);
@@ -1408,10 +1451,12 @@ export function leanObserve(response, options = {}) {
     revision: response?.revision ?? page.revision,
     page: { url: page.url, title: page.title, digest, ...(results ? { results } : {}),
       ...(results?.truncated ? { truncated: true } : {}) },
-    actions: listed.map(listedAction),
+    actions: sites.shown.map(listedAction),
   };
-  const left = all.length - listed.length;
+  // Links the page script's control cap left out count too: a focus naming one brings it into the listing.
+  const left = all.length - listed.length + linksDroppedCount(page);
   if (left > 0) out.moreActions = left;
+  if (left > 0 && sites.more > 0) out.moreOtherSites = sites.more;
   if (permissions) out.permissions = permissions;
   // Machine codes from the page script and the runtime (password_field, login_wall, controls_capped:<n>,
   // cross_origin_frame), as in run results. A count the runtime has not added yet (an older daemon) is added here.

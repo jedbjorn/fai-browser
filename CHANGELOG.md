@@ -7,6 +7,17 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 
 ## Unreleased
 
+### Fixed
+
+- **Links a person sees are offered and named by their text** (#32). Text a web component renders inside its link (light-DOM text slotted into a shadow-root `<a>`, slot fallback text, text in a nested component's shadow root) names the link instead of `unlabelled link 1 of 2`, read like `innerText` so a component is never named more leniently than the same visible content in the light DOM (`Del<b>ete</b>` is `Delete`); pages with hundreds of shadow roots or deep component nesting no longer hide links (up to 1000 roots, 10 deep, was 64 and 4); a point on a component link's slotted text lands on the link in Chromium too.
+- **`focus` finds links.** An observe's `focus` also ranks the listing and the page script's control order (the phrase first, controls holding the most terms first), or a link's host or path, so a link it names is listed even past the page script's 100-control cap; links that cap left out count in `moreActions`.
+- **Long blocks are readable and marked when cut.** The page script reads a block's text up to 1500 characters (was 300): a `focus` shows the blocks holding its words whole, a `digestChars` above 1500 shows every long block whole, and any block shown shorter than the page has it ends in `…` (a banner used to end mid-word with no mark).
+- **A point on a plain link works at `read-only`**, exactly as its action id would; a point on a button, a field, a script link, a `javascript:` or `data:` link or a purchase, sign-in or delete control is refused as its action id would be. A point on span-wrapped text slotted into a component's link lands on the link.
+
+### Added
+
+- **Links to other sites are listed with their destination**: `link to <origin><path> (other site): "<label>"` (origin and path only, redacted like other page text; a long or token-bearing path is not shown), never clicked at any level, so the agent can request that origin with the link's own address in `allowedUrls` instead of guessing one. Acting on it returns `cross_origin` with its own `next`: request that origin with `fai_browser_open` and tell the user an approval is coming. At most 5 are listed, one per origin, on top of the control cap, and 5 off-screen ones keep a place under the page script's cap; the `moreActions` line says how many unlisted links go to other sites.
+
 ### Changed
 
 - The per-request call budget now goes up to 10000 calls (was 500) for long sessions: the popup's Advanced, Per-request budget field, `config.json` `budget.maxCalls`, the daemon's and hub's checks of the extension's reported setting and the extension's own check all accept 1 to 10000. The default (50 calls, 20 minutes) and the time bound (4 hours) are unchanged. An older daemon drops a reported setting above 500 and applies `config.json` or the default instead, which the popup shows under the fields. Downgrading: a daemon older than this release refuses to start (and to reload) with a `config.json` `budget.maxCalls` above 500; lower it to 500 or less first.
