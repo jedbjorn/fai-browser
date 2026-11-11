@@ -4286,8 +4286,9 @@ chrome.tabs.onCreated.addListener(tab => {
   const current = session;
   setTimeout(async () => {
     const fresh = await chrome.tabs.get(tab.id).catch(() => null);
-    if (fresh && session === current && current.status === 'active' && !current.childFollow && leaseTab(fresh.openerTabId)
-      && !leaseTab(fresh.id)) startFollow(fresh);
+    if (fresh && session === current && current.status === 'active' && leaseTab(fresh.openerTabId) && !leaseTab(fresh.id)) {
+      startFollow(fresh);
+    }
   }, OPENER_RECHECK_MS);
 });
 chrome.tabs.onActivated.addListener(async info => {
