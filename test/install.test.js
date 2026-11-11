@@ -64,15 +64,16 @@ test('claude project install writes .mcp.json and copies the stamped skill; a re
 });
 
 test('claude install merges an existing .mcp.json, backs it up and adds FAI_HOME', async t => {
-  const { project, install } = await sandbox(t);
+  const { root, project, install } = await sandbox(t);
   const path = join(project, '.mcp.json');
   await writeFile(path, JSON.stringify({ mcpServers: { other: { command: 'x' } }, extra: true }));
-  const result = install(['--host', 'claude'], { FAI_HOME: '/data/fai' });
+  const fai = join(root, 'fai home');
+  const result = install(['--host', 'claude'], { FAI_HOME: fai });
   assert.equal(result.code, 0, result.stderr);
   const config = JSON.parse(read(path));
   assert.deepEqual(config.mcpServers.other, { command: 'x' });
   assert.equal(config.extra, true);
-  assert.deepEqual(config.mcpServers['fai-browser'].env, { FAI_HOME: resolve('/data/fai') });
+  assert.deepEqual(config.mcpServers['fai-browser'].env, { FAI_HOME: fai });
   const [backup] = backups(project);
   assert.match(backup, /^\.mcp\.json\.bak-\d{8}T\d{6}Z$/);
   assert.deepEqual(JSON.parse(read(join(project, backup))).mcpServers, { other: { command: 'x' } });

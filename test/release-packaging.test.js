@@ -134,9 +134,12 @@ test('amo.env: loaded only when the environment lacks the credentials, only the 
   assert.equal(fromEnv.source, 'env');
   assert.equal(fromEnv.env.WEB_EXT_API_KEY, 'k');
   // XDG_CONFIG_HOME and FAI_HOME move the file.
-  assert.equal(amoEnvPath({ HOME: home, XDG_CONFIG_HOME: '/x/cfg' }, 'linux'), '/x/cfg/fai-browser/amo.env');
-  assert.equal(amoEnvPath({ HOME: home, FAI_HOME: '/x/fai' }, 'linux'), '/x/fai/amo.env');
-  assert.equal(amoEnvPath({ HOME: '/Users/u' }, 'darwin'), '/Users/u/Library/Application Support/fai-browser/amo.env');
+  // POSIX path strings: on Windows node:path resolves them onto the current drive (see helpers/platform.js).
+  if (process.platform !== 'win32') {
+    assert.equal(amoEnvPath({ HOME: home, XDG_CONFIG_HOME: '/x/cfg' }, 'linux'), '/x/cfg/fai-browser/amo.env');
+    assert.equal(amoEnvPath({ HOME: home, FAI_HOME: '/x/fai' }, 'linux'), '/x/fai/amo.env');
+    assert.equal(amoEnvPath({ HOME: '/Users/u' }, 'darwin'), '/Users/u/Library/Application Support/fai-browser/amo.env');
+  }
   const missing = await credentialEnv({ HOME: join(home, 'nobody') }, { platform: 'linux' });
   assert.equal(missing.source, null);
 });

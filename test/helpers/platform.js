@@ -21,3 +21,8 @@ export const NO_WAKES = WINDOWS
 
 /** A fake program the test writes as a POSIX shell script (`#!/bin/sh`), which Windows cannot run. */
 export const SH_SHIMS = WINDOWS ? 'the test fakes a program with a #!/bin/sh script, which Windows cannot run' : false;
+
+/** Code that stops a child by its POSIX process group (`process.kill(-pid)`), which Windows does not have. */
+export const POSIX_GROUPS = WINDOWS
+  ? 'stops its child by POSIX process group (process.kill(-pid)); Windows has none, so the child would run on'
+  : false;
