@@ -1787,9 +1787,16 @@ class McpServer {
   async askMore(client, call, requestId, body) {
     const response = await client.ask(requestId, withoutUndefined(body), call.signal);
     const view = response?.request ?? null;
+    // A pending request never grows: asking more on one gives its successor (the old one expires as replaced).
+    const current = typeof response?.requestId === 'string' ? response.requestId : requestId;
     this.noteOwner(view);
-    this.lastRequestId = requestId;
-    return { requestId, state: response?.state ?? view?.state, view, asked: response?.asked === true };
+    if (current !== requestId) {
+      this.ownedRequests.delete(requestId);
+      this.ownedRequests.add(current);
+      this.noteOpencodeOwner(call, current);
+    }
+    this.lastRequestId = current;
+    return { requestId: current, state: response?.state ?? view?.state, view, asked: response?.asked === true };
   }
 
   /**

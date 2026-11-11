@@ -99,6 +99,8 @@ const ASK_KEYS = new Set(['mode', 'origins']);
 const LEASE_CODES = new Set(['stopped', 'paused', 'session_inactive', 'tab_changed', 'origin_changed', 'child_tab',
   'disconnected']);
 const LEASE_SETTLE_MS = 1500;
+// tab_not_ready answers in a row before the request is paused as a lost session (session_inactive).
+const NOT_READY_MAX = 3;
 // How long after an approval the extension may still give it back (`not_approved`: its own check of the tab failed).
 const UNDO_APPROVAL_MS = 30_000;
 
@@ -583,7 +585,8 @@ export function createDaemon(options = {}) {
       grant: record.grant ? { ...record.grant } : null,
       // The agent asked for more on this approved request (a higher level, more origins): it waits for the user's
       // Approve on the same request and tab (issue #30). `askDeclined`: the user declined the last ask.
-      ...(record.ask ? { ask: { level: record.ask.level, origins: [...record.ask.origins], at: iso(record.ask.at) } } : {}),
+      ...(record.ask ? { ask: { id: record.ask.id, level: record.ask.level, origins: [...record.ask.origins],
+        access: [...(record.ask.access ?? [])], at: iso(record.ask.at) } } : {}),
       ...(record.askDeclined ? { askDeclined: iso(record.askDeclined) } : {}),
       reason: record.reason,
       instruction: record.instruction,
@@ -791,8 +794,24 @@ export function createDaemon(options = {}) {
     // Real time, not the daemon's clock: this waits for a message from the browser.
     const until = Date.now() + LEASE_SETTLE_MS;
     while (record.state === 'active' && Date.now() < until) await delay(50);
-    if (record.state !== 'active') return { blocked: blockedResult(record), code };
-    return { code: ['stopped', 'paused', 'session_inactive'].includes(code) ? 'tab_not_ready' : code };
+    if (record.state !== 'active') {
+      record.notReady = 0;
+      return { blocked: blockedResult(record), code };
+    }
+    if (!['stopped', 'paused', 'session_inactive'].includes(code)) return { code };
+    // The browser keeps answering that it does not hold this lease: after NOT_READY_MAX in a row it is no transient
+    // switch but a lost session. The request pauses (session_inactive) so the user's Resume binds the tab again.
+    record.notReady = (record.notReady ?? 0) + 1;
+    if (record.notReady < NOT_READY_MAX) return { code: 'tab_not_ready' };
+    record.notReady = 0;
+    interruptActive(record, 'session_inactive');
+    setState(record, 'paused', 'session_inactive');
+    try {
+      if (record.lease?.leaseId) hub.updateLease(record.lease.leaseId, 'paused', 'session_inactive');
+    } catch (error) {
+      log('hub_update_error', { message: String(error?.message ?? error) });
+    }
+    return { blocked: blockedResult(record), code };
   }
 
   /**
@@ -819,21 +838,53 @@ export function createDaemon(options = {}) {
     const added = [...new Set(origins)].filter(origin => !entryCovered(origin, record.origins));
     if (record.origins.length + added.length > 10) throw badOptions('A request covers at most 10 origins');
     if (record.state === 'pending') {
-      // Not approved yet: the request asks for it all at once.
-      if (mode && levelRank(mode) > levelRank(record.mode)) record.mode = mode;
-      record.origins = [...record.origins, ...added];
-      if (mode || added.length) changed();
-      return { requestId, state: record.state, asked: false, request: viewFor(record, caller) };
+      // Not approved yet, and maybe on the user's screen: it never grows under their cursor (issue #38 review). A
+      // request for more is a successor; this one expires as replaced, so a click on it approves nothing.
+      const raise = mode && levelRank(mode) > levelRank(record.mode);
+      if (!raise && !added.length) return { requestId, state: record.state, asked: false, request: viewFor(record, caller) };
+      const owner = caller ?? (record.ownerSession ? { sessionId: record.ownerSession } : null);
+      const created = createRequest(withoutUndefinedFields({ origins: [...record.origins, ...added], mode: raise ? mode : record.mode,
+        reason: record.reason, instruction: record.instruction ?? undefined, url: record.url ?? undefined }),
+      record.client, owner, record.clientInstance ?? null);
+      const successor = requests.get(created.body.requestId);
+      if (successor && successor !== record) {
+        if (record.browserPinned) {
+          successor.browser = record.browser ? { ...record.browser } : null;
+          successor.browserPinned = true;
+        }
+        record.replacedBy = successor.requestId;
+        setState(record, 'expired', 'replaced');
+        log('request_replaced', { requestId, by: successor.requestId });
+      }
+      return { requestId: created.body.requestId, state: 'pending', asked: false, replaced: requestId,
+        request: viewFor(successor ?? record, caller) };
     }
+    // An approved request: a domain root cannot join it (the lease keeps its exact-origin scope, so a root would be
+    // shown and approved without becoming usable).
+    const roots = added.filter(origin => isSiteEntry(origin));
+    if (roots.length) {
+      throw new HttpError(422, 'ask_root', `A domain root cannot be added to an approved request (${roots[0]}): ask for `
+        + 'the exact origins it needs (a frame list or leftOrigin names them).');
+    }
+    // An exact origin the request already lists that the browser gives FAI Browser no access to yet (the extension
+    // reports the ones it can follow as `reachable`): the ask is for its site access.
+    const reachable = record.runtime?.lastOffer?.observation?.reachable;
+    const access = [...new Set(origins)].filter(origin => !added.includes(origin) && !isSiteEntry(origin)
+      && origin !== record.lease?.origin && !(Array.isArray(reachable) && reachable.includes(origin)));
     const held = record.grant?.level ?? 'read-only';
     const pendingLevel = record.ask?.level ?? null;
     const level = [mode, pendingLevel].filter(item => item && levelRank(item) > levelRank(held))
       .sort((a, b) => levelRank(b) - levelRank(a))[0] ?? null;
     const askOrigins = [...new Set([...(record.ask?.origins ?? []), ...added])];
-    if (!level && !askOrigins.length) return { requestId, state: record.state, asked: false, request: viewFor(record, caller) };
-    record.ask = { level, origins: askOrigins, at: now() };
+    const askAccess = [...new Set([...(record.ask?.access ?? []), ...access])].filter(origin => !askOrigins.includes(origin));
+    if (!level && !askOrigins.length && !askAccess.length) {
+      return { requestId, state: record.state, asked: false, request: viewFor(record, caller) };
+    }
+    // Every ask has its own id: the user's Approve names the one its card showed, and only that one is applied. A second
+    // ask while one waits replaces it (with both), under a new id, so a card showing the first approves nothing.
+    record.ask = { id: randomBytes(6).toString('hex'), level, origins: askOrigins, access: askAccess, at: now() };
     delete record.askDeclined;
-    log('request_ask', { requestId, level, origins: askOrigins.length });
+    log('request_ask', { requestId, level, origins: askOrigins.length, access: askAccess.length });
     changed();
     return { requestId, state: record.state, asked: true, request: viewFor(record, caller) };
   }
@@ -854,11 +905,16 @@ export function createDaemon(options = {}) {
     // The user refused the request (issue #36): said so, never as a technical close.
     if (record.state === 'denied') return outcomeResult('denied', base);
     const closed = outcomeResult('request_closed', base);
-    // Replaced by another request approved in the same browser: the agent continues with that one.
-    if (record.stateReason === 'superseded') {
-      closed.needs.message = 'Another tab request approved in this browser replaced this one. Continue with that requestId.';
-    } else if (record.stateReason === 'replaced') {
-      closed.needs.message = 'A newer request of yours was approved instead. Continue with that requestId.';
+    // Replaced by another approval in the same browser. The successor is named only when it is this agent's own
+    // request (then the agent continues there); anything else is the user's choice of another task.
+    if (['superseded', 'replaced'].includes(record.stateReason)) {
+      const by = record.replacedBy ? requests.get(record.replacedBy) : null;
+      if (by && sameSession(by, record) && LIVE.has(by.state)) {
+        closed.replacedBy = by.requestId;
+        closed.needs.message = `Your request ${by.requestId} replaced this one.`;
+      } else {
+        closed.needs.message = 'The user approved another task in this browser, which ended this one.';
+      }
     }
     return closed;
   }
@@ -908,8 +964,13 @@ export function createDaemon(options = {}) {
     const prior = { state: record.state, stateReason: record.stateReason, lease: record.lease, grant: record.grant,
       origins: [...record.origins], mode: record.mode, ask: record.ask ?? null, runtime: record.runtime,
       bridge: record.bridge, childOrigin: record.childOrigin ?? null, leftOrigin: record.leftOrigin ?? null };
-    // The user approved the agent's ask (issue #30): the origins and level it named join this request first.
-    const asked = event.ask === true && event.requestId === record.requestId && record.ask ? record.ask : null;
+    // The user approved the agent's ask (issue #30): exactly the ask the card showed (its id), or nothing.
+    if (event.ask === true && (!record.ask || event.requestId !== record.requestId || event.askId !== record.ask.id)) {
+      return replyTo(event, { error: { code: 'ask_changed', message: record.ask
+        ? 'The agent changed what it asks for since this card showed it. Nothing was approved: check the card again.'
+        : 'Nothing is asked on this request any more. Nothing was approved.' } });
+    }
+    const asked = event.ask === true ? record.ask : null;
     if (asked) {
       record.origins = [...new Set([...record.origins, ...asked.origins])];
       if (asked.level && levelRank(asked.level) > levelRank(record.mode)) record.mode = asked.level;
@@ -921,8 +982,7 @@ export function createDaemon(options = {}) {
       record.mode = prior.mode;
       record.ask = prior.ask;
     } else {
-      record.undo = { leaseId: reply.leaseId, at: now(), prior };
-      expireReplaced(record);
+      record.undo = { leaseId: reply.leaseId, at: now(), prior, expired: expireReplaced(record) };
       if (asked) {
         delete record.askDeclined;
         log('request_ask_approved', { requestId: record.requestId, level: record.grant?.level, origins: asked.origins.length });
@@ -982,18 +1042,31 @@ export function createDaemon(options = {}) {
    * approved (issue #36). A request the agent asked for after this one is left alone; so are invited tabs.
    */
   function expireReplaced(record) {
+    const expired = [];
     const owner = record.ownerSession ?? null;
     const instance = owner ? null : record.clientInstance ?? null;
-    if (!owner && !instance) return;
+    if (!owner && !instance) return expired;
+    // Only in the browser the approval happened in (one lease per browser): a request waiting in another browser does
+    // not compete with it.
     const browserId = record.lease?.browserId ?? null;
     for (const other of [...requests.values()]) {
       if (other === record || other.state !== 'pending' || other.invite || (other.seq ?? 0) >= (record.seq ?? 0)) continue;
-      const same = owner ? other.ownerSession === owner : !other.ownerSession && other.clientInstance === instance;
-      if (!same) continue;
-      if (browserId && other.browserPinned && other.browser?.id && other.browser.id !== browserId) continue;
+      if (!sameSession(other, record)) continue;
+      if (browserId && other.browser?.id && other.browser.id !== browserId) continue;
+      other.replacedBy = record.requestId;
       setState(other, 'expired', 'replaced');
+      expired.push(other);
       log('request_replaced', { requestId: other.requestId, by: record.requestId });
     }
+    return expired;
+  }
+
+  // Whether two requests come from the same agent: the same owner session, else (no session) the same client instance.
+  function sameSession(a, b) {
+    const owner = b.ownerSession ?? null;
+    if (owner) return a.ownerSession === owner;
+    const instance = b.clientInstance ?? null;
+    return Boolean(instance) && !a.ownerSession && a.clientInstance === instance;
   }
 
   /**
@@ -1005,8 +1078,17 @@ export function createDaemon(options = {}) {
   function revertApproval(record, leaseId) {
     const undo = record.undo;
     if (!undo || undo.leaseId !== leaseId || now() - undo.at > UNDO_APPROVAL_MS) return false;
+    if (record.state !== 'active' || record.lease?.leaseId !== leaseId) return false;
     const { prior } = undo;
     record.undo = null;
+    // The requests this approval replaced wait again (it was never made).
+    for (const other of undo.expired ?? []) {
+      if (other.state === 'expired' && other.stateReason === 'replaced' && other.replacedBy === record.requestId) {
+        delete other.replacedBy;
+        other.endedAt = null;
+        setState(other, 'pending', null);
+      }
+    }
     const regrant = prior.lease?.leaseId === leaseId;
     record.origins = prior.origins;
     record.mode = prior.mode;
@@ -1025,7 +1107,9 @@ export function createDaemon(options = {}) {
       changed();
       return true;
     }
-    interruptActive(record, 'session_inactive');
+    // A run that started on the given-back lease ends as what the request is again (waiting, or its pause).
+    interruptActive(record, prior.state === 'pending' ? 'select_tab'
+      : PAUSE_REASONS.has(prior.stateReason) ? prior.stateReason : 'paused');
     try {
       hub.forgetLease?.(leaseId);
     } catch (error) {
@@ -1058,6 +1142,7 @@ export function createDaemon(options = {}) {
     const browserId = typeof event.browserId === 'string' ? event.browserId : null;
     for (const other of requests.values()) {
       if (other !== record && LEASED.has(other.state) && sameBrowser(other, browserId)) {
+        other.replacedBy = record.requestId;
         endRequest(other, 'released', 'superseded', { interrupt: 'request_closed' });
       }
     }
@@ -1333,6 +1418,8 @@ export function createDaemon(options = {}) {
     invite.joinedBy = session.sessionId;
     invite.joinedView = sessions.view(session.sessionId);
     record.ownerSession = session.sessionId;
+    // The agent that joins now owns the invited tab: its older pending requests are replaced by it (issue #36).
+    expireReplaced(record);
     record.lastCallAt = now();
     log('invite_joined', { inviteId: invite.inviteId, requestId: record.requestId, sessionId: invite.joinedBy });
     changed();

@@ -1065,6 +1065,8 @@ export function createHub({
           tabMode: message.tabMode ?? 'single',
           // The user approved what the agent asked for on this request (a higher level, another origin): it joins it.
           ask: message.ask === true,
+          // Which ask the user's card showed: only that exact ask is applied.
+          askId: typeof message.askId === 'string' ? message.askId.slice(0, 64) : null,
           // The browser the user approved in: the lease, and every command of it, belong to it.
           browserId,
           browser: browserRef(),

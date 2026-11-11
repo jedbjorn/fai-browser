@@ -2358,7 +2358,8 @@ async function followChild(tab) {
   const fresh = await chrome.tabs.get(tab.id).catch(() => null);
   if (fresh?.active && session === current && current.status === 'active') {
     current.tabId = tab.id;
-    current.origin = originOf(fresh.url ?? url) ?? current.origin;
+    // The origin that was checked above (the live URL may still read about:blank).
+    current.origin = originOf(url) ?? current.origin;
   }
 }
 
@@ -3557,7 +3558,8 @@ async function bindSession(message, given) {
         sessionId: typeof invite.sessionId === 'string' ? invite.sessionId : null,
         text: typeof invite.text === 'string' ? invite.text.slice(0, 500) : '' })
       : await send('lease', { requestId, tabId: leaseTabId, origin, title, level, tabMode: approvedTabMode, ...asked,
-        ...(message.ask === true ? { ask: true } : {}) });
+        // The ask the user's card showed (its id): the daemon applies exactly that one, or nothing.
+        ...(message.ask === true ? { ask: true, askId: typeof message.askId === 'string' ? message.askId.slice(0, 64) : '' } : {}) });
   } catch (error) {
     settlePending();
     // A failed start (refused lease, daemon unreachable) never leaves the permission it just obtained behind.
@@ -4278,8 +4280,15 @@ function startFollow(tab) {
 // The browser may name a new tab's opener only after its creation event (Chromium for some tabs; issue #30): one more
 // look shortly after, still only for a tab a lease tab opened.
 const OPENER_RECHECK_MS = 250;
+// Tabs created while the session lives (any opener), so a tab that comes to the front with a lease tab as its opener
+// is followed only when it is new: a tab the user opened from that page before the request existed is personal and
+// never adopted. In worker memory only: a worker restart ends the session anyway, and an unknown tab pauses it.
+const MAX_CREATED = 200;
 chrome.tabs.onCreated.addListener(tab => {
   if (session?.status !== 'active') return;
+  session.created ??= new Set();
+  session.created.add(tab.id);
+  if (session.created.size > MAX_CREATED) session.created.delete(session.created.values().next().value);
   if (leaseTab(tab.openerTabId)) {
     startFollow(tab);
     return;
@@ -4307,9 +4316,10 @@ chrome.tabs.onActivated.addListener(async info => {
   // Only a switch inside the leased tab's window matters; working in another window is fine.
   const leased = await chrome.tabs.get(session.tabId).catch(() => null);
   if (leased && leased.windowId !== info.windowId) return;
-  // A tab the request's page opened, seen activated before (or without) its creation event: it is a child (followed,
-  // or a child_tab pause naming its origin), never a tab switch by the user.
-  const tab = await chrome.tabs.get(info.tabId).catch(() => null);
+  // A tab the request's page opened since the session started, whose opener the browser named only now: it is a child
+  // (followed, or a child_tab pause naming its origin), never a tab switch by the user. A tab that existed before
+  // (never seen created in this session) is the user's own: it pauses the session as a tab switch.
+  const tab = current.created?.has(info.tabId) ? await chrome.tabs.get(info.tabId).catch(() => null) : null;
   if (session !== current || current.status !== 'active') return;
   if (tab && leaseTab(tab.openerTabId)) {
     if (!current.childFollow) {

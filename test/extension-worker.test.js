@@ -4083,9 +4083,11 @@ test('#30: with Multiple task tabs a child in front joins and takes the commands
   assert.equal(h.sent.some(m => m.type === 'status'), false);
 });
 
-test('#30: a page-opened tab activated before its creation event is a child, not the user switching tabs', async () => {
+test('#30: a new tab whose opener the browser names only when it comes to the front is a child, not a tab switch', async () => {
   const h = await started();
+  // Created without an opener (Chromium for some tabs), then in front with the request's tab as its opener.
   h.openedTabs.set(95, { url: 'https://signup.example.net/x', status: 'complete', openerTabId: 7, active: true, windowId: 1 });
+  h.chrome.tabs.onCreated.emit({ id: 95, url: 'https://signup.example.net/x', windowId: 1 });
   h.setActiveTab(95);
   h.chrome.tabs.onActivated.emit({ tabId: 95, windowId: 1 });
   const status = await h.waitFor(m => m.type === 'status');
@@ -4098,6 +4100,34 @@ test('#30: a page-opened tab activated before its creation event is a child, not
   other.chrome.tabs.onActivated.emit({ tabId: 96, windowId: 1 });
   const switched = await other.waitFor(m => m.type === 'status');
   assert.equal(switched.reason, 'tab_changed');
+});
+
+// Review item 3: "existing personal tabs are never adopted". A tab the user opened from the task page before the
+// request existed has that page as its opener, but was never created in this session: bringing it forward is a tab
+// switch (paused), never a child that joins, also with Multiple task tabs.
+test('#30: a personal tab opened from the task page before the session is never adopted, also with Multiple task tabs', async () => {
+  const h = await multipleTask();
+  h.openedTabs.set(97, { url: `${ORIGIN}/mine`, status: 'complete', openerTabId: 7, active: true, windowId: 1 });
+  h.setActiveTab(97);
+  h.chrome.tabs.onActivated.emit({ tabId: 97, windowId: 1 });
+  const status = await h.waitFor(m => m.type === 'status');
+  assert.deepEqual({ status: status.status, reason: status.reason }, { status: 'paused', reason: 'tab_changed' });
+  assert.equal(h.groupOf.has(97), false, 'not grouped with the task');
+  const view = await h.send({ type: 'connect' });
+  assert.equal(view.session.tabId, 7, 'the commands never moved to it');
+});
+
+// Review item 11: the session's origin is the one checked for the child, never "null" from a tab still on about:blank.
+test('#30: a child that joins in front keeps the origin that was checked while its tab still reads about:blank', async () => {
+  const h = await multipleTask();
+  h.openedTabs.set(98, { url: 'about:blank', status: 'loading', active: true, windowId: 1 });
+  h.chrome.tabs.onCreated.emit({ id: 98, openerTabId: 7, pendingUrl: `${ORIGIN}/child`, windowId: 1 });
+  h.setActiveTab(98);
+  await h.until(() => h.groupOf.get(98) === h.groupOf.get(7));
+  await sleep(50);
+  const view = await h.send({ type: 'connect' });
+  assert.equal(view.session.tabId, 98);
+  assert.equal(view.session.origin, ORIGIN);
 });
 
 test('#30: another request\'s page opens behind the tab a live request works on, so that request keeps working', async () => {
@@ -4121,11 +4151,12 @@ test('#30: an approved ask updates the session in place: same lease, tabs and pa
   await h.until(() => h.session.requests?.[0]?.ask);
   assert.equal(h.badge, '?', 'an ask waits for the user like a request');
   h.grants.add(`${PARTNER}/*`);
-  const reply = await h.send({ type: 'start', requestId: 'req_1', level: 'reversible', ask: true, tabMode: 'multiple', onSessionTab: true });
+  const reply = await h.send({ type: 'start', requestId: 'req_1', level: 'reversible', ask: true, askId: 'a1b2c3', tabMode: 'multiple', onSessionTab: true });
   assert.equal(reply.error, undefined, JSON.stringify(reply));
   const lease = h.sent.filter(m => m.type === 'lease').at(-1);
-  assert.deepEqual({ ask: lease.ask, tabId: lease.tabId, level: lease.level, tabMode: lease.tabMode },
-    { ask: true, tabId: 7, level: 'reversible', tabMode: 'multiple' });
+  // The card's ask id goes with the approval: the daemon applies exactly that ask.
+  assert.deepEqual({ ask: lease.ask, askId: lease.askId, tabId: lease.tabId, level: lease.level, tabMode: lease.tabMode },
+    { ask: true, askId: 'a1b2c3', tabId: 7, level: 'reversible', tabMode: 'multiple' });
   assert.deepEqual({ level: reply.session.level, tabMode: reply.session.tabMode, leaseId: reply.session.leaseId },
     { level: 'reversible', tabMode: 'multiple', leaseId: LEASE_ID });
   // The added origin is reachable now: a navigation there is allowed, and the observation names it for the runtime.

@@ -2867,8 +2867,13 @@ export class BrowserRuntime {
       }
       if (!navigable(before, before.url, target.href, config.allowedOrigins)) {
         setOutcome(result, 'cross_origin');
-        result.needs.message = `${target.origin} is not covered by this request. If the task needs it, ask the user, then `
-          + `fai_browser_open with this requestId and ${target.origin} in origins: the same request and tab ask for it.`;
+        // Listed by the request but not reachable: the browser gives FAI Browser no access to that site yet.
+        const listed = Array.isArray(config.allowedOrigins) && config.allowedOrigins.includes(target.origin);
+        result.needs.message = listed
+          ? `${target.origin} is approved for this task, but the browser has not given FAI Browser access to it. Ask the `
+            + `user, then fai_browser_open with this requestId and ${target.origin} in origins: they allow its site access.`
+          : `${target.origin} is not covered by this request. If the task needs it, ask the user, then `
+            + `fai_browser_open with this requestId and ${target.origin} in origins: the same request and tab ask for it.`;
         session.why(`url:${target.origin}`);
         return { result };
       }

@@ -42,8 +42,10 @@ async function active(ctx, { level = 'read-only', tabMode = 'single', mode = lev
   return { requestId, leaseId: reply.leaseId };
 }
 
-const approveAsk = (ctx, requestId, { level, origin = ORIGIN, tabId = 1, tabMode = 'single' } = {}) => ctx.hub.emit({
-  type: 'lease', requestId, tabId, origin, title: 'Home', level, tabMode, ask: true });
+// The user's Approve on the ask card: it names the ask the card showed (by default the one waiting now).
+const approveAsk = (ctx, requestId, { level, origin = ORIGIN, tabId = 1, tabMode = 'single', browserId,
+  askId = ctx.daemon.request(requestId).ask?.id } = {}) => ctx.hub.emit({
+  type: 'lease', requestId, tabId, origin, title: 'Home', level, tabMode, ask: true, askId, ...(browserId ? { browserId } : {}) });
 
 test('ask: a higher level on an active request keeps its id, lease, tab and tab mode; nothing before the Approve', async t => {
   const ctx = await setup(t);
@@ -80,7 +82,10 @@ test('ask: an added origin joins the request and its lease only on Approve; Decl
   assert.equal(ctx.daemon.request(requestId).ask, undefined);
   const after = await ctx.api('POST', '/v1/observe', { requestId, afterAsk: true });
   assert.equal(after.body.result.code, 'ask_declined');
-  assert.equal(after.body.result.status, 'needs_user');
+  // Review item 13: the kind and the text agree: continue at the granted level (observe), nothing to relay.
+  assert.equal(after.body.result.status, 'needs_host');
+  assert.equal(directNext(after.body.result, { requestId }).kind, 'observe');
+  assert.match(directNext(after.body.result, { requestId }).text, /Continue at the granted level/);
   const plain = await ctx.api('POST', '/v1/observe', { requestId, afterAsk: true });
   assert.ok(plain.body.actions, 'reported once; the page reads as usual afterwards');
   // Asked again and approved: the origin joins the request and the lease (same lease id).
@@ -118,17 +123,75 @@ test('ask: a paused request (the tab left for an unlisted origin) resumes there 
   assert.equal(ctx.daemon.request(requestId).lease.tabId, 1, 'the same tab');
 });
 
-test('ask on a pending request asks for it all at once; a closed request cannot ask', async t => {
+// Review item 2: a pending request may be on the user's screen; it never grows under the cursor.
+test('ask on a pending request: a successor asks for it all; the shown one expires and its click approves nothing', async t => {
   const ctx = await setup(t);
   const created = await ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Read' });
   const { requestId } = created.body;
-  const asked = await ctx.api('POST', `/v1/requests/${requestId}/ask`, { mode: 'interactive', origins: [PARTNER] });
+  const asked = await ctx.api('POST', `/v1/requests/${requestId}/ask`, { mode: 'full', origins: [PARTNER] });
   assert.equal(asked.body.asked, false);
-  assert.deepEqual([asked.body.request.mode, asked.body.request.origins], ['interactive', [ORIGIN, PARTNER]]);
-  assert.equal((await ctx.api('GET', '/v1/requests')).body.requests.length, 1, 'no second request');
-  await ctx.api('DELETE', `/v1/requests/${requestId}`, {});
-  const closed = await ctx.api('POST', `/v1/requests/${requestId}/ask`, { mode: 'full' });
+  assert.notEqual(asked.body.requestId, requestId, 'a successor, not the request on screen');
+  assert.equal(asked.body.replaced, requestId);
+  assert.deepEqual([asked.body.request.mode, asked.body.request.origins], ['full', [ORIGIN, PARTNER]]);
+  const shown = ctx.daemon.request(requestId);
+  assert.deepEqual([shown.state, shown.stateReason, shown.mode, shown.origins], ['expired', 'replaced', 'read-only', [ORIGIN]]);
+  // The click on the card the user was looking at: nothing is granted, least of all the wider ask.
+  const late = await ctx.hub.approve(requestId, { level: 'full' });
+  assert.equal(late.error.code, 'request_not_pending');
+  assert.equal(ctx.daemon.request(asked.body.requestId).state, 'pending');
+  const unchanged = await ctx.api('POST', `/v1/requests/${asked.body.requestId}/ask`, { origins: [PARTNER] });
+  assert.equal(unchanged.body.requestId, asked.body.requestId, 'nothing new: the same request');
+  await ctx.api('DELETE', `/v1/requests/${asked.body.requestId}`, {});
+  const closed = await ctx.api('POST', `/v1/requests/${asked.body.requestId}/ask`, { mode: 'full' });
   assert.equal(closed.status, 409);
+});
+
+// Review item 1: the Approve applies exactly the ask its card showed.
+test('ask: a click names the ask its card showed; a wider ask since then is refused (ask_changed), nothing granted', async t => {
+  const ctx = await setup(t);
+  const THIRD = 'https://third.example.org';
+  const { requestId, leaseId } = await active(ctx, { level: 'reversible' });
+  await ctx.api('POST', `/v1/requests/${requestId}/ask`, { origins: [PARTNER] });
+  const shown = ctx.daemon.request(requestId).ask;
+  assert.deepEqual(shown.origins, [PARTNER]);
+  // The agent asks for more while the card is on screen (or while the click waits for the site-access prompt).
+  await ctx.api('POST', `/v1/requests/${requestId}/ask`, { origins: [THIRD] });
+  const now = ctx.daemon.request(requestId).ask;
+  assert.notEqual(now.id, shown.id, 'a changed ask is a new ask');
+  assert.deepEqual(now.origins, [PARTNER, THIRD]);
+  const stale = await approveAsk(ctx, requestId, { level: 'reversible', askId: shown.id });
+  assert.equal(stale.error.code, 'ask_changed');
+  assert.deepEqual(ctx.daemon.request(requestId).origins, [ORIGIN], 'nothing granted');
+  assert.equal(ctx.hub.lease(leaseId).allowedOrigins.includes(THIRD), false);
+  // No id at all (an older extension): refused the same way.
+  assert.equal((await approveAsk(ctx, requestId, { level: 'reversible', askId: null })).error.code, 'ask_changed');
+  // The card shows the new ask; its click applies exactly that.
+  const fresh = await approveAsk(ctx, requestId, { level: 'reversible', askId: now.id });
+  assert.equal(fresh.leaseId, leaseId);
+  assert.deepEqual(ctx.daemon.request(requestId).origins, [ORIGIN, PARTNER, THIRD]);
+});
+
+// Review item 5: an origin the request lists that the browser gives no access to is an ask for its site access.
+test('ask: a listed origin the extension cannot reach is asked for as site access, with a truthful refusal first', async t => {
+  const ctx = await setup(t);
+  const created = await ctx.api('POST', '/v1/requests', { origins: [ORIGIN, PARTNER], mode: 'reversible', reason: 'Read' });
+  const { requestId } = created.body;
+  await ctx.hub.approve(requestId, { level: 'reversible' });
+  await ctx.api('POST', '/v1/observe', { requestId });
+  const refused = (await ctx.api('POST', '/v1/act', { requestId, url: `${PARTNER}/start` })).body.result;
+  assert.equal(refused.code, 'cross_origin');
+  assert.match(refused.needs.message, /approved for this task, but the browser has not given FAI Browser access to it/);
+  const asked = await ctx.api('POST', `/v1/requests/${requestId}/ask`, { origins: [PARTNER] });
+  assert.equal(asked.body.asked, true, 'not a no-op');
+  assert.deepEqual([asked.body.request.ask.origins, asked.body.request.ask.access], [[], [PARTNER]]);
+  // Reachable (the extension says it can follow it): nothing to ask.
+  const bridge = ctx.hub.bridgeForTab(1);
+  const real = bridge.observe.bind(bridge);
+  bridge.observe = async (...args) => ({ ...(await real(...args)), reachable: [PARTNER] });
+  await ctx.hub.emit({ type: 'deny', requestId, ask: true });
+  await ctx.api('POST', '/v1/observe', { requestId });
+  const none = await ctx.api('POST', `/v1/requests/${requestId}/ask`, { origins: [PARTNER] });
+  assert.equal(none.body.asked, false);
 });
 
 test('wait {ask: true} returns once the user answered the ask', async t => {
@@ -182,7 +245,7 @@ test('#31: "stopped" only for the user\'s Stop; another stop reason ends the req
   const fourth = await active(ctx);
   const superseded = await ctx.api('POST', '/v1/observe', { requestId: third.requestId });
   assert.equal(superseded.body.result.code, 'request_closed');
-  assert.match(superseded.body.result.needs.message, /replaced this one/);
+  assert.match(superseded.body.result.needs.message, /The user approved another task in this browser/);
   assert.ok(fourth.requestId);
 });
 
@@ -266,26 +329,100 @@ test('#36 item 3: a request whose approval superseded the browser\'s older sessi
   assert.match(old.body.result.needs.message, /replaced this one/);
 });
 
-test('#36 items 4 and 5: an ask on an invited request keeps its id; the older pending request expires, its late click refused', async t => {
+test('#36 items 4 and 5: the invite join replaces the older pending request; an ask on the invited request keeps its id', async t => {
   const ctx = await setup(t);
   const { session, stale, invited, inviteLease } = await issue36(ctx);
-  // Item 5: more origins on the invited request are asked on that request (the same id), not a new request.
+  // Item 4: joining makes the invited tab this agent's; its older pending request (whose Approve did not get through)
+  // expires at once, so its late click (08:22:33) approves nothing.
+  assert.deepEqual([ctx.daemon.request(stale).state, ctx.daemon.request(stale).stateReason], ['expired', 'replaced']);
+  const early = await ctx.hub.emit({ type: 'lease', requestId: stale, tabId: 9, origin: ORIGIN, title: 'Blank',
+    level: 'interactive', browserId: 'b1' });
+  assert.equal(early.error.code, 'request_not_pending');
+  assert.equal(ctx.daemon.request(invited).state, 'active', 'the invited request stays');
+  const waited = await ctx.api('POST', '/v1/observe', { requestId: stale }, { headers: session.headers });
+  assert.equal(waited.body.result.replacedBy, invited);
+  assert.match(waited.body.result.needs.message, new RegExp(`Your request ${invited} replaced this one`));
+  assert.equal(directNext(waited.body.result, { requestId: stale }).kind, 'observe');
+  // 08:22:26: the frame origins as domain roots. A root cannot join an approved request (the lease keeps exact
+  // origins; the user would approve something that never becomes usable): refused with a clear message.
+  const roots = await ctx.api('POST', `/v1/requests/${invited}/ask`, { origins: ['https://*.example.org'] },
+    { headers: session.headers });
+  assert.equal(roots.status, 422);
+  assert.equal(roots.body.error?.code ?? roots.body.code, 'ask_root');
+  // Item 5: the exact frame origin, asked on the invited request: the same id, approved in place.
   const asked = await ctx.api('POST', `/v1/requests/${invited}/ask`, { origins: [PARTNER] }, { headers: session.headers });
   assert.equal(asked.body.asked, true, JSON.stringify(asked.body));
-  assert.equal((await ctx.api('GET', '/v1/requests', undefined, { headers: session.headers })).body.requests.length, 2,
-    'the invited request and the older pending one: no third');
-  const reply = await ctx.hub.emit({ type: 'lease', requestId: invited, tabId: 7, origin: ORIGIN, title: 'Portal',
-    level: 'full', browserId: 'b1', ask: true });
+  const reply = await approveAsk(ctx, invited, { level: 'full', tabId: 7, browserId: 'b1' });
   assert.equal(reply.leaseId, inviteLease, 'the invited lease, approved again in place');
-  // Item 4: the agent's older pending request is replaced by this approval, so it expires now...
-  assert.deepEqual([ctx.daemon.request(stale).state, ctx.daemon.request(stale).stateReason], ['expired', 'replaced']);
-  // ...and the click on it that arrives late (a site-access prompt that answered after the fact) approves nothing.
-  const late = await ctx.hub.emit({ type: 'lease', requestId: stale, tabId: 9, origin: ORIGIN, title: 'Blank', level: 'interactive',
-    browserId: 'b1' });
-  assert.equal(late.error.code, 'request_not_pending');
-  assert.equal(ctx.daemon.request(invited).state, 'active', 'the approved request stays');
-  const waited = await ctx.api('POST', '/v1/observe', { requestId: stale }, { headers: session.headers });
-  assert.match(waited.body.result.needs.message, /newer request of yours was approved/);
+  assert.deepEqual(ctx.daemon.request(invited).origins, [ORIGIN, PARTNER]);
+});
+
+// Review item 9: an approval given back restores what it replaced, and a run on it does not blame an extension restart.
+test('#36: an approval the extension gives back restores the requests it replaced', async t => {
+  const ctx = await setup(t);
+  const session = await agentSession(ctx);
+  const make = () => ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Read' }, { headers: session.headers })
+    .then(response => response.body.requestId);
+  const older = await make();
+  const newer = await make();
+  const { leaseId } = await ctx.hub.approve(newer, { level: 'read-only' });
+  assert.equal(ctx.daemon.request(older).state, 'expired');
+  await ctx.hub.emit({ type: 'status', leaseId, status: 'stopped', reason: 'not_approved' });
+  assert.equal(ctx.daemon.request(newer).state, 'pending');
+  assert.equal(ctx.daemon.request(older).state, 'pending', 'the replaced request waits again');
+  // A second give-back of the same lease changes nothing.
+  await ctx.hub.emit({ type: 'status', leaseId, status: 'stopped', reason: 'not_approved' });
+  assert.equal(ctx.daemon.request(newer).state, 'pending');
+});
+
+// Review item 7: one lease per browser, so only requests waiting in the same browser are replaced.
+test('#36: an approval replaces the agent\'s older pending requests in the same browser only', async t => {
+  const ctx = await setup(t);
+  const session = await agentSession(ctx);
+  const make = () => ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Read' }, { headers: session.headers })
+    .then(response => response.body.requestId);
+  const elsewhere = await make();
+  await ctx.hub.emit({ type: 'move', requestId: elsewhere, browserId: 'b2' });
+  const here = await make();
+  const approved = await make();
+  const lease = await ctx.hub.emit({ type: 'lease', requestId: approved, tabId: 1, origin: ORIGIN, title: 'Home', level: 'read-only', browserId: 'b1' });
+  assert.ok(lease);
+  assert.equal(ctx.daemon.request(here).state, 'expired');
+  assert.equal(ctx.daemon.request(elsewhere).state, 'pending', 'waiting in another browser');
+});
+
+// Review item 8: a request another agent's (or the user's) approval ended does not name that request.
+test('#36: superseded by another session\'s request: "the user approved another task", no id, stop', async t => {
+  const ctx = await setup(t);
+  const mine = await agentSession(ctx);
+  const theirs = await agentSession(ctx);
+  const make = headers => ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Read' }, { headers })
+    .then(response => response.body.requestId);
+  const first = await make(mine.headers);
+  await ctx.hub.approve(first, { level: 'read-only' });
+  const other = await make(theirs.headers);
+  await ctx.hub.approve(other, { level: 'read-only', tabId: 2 });
+  const closed = (await ctx.api('POST', '/v1/observe', { requestId: first }, { headers: mine.headers })).body.result;
+  assert.equal(closed.code, 'request_closed');
+  assert.equal(closed.replacedBy, undefined);
+  assert.equal(closed.needs.message, 'The user approved another task in this browser, which ended this one.');
+  assert.ok(!closed.needs.message.includes(other));
+  assert.equal(directNext(closed, { requestId: first }).kind, 'stop');
+});
+
+// Review item 10: tab_not_ready does not repeat forever.
+test('#31: a browser that keeps answering it does not hold the lease pauses the request (session_inactive) after three', async t => {
+  const ctx = await setup(t);
+  const { requestId } = await active(ctx);
+  const bridge = ctx.hub.bridgeForTab(1);
+  bridge.observe = async () => { throw bridgeError('session_inactive', 'This browser does not hold that tab lease', false); };
+  const codes = [];
+  for (let i = 0; i < 3; i++) codes.push((await ctx.api('POST', '/v1/observe', { requestId })).body.result.code);
+  assert.deepEqual(codes, ['tab_not_ready', 'tab_not_ready', 'session_inactive']);
+  const view = ctx.daemon.request(requestId);
+  assert.deepEqual([view.state, view.stateReason], ['paused', 'session_inactive']);
+  const blocked = (await ctx.api('POST', '/v1/observe', { requestId })).body.result;
+  assert.match(blocked.needs.message, /^Paused: the browser extension no longer holds this tab/);
 });
 
 test('#36: a request the agent made after the approved one is left alone; another session\'s is too', async t => {

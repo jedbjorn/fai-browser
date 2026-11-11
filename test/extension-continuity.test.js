@@ -20,6 +20,7 @@ import { chromium } from 'playwright-core';
 import { headlessEnv } from '../scripts/headless-env.mjs';
 import { createDaemon } from '../src/daemon.js';
 import { FaiBrowserClient } from '../src/client.js';
+import { call } from './helpers/fake-hub.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const sleep = ms => new Promise(done => setTimeout(done, ms));
@@ -117,6 +118,16 @@ async function activeRequest(env, { mode = 'reversible', tabMode = 'multiple', o
   return requestId;
 }
 
+// The FAI Browser window (popup.html?window=1) in a window of its own, as the worker opens it for a request or an ask.
+async function faiWindow(env) {
+  const cdp = await env.context.browser()?.newBrowserCDPSession?.().catch(() => null);
+  assert.ok(cdp, 'a CDP session to open the FAI Browser window');
+  await cdp.send('Target.createTarget', { url: `chrome-extension://${env.extensionId}/popup.html?window=1`, newWindow: true });
+  const page = await until(() => env.context.pages().find(item => item.url().includes('popup.html')));
+  assert.ok(page, 'the FAI Browser window opened');
+  return page;
+}
+
 const actionFor = (observed, label) => observed.actions.find(action => action.label === label);
 async function act(env, requestId, actionId) {
   const response = await env.client.act({ requestId, actionId, waitMs: 20_000 });
@@ -209,9 +220,7 @@ test('#30 an unapproved origin: refused up front, asked on the same request, app
     assert.match(await card.locator('.ask-meta').innerText(), /Same task and tab: add http:\/\/localhost:\d+/);
     await card.click('.ask-approve');
   } else {
-    // No CDP window: the same worker call the card makes.
-    await env.worker.evaluate(async requestId => approveOnSessionTab({ type: 'start', requestId, level: 'reversible', ask: true,
-      tabMode: 'single' }), requestId);
+    assert.fail('the FAI Browser window with the ask card did not open');
   }
   assert.ok(await until(async () => !(await env.client.getRequest(requestId)).ask), 'the ask is answered');
   const view = await env.client.getRequest(requestId);
@@ -235,8 +244,8 @@ test('#30 a higher level on the same request keeps its id, lease, page and tab m
   const lease = (await env.client.getRequest(requestId)).lease;
   const asked = await env.client.ask(requestId, { mode: 'reversible' });
   assert.equal(asked.request.ask.level, 'reversible');
-  await env.worker.evaluate(async requestId => approveOnSessionTab({ type: 'start', requestId, level: 'reversible', ask: true,
-    tabMode: 'multiple' }), requestId);
+  await env.worker.evaluate(async ({ requestId, askId }) => approveOnSessionTab({ type: 'start', requestId, level: 'reversible', ask: true,
+    askId, tabMode: 'multiple' }), { requestId, askId: asked.request.ask.id });
   const view = await env.client.getRequest(requestId);
   assert.deepEqual([view.requestId, view.state, view.lease.leaseId, view.grant.level, view.grant.tabMode],
     [requestId, 'active', lease.leaseId, 'reversible', 'multiple']);
@@ -261,4 +270,54 @@ test('#31 a command for a lease whose approval is still finishing is not answere
   const old = await env.client.observe({ requestId: first });
   assert.equal(old.result.code, 'request_closed');
   assert.match(old.result.needs.message, /replaced this one/);
+});
+
+// Review item 3, the reviewer's probe: a tab the user opened from the task page before any request existed has that
+// page as its opener. With Multiple task tabs it must never join the request when it comes to the front.
+test('#30 a personal tab opened from the task page before the request is never adopted (Multiple task tabs)', async t => {
+  const env = await launch(t);
+  await env.worker.evaluate(async url => {
+    const [opener] = await chrome.tabs.query({ url: `${url}/` });
+    await chrome.tabs.create({ url: `${url}/details`, openerTabId: opener.id, active: false, windowId: opener.windowId });
+  }, env.origin);
+  await sleep(300);
+  const requestId = await activeRequest(env, { tabMode: 'multiple' });
+  await env.worker.evaluate(async url => {
+    const [mine] = await chrome.tabs.query({ url: `${url}/details` });
+    await chrome.tabs.update(mine.id, { active: true });
+  }, env.origin);
+  assert.ok(await until(async () => (await env.client.getRequest(requestId)).state === 'paused'), 'the request pauses');
+  const view = await env.client.getRequest(requestId);
+  assert.equal(view.stateReason, 'tab_changed');
+  assert.equal(await env.worker.evaluate(() => session.tabs.length), 1, 'the personal tab never joined');
+  const observed = await env.client.observe({ requestId });
+  assert.equal(observed.result?.code, 'tab_changed', 'the agent reads nothing of the personal tab');
+});
+
+// Review item 4: the ask on an active invited tab is approvable from the UI (the FAI Browser window shows its card).
+test('#30 an ask on an invited tab: its card shows in the FAI Browser window and its Approve adds the origin', async t => {
+  const env = await launch(t);
+  // The user's Invite click on the task page (startSession with an invite, as the popup's Invite does).
+  const invited = await env.worker.evaluate(async url => {
+    const [tab] = await chrome.tabs.query({ url: `${url}/` });
+    await startSession({ level: 'reversible', invite: { sessionId: null, text: '', tabId: tab.id, origin: url } }, tab);
+    return { inviteId: session.inviteId, requestId: session.requestId };
+  }, env.origin);
+  assert.ok(invited.inviteId, JSON.stringify(invited));
+  // An agent session joins it.
+  const api = (method, path, body, headers = {}) => call(env.daemon.port, method, path, body, { token: env.daemon.token, headers });
+  const registered = await api('POST', '/v1/sessions', { host: 'claude', repo: 'repo', pid: process.pid, wake: 'none' });
+  const headers = { 'X-Fai-Session': `${registered.body.sessionId}:${registered.body.key}` };
+  assert.equal((await api('POST', `/v1/invites/${invited.inviteId}/join`, {}, headers)).status, 200);
+  const asked = await api('POST', `/v1/requests/${invited.requestId}/ask`, { origins: [env.partner] }, headers);
+  assert.equal(asked.body.asked, true, JSON.stringify(asked.body));
+  const card = await faiWindow(env);
+  await card.waitForSelector('.ask-approve:not([disabled])', { timeout: 5000 });
+  assert.match(await card.locator('.ask-meta').innerText(), /add http:\/\/localhost:\d+/);
+  await card.click('.ask-approve');
+  assert.ok(await until(async () => !(await api('GET', `/v1/requests/${invited.requestId}`, undefined, headers)).body.ask),
+    'the ask is answered from the card');
+  const view = (await api('GET', `/v1/requests/${invited.requestId}`, undefined, headers)).body;
+  assert.equal(view.state, 'active');
+  assert.ok(view.origins.includes(env.partner), JSON.stringify(view.origins));
 });

@@ -198,10 +198,15 @@ function askCard(request) {
   const says = element('p', 'agent-says');
   says.append(element('strong', '', 'Agent says: '), element('span', 'request-reason', String(request.reason ?? '')));
   card.append(top, says);
+  const access = Array.isArray(ask.access) ? ask.access.map(String) : [];
   const parts = [];
   if (added.length) parts.push(`add ${describeOrigins(added).join(', ')}`);
+  if (access.length) parts.push(`allow site access to ${describeOrigins(access).join(', ')}`);
   if (ask.level && LEVEL_TEXT[ask.level]) parts.push(`allow ${LEVEL_TEXT[ask.level].name}`);
   card.append(element('p', 'request-meta ask-meta', `Same task and tab: ${parts.join(' · ')}`));
+  if (added.length || access.length) {
+    card.append(element('p', 'field-help ask-sites', 'The agent may then move between the task\'s sites in its tab.'));
+  }
   const level = levelSelector(wanted);
   card.append(level.node);
   card.dataset.level = level.value();
@@ -226,9 +231,11 @@ function askCard(request) {
 // Approve an ask: site access for the added sites inside this click (the browser asks once), then the worker applies
 // it on the same request (approveOnSessionTab, or this tab).
 function approveAsk(request, wanted, level, own) {
-  const origins = (Array.isArray(request.ask?.origins) ? request.ask.origins : []).filter(origin => !String(origin).includes('*'));
+  const origins = [...(Array.isArray(request.ask?.origins) ? request.ask.origins : []),
+    ...(Array.isArray(request.ask?.access) ? request.ask.access : [])].filter(origin => !String(origin).includes('*'));
   const asked = askSiteAccess(null, { requestId: request.requestId, level, origins, tabMode: 'multiple' });
-  return asked.granted.then(() => send('start', { requestId: request.requestId, level, ask: true,
+  // askId: exactly the ask this card shows; a changed ask is refused (ask_changed) and the card shows the new one.
+  return asked.granted.then(() => send('start', { requestId: request.requestId, level, ask: true, askId: request.ask?.id,
     tabMode: own ? view.session?.tabMode ?? 'single' : tabMode.value, ...(own ? { onSessionTab: true } : {}) }));
 }
 
@@ -259,6 +266,10 @@ function requestCard(request, { serving }) {
   const asked = `asks for ${LEVEL_TEXT[requestedLevel(request)].name}`;
   const meta = [described, asked, request.client ? `from ${request.client}` : ''].filter(Boolean).join(' · ');
   card.append(element('p', 'request-meta', meta));
+  // Several exact sites: approving lets the agent move between them in the task tab (with browser site access).
+  if (origins.filter(origin => !origin.includes('*')).length > 1) {
+    card.append(element('p', 'field-help multi-site', 'The agent may move between these sites in its tab.'));
+  }
   // FAI could not wake the agent after your Approve or Resume: it may be waiting for a message that never came.
   if (request.ownerWake?.state === 'failed') {
     const who = request.owner ? agentLabel(request.owner) : 'your agent';
@@ -642,8 +653,8 @@ function render() {
   const active = view.status === 'active';
   const servingId = active ? view.session?.requestId ?? null : null;
   const visible = (view.requests ?? []).filter(request => {
-    // An active invited tab has its own card (extension/invite-card.js).
-    if (request.invite && request.state === 'active') return false;
+    // An active invited tab has its own card (extension/invite-card.js), unless its agent asks for more on it.
+    if (request.invite && request.state === 'active' && !request.ask) return false;
     if (request.requestId === servingId) return true;
     // The approval window is for new requests only (and the agent's asks on its task): a paused task is resumed from
     // the toolbar popup (issue #13: its Open button there looked like the new request's and took the click meant for it).

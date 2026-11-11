@@ -45,6 +45,9 @@ export function bridgeError(code, message, recoverable = RECOVERABLE_CODES.has(c
   return error;
 }
 
+// A daemon request id, as a result may name one (replacedBy).
+const REQUEST_REF = /^req_[A-Za-z0-9_-]{4,64}$/;
+
 // What a host does after line_break_input (needs.message and the trusted next text).
 const LINE_BREAK_TEXT = "Newlines can't be typed into a single-line field. Fill without the line break, then use "
   + 'submit_field (or the submit option) to submit.';
@@ -266,8 +269,8 @@ const OUTCOMES = {
       + 'its tab and page.',
   },
   ask_declined: {
-    status: 'needs_user',
-    who: 'user',
+    status: 'needs_host',
+    who: 'host',
     reason: 'The user declined the added level or site',
     message: 'The user declined it. Continue at the granted level, or tell the user what is left for them to do.',
   },
@@ -336,7 +339,7 @@ export const LEASE_MESSAGES = Object.freeze({
   tab_changed: `Paused: another tab came to the front in the task tab's window, or the task tab closed. ${RESUME_HINT}`,
   origin_changed: `Paused: the tab left the approved sites. ${RESUME_HINT}`,
   child_tab: `Paused: the page opened a tab or window this task cannot follow. ${RESUME_HINT}`,
-  session_inactive: `Paused: the browser extension restarted. ${RESUME_HINT}`,
+  session_inactive: `Paused: the browser extension no longer holds this tab (it restarted, or lost the task). ${RESUME_HINT}`,
   disconnected: `Paused: the browser extension lost its connection. ${RESUME_HINT}`,
   stopped: 'The user pressed Stop and released the tab. Do not retry without asking.',
   select_tab: OUTCOMES.select_tab.message,
@@ -1102,6 +1105,12 @@ function directNextStep(result, context = {}) {
       ? { kind: 'choose', text: `The expectation did not pass on this page. ${directChooseText(offered.revision)}` }
       : { kind: 'observe', text: 'The expectation did not pass on this page. Observe, then choose.' };
   }
+  if (code === 'request_closed' && typeof result.replacedBy === 'string' && REQUEST_REF.test(result.replacedBy)) {
+    return { kind: 'observe', text: `Your request ${result.replacedBy} replaced this one: continue with fai_browser_observe and requestId ${result.replacedBy}.` };
+  }
+  if (code === 'ask_declined') {
+    return { kind: 'observe', text: `The user declined what you asked for. Continue at the granted level: fai_browser_observe with requestId ${ref}, then choose.` };
+  }
   if (DIRECT_OBSERVE_CODES.has(code) || (result.status === 'needs_host' && code !== 'request_closed')) {
     return { kind: 'observe', text: 'The page changed or the action could not land. Observe again (fai_browser_observe), then choose.' };
   }
@@ -1172,6 +1181,7 @@ export function directResult(source) {
   }
   if (result.point) out.point = result.point;
   if (Array.isArray(result.did) && result.did.length) out.did = result.did;
+  if (typeof result.replacedBy === 'string' && REQUEST_REF.test(result.replacedBy)) out.replacedBy = result.replacedBy;
   // The lease's tabs when there is more than one (a popup or new tab the lease followed): ids for act {tab}.
   if (Array.isArray(result.tabs) && result.tabs.length > 1) out.tabs = result.tabs;
   // A JavaScript dialog the page opened (Test site): its kind and untrusted text.
@@ -1296,6 +1306,8 @@ export function agentResult(source) {
   if (Number.isFinite(result.approvalMs) && result.approvalMs > 0) out.approvalMs = Math.round(result.approvalMs);
   // A host act: one line per action that ran (runtime-written; labels are page text, a typed value only its length).
   if (Array.isArray(result.did) && result.did.length) out.did = result.did.filter(line => typeof line === 'string').slice(0, 25);
+  // Trusted (daemon-written): this agent's own request that replaced a closed one.
+  if (typeof result.replacedBy === 'string' && REQUEST_REF.test(result.replacedBy)) out.replacedBy = result.replacedBy;
   // The lease's tabs, a JavaScript dialog and Test-site logs on the page the act ended on (pageExtras; untrusted).
   Object.assign(out, pageExtras({ tabs: result.tabs, dialog: result.dialog, logs: result.logs, logsDropped: result.logsDropped,
     frames: result.frames, leftOrigin: result.leftOrigin, childOrigin: result.childOrigin }));
