@@ -199,8 +199,10 @@ test('act on an other_site entry refuses as cross_origin, with its own next: the
   const lean = agentResult(result);
   assert.equal(lean.next.kind, 'relay');
   assert.equal(lean.next.text, OTHER_SITE_NEXT);
-  assert.match(lean.next.text, /call fai_browser_open yourself/);
-  assert.ok(!/same request|Ask the user to handle/.test(lean.next.text));
+  assert.match(lean.next.text, /call fai_browser_open yourself with this requestId/);
+  // Issue #30: the same request and tab ask for the origin; never "a new approval".
+  assert.match(lean.next.text, /the same request and tab ask for it/);
+  assert.ok(!/new FAI Browser approval|Ask the user to handle/.test(lean.next.text));
   // Any other cross_origin keeps the generic next.
   const generic = agentResult({ ...result, needs: { ...result.needs, message: 'Ask the user.' } });
   assert.notEqual(generic.next.text, OTHER_SITE_NEXT);

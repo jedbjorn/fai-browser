@@ -577,7 +577,10 @@ function requestLine(view) {
   const browser = view.browser?.name ? `, in ${oneLine(view.browser.name, 40)}` : '';
   // A paused request nobody is expected to continue (the daemon's staleOf): the popup no longer offers it for Resume.
   const stale = ['newer_request', 'idle'].includes(view.stale) ? `, stale (${view.stale})` : '';
-  return `request: ${ids}${active}${origins}${browser}${stale}`;
+  // An ask waiting for the user's Approve on this request (issue #30): what it adds.
+  const asked = view.ask ? [view.ask.level, ...(Array.isArray(view.ask.origins) ? view.ask.origins : [])].filter(Boolean) : [];
+  const ask = asked.length ? `, asks ${asked.join(' ')}` : '';
+  return `request: ${ids}${active}${origins}${browser}${stale}${ask}`;
 }
 
 // One line per connected browser in status: which ones an agent can name as `browser`, and what each holds.
@@ -986,11 +989,14 @@ function nextForRequest(state, view, requestId, resume = undefined) {
       return nextStep('relay', approveHint(view?.origins?.[0], requestId, view?.approval, resume, browserHint(view)));
     case 'paused':
       // A stale request (the daemon's staleOf) is folded away in the popup: say where the user finds its Resume.
-      return nextStep('relay', withResumeWait(`The tab lease is paused${view?.stateReason ? ` (${view.stateReason})` : ''}. `
+      return nextStep('relay', withResumeWait(`The task is paused${view?.stateReason ? ` (${view.stateReason})` : ''}. `
         + (view?.stale ? 'Ask the user to open the FAI Browser popup, unfold Older paused tasks and click Resume on this '
           + 'task, then call ' : 'Ask the user to return to the tab and click Resume in the FAI Browser extension, then call ')
         + `fai_browser_observe with requestId ${requestId}.`, requestId, resume));
     default:
+      if (state === 'denied') {
+        return nextStep('stop', 'The user denied this tab request. Report that; ask again only if the user asks you to.');
+      }
       if (TERMINAL_REQUEST_STATES.has(state)) {
         return nextStep('stop', `This tab request has ended (${state}). Ask the user before requesting a tab again.`);
       }
@@ -1095,6 +1101,7 @@ export function daemonApi(client) {
   return {
     status: signal => call('GET', '/v1/status', undefined, signal),
     requestTab: (body, signal) => call('POST', '/v1/requests', body, signal),
+    ask: (requestId, body, signal) => call('POST', `/v1/requests/${id(requestId)}/ask`, body, signal),
     wait: (body, signal) => call('POST', '/v1/wait', body, signal, longPoll(body.maxMs ?? DEFAULT_WAIT_MS)),
     act: (body, signal) => call('POST', '/v1/act', body, signal, longPoll(body.waitMs)),
     // An observe with waitFor polls the page up to its maxMs first.
@@ -1748,14 +1755,9 @@ class McpServer {
         }
         if (peek && ['active', 'pending', 'paused'].includes(peek.state) && !coversLevel(peek.view, args.mode)
           && peek.view?.origins?.length) {
-          // The task needs a higher level than the user approved for this tab: ask again for the same origins at
-          // that level (the user approves or denies it in the popup; approving supersedes the current lease).
-          const created = await this.createRequest(client, call, {
-            ...args,
-            origins: [...peek.view.origins],
-            reason: args.reason ?? peek.view.reason,
-          });
-          return { requestId: created.requestId, state: created.state, view: { origins: peek.view.origins }, created };
+          // The task needs a higher level than the user approved: ask for it on the same request, which keeps its id,
+          // tab, page and tab mode (issue #30); the user approves the ask in FAI Browser.
+          return this.askMore(client, call, candidate, { mode: args.mode });
         }
         if (peek) {
           return { requestId: candidate, ...peek };
@@ -1768,6 +1770,12 @@ class McpServer {
         const coversMode = coversLevel(peek.view, args.mode);
         if (coversOrigins && coversMode && inBrowser(peek.view, args.browser)) {
           return { requestId: candidate, ...peek };
+        }
+        // The agent names this request and wants more on it (an origin the page leads to, a higher level): the same
+        // request asks for it, so the tab, page and request id stay (issue #30). A new request only without requestId.
+        if (args.requestId && inBrowser(peek.view, args.browser)) {
+          return this.askMore(client, call, candidate, { mode: coversMode ? undefined : args.mode,
+            origins: origins.filter(origin => !entryCovered(origin, granted)) });
         }
       }
     }
@@ -1783,11 +1791,27 @@ class McpServer {
     return { requestId: created.requestId, state: created.state, view: { origins }, created };
   }
 
+  /** Ask the daemon for more on `requestId` (POST /v1/requests/:id/ask) and return it as the request to use. */
+  async askMore(client, call, requestId, body) {
+    const response = await client.ask(requestId, withoutUndefined(body), call.signal);
+    const view = response?.request ?? null;
+    // A pending request never grows: asking more on one gives its successor (the old one expires as replaced).
+    const current = typeof response?.requestId === 'string' ? response.requestId : requestId;
+    this.noteOwner(view);
+    if (current !== requestId) {
+      this.ownedRequests.delete(requestId);
+      this.ownedRequests.add(current);
+      this.noteOpencodeOwner(call, current);
+    }
+    this.lastRequestId = current;
+    return { requestId: current, state: response?.state ?? view?.state, view, asked: response?.asked === true };
+  }
+
   /**
    * Long-poll a pending or paused request for up to the approval allowance (FAI_MCP_APPROVAL_WAIT_MS), with progress
    * notifications if asked. The wait moves the call deadline by the time it took, so the call keeps its budget.
    */
-  async awaitApproval(client, call, requestId) {
+  async awaitApproval(client, call, requestId, { ask = false } = {}) {
     call.waitingOnRequest = true;
     const waitStarted = Date.now();
     // Agent direct: one call waits at most GATE_MAX_WAIT_MS; next says how to keep waiting.
@@ -1810,15 +1834,16 @@ class McpServer {
       for (;;) {
         const roundStarted = Date.now();
         const maxMs = Math.max(0, Math.min(DAEMON_MAX_WAIT_MS, waitUntil - Date.now()));
-        const response = await client.wait({ requestId, maxMs }, call.signal);
+        const response = await client.wait(withoutUndefined({ requestId, maxMs, ask: ask || undefined }), call.signal);
         this.noteBudget(requestId, response.budget);
         const state = response.state ?? response.request?.state;
+        const asking = ask && Boolean(response.request?.ask);
         if (state === 'active') this.sawActive.set(requestId, Date.now());
         this.noteOwner(response.request);
         // The latest word on how the request is approved (its page may have opened by itself meanwhile).
         if (response.request?.approval) call.approval = response.request.approval;
         if (response.request) call.browser = browserHint(response.request);
-        if ((state !== 'pending' && state !== 'paused') || waitUntil - Date.now() <= 0) return state;
+        if (((state !== 'pending' && state !== 'paused') && !asking) || waitUntil - Date.now() <= 0) return state;
         const early = APPROVAL_ROUND_MIN_MS - (Date.now() - roundStarted);
         if (early > 0) await delay(early, undefined, { signal: call.signal });
       }
@@ -1940,12 +1965,15 @@ class McpServer {
     this.settleBudget(this.ledger(requestId));
     const refusal = this.budgetRefusal(requestId);
     if (refusal) return refusal;
-    if (request.state === 'pending' || request.state === 'paused') await this.awaitApproval(client, call, requestId);
+    if (request.state === 'pending' || request.state === 'paused' || request.asked) {
+      await this.awaitApproval(client, call, requestId, { ask: request.asked === true });
+    }
     this.armTaskBudget(call);
-    // observeRoute checks the lease too, so a timeout, denial or revocation never exposes the page.
+    // observeRoute checks the lease too, so a timeout, denial or revocation never exposes the page. After an ask it
+    // also says when the user has not answered it yet or declined it (afterAsk).
     return this.observe(call, withoutUndefined({
       requestId, mode: args.mode, suppliedText: args.suppliedText, allowedUrls: args.allowedUrls, policy: args.policy,
-      task, returnImages: args.returnImages,
+      task, returnImages: args.returnImages, afterAsk: request.asked === true ? true : undefined,
     }));
   }
 
@@ -2229,6 +2257,7 @@ class McpServer {
       digestChars: args.digestChars,
       waitFor: args.waitFor,
       logs: args.logs === true ? true : undefined,
+      afterAsk: args.afterAsk === true ? true : undefined,
       maxMs: args.waitFor ? args.maxMs ?? DEFAULT_OBSERVE_WAIT_MS : undefined,
       capture: images !== 'none',
     });

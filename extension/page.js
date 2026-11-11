@@ -1553,6 +1553,8 @@
   // approved domain root that also covers this page (the worker re-checks every page it lands on).
   function onApprovedSite(url) {
     if (url.origin === location.origin) return true;
+    // Another exact origin the user approved for this tab that the worker can follow (its context `origins`).
+    if (!pageContext.frame && pageContext.origins.includes(url.origin)) return true;
     const inRoot = (host, root) => host === root || host.endsWith(`.${root}`);
     return url.protocol === 'https:' && !url.port && location.protocol === 'https:' && !location.port
       && currentSites.some(root => inRoot(url.hostname, root) && inRoot(location.hostname, root));

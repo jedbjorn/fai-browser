@@ -124,8 +124,9 @@ The current page again: digest, actions, a fresh revision. Nothing runs. Can add
 script's control cap left out included, and says how many of them are links to other sites; use `observe` with a sharper
 `task` or `focus` (a link's text, host or path) to bring them up. A link to another site reads
 `link to https://jane.example.org/site/ (other site): "Our site"`: it is never clicked; to follow it, call
-`fai_browser_open` with `origins` set to that origin and `allowedUrls` set to the address (only the origin when the line
-says `address not shown`); the user approves the new request.
+`fai_browser_open` with the `requestId`, `origins` set to that origin and `allowedUrls` set to the address (only the
+origin when the line says `address not shown`); the same request and tab ask for it, and once the user approves, the
+link is an ordinary click.
 
 ### `fai_browser_wait`
 
