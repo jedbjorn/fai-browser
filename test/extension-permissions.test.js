@@ -149,6 +149,8 @@ async function popup(t, { local = {}, requests = [], state = {}, tabUrl = 'http:
     const granted = new Set(held);
     globalThis.__listeners = listeners;
     globalThis.__state = state;
+    // The worker's request list: a test may replace it (the next reply and session read return it).
+    globalThis.__requests = requests;
     globalThis.__sent = [];
     globalThis.__local = local;
     globalThis.__closed = 0;
@@ -160,7 +162,7 @@ async function popup(t, { local = {}, requests = [], state = {}, tabUrl = 'http:
           async get(keys) { return Object.fromEntries(keys.filter(key => key in __local).map(key => [key, structuredClone(__local[key])])); },
           async set(values) { Object.assign(__local, structuredClone(values)); },
         },
-        session: { async get() { return { requests, approvals: __state.approvals ?? [], connection: { connected, transport: connected ? 'websocket' : 'none', paired: connected, native: __state.native ?? null, ...(__state.connection ?? {}) } }; } },
+        session: { async get() { return { requests: __requests, approvals: __state.approvals ?? [], connection: { connected, transport: connected ? 'websocket' : 'none', paired: connected, native: __state.native ?? null, ...(__state.connection ?? {}) } }; } },
         onChanged: { addListener(listener) { listeners.push(listener); } },
       },
       tabs: { async query() { __tabQueries++; return [{ id: 7, url: tabUrl, title: 'App' }]; } },
@@ -188,7 +190,7 @@ async function popup(t, { local = {}, requests = [], state = {}, tabUrl = 'http:
           __sent.push(message);
           if (message.type === 'pair' && __state.pairError) return { error: __state.pairError };
           const live = connected || (message.type === 'pair' && !__state.pairError);
-          return { status: __state.status ?? null, session: __state.session ?? null, requests,
+          return { status: __state.status ?? null, session: __state.session ?? null, requests: __requests,
             connection: { connected: live, transport: live ? 'websocket' : 'none', paired: live, native: __state.native ?? null,
               ...(__state.control ? { control: __state.control } : {}), ...(__state.connection ?? {}) } };
         },
@@ -724,56 +726,71 @@ test('popup: newest first by activity, at most 5 paused tasks shown, the rest fo
   assert.equal(await page.evaluate(() => __sent.find(message => message.type === 'deny').requestId), 'req_s1');
 });
 
+// --- Pause and Stop at the top ----------------------------------------------------------------------------------------
 // The owner releases a tab in one glance: while an agent holds a tab, Pause and Stop sit right under the header, above
-// every card (new requests, paused tasks, Advanced open), inside the popup's normal size, and first in tab order. In
-// the approval window too. With no session the popup looks as before: no row, no extra space.
-test('popup: Pause and Stop come first, above every card and first in tab order, only while an agent holds a tab', async t => {
-  const minutes = n => new Date(Date.now() - n * 60_000).toISOString();
-  const live = { ...SHOP_REQUEST, requestId: 'req_live', state: 'active', reason: 'Compare shoes', createdAt: minutes(6),
-    lease: { leaseId: 'l1', tabId: 7 } };
-  const paused = { ...SHOP_REQUEST, requestId: 'req_paused', state: 'paused', stateReason: 'child_tab', reason: 'Order history',
-    createdAt: minutes(30), pausedAt: minutes(3), lease: { leaseId: 'l0', tabId: 4 } };
-  const fresh = { ...request(['https://partner.example.net'], 'read-only'), requestId: 'req_new',
-    url: 'https://partner.example.net/home', reason: 'Partner dashboard', createdAt: minutes(1) };
-  const session = { requestId: 'req_live', leaseId: 'l1', tabId: 7, origin: 'https://shop.example.com', status: 'active', level: 'read-only' };
-  // Chrome's popup is at most 600 px tall; the body is 364 px wide.
-  const POPUP = { width: 364, height: 600 };
-  const box = (page, selector) => page.$eval(selector, node => {
-    const rect = node.getBoundingClientRect();
-    return { top: rect.top, bottom: rect.bottom };
-  });
-  const tops = (page, selector) => page.$$eval(selector, nodes => nodes.filter(node => node.getClientRects().length)
-    .map(node => node.getBoundingClientRect().top));
-  // The ids of the first `n` controls Tab reaches from the top of the page.
-  const tabOrder = async (page, n) => {
-    await page.evaluate(() => { document.activeElement?.blur(); window.scrollTo(0, 0); });
-    // A click in the page's top corner moves the browser's focus starting point back to the top (blur alone keeps it).
-    await page.mouse.click(2, 2);
-    const ids = [];
-    for (let i = 0; i < n; i++) {
-      await page.keyboard.press('Tab');
-      ids.push(await page.evaluate(() => document.activeElement?.id || document.activeElement?.className || ''));
-    }
-    return ids;
-  };
-  const checkTop = async (page, what) => {
-    await page.evaluate(() => window.scrollTo(0, 0));
-    assert.equal(await page.locator('#controls').isVisible(), true, `${what}: the row shows`);
-    assert.equal(await page.locator('#pause').isVisible(), true, `${what}: Pause shows`);
-    assert.equal(await page.locator('#stop').isVisible(), true, `${what}: Stop shows`);
-    const header = await box(page, '.topbar');
-    const pause = await box(page, '#pause');
-    const stop = await box(page, '#stop');
-    assert.ok(pause.top >= header.bottom && stop.top >= header.bottom, `${what}: under the header`);
-    assert.ok(Math.max(pause.bottom, stop.bottom) <= POPUP.height, `${what}: inside the popup without scrolling`);
-    const below = await tops(page, '.tab-card, #update, #setup, #invite > *, #approvals > *, #request-list > *, .control-area, #advanced');
-    assert.ok(below.length >= 4, `${what}: the other cards are there`);
-    for (const top of below) assert.ok(top >= Math.max(pause.bottom, stop.bottom), `${what}: above every card (${top})`);
-    assert.deepEqual(await tabOrder(page, 2), ['pause', 'stop'], `${what}: first in tab order`);
-  };
+// every card, inside the popup's normal size, and first in tab order; in the approval window too. They follow the
+// session live while the popup is open. With no session the popup looks as before: no row, no extra space.
+const ago = n => new Date(Date.now() - n * 60_000).toISOString();
+const LIVE = { ...SHOP_REQUEST, requestId: 'req_live', state: 'active', reason: 'Compare shoes', createdAt: ago(6),
+  lease: { leaseId: 'l1', tabId: 7 } };
+const PAUSED = { ...SHOP_REQUEST, requestId: 'req_paused', state: 'paused', stateReason: 'child_tab', reason: 'Order history',
+  createdAt: ago(30), pausedAt: ago(3), lease: { leaseId: 'l0', tabId: 4 } };
+const FRESH = { ...request(['https://partner.example.net'], 'read-only'), requestId: 'req_new',
+  url: 'https://partner.example.net/home', reason: 'Partner dashboard', createdAt: ago(1) };
+const LIVE_SESSION = { requestId: 'req_live', leaseId: 'l1', tabId: 7, origin: 'https://shop.example.com', status: 'active', level: 'read-only' };
+// Chrome's popup is at most 600 px tall; the body is 364 px wide.
+const POPUP = { width: 364, height: 600 };
+// Every card or section that can show besides the row (hidden ones are skipped by `tops`).
+const CARDS = '#pin-hint, #update, #setup, .tab-card, #invite > *, #approvals > *, #request-list > *, .control-area, '
+  + '#connection-line, #advanced';
+const box = (page, selector) => page.$eval(selector, node => {
+  const rect = node.getBoundingClientRect();
+  return { top: rect.top, bottom: rect.bottom };
+});
+const tops = (page, selector) => page.$$eval(selector, nodes => nodes.filter(node => node.getClientRects().length)
+  .map(node => ({ id: node.id || node.className, top: node.getBoundingClientRect().top })));
+const rowShown = page => page.evaluate(() => !document.getElementById('controls').hidden);
+// The worker changes the session's status (storage.local `status`) and, optionally, its request list.
+const workerSays = (page, { status, session = null, requests }) => page.evaluate(([status, session, requests]) => {
+  __state.status = status;
+  __state.session = session;
+  if (requests) {
+    __requests = requests;
+    for (const listener of __listeners) listener({ requests: { newValue: requests } }, 'session');
+  }
+  for (const listener of __listeners) listener({ status: { newValue: status } }, 'local');
+}, [status, session, requests ?? null]);
+// The ids of the first `n` controls Tab reaches from the top of the page.
+async function tabOrder(page, n) {
+  await page.evaluate(() => { document.activeElement?.blur(); window.scrollTo(0, 0); });
+  // A click in the page's top corner moves the browser's focus starting point back to the top (blur alone keeps it).
+  await page.mouse.click(2, 2);
+  const ids = [];
+  for (let i = 0; i < n; i++) {
+    await page.keyboard.press('Tab');
+    ids.push(await page.evaluate(() => document.activeElement?.id || document.activeElement?.className || ''));
+  }
+  return ids;
+}
+async function checkTop(page, what, { atLeast = 4 } = {}) {
+  await page.evaluate(() => window.scrollTo(0, 0));
+  assert.equal(await page.locator('#controls').isVisible(), true, `${what}: the row shows`);
+  assert.equal(await page.locator('#pause').isVisible(), true, `${what}: Pause shows`);
+  assert.equal(await page.locator('#stop').isVisible(), true, `${what}: Stop shows`);
+  const header = await box(page, '.topbar');
+  const pause = await box(page, '#pause');
+  const stop = await box(page, '#stop');
+  assert.ok(pause.top >= header.bottom && stop.top >= header.bottom, `${what}: under the header`);
+  assert.ok(Math.max(pause.bottom, stop.bottom) <= POPUP.height, `${what}: inside the popup without scrolling`);
+  const below = await tops(page, CARDS);
+  assert.ok(below.length >= atLeast, `${what}: the other cards are there (${below.length})`);
+  for (const card of below) assert.ok(card.top >= Math.max(pause.bottom, stop.bottom), `${what}: above ${card.id} (${card.top})`);
+  assert.deepEqual(await tabOrder(page, 2), ['pause', 'stop'], `${what}: first in tab order`);
+}
 
-  const page = await popup(t, { local: { ...PAIRED, status: 'active' }, requests: [paused, live, fresh],
-    tabUrl: 'https://shop.example.com/cart', state: { status: 'active', session } });
+test('popup: Pause and Stop come first, above every card and first in tab order, only while an agent holds a tab', async t => {
+  const page = await popup(t, { local: { ...PAIRED, status: 'active' }, requests: [PAUSED, LIVE, FRESH],
+    tabUrl: 'https://shop.example.com/cart', state: { status: 'active', session: LIVE_SESSION } });
   await page.setViewportSize(POPUP);
   // The list itself is unchanged: the new request first, then the task in use, then the paused one.
   assert.deepEqual(await page.$$eval('#request-list > .request-card', nodes => nodes.map(node => node.dataset.requestId)),
@@ -794,13 +811,13 @@ test('popup: Pause and Stop come first, above every card and first in tab order,
   await page.waitForFunction(() => __sent.some(message => message.type === 'stop'));
 
   // The approval window (Act and Test site requests) shows the same row first while a session runs.
-  const win = await popup(t, { local: { ...PAIRED, status: 'active' }, requests: [live, fresh], query: '?window=1',
-    state: { status: 'active', session } });
+  const win = await popup(t, { local: { ...PAIRED, status: 'active' }, requests: [LIVE, FRESH], query: '?window=1',
+    state: { status: 'active', session: LIVE_SESSION } });
   await win.setViewportSize(POPUP);
   await checkTop(win, 'approval window');
 
   // No session: no row and no space for it; the tab card sits under the header as before and Tab skips them.
-  const idle = await popup(t, { local: { ...PAIRED }, requests: [paused, fresh], tabUrl: 'https://shop.example.com/cart' });
+  const idle = await popup(t, { local: { ...PAIRED }, requests: [PAUSED, FRESH], tabUrl: 'https://shop.example.com/cart' });
   await idle.setViewportSize(POPUP);
   assert.equal(await idle.locator('#controls').isVisible(), false);
   assert.equal(await idle.locator('#stop').isVisible(), false);
@@ -808,9 +825,123 @@ test('popup: Pause and Stop come first, above every card and first in tab order,
   assert.equal((await box(idle, '.tab-card')).top - header.bottom, 17, 'the header margin only, as before');
   assert.ok(!(await tabOrder(idle, 3)).some(id => id === 'pause' || id === 'stop'));
   // A paused session has no Stop either (Release on its card ends it), as before.
-  const pausedOnly = await popup(t, { local: { ...PAIRED, status: 'paused' }, requests: [paused],
-    tabUrl: 'https://shop.example.com/cart', state: { status: 'paused', session: { ...session, status: 'paused' } } });
+  const pausedOnly = await popup(t, { local: { ...PAIRED, status: 'paused' }, requests: [PAUSED],
+    tabUrl: 'https://shop.example.com/cart', state: { status: 'paused', session: { ...LIVE_SESSION, status: 'paused' } } });
   assert.equal(await pausedOnly.locator('#controls').isVisible(), false);
+});
+
+// The cards that only sometimes show: the pin hint, an update, an Approve-once card, the invite picker (the session
+// runs on another tab) and, with the FAI service unreachable, the setup card. Pause and Stop stay above all of them.
+test('popup: Pause and Stop stay above the pin hint, update, approval, invite and setup cards', async t => {
+  const approval = { id: 'approval-1', kind: 'click', cls: 'purchase', origin: 'https://shop.example.com',
+    title: 'Checkout', label: 'Pay now', total: 'Total $20.00', note: 'Complete the order' };
+  const update = { available: true, latest: 'v9.9.9', current: 'v0.7.0', installable: true,
+    notesUrl: 'https://github.com/jedbjorn/fai-browser/releases/tag/v9.9.9' };
+  const elsewhere = { ...LIVE_SESSION, tabId: 9 };
+  const live = { ...LIVE, lease: { leaseId: 'l1', tabId: 9 } };
+  const page = await popup(t, { local: { ...PAIRED, status: 'active' }, pinned: false, requests: [PAUSED, live, FRESH],
+    tabUrl: 'https://shop.example.com/cart', state: { status: 'active', session: elsewhere, approvals: [approval], connection: { update } } });
+  await page.setViewportSize(POPUP);
+  await page.waitForSelector('.approval-card');
+  for (const selector of ['#pin-hint', '#update', '#update-install', '.approval-card', '.invite-picker', '#request-list .request-card']) {
+    assert.equal(await page.locator(selector).first().isVisible(), true, `${selector} shows in this scenario`);
+  }
+  await checkTop(page, 'every card', { atLeast: 8 });
+
+  // The FAI service is not answering while the session is still active: the setup card shows, under the row.
+  const setup = await popup(t, { local: { ...PAIRED, status: 'active' }, pinned: false, connected: false, requests: [LIVE],
+    tabUrl: 'https://shop.example.com/cart', state: { status: 'active', session: LIVE_SESSION, connection: { update } } });
+  await setup.setViewportSize(POPUP);
+  for (const selector of ['#pin-hint', '#update', '#setup']) {
+    assert.equal(await setup.locator(selector).isVisible(), true, `${selector} shows when not connected`);
+  }
+  await checkTop(setup, 'setup card', { atLeast: 5 });
+});
+
+// The popup and the approval window follow the session while they are open (the worker's storage `status`): the row
+// appears when a session starts (approved in the page's request modal) and goes when it ends (released, tab closed,
+// budget spent). Focus stays where the user has it, and nothing moves under a press until it ends.
+test('popup: Pause and Stop appear and disappear with the session while the popup is open', async t => {
+  // (a) The session ends while the popup is open, with keyboard focus on Stop.
+  const page = await popup(t, { local: { ...PAIRED, status: 'active' }, requests: [PAUSED, LIVE, FRESH],
+    tabUrl: 'https://shop.example.com/cart', state: { status: 'active', session: LIVE_SESSION } });
+  await page.setViewportSize(POPUP);
+  assert.equal(await rowShown(page), true);
+  assert.deepEqual(await tabOrder(page, 2), ['pause', 'stop']);
+  const connects = await page.evaluate(() => __sent.filter(message => message.type === 'connect').length);
+  await workerSays(page, { status: 'stopped', requests: [PAUSED, FRESH] });
+  await page.waitForFunction(() => document.getElementById('controls').hidden);
+  assert.equal(await page.$eval('#state-label', node => node.textContent), 'Stopped');
+  assert.equal(await page.$eval('#status', node => node.textContent), 'Stopped');
+  // Focus moved on to the next control, never to nothing.
+  assert.equal(await page.evaluate(() => document.activeElement !== document.body
+    && !document.getElementById('controls').contains(document.activeElement)), true);
+  assert.equal(await page.evaluate(() => Boolean(document.activeElement.closest('.request-card, .requests, #advanced'))), true);
+  // It asked the worker for the session itself once.
+  await page.waitForFunction(count => __sent.filter(message => message.type === 'connect').length > count, connects);
+  // The same status again (this popup's own Stop already applied it) changes nothing.
+  await page.evaluate(() => { document.getElementById('status').textContent = 'Request denied.'; });
+  await workerSays(page, { status: 'stopped' });
+  assert.equal(await page.$eval('#status', node => node.textContent), 'Request denied.');
+
+  // (b) A session starts while the popup is open (approved in the page's modal): the row appears and keyboard focus on
+  // a card's level select stays there.
+  const idle = await popup(t, { local: { ...PAIRED }, requests: [PAUSED, FRESH], tabUrl: 'https://shop.example.com/cart' });
+  await idle.setViewportSize(POPUP);
+  assert.equal(await rowShown(idle), false);
+  await idle.focus('[data-request-id="req_new"] .open-request');
+  await workerSays(idle, { status: 'active', session: LIVE_SESSION, requests: [PAUSED, LIVE, FRESH] });
+  await idle.waitForFunction(() => !document.getElementById('controls').hidden);
+  await idle.waitForSelector('[data-request-id="req_live"][data-state="active"]');
+  assert.equal(await idle.$eval('#state-label', node => node.textContent), 'In use');
+  assert.deepEqual(await idle.evaluate(() => [document.activeElement.closest('.request-card')?.dataset.requestId,
+    document.activeElement.classList.contains('open-request')]), ['req_new', true], 'focus stays on the card');
+  await checkTop(idle, 'started while open');
+
+  // (c) A press in progress (here on the Update button, above the list): the row waits for it to end, so nothing under
+  // the pointer moves mid-press; then only the row's own height moves it.
+  const update = { available: true, latest: 'v9.9.9', current: 'v0.7.0', installable: true,
+    notesUrl: 'https://github.com/jedbjorn/fai-browser/releases/tag/v9.9.9' };
+  const pressed = await popup(t, { local: { ...PAIRED, status: 'active' }, requests: [LIVE, FRESH],
+    tabUrl: 'https://shop.example.com/cart', state: { status: 'active', session: LIVE_SESSION, connection: { update } } });
+  await pressed.setViewportSize(POPUP);
+  await pressed.waitForSelector('#update-install', { state: 'visible' });
+  const button = await pressed.$eval('#update-install', node => {
+    const rect = node.getBoundingClientRect();
+    return { x: rect.left + 20, y: rect.top + rect.height / 2, top: rect.top };
+  });
+  const row = await box(pressed, '#controls');
+  await pressed.mouse.move(button.x, button.y);
+  await pressed.mouse.down();
+  await workerSays(pressed, { status: 'stopped' });
+  await pressed.waitForTimeout(150);
+  assert.equal(await pressed.$eval('#state-label', node => node.textContent), 'Stopped', 'the label follows at once');
+  assert.equal(await rowShown(pressed), true, 'the row waits for the press');
+  assert.equal(await pressed.$eval('#update-install', node => node.getBoundingClientRect().top), button.top, 'nothing moved');
+  // Released away from the button (no click): the row goes, and the button moves up by the row's height only.
+  await pressed.mouse.move(2, 2);
+  await pressed.mouse.up();
+  await pressed.waitForFunction(() => document.getElementById('controls').hidden);
+  const after = await pressed.$eval('#update-install', node => node.getBoundingClientRect().top);
+  assert.equal(Math.round(button.top - after), Math.round(row.bottom - row.top + 12 - 5), 'the row and its margins only');
+  assert.equal(await pressed.evaluate(() => __sent.some(message => message.type === 'update_install')), false);
+
+  // (d) The approval window: a session starts (one request approved in its page's modal) while another still waits.
+  const second = { ...FRESH, requestId: 'req_two', reason: 'Second request', origins: ['https://docs.example.org'],
+    url: 'https://docs.example.org/' };
+  const win = await popup(t, { local: { ...PAIRED }, requests: [FRESH, second], query: '?window=1' });
+  await win.setViewportSize(POPUP);
+  assert.equal(await rowShown(win), false);
+  const started = { ...FRESH, state: 'active', lease: { leaseId: 'l2', tabId: 11 } };
+  await workerSays(win, { status: 'active', session: { ...LIVE_SESSION, requestId: 'req_new', tabId: 11,
+    origin: 'https://partner.example.net' }, requests: [started, second] });
+  await win.waitForFunction(() => !document.getElementById('controls').hidden);
+  await win.waitForSelector('[data-request-id="req_new"][data-state="active"]');
+  assert.equal(await win.evaluate(() => __closed), 0, 'a request still waits: the window stays');
+  await checkTop(win, 'approval window, started while open');
+  // And it goes again when the session ends.
+  await workerSays(win, { status: 'stopped', requests: [second] });
+  await win.waitForFunction(() => document.getElementById('controls').hidden);
 });
 
 test('approval window: it closes itself when no pending or paused request is left', async t => {

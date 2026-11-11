@@ -1,6 +1,7 @@
 // Popup: pending tab requests from agents (level and, for a domain root, site scope), the active session's Pause and
-// Stop (right under the header, before every card, while an agent holds a tab), setup state (pairing is automatic through the native host; Pair retries it), and an Advanced section
-// (approvals, test sites, budget, connection with the manual pairing fallback).
+// Stop (right under the header, before every card, while an agent holds a tab), setup state (pairing is automatic
+// through the native host; Pair retries it), and an Advanced section (approvals, test sites, budget, connection with
+// the manual pairing fallback).
 // Everything an agent wrote (reason, instruction, client, origins) is rendered with textContent only. The pairing
 // secret is never shown or put into the page: its field only ever holds what the user types, and is cleared once saved.
 import {
@@ -91,7 +92,8 @@ const STATUS_TEXT = {
   stopped: 'Stopped',
 };
 
-function showState(state) {
+// `keepText`: only the label and the controls follow (a background refresh never replaces what the status line says).
+function showState(state, { keepText = false } = {}) {
   view.status = state;
   const testing = state === 'active' && view.session?.level === 'testing';
   stateLabel.dataset.state = testing ? 'testing' : state === 'active' ? 'active' : state === 'paused' ? 'paused' : 'idle';
@@ -100,8 +102,10 @@ function showState(state) {
     paused: 'Paused',
     stopped: 'Stopped',
   }[state] ?? (paired ? 'Ready' : 'Setup needed');
-  status.textContent = STATUS_TEXT[state]
-    ?? (paired ? state || 'Waiting for an agent request. Its page opens in a new tab.' : '');
+  if (!keepText) {
+    status.textContent = STATUS_TEXT[state]
+      ?? (paired ? state || 'Waiting for an agent request. Its page opens in a new tab.' : '');
+  }
   render();
 }
 
@@ -557,6 +561,31 @@ const PAUSED_SHOWN = 5;
 let staleOpen = false;
 let staleAll = false;
 
+// Pause and Stop show exactly while the session is active, and follow it live (the worker's `status` in storage). The
+// row waits while the user presses anything in the popup, so it never moves a control mid-press; otherwise only its
+// own height moves the cards below. Focus on Pause or Stop when the row hides goes on to the next control, not nowhere
+// (Chrome may already have moved it to the body when the reply disabled the pressed button).
+const holdRow = pressGuard(document.querySelector('.app'));
+let rowHadFocus = false;
+document.addEventListener('focusin', event => { rowHadFocus = controls.contains(event.target); });
+function renderControls(active) {
+  if (controls.hidden === !active) return;
+  if (holdRow(render)) return;
+  const focused = controls.contains(document.activeElement)
+    || (rowHadFocus && (!document.activeElement || document.activeElement === document.body));
+  controls.hidden = !active;
+  pause.hidden = !active;
+  if (focused && !active) {
+    rowHadFocus = false;
+    nextControl(controls)?.focus({ preventScroll: true });
+  }
+}
+function nextControl(after) {
+  return [...document.querySelectorAll('button, select, input, summary, a[href]')].find(node => !after.contains(node)
+    && (after.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) && !node.disabled
+    && node.getClientRects().length > 0);
+}
+
 function sectionLabel(text, className) {
   return element('p', `request-section ${className}`, text);
 }
@@ -619,8 +648,7 @@ function render() {
   const firstApprove = requestList.querySelector('.approve-request:not(:disabled)');
   if (firstApprove) firstApprove.id = 'approve';
   requestsEmpty.hidden = !view.connection?.connected || visible.length > 0;
-  controls.hidden = !active;
-  pause.hidden = !active;
+  renderControls(active);
   const transport = view.connection?.connected ? view.connection.transport : 'not connected';
   transportLabel.textContent = `Connection: ${transport}`;
   renderBrowsers();
@@ -685,6 +713,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
     renderBudgetFields();
   }
   if (area === 'local' && changes.secret) paired = Boolean(changes.secret.newValue);
+  // The session started, paused or ended while this popup (or the approval window) is open: approved in the page's
+  // request modal, released by the agent, its tab closed, its budget spent. Follow it at once, then ask the worker for
+  // the session itself (its request, tab and level). A change this popup's own Pause, Stop or Approve already applied
+  // from the worker's reply is no change here.
+  if (area === 'local' && changes.status && (changes.status.newValue ?? null) !== (view.status ?? null)) {
+    showState(changes.status.newValue);
+    chrome.runtime.sendMessage({ type: 'connect' }).then(state => {
+      if (!state || state.error) return;
+      applyState({ ...state, status: undefined });
+      if (state.status) showState(state.status, { keepText: true });
+    }, () => {});
+  }
   if (area === 'local' && changes.permissions) {
     permissions = normalizePermissions(changes.permissions.newValue);
     renderPermissions();

@@ -10,6 +10,7 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 ### Changed
 
 - **Pause and Stop come first in the popup.** While an agent holds a tab, the two buttons sit right under the header, above the tab card, new requests, paused tasks and every other card (also in the approval window), inside the popup's normal size and first in tab order, so you can release a tab at a glance. Same buttons, labels and styles; with no agent connected the popup looks as before.
+- The popup and the approval window now follow the session while they are open: Pause and Stop appear when a session starts (for example approved in the page's request modal) and go when it ends (released, tab closed, budget spent), instead of staying as they were when the popup opened. Keyboard focus stays where it was (on a hidden Stop it moves to the next control), and the row waits until a press in the popup ends.
 
 ## 0.7.0 (2026-11-10)
 
