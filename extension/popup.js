@@ -173,8 +173,59 @@ const STALE_TEXT = {
   idle: 'No agent is waiting for it.',
 };
 
+// The agent asks for more on a task the user already approved (issue #30): another site and/or a higher level, on
+// the same request, tab and page. Approve applies it there (with site access for the added sites, asked in this
+// click); Decline keeps the task as it is. Nothing is granted until the click.
+function askCard(request) {
+  const ask = request.ask;
+  const added = Array.isArray(ask.origins) ? ask.origins.map(String) : [];
+  const wanted = { ...request, mode: ask.level ?? request.grant?.level ?? request.mode,
+    origins: [...new Set([...(Array.isArray(request.origins) ? request.origins.map(String) : []), ...added])] };
+  const card = element('article', 'request-card ask-request');
+  card.dataset.requestId = request.requestId;
+  card.dataset.state = 'ask';
+  const top = element('div', 'card-topline');
+  top.append(element('span', 'card-label', 'AGENT ASKS FOR MORE'), element('span', 'request-age', age(ask.at)));
+  const says = element('p', 'agent-says');
+  says.append(element('strong', '', 'Agent says: '), element('span', 'request-reason', String(request.reason ?? '')));
+  card.append(top, says);
+  const parts = [];
+  if (added.length) parts.push(`add ${describeOrigins(added).join(', ')}`);
+  if (ask.level && LEVEL_TEXT[ask.level]) parts.push(`allow ${LEVEL_TEXT[ask.level].name}`);
+  card.append(element('p', 'request-meta ask-meta', `Same task and tab: ${parts.join(' · ')}`));
+  const level = levelSelector(wanted);
+  card.append(level.node);
+  card.dataset.level = level.value();
+  // The worker's session serves this request: approved on its tab. Otherwise (a paused task this browser lost) on the
+  // tab the popup is on, when the request covers it.
+  const own = view.session?.requestId === request.requestId && ['active', 'paused'].includes(view.status);
+  const covered = Boolean(currentOrigin && originCovered(currentOrigin, wanted.origins));
+  const actions = element('div', 'request-actions');
+  const approve = element('button', 'primary-button approve-request ask-approve', own ? 'Approve on the FAI tab' : 'Approve this tab');
+  approve.type = 'button';
+  approve.disabled = busy || (!own && (!covered || windowMode));
+  approve.addEventListener('click', () => approveAsk(request, wanted, level.value(), own));
+  const decline = element('button', 'link-button deny-request ask-decline', 'Decline');
+  decline.type = 'button';
+  decline.disabled = busy;
+  decline.addEventListener('click', () => send('deny', { requestId: request.requestId, ask: true }, 'Declined. The task keeps what it had.'));
+  actions.append(approve, decline);
+  card.append(actions);
+  return card;
+}
+
+// Approve an ask: site access for the added sites inside this click (the browser asks once), then the worker applies
+// it on the same request (approveOnSessionTab, or this tab).
+function approveAsk(request, wanted, level, own) {
+  const origins = (Array.isArray(request.ask?.origins) ? request.ask.origins : []).filter(origin => !String(origin).includes('*'));
+  const asked = askSiteAccess(null, { requestId: request.requestId, level, origins, tabMode: 'multiple' });
+  return asked.granted.then(() => send('start', { requestId: request.requestId, level, ask: true,
+    tabMode: own ? view.session?.tabMode ?? 'single' : tabMode.value, ...(own ? { onSessionTab: true } : {}) }));
+}
+
 function requestCard(request, { serving }) {
   if (!serving && !here(request)) return elsewhereCard(request);
+  if (request.ask && ['active', 'paused'].includes(request.state)) return askCard(request);
   const card = element('article', 'request-card');
   card.dataset.requestId = request.requestId;
   card.dataset.state = serving ? 'active' : request.state;
@@ -569,14 +620,14 @@ function render() {
     // An active invited tab has its own card (extension/invite-card.js).
     if (request.invite && request.state === 'active') return false;
     if (request.requestId === servingId) return true;
-    // The approval window is for new requests only: a paused task is resumed from the toolbar popup (issue #13: its
-    // Open button there looked like the new request's and took the click meant for it).
-    if (windowMode) return request.state === 'pending';
+    // The approval window is for new requests only (and the agent's asks on its task): a paused task is resumed from
+    // the toolbar popup (issue #13: its Open button there looked like the new request's and took the click meant for it).
+    if (windowMode) return request.state === 'pending' || Boolean(request.ask && here(request));
     // Another browser's paused request stays there; its pending ones are listed with Open here.
     return request.state === 'pending' || (request.state === 'paused' && here(request));
   });
   if (windowMode && !closing && view.connection
-    && !visible.some(request => request.state === 'pending' && here(request))) {
+    && !visible.some(request => (request.state === 'pending' || request.ask) && here(request))) {
     // Approved, denied or expired: nothing left for this window.
     closing = true;
     window.close();

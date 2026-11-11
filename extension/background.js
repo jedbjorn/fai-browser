@@ -872,8 +872,12 @@ async function showApproval() {
   // Only the requests meant for this browser: another browser shows its own (this popup lists them with Open here).
   const pending = requests.filter(item => item.state === 'pending' && here(item)).map(item => item.requestId);
   const fresh = pending.filter(id => !shown.includes(id) && id !== served);
-  if (!fresh.length) return;
-  await chrome.storage.session?.set?.({ shownRequests: [...shown, ...fresh].slice(-SHOWN_KEEP) });
+  // The agent's asks for more on an approved task (issue #30): shown once each, always in the window (its page is
+  // already open), keyed by the ask's time.
+  const asks = requests.filter(item => item.ask && ['active', 'paused'].includes(item.state) && here(item))
+    .map(item => `${item.requestId}#${item.ask.at}`).filter(key => !shown.includes(key));
+  if (!fresh.length && !asks.length) return;
+  await chrome.storage.session?.set?.({ shownRequests: [...shown, ...fresh, ...asks].slice(-SHOWN_KEEP) });
   if (!pairing) return;
   const settings = await chrome.storage.local.get(['approvalWindow', 'openRightAway']);
   // "Open requested pages right away" (on unless turned off): a request with a start URL that asks for Interactive or
@@ -892,7 +896,7 @@ async function showApproval() {
       else await openAndArm(id, level, false).catch(() => left.push(id));
     }
   }
-  if (!left.length || settings.approvalWindow === false) return;
+  if ((!left.length && !asks.length) || settings.approvalWindow === false) return;
   if (await openToolbarPopup()) return;
   const id = stored.approvalWindowId;
   if (Number.isInteger(id) && await chrome.windows.get(id).then(Boolean, () => false)) {
@@ -911,7 +915,8 @@ let badgeTabId = null;
 function updateBadge() {
   let text = '';
   let title = 'FAI Browser';
-  const pendingCount = requests.filter(item => item.state === 'pending' && here(item)).length;
+  const pendingCount = requests.filter(item => (item.state === 'pending' || (item.ask && item.state !== 'pending'))
+    && here(item)).length;
   const live = session && ['active', 'paused'].includes(session.status) ? session : null;
   const tabText = live ? (live.status === 'active' ? 'ON' : 'Ⅱ') : null;
   try {
@@ -3620,6 +3625,8 @@ async function bindSession(message, given) {
   for (const extra of given?.modalPatterns ?? []) if (!session.patterns.includes(extra)) session.patterns.push(extra);
   if (session.tabMode === 'multiple' && !session.patterns.includes(taskPattern)) session.patterns.push(taskPattern);
   for (const extra of askPatterns(message, leaseOrigins)) if (!session.patterns.includes(extra)) session.patterns.push(extra);
+  // The same request resumed: the site access its earlier session held stays with it.
+  if (own && previous === own) for (const kept of own.patterns ?? []) if (!session.patterns.includes(kept)) session.patterns.push(kept);
   session.reachable = await reachableOrigins(session);
   // An armed tab's FAI ? group becomes the session's FAI mark (markTab retitles it).
   if (Number.isInteger(given?.armGroupId)) session.groupId = given.armGroupId;
@@ -4065,6 +4072,11 @@ async function approveOnSessionTab(message) {
   const tabId = session?.tabId;
   const tab = Number.isInteger(tabId) ? await chrome.tabs.get(tabId).catch(() => null) : null;
   if (!tab) throw new Error('No FAI tab to approve on.');
+  // The agent's ask on the task this tab serves (issue #30): approved on the same request, tab and page, or not at all.
+  if (message.ask === true && session?.requestId === message.requestId) {
+    await startSession({ ...message, type: 'start' }, tab);
+    return null;
+  }
   try {
     await startSession({ ...message, type: 'start' }, tab);
     return null;
@@ -4183,7 +4195,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     } else if (message.type === 'deny') {
       if (typeof message.requestId !== 'string') throw new Error('No request to deny');
       for (const arm of [...armed.values()]) if (arm.requestId === message.requestId) await disarm(arm.tabId);
-      await send('deny', { requestId: message.requestId });
+      await send('deny', { requestId: message.requestId, ...(message.ask === true ? { ask: true } : {}) });
     } else if (message.type === 'connect') {
       // Sent when the popup opens or its permissions change: connect with the saved pairing if not connected yet,
       // and re-read the testing environments so the reply's session level is current (no race with onChanged).

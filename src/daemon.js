@@ -21,7 +21,7 @@ import { DEFAULT_BUDGET, checkBudget, loadDaemonSettings } from './settings.js';
 import { LEVELS, clampLevel, isLevel, levelRank, normalizeAdditions } from './guardrails.js';
 import { probeHealth } from './client.js';
 import { pickBrowser } from './bridge.js';
-import { checkOriginEntry, isSiteEntry, leaseOrigins, originCovered, siteRoots, urlCovered } from './origins.js';
+import { checkOriginEntry, entryCovered, isSiteEntry, leaseOrigins, originCovered, siteRoots, urlCovered } from './origins.js';
 import { scrubSecrets } from './secrets.js';
 import { spawn } from 'node:child_process';
 import { automaticCheck, createUpdateChecker, runningUpdate, underTest, claimUpdateLock, writeInstallState } from './update.js';
@@ -780,6 +780,64 @@ export function createDaemon(options = {}) {
       ?? null;
   }
 
+  /**
+   * What a lease code from the extension (stopped, paused, tab_changed, ...) means for `record`: the request's own
+   * state once the extension's status report has arrived (it follows the failed command within moments), as
+   * `{blocked}` (blockedResult) when the request is no longer active. A request still active after LEASE_SETTLE_MS
+   * was not stopped or paused at all (a command that reached the browser while it was still switching to this tab):
+   * `{code: 'tab_not_ready'}`, which says to observe again. Codes that pause the request keep their code.
+   */
+  async function settledLease(record, code) {
+    // Real time, not the daemon's clock: this waits for a message from the browser.
+    const until = Date.now() + LEASE_SETTLE_MS;
+    while (record.state === 'active' && Date.now() < until) await delay(50);
+    if (record.state !== 'active') return { blocked: blockedResult(record), code };
+    return { code: ['stopped', 'paused', 'session_inactive'].includes(code) ? 'tab_not_ready' : code };
+  }
+
+  /**
+   * The agent asks for more on a request (issue #30): a higher level and/or origins the request does not cover yet.
+   * Pending: the request itself asks for them. Approved (active or paused): `record.ask` waits for the user's Approve
+   * on the same request, tab and page; nothing is granted until then (onLeaseEvent applies it). Asks add up until the
+   * user answers. Returns the request view and whether anything was asked.
+   */
+  function askRoute(requestId, body, caller) {
+    checkKeys(body, ASK_KEYS);
+    const record = getRecord(requestId);
+    checkUse(record, caller);
+    touch(record);
+    if (!LIVE.has(record.state)) {
+      throw new HttpError(409, 'request_closed', `This tab request is ${record.state}; request a tab again.`);
+    }
+    const mode = body.mode === undefined ? null : oneOf(body, 'mode', [...LEVELS], null);
+    const origins = body.origins ?? [];
+    if (!Array.isArray(origins) || origins.length > 10) throw badOptions('origins must list at most 10 origins');
+    for (const origin of origins) {
+      const checked = checkOriginEntry(origin);
+      if (checked.error) throw badOptions(checked.error);
+    }
+    const added = [...new Set(origins)].filter(origin => !entryCovered(origin, record.origins));
+    if (record.origins.length + added.length > 10) throw badOptions('A request covers at most 10 origins');
+    if (record.state === 'pending') {
+      // Not approved yet: the request asks for it all at once.
+      if (mode && levelRank(mode) > levelRank(record.mode)) record.mode = mode;
+      record.origins = [...record.origins, ...added];
+      if (mode || added.length) changed();
+      return { requestId, state: record.state, asked: false, request: viewFor(record, caller) };
+    }
+    const held = record.grant?.level ?? 'read-only';
+    const pendingLevel = record.ask?.level ?? null;
+    const level = [mode, pendingLevel].filter(item => item && levelRank(item) > levelRank(held))
+      .sort((a, b) => levelRank(b) - levelRank(a))[0] ?? null;
+    const askOrigins = [...new Set([...(record.ask?.origins ?? []), ...added])];
+    if (!level && !askOrigins.length) return { requestId, state: record.state, asked: false, request: viewFor(record, caller) };
+    record.ask = { level, origins: askOrigins, at: now() };
+    delete record.askDeclined;
+    log('request_ask', { requestId, level, origins: askOrigins.length });
+    changed();
+    return { requestId, state: record.state, asked: true, request: viewFor(record, caller) };
+  }
+
   /** The v1 result a run call returns when the lease is not active. */
   function blockedResult(record, expectation, mode = record.mode) {
     const lease = { requestId: record.requestId, state: record.state };
@@ -793,7 +851,12 @@ export function createDaemon(options = {}) {
     if (record.state === 'released' && record.stateReason === 'stopped') {
       return outcomeResult('stopped', base);
     }
-    return outcomeResult('request_closed', base);
+    const closed = outcomeResult('request_closed', base);
+    // Replaced by another request approved in the same browser: the agent continues with that one.
+    if (record.stateReason === 'superseded') {
+      closed.needs.message = 'Another tab request approved in this browser replaced this one. Continue with that requestId.';
+    }
+    return closed;
   }
 
   /**
@@ -1291,6 +1354,16 @@ export function createDaemon(options = {}) {
   function onDenyEvent(event) {
     const record = requests.get(event.requestId);
     if (!record) return replyTo(event, { error: { code: 'no_request', message: 'No such tab request' } });
+    // The user declined the agent's ask for more: the request keeps what it had (it is not released).
+    if (event.ask === true) {
+      if (!record.ask) return replyTo(event, { error: { code: 'request_not_pending', message: 'Nothing is asked on this request' } });
+      record.ask = null;
+      record.askDeclined = now();
+      log('request_ask_declined', { requestId: record.requestId });
+      if (record.ownerSession && LEASED.has(record.state)) wakeOwner(record, record.state === 'active' ? 'approved' : 'resume');
+      changed();
+      return replyTo(event, { requestId: record.requestId, state: record.state });
+    }
     // A tab another browser holds is only released there (a pending request can be denied from any browser).
     if (LEASED.has(record.state) && !sameBrowser(record, event.browserId)) {
       return replyTo(event, { error: { code: 'request_not_pending', message: 'Another browser holds this tab' } });
@@ -1329,8 +1402,14 @@ export function createDaemon(options = {}) {
   function onStatusEvent(event) {
     const record = findByLease(event.leaseId);
     if (!record) return;
+    // The extension gave back an approval it had just made (its last check of the tab failed): nothing was approved,
+    // and the request is what it was before (never "the user stopped it", issue #31).
+    if (event.status === 'stopped' && event.reason === 'not_approved' && revertApproval(record, event.leaseId)) return;
     if (event.status === 'stopped') {
-      endRequest(record, 'released', 'stopped', { interrupt: 'stopped', notifyHub: false });
+      // `stopped` (the user's Stop, the only reason an extension of this version sends besides not_approved) is the
+      // one the agent is told "the user stopped the tab" for; anything else ended it without the user.
+      const why = event.reason === 'stopped' ? 'stopped' : 'released';
+      endRequest(record, 'released', why, { interrupt: why === 'stopped' ? 'stopped' : 'request_closed', notifyHub: false });
       return;
     }
     if (event.status === 'paused' && record.state === 'active') {
@@ -1692,6 +1771,17 @@ export function createDaemon(options = {}) {
   }
 
   async function finishRun(run, record, raw, spec) {
+    if (LEASE_CODES.has(raw?.code)) {
+      const settled = await settledLease(record, raw.code);
+      const code = settled.blocked?.code ?? settled.code;
+      if (code !== raw.code) {
+        // The receipt's verdict and next were written for the extension's code: they go with it.
+        delete raw.verdict;
+        delete raw.next;
+        setOutcome(raw, code);
+        if (raw.verification) raw.verification = { ...raw.verification, passed: false };
+      }
+    }
     applyLeaseMessage(raw);
     if (record.state === 'paused') withLeftOrigin(record, raw);
     raw.lease = { requestId: record.requestId, state: record.state };
@@ -1970,7 +2060,10 @@ export function createDaemon(options = {}) {
       }
       watched = body.while;
     }
-    await waitUntil(() => !watched.includes(record.state), maxMs, signal);
+    if (body.ask !== undefined && typeof body.ask !== 'boolean') throw badOptions('ask must be a boolean');
+    // ask: also wait while the agent's ask for more on this request waits for the user.
+    await waitUntil(() => !watched.includes(record.state) && !(body.ask === true && record.ask && LIVE.has(record.state)),
+      maxMs, signal);
     touch(record);
     // `budget`: the call budget in effect for this request (the MCP server reads its ceiling from here).
     return { state: record.state, request: viewFor(record, caller), waitedMs: Date.now() - started,
@@ -2196,6 +2289,14 @@ export function createDaemon(options = {}) {
     if (body.capture !== undefined && typeof body.capture !== 'boolean') throw badOptions('capture must be a boolean');
     const capture = body.capture ?? false;
     if (record.state !== 'active') return { state: 'done', requestId: record.requestId, result: blockedResult(record, undefined, spec.mode) };
+    // The open that asked for more (afterAsk): the ask still waits, or the user declined it.
+    if (body.afterAsk !== undefined && typeof body.afterAsk !== 'boolean') throw badOptions('afterAsk must be a boolean');
+    if (body.afterAsk === true && (record.ask || record.askDeclined)) {
+      const code = record.ask ? 'ask_pending' : 'ask_declined';
+      if (!record.ask) delete record.askDeclined;
+      return { state: 'done', requestId: record.requestId, result: outcomeResult(code, {
+        lease: { requestId: record.requestId, state: record.state }, permissions: permissionsOf(spec.mode, record) }) };
+    }
     ensureIdle(record);
     const observeStart = now();
     const terms = standingTerms(record, spec);
@@ -2239,6 +2340,16 @@ export function createDaemon(options = {}) {
       if (/already active/.test(String(error?.message))) throw new HttpError(409, 'run_active', 'A run is active on this lease');
       if (error instanceof TypeError || error instanceof RangeError) throw badOptions(error.message);
       const code = error?.name === 'TimeoutError' ? 'timeout' : isKnownCode(error?.code) ? error.code : 'failed';
+      // A lease code is checked against the request itself (issue #31): the extension's word for one command is not
+      // the request's state.
+      if (LEASE_CODES.has(code)) {
+        const settled = await settledLease(record, code);
+        if (settled.blocked) return { state: 'done', requestId: record.requestId, result: settled.blocked };
+        if (settled.code !== code) {
+          return { state: 'done', requestId: record.requestId, result: outcomeResult(settled.code, {
+            lease: { requestId: record.requestId, state: record.state }, permissions: permissionsOf(spec.mode, record) }) };
+        }
+      }
       const result = outcomeResult(code, {
         detail: code === 'failed' || code === 'timeout' ? String(error?.message ?? error) : undefined,
         lease: { requestId: record.requestId, state: record.state },
@@ -2466,6 +2577,7 @@ export function createDaemon(options = {}) {
     ['GET', /^\/v1\/requests$/, 'requests.list'],
     ['GET', /^\/v1\/requests\/([^/]+)$/, 'requests.get'],
     ['DELETE', /^\/v1\/requests\/([^/]+)$/, 'requests.delete'],
+    ['POST', /^\/v1\/requests\/([^/]+)\/ask$/, 'requests.ask'],
     ['POST', /^\/v1\/wait$/, 'wait'],
     ['GET', /^\/v1\/runs$/, 'runs.list'],
     ['GET', /^\/v1\/runs\/([^/]+)$/, 'runs.get'],
@@ -2592,6 +2704,8 @@ export function createDaemon(options = {}) {
           .map(view);
         return { body: { requests: list } };
       }
+      case 'requests.ask':
+        return { body: askRoute(route.param, body, caller) };
       case 'requests.get': {
         const record = getRecord(route.param);
         return { body: viewFor(record, caller) };

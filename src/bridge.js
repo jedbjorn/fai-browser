@@ -1061,6 +1061,8 @@ export function createHub({
           // anything else is the exact-origin scope.
           scope: message.scope === 'domain' ? 'domain' : 'origin',
           tabMode: message.tabMode ?? 'single',
+          // The user approved what the agent asked for on this request (a higher level, another origin): it joins it.
+          ask: message.ask === true,
           // The browser the user approved in: the lease, and every command of it, belong to it.
           browserId,
           browser: browserRef(),
@@ -1145,7 +1147,8 @@ export function createHub({
       }
       case 'deny': {
         const requestId = typeof message.requestId === 'string' ? message.requestId : null;
-        const event = { type: 'deny', requestId, browserId, reply };
+        // `ask`: the user declined only what the agent asked for on top of an approved request.
+        const event = { type: 'deny', requestId, browserId, reply, ...(message.ask === true ? { ask: true } : {}) };
         if (!emit(event)) reply({ error: { code: 'no_request', message: 'No tab request is pending' } });
         return;
       }
