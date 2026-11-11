@@ -443,7 +443,7 @@
   const TERM_RESERVE = 15;
   const MAX_TERMS = 30;
   // Off-screen controls whose labels are read to find term matches (selectControls).
-  const TERM_SCAN_BUDGET = 1000;
+  const TERM_SCAN_BUDGET = 500;
   // Off-screen links to other sites kept under the cap whatever their position (selectControls).
   const OFFSITE_RESERVE = 5;
   // Visibility checks spent on counting the off-screen controls the cap left out (controlsDropped).
@@ -533,6 +533,24 @@
 
   // Readable frames of the current observation, keyed by their document: { index, el, doc, dx, dy, clip }.
   let frameByDoc = new Map();
+  // Per-observation caches for the rendered-text reads (flatCaches): a control's flatText, whether it renders content
+  // innerText misses (hasFlatParts), and the elements that hold a shadow host (from the observation's shadow roots).
+  let flatCache = null;
+  function flatCaches(roots) {
+    const hostAncestors = new Set();
+    for (const root of roots) {
+      // Up the host's own tree (parentElement stays inside it): every element there holds a component.
+      for (let el = root.host?.parentElement; el && !hostAncestors.has(el); el = el.parentElement) hostAncestors.add(el);
+    }
+    let baseHere = false;
+    try {
+      baseHere = new URL(document.baseURI).origin === location.origin;
+    } catch {
+      // An unparsable base: every href is parsed.
+    }
+    flatCache = { text: new Map(), parts: new Map(), hostAncestors, links: new Map(), baseHere,
+      webPage: location.protocol === 'https:' || location.protocol === 'http:' };
+  }
 
   function intersectsViewport(rect) {
     const inTop = rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0
@@ -868,34 +886,38 @@
   }
 
   // Elements matching `selector` in the document and in the shadow roots, in document order: a root's matches
-  // are spliced in right after its host (before the host's light-DOM children).
+  // come right after its host (before the host's light-DOM children).
   function queryAll(selector, roots) {
-    const lists = new Map([[document, Array.from(document.querySelectorAll(selector))]]);
-    for (const root of roots) lists.set(root, Array.from(root.querySelectorAll(selector)));
-    // Insertion points are searched in each tree's own matches only (compareDocumentPosition across shadow trees
-    // is implementation-defined), so the search runs on an unspliced copy. Roots go in reverse pre-order, so a
-    // nested root's matches are already in its parent root's list when that list is spliced, and whatever already
-    // follows the preceding light-DOM match belongs to a later host: inserting right after that match keeps
-    // document order.
-    const own = new Map(Array.from(lists, ([key, list]) => [key, list.slice()]));
-    for (let i = roots.length - 1; i >= 0; i--) {
-      const root = roots[i];
-      const inner = lists.get(root);
+    const own = new Map([[document, Array.from(document.querySelectorAll(selector))]]);
+    for (const root of roots) own.set(root, Array.from(root.querySelectorAll(selector)));
+    // Where each root goes in its own tree's matches: before the first match that follows its host. Positions are
+    // found in each tree's own matches only (compareDocumentPosition across shadow trees is implementation-defined).
+    // Roots come in pre-order, so the hosts of one tree come in document order and one pointer per tree walks its
+    // matches once (a page of thousands of components costs a comparison per host and per match, not a search each).
+    const placed = new Map();
+    const pointer = new Map();
+    for (const root of roots) {
       const tree = root.host.getRootNode();
-      const outer = lists.get(tree);
-      const pristine = own.get(tree);
-      if (!inner.length || !outer || !pristine) continue;
-      let low = 0;
-      let high = pristine.length;
-      while (low < high) {
-        const middle = (low + high) >> 1;
-        if (root.host.compareDocumentPosition(pristine[middle]) & Node.DOCUMENT_POSITION_FOLLOWING) high = middle;
-        else low = middle + 1;
-      }
-      const at = low > 0 ? outer.indexOf(pristine[low - 1]) + 1 : 0;
-      outer.splice(at, 0, ...inner);
+      const list = own.get(tree);
+      if (!list) continue;
+      let at = pointer.get(tree) ?? 0;
+      while (at < list.length && !(root.host.compareDocumentPosition(list[at]) & Node.DOCUMENT_POSITION_FOLLOWING)) at++;
+      pointer.set(tree, at);
+      if (!placed.has(tree)) placed.set(tree, []);
+      placed.get(tree).push({ at, root });
     }
-    return lists.get(document);
+    const out = [];
+    const emit = tree => {
+      const list = own.get(tree);
+      const inner = placed.get(tree) ?? [];
+      let next = 0;
+      for (let i = 0; i <= list.length; i++) {
+        while (next < inner.length && inner[next].at === i) emit(inner[next++].root);
+        if (i < list.length) out.push(list[i]);
+      }
+    };
+    emit(document);
+    return out;
   }
 
   function normalizeTerms(terms) {
@@ -971,6 +993,12 @@
   // skipped; at most FLAT_TEXT_BUDGET nodes are read. A control that is not rendered itself reads all its text.
   const FLAT_TEXT_BUDGET = 400;
   function flatText(el) {
+    if (flatCache?.text.has(el)) return flatCache.text.get(el);
+    const value = readFlatText(el);
+    flatCache?.text.set(el, value);
+    return value;
+  }
+  function readFlatText(el) {
     let out = '';
     let budget = FLAT_TEXT_BUDGET;
     const filter = el.checkVisibility ? el.checkVisibility({ visibilityProperty: true }) : true;
@@ -1010,15 +1038,28 @@
   // Whether a control renders content innerText does not see: inside a shadow root it places the host's content with
   // a <slot> (a component's own <a> or <button>, whose innerText is only the component's glyphs), or it holds a
   // component whose text lives in its own shadow root. Its label and its guard names then come from flatText.
+  // Within an observation the hosts' ancestors are known (flatCaches), so a light-DOM control costs one set lookup;
+  // outside one (a point's locate on a control the observation left out) a short walk stands in.
   const FLAT_PARTS_BUDGET = 60;
   function hasFlatParts(el) {
-    if (el.getRootNode() !== el.ownerDocument && el.querySelector('slot')) return true;
-    const walker = el.ownerDocument.createTreeWalker(el, NodeFilter.SHOW_ELEMENT);
-    let seen = 0;
-    for (let node = walker.nextNode(); node && seen < FLAT_PARTS_BUDGET; node = walker.nextNode(), seen++) {
-      if (node.shadowRoot) return true;
+    if (flatCache?.parts.has(el)) return flatCache.parts.get(el);
+    let value;
+    if (el.getRootNode() !== el.ownerDocument && el.querySelector('slot')) value = true;
+    else if (el.shadowRoot) value = true;
+    else if (flatCache) value = flatCache.hostAncestors.has(el);
+    else {
+      value = false;
+      const walker = el.ownerDocument.createTreeWalker(el, NodeFilter.SHOW_ELEMENT);
+      let seen = 0;
+      for (let node = walker.nextNode(); node && seen < FLAT_PARTS_BUDGET; node = walker.nextNode(), seen++) {
+        if (node.shadowRoot) {
+          value = true;
+          break;
+        }
+      }
     }
-    return false;
+    flatCache?.parts.set(el, value);
+    return value;
   }
 
   // A name from content for an element without text: the aria-label, image alt, SVG <title> or title attribute of
@@ -3286,32 +3327,64 @@
   // term matches, other in-viewport controls (leaving up to TERM_RESERVE slots for off-screen term matches), off-screen
   // term matches, off-screen controls.
   // An <a> whose href is a web page (http or https), and one on another site than the approved one.
-  function webLink(el) {
-    if (el.tagName !== 'A' || !el.hasAttribute('href')) return false;
+  // What an <a> leads to, read from its raw href (an anchor's URL properties parse the href on every read, and a page
+  // holds thousands of links): `{ web, offSite, words }`. A relative href resolves against a base on the page's own
+  // origin: a web link on this site, its words the href itself; only an absolute or protocol-relative href is parsed.
+  // Cached per observation (flatCache).
+  const NO_LINK = Object.freeze({ web: false, offSite: false, words: '' });
+  const HREF_SCHEME = /^([a-z][a-z0-9+.-]*):/i;
+  function decodedWords(text) {
+    if (!text.includes('%')) return text;
     try {
-      return /^https?:$/.test(new URL(el.href).protocol);
+      return decodeURIComponent(text);
     } catch {
-      return false;
+      return text;
     }
   }
-  function offSiteLink(el) {
-    if (!webLink(el) || el.ownerDocument !== document) return false;
-    try {
-      return !onApprovedSite(new URL(el.href));
-    } catch {
-      return false;
+  function readLinkInfo(el) {
+    if (el.tagName !== 'A') return NO_LINK;
+    const raw = el.getAttribute('href');
+    if (raw === null) return NO_LINK;
+    const href = raw.trim();
+    const scheme = HREF_SCHEME.exec(href);
+    if (scheme && !/^https?$/i.test(scheme[1])) return NO_LINK;
+    const top = el.ownerDocument === document;
+    if (!scheme && !href.startsWith('//') && (!top || flatCache?.baseHere)) {
+      // On the page's own origin (or a same-origin frame's): never another site.
+      return { web: !top || flatCache.webPage, offSite: false, words: decodedWords(href) };
     }
+    let url;
+    try {
+      url = new URL(href, el.baseURI);
+    } catch {
+      return NO_LINK;
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return NO_LINK;
+    return { web: true, offSite: top && url.origin !== location.origin && !onApprovedSite(url),
+      words: decodedWords(`${url.hostname}${url.pathname}`) };
+  }
+  function linkInfo(el) {
+    if (!flatCache) return readLinkInfo(el);
+    let info = flatCache.links.get(el);
+    if (!info) {
+      info = readLinkInfo(el);
+      flatCache.links.set(el, info);
+    }
+    return info;
+  }
+  function webLink(el) {
+    return linkInfo(el).web;
+  }
+  function offSiteLink(el) {
+    return linkInfo(el).offSite;
   }
   // A link's host and path as words a term can match ("widget-company.example/contact"), else ''.
   function linkWords(el) {
-    if (!webLink(el)) return '';
-    try {
-      const url = new URL(el.href);
-      return `${url.hostname}${decodeURIComponent(url.pathname)}`;
-    } catch {
-      return '';
-    }
+    return linkInfo(el).words;
   }
+  // A short link label that names an action the runtime never offers as a link (src/oversight.js destructiveLink),
+  // roughly: only for the count of links the cap left out, one cheap test per link.
+  const ACTION_LINK = /^\W*(?:sign|log|delete|remove|buy|order|pay|check ?out|purchase|subscribe|unsubscribe|book|reserve|cancel|donate|close|deactivate|place)\b/i;
 
   function selectControls(candidates, terms, consent) {
     const inView = [];
@@ -3424,8 +3497,8 @@
     let offSite = 0;
     const countLink = el => {
       if (!webLink(el)) return;
-      const text = cleanText(el.textContent).slice(0, 80);
-      if (text.split(' ').length <= 4 && (labelClass(text) || forbidden(text))) return;
+      const text = el.textContent;
+      if (text.length <= 60 && ACTION_LINK.test(text) && cleanText(text).split(' ').length <= 4) return;
       links++;
       if (offSiteLink(el)) offSite++;
     };
@@ -5200,6 +5273,7 @@
     usePolicy({ forbid, allow, sites });
     assertFrameApproved();
     const roots = collectShadowRoots();
+    flatCaches(roots);
     const { frames, crossOrigin } = collectFrames();
     frameByDoc = frames;
     sensitivePage = null;
@@ -5269,6 +5343,8 @@
     if (crossOrigin.length) warnings.push('cross_origin_frame');
     if (views?.unreadable.length) warnings.push('unreadable_region');
     if (withBlocks && secretMode().page) warnings.push('secret_page');
+    // The rendered-text caches hold for this observation only.
+    flatCache = null;
     const status = httpStatus();
     const expected = normalizeExpectText(expectText);
     findTexts.capped = false;
