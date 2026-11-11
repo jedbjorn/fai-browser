@@ -72,7 +72,7 @@ test('claude install merges an existing .mcp.json, backs it up and adds FAI_HOME
   const config = JSON.parse(read(path));
   assert.deepEqual(config.mcpServers.other, { command: 'x' });
   assert.equal(config.extra, true);
-  assert.deepEqual(config.mcpServers['fai-browser'].env, { FAI_HOME: '/data/fai' });
+  assert.deepEqual(config.mcpServers['fai-browser'].env, { FAI_HOME: resolve('/data/fai') });
   const [backup] = backups(project);
   assert.match(backup, /^\.mcp\.json\.bak-\d{8}T\d{6}Z$/);
   assert.deepEqual(JSON.parse(read(join(project, backup))).mcpServers, { other: { command: 'x' } });

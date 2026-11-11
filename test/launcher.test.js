@@ -21,6 +21,7 @@ import { locateAddon, obtainAddon } from '../src/launcher/addon.js';
 import { MARKER, desktopEntry, desktopEntryPath, installDesktopEntry, removeDesktopEntry } from '../src/launcher/desktop.js';
 import { firefoxCommand, launch, main, planLaunch, uninstallLauncher } from '../src/launcher/launch.js';
 import { releaseAssetUrl, xpiName } from '../src/launcher/release.js';
+import { POSIX_PATHS } from './helpers/platform.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const VERSION = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8')).version;
@@ -59,7 +60,7 @@ function tempEnv(home) {
 
 // --- detection -------------------------------------------------------------------------------------------------------
 
-test('detect, Linux: the PATH wrapper script resolves to the real binary and its application.ini', () => {
+test('detect, Linux: the PATH wrapper script resolves to the real binary and its application.ini', { skip: POSIX_PATHS }, () => {
   const fs = fakeFs({
     '/usr/bin/firefox': '#!/bin/sh\nexec /usr/lib/firefox/firefox "$@"\n',
     '/usr/lib/firefox/firefox': null,
@@ -73,7 +74,7 @@ test('detect, Linux: the PATH wrapper script resolves to the real binary and its
   assert.deepEqual(found.sandboxed, []);
 });
 
-test('detect, Linux: Snap, the Ubuntu snap wrapper and Flatpak are sandboxed, never chosen', () => {
+test('detect, Linux: Snap, the Ubuntu snap wrapper and Flatpak are sandboxed, never chosen', { skip: POSIX_PATHS }, () => {
   const snap = findFirefox({ platform: 'linux', env: { PATH: '/usr/bin:/snap/bin' }, home: '/home/u', fs: fakeFs({
     '/usr/bin/firefox': '#!/bin/sh\n# transitional package\nexec /snap/bin/firefox "$@"\n',
     '/snap/bin/firefox': null,
@@ -89,7 +90,7 @@ test('detect, Linux: Snap, the Ubuntu snap wrapper and Flatpak are sandboxed, ne
   assert.equal(inspectCandidate('/usr/bin/firefox', { platform: 'linux', fs: fakeFs({ '/usr/bin/firefox': '#!/bin/sh\necho "Command requires the firefox snap to be installed"' }) }).kind, 'snap');
 });
 
-test('detect, Linux: /opt tarball, ESR, too old, explicit, saved and private copy order', () => {
+test('detect, Linux: /opt tarball, ESR, too old, explicit, saved and private copy order', { skip: POSIX_PATHS }, () => {
   const files = {
     '/opt/firefox/firefox': null, '/opt/firefox/application.ini': INI('160.0.1'),
     '/usr/lib/firefox-esr/firefox-esr': null, '/usr/lib/firefox-esr/application.ini': INI('128.9.0esr'),
@@ -110,7 +111,7 @@ test('detect, Linux: /opt tarball, ESR, too old, explicit, saved and private cop
   assert.equal(findFirefox({ platform: 'linux', env: { PATH: '' }, home: '/home/u', fs: fakeFs({}) }).chosen, null);
 });
 
-test('detect, macOS and Windows: application bundles and Program Files', () => {
+test('detect, macOS: application bundles', { skip: POSIX_PATHS }, () => {
   const mac = findFirefox({ platform: 'darwin', env: {}, home: '/Users/u', fs: fakeFs({
     '/Users/u/Applications/Firefox Developer Edition.app/Contents/MacOS/firefox': null,
     '/Users/u/Applications/Firefox Developer Edition.app/Contents/Resources/application.ini': INI('160.0'),
@@ -121,6 +122,10 @@ test('detect, macOS and Windows: application bundles and Program Files', () => {
   assert.equal(mac.chosen.version.version, '159.0.2');
   assert.equal(mac.usable.length, 2);
   assert.equal(privateBinary('/d/firefox', 'darwin'), '/d/firefox/Firefox.app/Contents/MacOS/firefox');
+  assert.equal(readVersion('/x/firefox', { platform: 'linux', fs: fakeFs({ '/x/application.ini': 'garbage' }) }), null);
+});
+
+test('detect, Windows: Program Files and the user\'s AppData', () => {
   const programFiles = 'C:\\Program Files';
   const winPaths = systemCandidates({ platform: 'win32', env: { ProgramFiles: programFiles, LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' }, home: 'C:\\Users\\u' })
     .map(item => item.path);
@@ -131,7 +136,6 @@ test('detect, macOS and Windows: application bundles and Program Files', () => {
     [exe]: null, [join(exe, '..', 'application.ini')]: INI('159.0') }) });
   assert.equal(win.chosen.binary, exe);
   assert.equal(win.chosen.version.major, 159);
-  assert.equal(readVersion('/x/firefox', { platform: 'linux', fs: fakeFs({ '/x/application.ini': 'garbage' }) }), null);
 });
 
 // --- profile ---------------------------------------------------------------------------------------------------------
@@ -189,7 +193,7 @@ test('profile: user.js 0600 in a 0700 directory; the add-on as extensions/<gecko
   assert.deepEqual(await readdir(join(profile, 'extensions')), [`${GECKO_ID}.xpi`]);
 });
 
-test('policies.json for the private copy: force_installed from the file on disk', () => {
+test('policies.json for the private copy: force_installed from the file on disk', { skip: POSIX_PATHS }, () => {
   const value = policies('/data/addon/fai-browser-firefox-0.3.0.xpi');
   assert.deepEqual(value.policies.ExtensionSettings, {
     [GECKO_ID]: { installation_mode: 'force_installed', install_url: 'file:///data/addon/fai-browser-firefox-0.3.0.xpi' },
@@ -417,7 +421,7 @@ function fakeDeps(home, { extra = {}, answers = [], interactive = true } = {}) {
 
 const SYSTEM_FIREFOX = { '/usr/lib/firefox/firefox': null, '/usr/lib/firefox/application.ini': INI('159.0') };
 
-test('launch: system Firefox, secret, native host, signed add-on, profile, welcome page, menu entry, command', async t => {
+test('launch: system Firefox, secret, native host, signed add-on, profile, welcome page, menu entry, command', { skip: POSIX_PATHS }, async t => {
   const home = await scratch(t);
   const xpi = join(home, 'signed.xpi');
   await writeFile(xpi, signedXpi());
@@ -461,7 +465,7 @@ test('launch: system Firefox, secret, native host, signed add-on, profile, welco
   assert.ok(again.lines.some(line => /already there/.test(line)));
 });
 
-test('launch --print changes nothing and names every step', async t => {
+test('launch --print changes nothing and names every step', { skip: POSIX_PATHS }, async t => {
   const home = await scratch(t);
   const { deps, lines, spawned } = fakeDeps(home, { extra: SYSTEM_FIREFOX });
   const result = await launch({ print: true }, deps);
@@ -494,7 +498,7 @@ test('launch: only a Snap Firefox: explains, asks before downloading, refusal ch
   await assert.rejects(stat(join(home, '.mozilla')));
 });
 
-test('launch: with consent, Mozilla\'s Firefox goes into the data directory and gets the add-on policy', async t => {
+test('launch: with consent, Mozilla\'s Firefox goes into the data directory and gets the add-on policy', { skip: POSIX_PATHS }, async t => {
   const home = await scratch(t);
   const xpi = join(home, 'signed.xpi');
   await writeFile(xpi, signedXpi());

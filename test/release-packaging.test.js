@@ -124,7 +124,8 @@ test('amo.env: loaded only when the environment lacks the credentials, only the 
   const home = await scratch(t);
   const path = await writeAmoEnv(home);
   assert.equal(path, join(home, '.config', 'fai-browser', 'amo.env'));
-  const loaded = await credentialEnv(homeEnv(home), { platform: 'linux' });
+  // The Linux location, read with this system's file-mode rule (Windows has no POSIX modes: stat says 0o666).
+  const loaded = await credentialEnv(homeEnv(home), { platform: process.platform === 'win32' ? 'win32' : 'linux', path });
   assert.equal(loaded.source, 'file');
   assert.equal(loaded.env.WEB_EXT_API_KEY, FAKE_KEY);
   assert.equal(loaded.env.WEB_EXT_API_SECRET, FAKE_SECRET);

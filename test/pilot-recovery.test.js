@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { validateTask, recoveryDecision, recoveryPrompt, segmentEvidence, aggregateSegments, pilotArgs } from '../bench/lib/pilot-recovery.mjs';
 import { runPilotProcess } from '../bench/lib/pilot-process.mjs';
 const task = { model: 'gpt-6-astra', provider: 'openai', prompt: 'Inspect only. At most 40 FAI calls.', maxCalls: 40,
@@ -61,7 +63,7 @@ test('separate host usage sums only complete counters, optional zeros remain exp
 });
 
 test('Ctrl-C cancellation saves completed event evidence without repeating the fake operation', async () => {
-  const dir = await mkdtemp('/tmp/fai-recovery-test-');
+  const dir = await mkdtemp(join(tmpdir(), 'fai-recovery-test-'));
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 350);
@@ -79,7 +81,7 @@ test('pre-cancelled execution never spawns and timeout cannot be resumed', async
   const pre = await runPilotProcess({ command: '/does-not-exist', args: [], prompt: '', dir: '/does-not-exist', timeoutMs: 10, signal: controller.signal });
   assert.equal(pre.wallMs, 0);
   assert.equal(pre.spawnError, null);
-  const dir = await mkdtemp('/tmp/fai-recovery-timeout-');
+  const dir = await mkdtemp(join(tmpdir(), 'fai-recovery-timeout-'));
   try {
     const timed = await runPilotProcess({ command: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], prompt: '', dir, timeoutMs: 100 });
     assert.equal(timed.timedOut, true);

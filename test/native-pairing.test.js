@@ -16,6 +16,7 @@ import { GECKO_ID, GECKO_IDS, NATIVE_HOST_ENTRY, NATIVE_HOST_NAME, applyNativeIn
   uninstallNative } from '../src/native.js';
 import { callerAllowed, decodeMessages, encodeMessage, handleMessage, serve } from '../src/native-host.js';
 import { PINNED_EXTENSION_ID } from '../src/bridge.js';
+import { POSIX_PATHS } from './helpers/platform.js';
 
 const CHROME_ORIGIN = `chrome-extension://${PINNED_EXTENSION_ID}/`;
 // File modes are POSIX: on Windows a file's access comes from the user profile's ACL and stat reports 0o666.
@@ -27,7 +28,7 @@ async function scratch(t, prefix = 'fai-native-') {
   return dir;
 }
 
-test('default directories per platform; FAI_HOME keeps everything in one place', () => {
+test('default directories per platform; FAI_HOME keeps everything in one place', { skip: POSIX_PATHS }, () => {
   assert.deepEqual(defaultDirs({ HOME: '/h' }, 'linux'),
     { config: '/h/.config/fai-browser', state: '/h/.local/state/fai-browser' });
   assert.deepEqual(defaultDirs({ HOME: '/h', XDG_CONFIG_HOME: '/x/c', XDG_STATE_HOME: '/x/s' }, 'linux'),
