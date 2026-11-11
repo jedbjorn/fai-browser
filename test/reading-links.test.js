@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { BrowserRuntime, OTHER_SITE_TEXT, legalActions, offeredActions } from '../src/runtime.js';
 import { capOffer, OTHER_SITE_LISTED, offerCap } from '../src/relevance.js';
 import { buildDigest } from '../src/digest.js';
-import { leanObserve, offerOf } from '../src/result.js';
+import { leanObserve, listedAction, offerOf } from '../src/result.js';
 import { FakeBridge, ORIGIN, link } from './runtime-fixtures.js';
 
 const FAKE_TOKEN = ['FAKE', 'tok0123456789', 'abcdefABCDEF'].join('');
@@ -36,6 +36,16 @@ test('a link to another site is offered at every level as other_site with its de
     // mailto:, javascript: and ftp: links are no page another site serves: never listed as one.
     assert.ok(!actions.some(action => ['4', '6'].includes(action.target)), mode);
   }
+});
+
+test('the host sees one short line per other-site link: label, destination and what to do', () => {
+  const controls = [link('1', 'Our marketing site', 'https://jane.example.org/site/'),
+    link('2', 'M'.repeat(120), `https://jane.example.org/${'p/'.repeat(80)}`)];
+  const actions = offeredActions({ url: `${ORIGIN}/`, controls }, { mode: 'read-only' }).actions;
+  const [short, long] = actions.filter(action => action.type === 'other_site').map(listedAction);
+  assert.equal(short.description, 'link "Our marketing site" → https://jane.example.org/site/ (other site: request its origin)');
+  assert.ok(long.description.length <= 200, `${long.description.length}: inside the MCP's 200-character action line`);
+  assert.match(long.description, /^link "M{50}" → https:\/\/jane\.example\.org\/[^ ]+… \(other site: request its origin\)$/);
 });
 
 test('a domain root the user approved keeps its subdomains as ordinary links; other roots are other sites', () => {

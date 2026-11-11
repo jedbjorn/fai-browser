@@ -5,6 +5,19 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## Unreleased
+
+### Fixed
+
+- **Links a person sees are offered and named by their text** (#32). Text a web component renders inside its link (light-DOM text slotted into a shadow-root `<a>`, slot fallback text, text in a nested component's shadow root) names the link instead of `unlabelled link 1 of 2`; pages with hundreds of shadow roots or deep component nesting no longer hide links (up to 1000 roots, 10 deep, was 64 and 4); a point on a component link's slotted text lands on the link in Chromium too.
+- **`focus` finds links.** An observe's `focus` also ranks the listing and the page script's control order (the phrase first, controls holding the most terms first), so a link it names is listed even past the page script's 100-control cap; links that cap left out count in `moreActions`.
+- **Long blocks are readable and marked when cut.** The page script reads a block's text up to 1500 characters (was 300): a `focus` shows the blocks holding its words whole, a `digestChars` above 1500 shows every long block whole, and any block shown shorter than the page has it ends in `…` and sets `page.truncated` (a banner used to end mid-word with no mark).
+- **A point on a plain link works at `read-only`**, exactly as its action id would; a point on a button, a field, a `javascript:` link or a purchase, sign-in or delete control is refused as before.
+
+### Added
+
+- **Links to other sites are listed with their destination**: `link "<label>" → <url> (other site: request its origin)` (the destination redacted like other page text), never clicked at any level, so the agent can request that origin with the link's own address in `allowedUrls` instead of guessing one. Acting on it returns `cross_origin` with how to follow it. A listing shows at most 5 unless the task or a `focus` names more.
+
 ## 0.7.0 (2026-11-10)
 
 ### Removed

@@ -87,11 +87,13 @@ export type BlockType = 'h1' | 'h2' | 'h3' | 'h4' | 'p' | 'li' | 'tr' | 'dt' | '
 /** One structural text block of the page, in document order. Untrusted page content. */
 export interface PageBlock {
   t: BlockType;
-  /** At most 300 characters. */
+  /** At most 1500 characters (the digest shows 300 unless a focus or a larger digestChars asks for more). */
   text: string;
   /** Control id when the block is (or contains) an offered control. */
   ref?: string;
   offscreen?: boolean;
+  /** The page script cut the block's text at 1500 characters; the digest ends it in "…". */
+  cut?: true;
 }
 
 export interface Observation {
@@ -123,6 +125,8 @@ export interface Observation {
   frames?: PageFrame[];
   /** With controls_capped: how many rendered controls the page script's 100-control cap left out. */
   controlsDropped?: number;
+  /** Of controlsDropped, the real links (an <a> with a navigating href); counted in moreActions. */
+  linksDropped?: number;
   /** The document's HTTP status (Navigation Timing responseStatus) while the URL is still the loaded one. */
   httpStatus?: number;
   /**
@@ -156,7 +160,9 @@ export type ActionType =
   | 'navigate_allowed_url'
   | 'wait'
   | 'fill_secret'
-  | 'copy_secret';
+  | 'copy_secret'
+  /** Offered only: a link to another site, listed with its destination and never run (act is refused as cross_origin). */
+  | 'other_site';
 
 /** Command sent to the bridge. `text` is resolved from suppliedText only at execution time. */
 export interface Action {
@@ -191,6 +197,8 @@ export interface LegalAction {
   url?: string;
   /** navigate_allowed_url for a same-origin link that would open a new tab: opened in the selected tab instead. */
   newTab?: true;
+  /** other_site: the destination's origin (page data, like `href`). */
+  origin?: string;
   /**
    * The Approve gate (host-driven offers only): act() on this action first asks the user to click Approve once in
    * the extension (bridge.approve). The description ends "(asks the user)".
@@ -854,7 +862,7 @@ export interface RunResult {
 
 /** Task-conditioned digest of an observation's blocks (see PageSummary.digest). */
 export function buildDigest(observation: Observation, instruction: string,
-  options?: { maxBlocks?: number; maxChars?: number }): { digest: DigestBlock[]; truncated: boolean };
+  options?: { maxBlocks?: number; maxChars?: number; fullBlocks?: 'all' | 'matched' | null }): { digest: DigestBlock[]; truncated: boolean };
 /** Candidate answer blocks for the question, best first (default at most 12). */
 export function pickAnswerCandidates(observation: Observation, instruction: string, options?: { max?: number }):
   Array<DigestBlock & { index: number; score: number }>;
