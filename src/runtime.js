@@ -178,9 +178,9 @@ function clip(value, limit) {
 // ---------------------------------------------------------------------------------------------------------------
 
 // A link to another site: its destination (page data, redacted like the rest of the page) is shown up to this many
-// characters, its label up to OTHER_SITE_LABEL_CHARS, so the line stays one short line.
-const OTHER_SITE_URL_CHARS = 120;
-const OTHER_SITE_LABEL_CHARS = 80;
+// characters, its label up to OTHER_SITE_LABEL_CHARS, so the line stays inside the MCP's 200-character action line.
+const OTHER_SITE_URL_CHARS = 100;
+const OTHER_SITE_LABEL_CHARS = 50;
 
 /**
  * The trusted text of an act on a link to another site (an offered other_site action, or a point on such a link). The
@@ -215,7 +215,7 @@ function otherSiteAction(base, href) {
   const shown = href.length > OTHER_SITE_URL_CHARS ? `${href.slice(0, OTHER_SITE_URL_CHARS - 1)}…` : href;
   const label = base.label.length > OTHER_SITE_LABEL_CHARS ? `${base.label.slice(0, OTHER_SITE_LABEL_CHARS - 1)}…` : base.label;
   return { type: 'other_site', ...base, href, origin: new URL(href).origin,
-    description: `Link ${base.target}: ${label} → ${shown} (another site: request its origin to open it)` };
+    description: `Link ${base.target}: ${label} → ${shown} (other site: request its origin)` };
 }
 
 function isTextEntry(control) {

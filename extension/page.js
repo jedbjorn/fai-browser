@@ -983,6 +983,13 @@
     return parts.join(' ');
   }
 
+  // Whether a control inside a shadow root places the host's content with a <slot> (a component's own <a> or
+  // <button>): innerText sees only the component's own glyphs ("›"), never the slotted text that names it. A control
+  // whose innerText is empty reaches flatText anyway; one in the light DOM keeps innerText first.
+  function hasFlatParts(el) {
+    return el.getRootNode() !== el.ownerDocument && Boolean(el.querySelector('slot'));
+  }
+
   // A name from content for an element without text: the aria-label, image alt, SVG <title> or title attribute of
   // its descendants in the rendered tree (an icon button whose only name sits on a nested icon or link, also inside a
   // web component), in document order.
@@ -1032,9 +1039,11 @@
       () => (field ? el.labels?.[0]?.textContent : ''),
       () => (tag === 'INPUT' && ['button', 'reset', 'submit'].includes(el.type) ? el.value : ''),
       () => (tag === 'INPUT' && el.type === 'image' ? el.alt : ''),
+      // Text a web component renders inside the control (slotted into its shadow root, or in a nested shadow root),
+      // which innerText and textContent miss: first when the control has such parts, else after them.
+      () => (!field && hasFlatParts(el) ? flatText(el) : ''),
       () => el.innerText,
       () => el.textContent,
-      // Text a web component renders inside the control: slotted into its shadow root, or in a nested shadow root.
       () => flatText(el),
       () => contentName(el),
       () => el.title,
@@ -5284,7 +5293,13 @@
       let hit = doc.elementFromPoint(px, py);
       if (!hit) return el;
       while (hit.shadowRoot) {
-        const inner = hit.shadowRoot.elementFromPoint(px, py);
+        let inner = hit.shadowRoot.elementFromPoint(px, py);
+        // Over text slotted from the host's light DOM, Chromium answers with the host itself: the topmost element of
+        // the shadow tree under the point (the component's <a> or its wrapper) is what the click lands on.
+        if (!inner || inner === hit) {
+          const stack = typeof hit.shadowRoot.elementsFromPoint === 'function' ? hit.shadowRoot.elementsFromPoint(px, py) : [];
+          inner = stack.find(el => el !== hit && hit.shadowRoot.contains(el)) ?? null;
+        }
         if (!inner || inner === hit) break;
         hit = inner;
       }

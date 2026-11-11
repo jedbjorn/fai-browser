@@ -1320,6 +1320,13 @@ export function cleanPermissions(value) {
   return out;
 }
 
+// The destination of an other_site link in its brief line, at most this many characters (cut ones end in "…").
+const OTHER_SITE_BRIEF_URL = 100;
+function otherSiteShown(href) {
+  const url = String(href ?? '').replace(/\s+/g, '');
+  return url.length > OTHER_SITE_BRIEF_URL ? `${url.slice(0, OTHER_SITE_BRIEF_URL - 1)}…` : url;
+}
+
 function quoted(label) {
   return JSON.stringify(String(label ?? '').replace(/\s+/g, ' ').trim().slice(0, BRIEF_LABEL_LIMIT));
 }
@@ -1369,6 +1376,10 @@ function actionBriefOf(action) {
       return 'wait';
     case 'navigate_allowed_url':
       return action.newTab ? `open ${quoted(action.label)} in this tab` : `open ${action.url}`;
+    // A link that leaves the approved site (src/runtime.js otherSiteAction): never clicked; its destination (page
+    // data, redacted) lets the host request that origin and open the link's own address.
+    case 'other_site':
+      return `link ${quoted(String(action.label ?? '').slice(0, 50))} → ${otherSiteShown(action.href)} (other site: request its origin)`;
     default:
       return String(action.description ?? action.type);
   }
