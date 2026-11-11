@@ -918,6 +918,10 @@ export function directText(structured, previous = null) {
   lines.push(`status: ${result.status}${result.code ? ` (${result.code})` : ''}${verified}`);
   if (result.verification?.expectation) lines.push(`expectation: ${JSON.stringify(result.verification.expectation)}`);
   if (result.verification?.hint) lines.push(`verification: ${oneLine(result.verification.hint, 300)}`);
+  if (result.verification?.passed === true && Number.isInteger(result.verification.seenAfterMs)) {
+    lines.push(`verification: the expectation showed ${result.verification.seenAfterMs} ms after the act settled (read again `
+      + 'until it did); the page below is the one it showed on and may have changed since.');
+  }
   const granted = result.granted;
   if (granted?.level) lines.push(`granted: ${granted.level}${granted.asked ? ` (asked ${granted.asked})` : ''}${granted.tabMode ? `; task tabs: ${granted.tabMode}` : ''}${granted.browser ? `; browser: ${oneLine(granted.browser, 40)}` : ''}`);
   if (result.needs?.message) lines.push(`needs: ${result.needs.message}${result.needs.level ? ` (level ${result.needs.level})` : ''}`);
@@ -1061,6 +1065,22 @@ export function successorNote(from, to) {
 export function newRequestNote(from, to) {
   return `requestId ${to} is a new request: ${from} had ended, so nothing of it carries over (suppliedText, policy and `
     + `allowedUrls are only what this call gave). Use ${to} from now on.`;
+}
+
+/**
+ * fai_browser_wait on a request that is still pending or paused when its wait ran out: kind `wait`, short. Calling the
+ * wait again is waiting, not a repeated call; a session FAI wakes may end its turn instead.
+ */
+export function waitAgain(state, view, requestId, waitedMs, resume = undefined) {
+  const seconds = Number.isFinite(waitedMs) ? ` after ${Math.round(waitedMs / 1000)} s` : '';
+  const what = state === 'paused'
+    ? `Still paused${view?.stateReason ? ` (${view.stateReason})` : ''}${seconds}: the user has not clicked Resume yet.`
+    : `Still pending${seconds}: the user has not approved the request yet.`;
+  const again = `call fai_browser_wait with requestId ${requestId} again (that is waiting, not a repeated call)`;
+  const how = resume?.wake
+    ? `End your turn if you can (FAI Browser wakes this session when they have done it); if you cannot (a subagent, a script), ${again}.`
+    : `${again.charAt(0).toUpperCase()}${again.slice(1)}.`;
+  return nextStep('wait', `${what} ${how} Tell the user once if you have not.`);
 }
 
 // `resume`: {env, wake} (src/resume.js): the wait command's daemon location, or the wake that makes it unnecessary.
@@ -2031,11 +2051,15 @@ class McpServer {
       const state = response.state ?? view?.state ?? 'ok';
       if (state === 'active') this.sawActive.set(requestId, Date.now());
       this.noteOwner(view);
+      // Still waiting when the wait ran out: a short "wait again" (the approval steps were in the result that asked
+      // the user), never the long relay text once more.
+      const still = state === 'pending' || state === 'paused';
       return okResult(withoutUndefined({
         ...response,
         state,
         requestId: view?.requestId ?? requestId,
-        next: nextForRequest(state, view, requestId, this.resumeOptions(requestId)),
+        next: still ? waitAgain(state, view, requestId, response.waitedMs, this.resumeOptions(requestId))
+          : nextForRequest(state, view, requestId, this.resumeOptions(requestId)),
       }));
     } finally {
       clearInterval(ticker);

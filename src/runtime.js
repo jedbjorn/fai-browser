@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { URL_HOP_REFUSED, namedUrls, sameSite, siteRoots, urlCovered } from './origins.js';
 
 export { namedUrls };
@@ -2752,10 +2753,17 @@ function didLine(action) {
   }
 }
 
+// After a host act whose declarative expectation does not hold on the settled page: the page is read again every
+// EXPECT_LATE_POLL_MS for at most EXPECT_LATE_MS, so a result line that shows shortly after the act (a form that says
+// "sending..." before "sent") still counts. Only what an observation actually showed passes.
+export const EXPECT_LATE_MS = 2500;
+const EXPECT_LATE_POLL_MS = 300;
+
 export class BrowserRuntime {
-  constructor({ bridge, asks } = {}) {
+  constructor({ bridge, asks, expectLateMs = EXPECT_LATE_MS } = {}) {
     if (!bridge) throw new TypeError('A browser bridge is required');
     this.bridge = bridge;
+    this.expectLateMs = Number.isFinite(expectLateMs) && expectLateMs >= 0 ? expectLateMs : EXPECT_LATE_MS;
     // The Approve gate's asks the extension reported (a function: the daemon's latest), so offers say "(asks the
     // user)" only for what the extension will ask about.
     this.asks = typeof asks === 'function' ? asks : () => APPROVAL_ASKS;
@@ -3062,7 +3070,7 @@ export class BrowserRuntime {
         page = executed.observation;
         if (!allowedOrigin(page.url, config.allowedOrigins) || executed.step.fill?.kept === false) break;
       }
-      const after = executed.observation;
+      let after = executed.observation;
       if (!allowedOrigin(after.url, config.allowedOrigins)) setOutcome(session.result, 'cross_origin');
       else {
         if (executed.step.fill?.kept === false) {
@@ -3075,7 +3083,16 @@ export class BrowserRuntime {
           // can still reload or open another approved URL once the site is back.
           await session.errorPage(after, false);
         } else if (await session.checkExpectation(after)) setOutcome(session.result, 'expectation_passed');
-        else setOutcome(session.result, 'step_complete');
+        else {
+          // Not on the settled page: read it again for a short while (a result line that shows a moment later).
+          const late = await this.#expectLater(session, config, executed.observation);
+          after = late.observation;
+          if (late.passed) {
+            session.result.verification.seenAfterMs = late.ms;
+            session.why('expect:late');
+            setOutcome(session.result, 'expectation_passed');
+          } else setOutcome(session.result, 'step_complete');
+        }
         // What the host may do next from here, without another observe(); listed by the task its observe() named.
         session.result.offer = this.#offerAfter(session, config, after, offer.hints, offer.question);
       }
@@ -3090,6 +3107,39 @@ export class BrowserRuntime {
       session.result.needs = { ...session.result.needs, message: HISTORY_OFF_SITE_TEXT };
     }
     return session.result;
+  }
+
+  /**
+   * The act's declarative expectation did not hold on the settled page: read the page again every EXPECT_LATE_POLL_MS,
+   * at most expectLateMs after the act settled, and stop at the first observation it holds on. Returns `{ passed,
+   * observation, ms }`: the observation it passed on (or the last one read) and when it was seen. Only observations
+   * count, so a line that showed and went between two reads is not seen. A function expectation, a page off the
+   * approved origins or an interrupted act ends it at once.
+   */
+  async #expectLater(session, config, observation) {
+    const expectation = session.config.expectation;
+    const started = Date.now();
+    let last = observation;
+    if (!this.expectLateMs || !expectation || typeof expectation !== 'object') return { passed: false, observation: last };
+    while (Date.now() - started < this.expectLateMs) {
+      try {
+        await sleep(Math.min(EXPECT_LATE_POLL_MS, this.expectLateMs - (Date.now() - started)), undefined, { signal: session.signal });
+      } catch {
+        break;
+      }
+      if (session.signal.aborted || session.interrupted) break;
+      let fresh;
+      try {
+        fresh = await session.observe();
+      } catch {
+        break;
+      }
+      session.visit(fresh);
+      last = fresh;
+      if (!allowedOrigin(fresh.url, config.allowedOrigins)) break;
+      if (await session.checkExpectation(fresh)) return { passed: true, observation: fresh, ms: Date.now() - started };
+    }
+    return { passed: false, observation: last };
   }
 
   /**

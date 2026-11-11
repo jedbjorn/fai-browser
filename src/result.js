@@ -1264,6 +1264,8 @@ export function directResult(source) {
   if (verification?.checked) {
     out.verification = { passed: verification.passed === true, expectation: verification.expectation ?? null };
     if (verification.hint) out.verification.hint = verification.hint;
+    // Passed on a later read of the page, this long after the act settled (the runtime's short re-check).
+    if (verification.passed === true && Number.isInteger(verification.seenAfterMs)) out.verification.seenAfterMs = verification.seenAfterMs;
   }
   const page = result.page;
   if (page && typeof page === 'object') {
@@ -1354,6 +1356,7 @@ export function agentResult(source) {
   if (typeof verification.held === 'string') out.verification.held = verification.held;
   // The expected text or title is not on the page: what the page has instead (quoted page text, runtime-built).
   if (typeof verification.hint === 'string' && verification.hint) out.verification.hint = verification.hint;
+  if (verification.passed === true && Number.isInteger(verification.seenAfterMs)) out.verification.seenAfterMs = verification.seenAfterMs;
   // The runtime's own expand click left the page rewriting its URL in place: these URL fields were carried from
   // before the click, the rest verified on the expanded page (runtime-written).
   if (Array.isArray(verification.carried) && verification.carried.length) out.verification.carried = [...verification.carried];

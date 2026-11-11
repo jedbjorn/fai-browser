@@ -11,6 +11,16 @@ export const CLI_PATH = fileURLToPath(new URL('./cli.js', import.meta.url));
 /** What a session FAI can wake does instead of the wait command. */
 export const WAKE_TEXT = 'FAI Browser wakes this session with a message once the user has done it (no wait command '
   + 'needed): tell the user, then end your turn.';
+
+/**
+ * The blocking alternative for a caller that cannot end its turn and be woken (a subagent: the wake goes to the main
+ * session; a script): fai_browser_wait, again while it says pending or paused. Calling it again is waiting, not a
+ * repeated call.
+ */
+export function blockingWaitText(requestId) {
+  return `If you cannot end your turn and be woken (a subagent, a script), call fai_browser_wait with requestId ${requestId} `
+    + 'instead, again while it says pending or paused.';
+}
 /** The default --timeout of the resume wait: a paused lease expires after 30 minutes (src/daemon.js PAUSED_TTL_MS). */
 export const RESUME_WAIT_TIMEOUT = '30m';
 // What the CLI must share with this process to reach the same daemon. Never the client token: it stays in its file.
@@ -48,12 +58,12 @@ export function resumeWaitText(requestId, options = {}) {
   if (!REQUEST_ID.test(String(requestId ?? ''))) return '';
   // A session FAI can wake (options.wake: claude-socket, codex-queue or opencode-plugin, src/wake.js) gets a message when the user
   // approves or resumes this request: it ends its turn instead of starting a wait command.
-  if (options.wake) return WAKE_TEXT;
+  if (options.wake) return `${WAKE_TEXT} ${blockingWaitText(requestId)}`;
   return 'If you can run a background command that notifies you when it exits (for example Claude Code\'s Bash '
     + `run_in_background), start \`${resumeWaitCommand(requestId, options)}\` that way now, if one is not already `
     + 'running for this request, and end your turn: it exits 0 '
-    + 'once the tab is ready (on another exit code follow next.text in its JSON line). Otherwise ask the user to tell '
-    + 'you when they have done it.';
+    + 'once the tab is ready (on another exit code follow next.text in its JSON line). Otherwise call fai_browser_wait '
+    + `with requestId ${requestId} (again while it says pending or paused), or ask the user to tell you when they have done it.`;
 }
 
 /** `text` followed by the resume wait sentences for `requestId` (unchanged when there is no usable id). */
