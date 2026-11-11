@@ -1880,7 +1880,7 @@ function secretOptions() {
   // `context`: what the tab's approved frames add to the page's restrictions (frames.js); none without frames.
   // `origins` there: the other approved exact origins the tab may go to (page.js onApprovedSite).
   const top = globalThis.faiFrames?.topContext(session?.tabId) ?? null;
-  const reachable = Array.isArray(session?.reachable) ? session.reachable : [];
+  const reachable = Array.isArray(session?.reachable) ? session.reachable.filter(origin => origin !== session.origin) : [];
   const context = reachable.length ? { ...(top ?? {}), origins: reachable } : top;
   return { ...secretRedaction, salt: secretNumbering().salt, gates: approvalSettings, vault: true, input: { trusted, rhythmSeed: rhythmSeed() }, context };
 }
