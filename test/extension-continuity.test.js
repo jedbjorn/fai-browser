@@ -138,6 +138,54 @@ test('#30 Multiple task tabs: a tab the page opens on the approved origin joins 
   assert.equal(again.lease?.requestId ?? requestId, requestId);
 });
 
+// The two FAI-side causes of the issue's `tab_changed` with Multiple task tabs (both reproduced on 0.7.0): a tab the
+// page opened behind the working tab took the commands though it was not in front, and another request's page that
+// FAI itself opened in front of the working tab paused it as if the user had switched tabs.
+// Chromium reports some new tabs' opener only after their creation event (seen here for tabs a script creates with an
+// openerTabId; Firefox reports none for a popup window): on 0.7.0 such a child was never followed, and once in front it
+// paused the request as tab_changed, the issue's symptom with Multiple task tabs.
+test('#30 Multiple task tabs: children whose opener shows late join; one in front takes the commands, one behind does not', async t => {
+  const env = await launch(t);
+  const requestId = await activeRequest(env);
+  const open = (active, path) => env.worker.evaluate(async ({ url, active, path }) => {
+    const [opener] = await chrome.tabs.query({ url: `${url}/` });
+    await chrome.tabs.create({ url: `${url}${path}`, openerTabId: opener.id, active, windowId: opener.windowId });
+  }, { url: env.origin, active, path });
+  await open(true, '/child');
+  assert.ok(await until(() => env.worker.evaluate(() => session?.tabs?.length === 2)), 'the child in front joined');
+  await sleep(300);
+  const front = await env.client.observe({ requestId });
+  assert.equal(front.result?.code, undefined, `no pause: ${JSON.stringify(front.result?.needs ?? {})}`);
+  assert.equal((front.page ?? front.observation).title, 'Child page', 'the commands follow the child in front');
+  // A tab the page opened behind the working tab (a Ctrl-click, a site's background window.open): it joins the request
+  // and is listed for `tab: "t2"`, but the commands stay on the tab in front (on 0.7.0 they moved to the hidden tab,
+  // and the next command found the request's tab not in front: tab_changed).
+  await open(false, '/details');
+  assert.ok(await until(() => env.worker.evaluate(() => session?.tabs?.length === 3)), 'the child behind joined');
+  await sleep(300);
+  const behind = await env.client.observe({ requestId });
+  assert.equal(behind.result?.code, undefined, `no pause: ${JSON.stringify(behind.result?.needs ?? {})}`);
+  assert.equal((behind.page ?? behind.observation).title, 'Child page');
+  assert.equal((await env.client.getRequest(requestId)).state, 'active');
+});
+
+test('#30 another request\'s page opens behind the working tab instead of pausing it', async t => {
+  const env = await launch(t);
+  const requestId = await activeRequest(env);
+  await env.worker.evaluate(() => chrome.storage.local.set({ openRightAway: true }));
+  // Another site, so its page opens by itself (a request the working tab covers would get the window instead).
+  const other = await env.client.requestTab({ origins: [env.partner], mode: 'read-only', reason: 'Another task',
+    url: `${env.partner}/partner` });
+  assert.ok(await until(async () => (await env.worker.evaluate(async () => (await chrome.storage.session.get('armedTabs')).armedTabs ?? [])).length === 1),
+    'the other request\'s page opened');
+  await sleep(500);
+  const view = await env.client.getRequest(requestId);
+  assert.equal(view.state, 'active', `not paused by FAI's own tab: ${view.stateReason}`);
+  const observed = await env.client.observe({ requestId });
+  assert.equal(observed.result?.code, undefined, JSON.stringify(observed.result?.needs ?? {}));
+  assert.ok(other.requestId);
+});
+
 test('#30 an unapproved origin: refused up front, asked on the same request, approved, continued in the same tab', async t => {
   const env = await launch(t);
   const requestId = await activeRequest(env, { tabMode: 'single' });

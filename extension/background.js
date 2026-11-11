@@ -4264,15 +4264,30 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 });
 
 // Session-changing browser events. Each pauses the lease with a reason the service maps to a BridgeError.
+function startFollow(tab) {
+  // An act that opened it waits for this (executeCommand) and reports the new tab's page.
+  const current = session;
+  const following = followChild(tab).catch(() => {}).finally(() => {
+    if (current.childFollow === following) current.childFollow = null;
+  });
+  current.childFollow = following;
+}
+// The browser may name a new tab's opener only after its creation event (Chromium for some tabs; issue #30): one more
+// look shortly after, still only for a tab a lease tab opened.
+const OPENER_RECHECK_MS = 250;
 chrome.tabs.onCreated.addListener(tab => {
-  if (session?.status === 'active' && leaseTab(tab.openerTabId)) {
-    // An act that opened it waits for this (executeCommand) and reports the new tab's page.
-    const current = session;
-    const following = followChild(tab).catch(() => {}).finally(() => {
-      if (current.childFollow === following) current.childFollow = null;
-    });
-    current.childFollow = following;
+  if (session?.status !== 'active') return;
+  if (leaseTab(tab.openerTabId)) {
+    startFollow(tab);
+    return;
   }
+  if (tab.openerTabId !== undefined && tab.openerTabId !== null) return;
+  const current = session;
+  setTimeout(async () => {
+    const fresh = await chrome.tabs.get(tab.id).catch(() => null);
+    if (fresh && session === current && current.status === 'active' && !current.childFollow && leaseTab(fresh.openerTabId)
+      && !leaseTab(fresh.id)) startFollow(fresh);
+  }, OPENER_RECHECK_MS);
 });
 chrome.tabs.onActivated.addListener(async info => {
   const current = session;
