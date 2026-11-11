@@ -1130,7 +1130,9 @@ export function prune(dir: string, options?: Partial<RetentionLimits> & { keep?:
 
 /** The per-request call budget (MCP ledger): calls and run milliseconds per tab request. */
 export interface CallBudget {
+  /** Calls per tab request, 1-10000 (default 50). */
   maxCalls: number;
+  /** Run milliseconds per tab request, 1000-14400000 (4 hours; default 1200000, 20 minutes). */
   maxMs: number;
 }
 

@@ -373,14 +373,14 @@ export function startTarget(request) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Per-request call budget (Setup & connection): what an agent may spend on one tab request (calls, run minutes)
-// before the MCP server stops it. Stored as `chrome.storage.local.budget` {maxCalls, maxMs}; absent means the
-// daemon's own default applies (config.json `budget`, else 50 calls and 20 minutes). The worker reports it in its
-// hello and on every change; an agent's own maxCalls/maxMs can only lower it. The bounds are src/settings.js
+// Per-request call budget (Advanced): what an agent may spend on one tab request (calls, run minutes) before the MCP
+// server stops it. Stored as `chrome.storage.local.budget` {maxCalls, maxMs}; absent means the daemon's own default
+// applies (config.json `budget`, else 50 calls and 20 minutes). The worker reports it in its hello and on every
+// change; the agent cannot change it. The bounds are src/settings.js
 // BUDGET_LIMITS (test/extension-permissions.test.js checks the two agree).
 
 export const BUDGET_LIMITS = Object.freeze({
-  maxCalls: Object.freeze({ min: 1, max: 500 }),
+  maxCalls: Object.freeze({ min: 1, max: 10_000 }),
   maxMs: Object.freeze({ min: 1000, max: 14_400_000 }),
 });
 const MINUTE_MS = 60_000;

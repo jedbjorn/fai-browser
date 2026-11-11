@@ -609,7 +609,7 @@ export function pageExtras(observation) {
   if (!observation || typeof observation !== 'object') return out;
   if (Array.isArray(observation.tabs) && observation.tabs.length > 1) {
     out.tabs = observation.tabs.slice(0, MAX_PAGE_TABS)
-      .filter(tab => tab && typeof tab.id === 'string' && /^t\d{1,3}$/.test(tab.id))
+      .filter(tab => tab && typeof tab.id === 'string' && /^t\d{1,5}$/.test(tab.id))
       .map(tab => ({ id: tab.id, url: line(tab.url, 300), title: line(tab.title, 120), ...(tab.current === true ? { current: true } : {}) }));
   }
   const dialog = observation.dialog;
