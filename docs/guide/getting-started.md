@@ -22,9 +22,29 @@ profile, the signed add-on preinstalled and paired), **Add to your Firefox**, an
 ```sh
 git clone https://github.com/jedbjorn/fai-browser
 cd fai-browser
-npm ci
 npm run setup
 ```
+
+**No git or Node yet?** Use the installer for your system instead: it checks for both, installs what is missing only
+after you say yes, clones the latest release into `~/fai-browser` and runs `npm run setup` for you. Download it from a
+release tag, read it, then run it:
+
+```sh
+# macOS (on Linux it says what is missing and installs nothing)
+curl -fsSLo install-fai.sh https://raw.githubusercontent.com/jedbjorn/fai-browser/<tag>/scripts/install.sh
+less install-fai.sh && sh install-fai.sh
+```
+
+```powershell
+# Windows 10/11: a normal (not administrator) PowerShell window
+Invoke-WebRequest -UseBasicParsing -OutFile install-fai.ps1 https://raw.githubusercontent.com/jedbjorn/fai-browser/<tag>/scripts/install.ps1
+notepad install-fai.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-fai.ps1
+```
+
+`<tag>` is the newest release on the [Releases page](https://github.com/jedbjorn/fai-browser/releases) (the installers
+ship from the first release after 0.8.0). Add `--check` (`-Check`) to see what it would do without changing anything.
+Where each tool comes from: [REFERENCE: Bootstrap installers](../REFERENCE.md#bootstrap-installers).
 
 `npm run setup` is run by you, once:
 

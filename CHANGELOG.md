@@ -5,6 +5,21 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## Unreleased
+
+### Added
+
+- **Installers for a machine without git or Node (#47).** `scripts/install.sh` (macOS on Apple silicon and Intel, and Linux; POSIX `sh`) and `scripts/install.ps1` (Windows 10 and 11, Windows PowerShell 5.1 or PowerShell 7) say what is present and missing, install a missing git or Node 22+ only after a yes (macOS: Apple's Command Line Tools, Homebrew when it is already there, else the nodejs.org `.pkg` checked against its `SHASUMS256.txt`; Windows: winget's `Git.Git` and `OpenJS.NodeJS.LTS`; Linux: the package command is printed, nothing is installed), clone the latest release tag into `~/fai-browser` (or reuse a clone there), and run setup. `--check`/`-Check` changes nothing, `--yes`/`-Yes` is unattended; they refuse root and an administrator window, never install Homebrew, never pipe a download into a shell and never read the pairing secret. Running one again reuses the checkout. See docs/REFERENCE.md "Bootstrap installers".
+- **CI on Windows and macOS.** The browserless suite runs on GitHub's `windows-latest` and `macos-latest` runners, and both installers run there for real: check-only, a fresh clone of the latest release, a rerun, and on macOS the full setup of the checkout against a private `FAI_HOME`; on Windows setup's steps through the CLI (pairing in HKCU, the daemon).
+
+### Fixed
+
+- **Windows: the auto-started FAI service has no console window.** It was started detached without `windowsHide`, which on Windows opens a console window; closing it stopped the service.
+- **Windows: the updater's `npm ci` runs.** Node refuses to start `npm.cmd` without a shell since the fix for CVE-2024-27980, so the step always failed (a warning, never a rollback); it now runs npm's own `npm-cli.js` with the running node.
+- **Windows: setup registers with an npm-installed Claude Code.** `claude.cmd` could not be started at all for the same reason; a batch shim now runs through cmd.exe with every argument quoted, as `claude mcp add` arguments (cmd.exe cannot pass add-json's JSON intact); a value with `%` or `"` is refused with the command to run by hand. The command printed for a Windows user is plain `claude mcp add` lines.
+- **Windows: the native host launcher keeps a `%` in a path** (`native-host.bat` doubles it), and browser profiles are looked up under `%LOCALAPPDATA%` and `%APPDATA%` when those are set.
+- **The Firefox launcher keeps its settings and its pairing in one place** when it plans for a platform other than the one it runs on (tests); `homePaths` takes the platform.
+
 ## 0.8.0 (2026-11-11)
 
 ### Fixed

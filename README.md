@@ -149,9 +149,29 @@ node examples/fake-demo.js   # in-memory bridge; observe, then act; prints a res
 ```sh
 git clone https://github.com/jedbjorn/fai-browser.git
 cd fai-browser
-npm ci
 npm run setup
 ```
+
+**No git or Node yet?** The installers check for git and Node 22+, install a missing one only after you say yes (macOS:
+Apple's Command Line Tools, Homebrew if you have it, else the official nodejs.org package checked against its
+SHA-256; Windows: winget), clone the latest release into `~/fai-browser` and run setup. Download one from a release
+tag, read it, then run it ([details](docs/REFERENCE.md#bootstrap-installers)):
+
+```sh
+# macOS (Linux too: it says what is missing; it installs nothing there)
+curl -fsSLo install-fai.sh https://raw.githubusercontent.com/jedbjorn/fai-browser/<tag>/scripts/install.sh
+less install-fai.sh && sh install-fai.sh
+```
+
+```powershell
+# Windows 10/11, in a normal (not administrator) PowerShell window
+Invoke-WebRequest -UseBasicParsing -OutFile install-fai.ps1 https://raw.githubusercontent.com/jedbjorn/fai-browser/<tag>/scripts/install.ps1
+notepad install-fai.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File .\install-fai.ps1
+```
+
+`<tag>` is the newest release on the [Releases page](https://github.com/jedbjorn/fai-browser/releases) that has
+`scripts/install.sh` (the first release after 0.8.0). `--check` (`-Check`) only reports what is there and what it
+would do.
 
 1. `npm run setup` saves its settings in `~/.config/fai-browser` (macOS: `~/Library/Application
    Support/fai-browser`), installs browser pairing for every browser it finds, starts the FAI service and asks
