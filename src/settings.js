@@ -122,11 +122,11 @@ export async function loadDaemonSettings(envPath, { env = process.env, generateS
 // change both (BUDGET_LIMITS bounds every source: popup, config.json and the host's per-call maxCalls/maxMs).
 export const DEFAULT_BUDGET = Object.freeze({ maxCalls: 50, maxMs: 1_200_000 });
 export const BUDGET_LIMITS = Object.freeze({
-  maxCalls: Object.freeze({ min: 1, max: 500 }),
+  maxCalls: Object.freeze({ min: 1, max: 10_000 }),
   maxMs: Object.freeze({ min: 1000, max: 14_400_000 }), // 4 hours
 });
 
-/** Validate a `budget` object ({maxCalls 1-500, maxMs 1000-14400000}); returns a clean copy or throws. */
+/** Validate a `budget` object ({maxCalls 1-10000, maxMs 1000-14400000}); returns a clean copy or throws. */
 export function checkBudget(budget) {
   if (budget === undefined || budget === null) return {};
   if (typeof budget !== 'object' || Array.isArray(budget)) throw new Error('budget must be an object');

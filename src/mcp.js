@@ -302,7 +302,7 @@ export const TOOLS = [
       url: { type: 'string', minLength: 1, maxLength: 2048, description: 'Open this URL (on the granted origins) in the tab.' },
       openTab: { type: 'string', minLength: 1, maxLength: 2048, description: 'Open an additional task tab on approved origins. Requires the user-approved Multiple task tabs grant; at most eight task tabs.' },
       nav: { type: 'string', enum: ['back', 'forward', 'reload'] },
-      tab: { type: 'string', pattern: '^t\\d{1,3}$', description: 'Switch to this tab of the request (tabs[].id).' },
+      tab: { type: 'string', pattern: '^t\\d{1,5}$', description: 'Switch to this tab of the request (tabs[].id).' },
       path: { type: 'string', minLength: 1, maxLength: 4096, description: 'For an upload action (Act or Test site; the user approves it): a file in your workspace.' },
       dialog: { type: 'string', enum: ['accept', 'dismiss'], description: 'Test site: the answer to the page\'s next confirm or prompt (text: prompt\'s value).' },
       point: POINT,

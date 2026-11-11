@@ -380,7 +380,7 @@ export function startTarget(request) {
 // BUDGET_LIMITS (test/extension-permissions.test.js checks the two agree).
 
 export const BUDGET_LIMITS = Object.freeze({
-  maxCalls: Object.freeze({ min: 1, max: 500 }),
+  maxCalls: Object.freeze({ min: 1, max: 10_000 }),
   maxMs: Object.freeze({ min: 1000, max: 14_400_000 }),
 });
 const MINUTE_MS = 60_000;

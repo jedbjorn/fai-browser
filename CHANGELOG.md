@@ -5,6 +5,13 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## Unreleased
+
+### Changed
+
+- The per-request call budget now goes up to 10000 calls (was 500) for long sessions: the popup's Advanced, Per-request budget field, `config.json` `budget.maxCalls`, the daemon's and hub's checks of the extension's reported setting and the extension's own check all accept 1 to 10000. The default (50 calls, 20 minutes) and the time bound (4 hours) are unchanged. An older daemon drops a reported setting above 500 and applies `config.json` or the default instead, which the popup shows under the fields.
+- Task tab ids (`t0`, `t1`, ...) are accepted up to five digits (was three) by the `tab` parameter of `fai_browser_act`, the daemon and the extension, so a long session that keeps opening tabs can still switch to them.
+
 ## 0.7.0 (2026-11-10)
 
 ### Removed
