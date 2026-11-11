@@ -349,7 +349,7 @@ This is a plain-language summary, not legal advice.
 
 ## More projects
 
-Other open-source projects by the same author:
+FAI Browser is part of [Designs/OS](https://designs-os.com). Other open-source projects by the same author:
 
 - **[Subfloor](https://subfloor.designs-os.com)** — a standing team of coding agents for your Git repository, with durable identity, memory, specs and handoffs, run through your coding harness. ([source](https://github.com/jedbjorn/subfloor))
 - **[RST](https://jedbjorn.github.io/rst-c/)** — a native Revit add-in for curated ribbon profiles: admins build them, users load them with one click. ([source](https://github.com/jedbjorn/rst-c))
