@@ -241,8 +241,9 @@ test('no artifacts: no 1 ms bin of holds, intervals or keyup-to-keydown times pi
     for (const r of t.ratio) ratios.set(r.toFixed(6), (ratios.get(r.toFixed(6)) ?? 0) + 1);
     const most = [...ratios.values()].reduce((a, b) => Math.max(a, b), 0);
     assert.ok(most / t.ratio.length < 0.002, `${blind ? 'blind' : 'normal'}: one hold/interval ratio in ${most} of ${t.ratio.length}`);
-    // A blind hold is as long as a normal one.
-    if (blind) assert.ok(median(t.hold) > 55, `blind hold median ${median(t.hold)}`);
+    // A blind hold is a human one: a group's first key as long as a normal one, the rest shorter (blindInGroupHold:
+    // no rollover there), so a median above 45 ms.
+    if (blind) assert.ok(median(t.hold) > 45, `blind hold median ${median(t.hold)}`);
     // The time between two events rises from its floor instead of starting with a full bin there: the lowest
     // populated 1 ms bins hold a small share of the fuller bins a few ms above them.
     const bins = new Map();
@@ -281,10 +282,12 @@ const quantile = (xs, f) => [...xs].sort((a, b) => a - b)[Math.floor(f * (xs.len
 const UNBROKEN = ['482915736024', 'qwrtzxcvbnmpsdfghjkl', '0123456789'.repeat(4), 'aaaabbbbccccddddeeee'];
 const GROUP_TEXTS = [...SENTENCES, 'ada.lovelace@example.com', ...UNBROKEN];
 
-test('groups: 3, 4 or 5 characters, now and then a single (never first, never two in a row), the rest at the end', t => {
+test('groups: 3, 4 or 5 characters, now and then a single (never first, never two in a row, the last too), no 2s', t => {
   const counts = { 1: 0, 3: 0, 4: 0, 5: 0 };
   const unbroken = { 1: 0, 3: 0, 4: 0, 5: 0 };
   let groups = 0;
+  let lastSingles = 0;
+  let fills = 0;
   for (const blind of [false, true]) {
     const random = seeded(blind ? 13 : 12);
     for (let i = 0; i < 4000; i++) {
@@ -294,32 +297,59 @@ test('groups: 3, 4 or 5 characters, now and then a single (never first, never tw
       assert.equal(sizes.reduce((a, b) => a + b, 0), p.typed);
       assert.equal(p.groups[0], 0);
       assert.ok(sizes[0] >= 3, 'the first group is never a single');
-      for (let k = 0; k < sizes.length - 1; k++) {
+      // Every group, the last included: 1, 3, 4 or 5 characters, and never two singles in a row.
+      for (let k = 0; k < sizes.length; k++) {
         assert.ok([1, 3, 4, 5].includes(sizes[k]), `a group of ${sizes[k]} in ${JSON.stringify(text)}`);
-        if (sizes[k] === 1) assert.ok(sizes[k + 1] !== 1 || k + 1 === sizes.length - 1, 'never two singles in a row');
+        if (k > 0) assert.ok(!(sizes[k] === 1 && sizes[k - 1] === 1), `two singles in a row in ${JSON.stringify(text)}`);
         counts[sizes[k]]++;
         if (UNBROKEN.includes(text)) unbroken[sizes[k]]++;
         groups++;
       }
-      assert.ok(sizes.at(-1) >= 1 && sizes.at(-1) <= 5, 'the rest at the end: 1 to 5 characters');
+      if (sizes.at(-1) === 1) lastSingles++;
+      fills++;
     }
   }
   const unbrokenGroups = Object.values(unbroken).reduce((a, b) => a + b, 0);
-  t.diagnostic(`shares: ${[1, 3, 4, 5].map(size => `${size}: ${(counts[size] / groups).toFixed(3)}`).join(', ')}; unbroken `
-    + `${[1, 3, 4, 5].map(size => `${size}: ${(unbroken[size] / unbrokenGroups).toFixed(3)}`).join(', ')}`);
+  t.diagnostic(`shares (all groups, the last included): ${[1, 3, 4, 5].map(size => `${size}: ${(counts[size] / groups).toFixed(3)}`).join(', ')}; `
+    + `unbroken ${[1, 3, 4, 5].map(size => `${size}: ${(unbroken[size] / unbrokenGroups).toFixed(3)}`).join(', ')}; a single last in ${(lastSingles / fills).toFixed(3)} of fills`);
   // Spread across 3, 4 and 5 (each 22-45% of groups: none dominating, none nearly absent); singles about one group
-  // in 17 (3-8%).
+  // in 17 (3-8%); a lone last character about as rare (2-8% of fills).
   for (const size of [3, 4, 5]) assert.ok(counts[size] / groups > 0.22 && counts[size] / groups < 0.45, `${size}: ${counts[size] / groups}`);
   assert.ok(counts[1] / groups > 0.03 && counts[1] / groups < 0.08, `singles ${counts[1] / groups}`);
-  // With no natural break to snap to, 3, 4 and 5 each 27-40%.
-  for (const size of [3, 4, 5]) assert.ok(unbroken[size] / unbrokenGroups > 0.27 && unbroken[size] / unbrokenGroups < 0.4, `unbroken ${size}: ${unbroken[size] / unbrokenGroups}`);
+  assert.ok(lastSingles / fills > 0.02 && lastSingles / fills < 0.08, `single last ${lastSingles / fills}`);
+  // With no natural break to snap to, 3, 4 and 5 each 25-42%.
+  for (const size of [3, 4, 5]) assert.ok(unbroken[size] / unbrokenGroups > 0.25 && unbroken[size] / unbrokenGroups < 0.42, `unbroken ${size}: ${unbroken[size] / unbrokenGroups}`);
 });
 
-test('groups prefer natural breaks within reach (word starts, symbols, Shift changes), a secret\'s never look', t => {
+test('the tail is balanced: no group of 2, and a group of 1 or 2 only where the whole value is that short', () => {
+  // Values of 1 to 4 characters are one group (so a 1- or 2-character value is the only 1- or 2-character group
+  // that is not a single); from 5 characters every group is 3-5 or a single: 5 is 5 (or 4 and a lone last), 6 is 3+3,
+  // 7 is 3+4 or 4+3 (or 3+3 and a lone last), never 5+1 or 5+2.
+  const random = seeded(18);
+  const seen = new Map();
+  for (let length = 1; length <= 30; length++) {
+    for (let i = 0; i < 600; i++) {
+      for (const [blind, text] of [[false, 'abcdefghijklmnopqrstuvwxyz0123'.slice(0, length)], [false, 'the cat sat on a big red mat ok'.slice(0, length)], [true, 'x'.repeat(length)]]) {
+        const sizes = groupSizes(plan(text, { session: session(i + 1), random, blind, ...UNBOUNDED }));
+        if (length < 5) {
+          assert.deepEqual(sizes, [length]);
+          continue;
+        }
+        assert.ok(sizes.every(size => size !== 2), `${JSON.stringify(text)}: ${sizes}`);
+        if (length <= 7) seen.set(`${length}:${sizes.join('+')}`, true);
+      }
+    }
+  }
+  const shapes = [...seen.keys()].sort();
+  for (const shape of ['6:3+3', '7:3+4', '7:4+3']) assert.ok(shapes.includes(shape), `${shape} in ${shapes}`);
+  for (const shape of ['6:5+1', '7:5+2', '6:4+2', '7:5+1+1', '5:3+2']) assert.ok(!shapes.includes(shape), `${shape} in ${shapes}`);
+});
+
+test('groups prefer natural breaks within reach (word starts, symbols, a capital), a secret\'s never look', t => {
   const random = seeded(14);
   const kind = ch => (ch === ' ' ? 'space' : /[a-z]/i.test(ch) ? 'letter' : /\d/.test(ch) ? 'digit' : 'symbol');
   const shifted = ch => /^[A-Z~!@#$%^&*()_+{}|:"<>?]$/.test(ch);
-  const natural = (chars, i) => chars[i] !== ' ' && (kind(chars[i]) !== kind(chars[i - 1]) || shifted(chars[i]) !== shifted(chars[i - 1]));
+  const natural = (chars, i) => chars[i] !== ' ' && (kind(chars[i]) !== kind(chars[i - 1]) || (shifted(chars[i]) && !shifted(chars[i - 1])));
   const hits = { false: 0, true: 0 };
   const starts = { false: 0, true: 0 };
   for (let i = 0; i < 3000; i++) {
@@ -336,6 +366,31 @@ test('groups prefer natural breaks within reach (word starts, symbols, Shift cha
   t.diagnostic(`group starts on a natural break: ${(hits.false / starts.false).toFixed(2)}, blind ${(hits.true / starts.true).toFixed(2)}`);
   assert.ok(hits.false / starts.false > 0.55 && hits.false / starts.false > 2 * hits.true / starts.true, `on a natural break: ${hits.false / starts.false}`);
   assert.ok(hits.true / starts.true < 0.45, `blind, by chance only: ${hits.true / starts.true}`);
+});
+
+test('a capital stays with its word: a group starts on the letter after it no more often than after a small letter', t => {
+  // The second letter of a word: after a capital ("O|slo") against after a small letter ("o|n"), same texts.
+  const random = seeded(19);
+  const texts = ['Maria Gonzalez', ...SENTENCES];
+  const at = { capital: [0, 0], small: [0, 0] };
+  for (let i = 0; i < 6000; i++) {
+    const text = texts[i % texts.length];
+    const chars = Array.from(text);
+    const p = plan(text, { session: session(i + 1), random, ...UNBOUNDED });
+    const starts = new Set(p.groups.map(g => p.strokes[g].index));
+    for (let k = 1; k + 1 < chars.length; k++) {
+      if (!/[a-z]/.test(chars[k]) || (k > 1 && /[a-z]/i.test(chars[k - 2]))) continue;
+      const which = /[A-Z]/.test(chars[k - 1]) ? 'capital' : /[a-z]/.test(chars[k - 1]) ? 'small' : null;
+      if (!which) continue;
+      at[which][0] += starts.has(k) ? 1 : 0;
+      at[which][1]++;
+    }
+  }
+  const capital = at.capital[0] / at.capital[1];
+  const small = at.small[0] / at.small[1];
+  t.diagnostic(`a group starts on a word's second letter: after a capital ${capital.toFixed(3)}, after a small letter ${small.toFixed(3)}`);
+  assert.ok(at.capital[1] > 5000 && at.small[1] > 5000);
+  assert.ok(capital <= small * 1.1 + 0.005, `after a capital ${capital}, after a small letter ${small}`);
 });
 
 test('bursts: quick and even inside a group, a clearly longer and widely varied pause between groups', t => {
@@ -442,32 +497,53 @@ test('slips inside groups: a correction is never split by a pause, and starts a 
   assert.ok(atStart / slips > 0.05 && atStart / slips < 0.5, `slips starting a group ${atStart}/${slips}`);
 });
 
-test('a rare long pause (off by default) replaces a group\'s pause, at most one per fill, dropped first over budget', () => {
+test('the pause before a group is a draw of its own: right-skewed, widely spread, scaled by the typist', t => {
+  // The pause itself (the plan's `pauses`), in multiples of the session's median interval, so the interval's own
+  // spread cannot stand in for it: log-normal around 1.2 (sigma 0.45), within 0.6-5.
+  const random = seeded(20);
+  const ratios = [];
+  const ms = { slow: [], fast: [] };
+  for (let i = 0; i < 3000; i++) {
+    const s = session(i + 1);
+    for (const blind of [false, true]) {
+      const p = plan(GROUP_TEXTS[i % GROUP_TEXTS.length], { session: s, random, blind, slips: !blind, ...UNBOUNDED });
+      assert.equal(p.pauses.length, p.groups.length - 1);
+      for (const pause of p.pauses) {
+        ratios.push(pause / s.iki);
+        if (s.iki > 100) ms.slow.push(pause);
+        if (s.iki < 82) ms.fast.push(pause);
+      }
+    }
+  }
+  t.diagnostic(`pause / session interval: median ${median(ratios).toFixed(2)}, CV ${(sd(ratios) / mean(ratios)).toFixed(2)}, `
+    + `5-95% ${quantile(ratios, 0.05).toFixed(2)}-${quantile(ratios, 0.95).toFixed(2)}; slow typist ${median(ms.slow).toFixed(0)} ms, fast ${median(ms.fast).toFixed(0)} ms`);
+  assert.ok(ratios.every(r => r >= params.groupPause[2] - 1e-9 && r <= params.groupPause[3] + 1e-9));
+  assert.ok(median(ratios) > 1 && median(ratios) < 1.4, `median ${median(ratios)}`);
+  assert.ok(sd(ratios) / mean(ratios) > 0.35, `pause CV ${sd(ratios) / mean(ratios)}`);
+  assert.ok(mean(ratios) > median(ratios) * 1.05 && skewness(ratios) > 0.5, `pause skewness ${skewness(ratios)}`);
+  assert.ok(quantile(ratios, 0.95) / quantile(ratios, 0.05) > 3, 'widely spread, not a constant');
+  assert.ok(median(ms.slow) > median(ms.fast) * 1.15, 'a slower typist pauses longer');
+});
+
+test('a hesitation replaces a group\'s pause, never stacks on it', () => {
+  // Every group start hesitates (300 ms) while the group's own pause is about 3 times the session interval: replaced,
+  // a group's gap is its interval (or, blind, the wait for the key before to come up) and 300 ms, under 3 intervals
+  // over 300 ms; stacked, it would be 3 intervals longer than that.
   const ctx = vm.createContext({ navigator: { platform: 'Linux' }, document: { hidden: false }, performance, setTimeout, clearTimeout });
   vm.runInContext(SOURCE, ctx);
   const r = ctx.__faiInput.rhythm;
-  const longPlan = (...args) => JSON.parse(JSON.stringify(r.plan(...args)));
-  assert.equal(params.longPause, 0);
-  const text = 'the quick brown fox jumps over the lazy dog';
-  for (let i = 0; i < 200; i++) assert.equal(plan(text, { session: session(i + 1), random: seeded(i), ...UNBOUNDED }).longPauses, 0);
-  r.params.longPause = 0.5;
-  let seen = 0;
-  let dropped = 0;
-  for (let i = 0; i < 200; i++) {
-    const p = longPlan(text, { session: r.session(i + 1), random: r.seeded(i), ...UNBOUNDED });
-    assert.ok(p.longPauses <= r.params.longPauseMax);
-    const g = groupGaps(p);
-    if (p.longPauses) {
-      seen++;
-      assert.ok(g.between.some(gap => gap >= r.params.longPauseMs[0]), 'the long pause comes before a group');
+  Object.assign(r.params, { hesitation: 1, hesitationCap: 1e9, hesitationMs: [300, 300.001], groupPause: [3, 0.01, 2.9, 3.1] });
+  for (let i = 0; i < 300; i++) {
+    for (const blind of [false, true]) {
+      const s = r.session(i + 1);
+      const p = JSON.parse(JSON.stringify(r.plan('qwrtzxcvbnmpsdfghjkl', { session: s, random: r.seeded(i + 1), blind, ...UNBOUNDED })));
+      assert.equal(p.hesitations, p.groups.length - 1);
+      const { between } = groupGaps(p);
+      assert.ok(between.length >= 3);
+      assert.ok(median(between) - 300 < 3 * s.iki, `${blind ? 'blind' : 'normal'}: ${median(between)} ms with a ${s.iki} ms interval`);
+      assert.ok(median(between) - 300 > 0.5 * s.iki);
     }
-    assert.ok(g.within.every(gap => gap < r.params.longPauseMs[0]));
-    const budgeted = longPlan('hotel rooms', { session: r.session(i + 1), random: r.seeded(i), budgetMs: 1000, maxTyped: 40 });
-    if (budgeted.longPauses) assert.ok(budgeted.total <= 1000 * params.slack);
-    else dropped++;
   }
-  assert.ok(seen > 150, `${seen} fills with a long pause`);
-  assert.ok(dropped > 0, 'a long pause that does not fit is dropped');
 });
 
 test('Shift, digits and the same finger are slower; common bigrams and a change of hand quicker (damped inside a group)', () => {
@@ -530,10 +606,10 @@ test('the pace stays quick: a 30-character value at about 9 characters a second'
   const charsPerSecond = 1000 / mean(perChar);
   assert.ok(charsPerSecond >= 7.5 && charsPerSecond <= 11, `${charsPerSecond} chars/s`);
   assert.ok(Math.min(...perChar) > 60);
-  // Typed in full, with groups and slips: a 4-character value always under 0.6 s; 12 digits about 1.2 s and an
+  // Typed in full, with groups and slips: a 4-character value always under 0.65 s; 12 digits about 1.2 s and an
   // email address of 24 characters about 2.8 s on average (each within 20%).
   const totals = text => Array.from({ length: 2000 }, (_, i) => plan(text, { session: session(i + 1), random, slips: true, ...UNBOUNDED }).total);
-  assert.ok(Math.max(...totals('Oslo')) < 600);
+  assert.ok(Math.max(...totals('Oslo'), ...totals('Ab1!')) < 650);
   const digits = mean(totals('482915736024'));
   assert.ok(digits > 1000 && digits < 1450, `12 digits ${digits} ms`);
   const email = mean(totals('ada.lovelace@example.com'));
@@ -581,7 +657,7 @@ test('a fill types for a bounded time: values up to 14 characters in full, long 
   // The pauses between groups do not eat the typed part of a long value: about 9 characters in the second (10 before
   // groups), never fewer than 8.5 on average.
   assert.ok(mean(typedShare) >= 8.5, `typed ${mean(typedShare)} characters of a long value`);
-  assert.equal(plan('abc',{ session: session(1), random, budgetMs: 0, maxTyped: 40 }).typed, 0);
+  assert.equal(plan('abc', { session: session(1), random, budgetMs: 0, maxTyped: 40 }).typed, 0);
   assert.equal(plan('abcdef', { session: session(1), random, budgetMs: 1e6, maxTyped: 4 }).typed, 4);
 });
 
@@ -594,7 +670,7 @@ test('a secret is planned from its length alone: same times, groups, pauses, tot
         assertValid(value, p);
         assert.equal(p.slips, 0);
         const keys = p.events.filter(e => e.type !== 'shift').map(e => [e.type, e.index, e.at]);
-        return { keys, groups: p.groups, total: p.total, typed: p.typed, chunked: p.chunked, hesitations: p.hesitations, hesitationMs: p.hesitationMs };
+        return { keys, groups: p.groups, pauses: p.pauses, total: p.total, typed: p.typed, chunked: p.chunked, hesitations: p.hesitations, hesitationMs: p.hesitationMs };
       });
       for (const shape of shapes.slice(1)) assert.deepEqual(shape, shapes[0]);
     }
@@ -605,6 +681,16 @@ test('a secret is planned from its length alone: same times, groups, pauses, tot
   assert.deepEqual(a.groups, b.groups);
   assert.ok(a.groups.length >= 5);
   assert.deepEqual(downs(a), downs(b));
+  // Still bursts: with no rollover a key waits for the one before to come up, so holds and flights inside a group are
+  // shorter; the pause before a group is at least 2.5 times the gap inside one (medians).
+  const within = [];
+  const between = [];
+  for (const { plan: p } of corpus({ fills: 1500, texts: ['Tr0ub4dor&3!', 'correct horse battery staple'], blind: true, seed: 22 })) {
+    const g = groupGaps(p);
+    within.push(...g.within);
+    between.push(...g.between);
+  }
+  assert.ok(median(between) >= 2.5 * median(within), `blind: between ${median(between)} vs within ${median(within)}`);
 });
 
 test('trusted steps: the plan as debugger steps, waits within the worker limit, keys, Backspace and text in order', () => {

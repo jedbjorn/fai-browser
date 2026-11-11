@@ -549,8 +549,8 @@
     pad: [10, 0.55], // a per-key margin over `sep` and holdMin wherever events are pushed apart: log-normal (median, sigma),
     // so its density rises from zero (mode about 7 ms) instead of stepping up at a floor
     // Groups (bursts): characters per group, drawn uniformly per group; the chance a group is a lone character
-    // instead (about one group in 17; never two in a row, never the first); values shorter than groupMinValue are
-    // one group, with no pause.
+    // instead (about one group in 17; never two in a row, never the first; the last group too, split off a last group
+    // of 4 or 5); values shorter than groupMinValue are one group, with no pause.
     group: [3, 5],
     groupSingle: 0.06,
     groupMinValue: 5,
@@ -562,11 +562,6 @@
     // The pause before a group, added to that key's own interval: log-normal, in multiples of the session's median
     // IKI: [median, sigma, low, high] (truncated: redrawn, never clamped).
     groupPause: [1.2, 0.45, 0.6, 5],
-    // A rare long pause (about a second) instead of a group's pause: chance per group start (0: off), its range
-    // (ms), most per fill. Dropped with the hesitations when a plan does not fit its budget.
-    longPause: 0,
-    longPauseMs: [800, 1300],
-    longPauseMax: 1,
     bigram: 0.8,
     alternate: 0.88,
     sameFinger: 1.3,
@@ -581,13 +576,18 @@
     wordStart: 1.3,
     afterPunctuation: 1.5,
     floor: 0.62, // lowest combined context factor
-    hesitation: 0.05, // chance per group start that its pause is a hesitation instead (about 1.3% of keys)
+    hesitation: 0.05, // chance per group start that its pause is a hesitation instead (about 1% of keys)
     hesitationMs: [250, 550],
     hesitationCap: 600, // most hesitation per fill
     lead: 45, // median Shift lead before its key (ms); inGroupLead inside a group, where a Shift change is quicker
     inGroupLead: 28,
     sep: 8, // least time between two key events
     blindIkiMin: 45,
+    // Inside a group of a blind plan (no rollover there, so each key waits for the one before to come up): the hold
+    // against the session's, and the median of the flight's log-normal part (ms; `flight` elsewhere), so the wait
+    // does not swallow the quicker interval of a group.
+    blindInGroupHold: 0.6,
+    blindInGroupFlight: 4,
     shiftAt: [0.3, 0.7], // where a blind plan's Shift sits in the gap before its key
     slack: 1.4, // a whole value is typed when its plan is within budget * slack
     fullChars: 14, // a value this short is always typed in full (without hesitations and slips when they do not fit)
@@ -649,8 +649,9 @@
     return { ch, shift: key.shift, kind, id: key.code || ch, finger, hand: finger?.[0] ?? null };
   }
 
-  // How much slower (above 1) or quicker this key comes after `prev`.
-  function contextFactor(prev, key) {
+  // How much slower (above 1) or quicker this key comes after `prev`. At a group's start (`groupStart`) a word start
+  // and the key after punctuation are not slowed: the group's pause is that break.
+  function contextFactor(prev, key, groupStart = false) {
     if (!prev) return 1;
     if (key.kind === 'back') return prev.kind === 'back' ? RHYTHM.backRun : RHYTHM.back;
     let f = prev.kind === 'back' ? RHYTHM.retype : 1;
@@ -665,21 +666,24 @@
     if (key.kind === 'symbol') f *= RHYTHM.symbol;
     if (key.kind === 'foreign') f *= RHYTHM.foreign;
     if (key.kind === 'enter' || prev.kind === 'enter') f *= RHYTHM.enter;
-    if (prev.kind === 'space' && key.kind !== 'space') f *= RHYTHM.wordStart;
-    if (PUNCTUATION.test(prev.ch)) f *= RHYTHM.afterPunctuation;
+    if (!groupStart && prev.kind === 'space' && key.kind !== 'space') f *= RHYTHM.wordStart;
+    if (!groupStart && PUNCTUATION.test(prev.ch)) f *= RHYTHM.afterPunctuation;
     return Math.max(RHYTHM.floor, f);
   }
 
-  // A natural place for a group to start: at `key` after `prev`, where the kind of key or Shift changes (a word start,
-  // a symbol or punctuation, a letter after a digit), except before a space (the space goes with its word).
-  const naturalBreak = (prev, key) => key.kind !== 'space' && (prev.kind !== key.kind || prev.shift !== key.shift);
+  // A natural place for a group to start: at `key` after `prev`, where the kind of key changes (a word start, a
+  // symbol or punctuation, a letter after a digit) or Shift goes down (a capital after a small letter; not the small
+  // letter after a capital, which stays with it), except before a space (the space goes with its word).
+  const naturalBreak = (prev, key) => key.kind !== 'space' && (prev.kind !== key.kind || (key.shift && !prev.shift));
 
   // Where groups start (character indices, 0 first). Each group draws its size uniformly from RHYTHM.group, or with
-  // RHYTHM.groupSingle is a lone character (never the first group, never right after another); a multi-character
-  // group ends at the natural break within its 3-5 reach nearest its drawn size, if any (`blind`: never looked for).
-  // The last group is what is left (1 to 4 characters when less than its drawn size). Values shorter than
-  // RHYTHM.groupMinValue are one group. Blind, no draw looks at a character, so a secret's groups (and every draw
-  // after them) depend on its length alone.
+  // RHYTHM.groupSingle is a lone character (never the first group, never right after another, and only where 3 or
+  // more characters follow it); a multi-character group ends at the natural break within its 3-5 reach nearest its
+  // drawn size that leaves 3 or more characters (`blind`: never looked for). The tail is balanced: a group that would
+  // leave 1 or 2 characters takes them when it stays within 5, else ends early so 3 are left (6 characters are 3+3,
+  // 7 are 3+4 or 4+3), so no group has 2 characters; a last group of 4 or 5 is split into 3 or 4 and a lone last
+  // character as often as a lone character comes elsewhere. Values shorter than RHYTHM.groupMinValue are one group.
+  // Blind, no draw looks at a character, so a secret's groups (and every draw after them) depend on its length alone.
   function chooseGroups(keys, random, blind) {
     const n = keys.length;
     if (!n) return [];
@@ -689,17 +693,25 @@
     let start = 0;
     let single = false;
     for (;;) {
-      const lone = !single && start > 0 && random() < RHYTHM.groupSingle;
+      const rest = n - start;
+      const lone = !single && start > 0 && rest > low && random() < RHYTHM.groupSingle;
       const drawn = low + Math.floor(random() * (high - low + 1));
       let size = lone ? 1 : drawn;
-      if (!lone && !blind && start + size < n) {
-        let best = null;
-        for (let b = start + low; b <= Math.min(start + high, n - 1); b++) {
-          if (naturalBreak(keys[b - 1], keys[b]) && (best === null || Math.abs(b - start - drawn) < Math.abs(best - start - drawn))) best = b;
+      if (!lone) {
+        if (!blind && size < rest) {
+          let best = null;
+          for (let b = start + low; b <= Math.min(start + high, n - low); b++) {
+            if (naturalBreak(keys[b - 1], keys[b]) && (best === null || Math.abs(b - start - drawn) < Math.abs(best - start - drawn))) best = b;
+          }
+          if (best !== null) size = best - start;
         }
-        if (best !== null) size = best - start;
+        const left = rest - size;
+        if (left > 0 && left < low) size = rest <= high ? rest : rest - low;
       }
-      if (start + size >= n) return starts;
+      if (size >= rest) {
+        if (rest > low && random() < RHYTHM.groupSingle) starts.push(n - 1);
+        return starts;
+      }
       start += size;
       single = lone;
       starts.push(start);
@@ -747,9 +759,9 @@
     return strokes;
   }
 
-  // The random part of a plan, stroke by stroke: interval before it, the pause before a group (and any hesitation or
-  // long pause that would replace it), hold, Shift lead, flight, the margins where events are pushed apart, and the
-  // blind Shift slot. A group starts at the first stroke of its first character (the wrong key, for a slip there);
+  // The random part of a plan, stroke by stroke: interval before it, the pause before a group (and any hesitation
+  // that would replace it), hold, Shift lead, flight, the margins where events are pushed apart, and the blind Shift
+  // slot. A group starts at the first stroke of its first character (the wrong key, for a slip there);
   // a Backspace and the right key again belong to the group they correct.
   function rhythmDraws(strokes, session, random, blind, groupStarts = new Set()) {
     const normal = () => Math.sqrt(-2 * Math.log(1 - random())) * Math.cos(2 * Math.PI * random());
@@ -762,11 +774,10 @@
       return low + random() * (high - low);
     };
     const pad = () => logNormal(RHYTHM.pad[0], RHYTHM.pad[1], 0, 90);
-    const out = { iki: [], pause: [], extra: [], long: [], hold: [], lead: [], flight: [], pad: [], shiftAt: [], groups: [], start: 0, tail: 0, shiftEnd: 0 };
+    const out = { iki: [], pause: [], extra: [], start: [], hold: [], lead: [], flight: [], pad: [], shiftAt: [], groups: [], begin: 0, tail: 0, shiftEnd: 0 };
     const [pauseMedian, pauseSigma, pauseLow, pauseHigh] = RHYTHM.groupPause;
     const seen = new Set();
     let hesitated = 0;
-    let longs = 0;
     for (let i = 0; i < strokes.length; i++) {
       const stroke = strokes[i];
       const key = stroke.key;
@@ -774,7 +785,9 @@
       const first = !stroke.back && !seen.has(stroke.index);
       if (!stroke.back) seen.add(stroke.index);
       const groupStart = i === 0 || (first && groupStarts.has(stroke.index));
-      let f = blind ? 1 : contextFactor(prev, key);
+      // At a group's start the pause marks the break, so a word start or the key after punctuation is not slowed
+      // on top of it.
+      let f = blind ? 1 : contextFactor(prev, key, groupStart);
       let sigma = RHYTHM.ikiSigma;
       if (groupStart) {
         out.groups.push(i);
@@ -787,17 +800,11 @@
       if (stroke.notice) iki += logNormal(RHYTHM.notice[2], 0.3, RHYTHM.notice[0], RHYTHM.notice[1]);
       let pause = 0;
       let extra = 0;
-      let long = false;
       if (groupStart && i > 0) {
         pause = logNormal(session.iki * pauseMedian, pauseSigma, session.iki * pauseLow, session.iki * pauseHigh);
-        // Instead of the pause, now and then: a long pause (off unless RHYTHM.longPause), or a hesitation that fits
-        // what is left of the cap (one that does not is not taken: no time cut short at a limit).
-        if (RHYTHM.longPause > 0 && longs < RHYTHM.longPauseMax && random() < RHYTHM.longPause) {
-          const [low, high] = RHYTHM.longPauseMs;
-          extra = low + random() * (high - low);
-          long = true;
-          longs++;
-        } else if (random() < RHYTHM.hesitation) {
+        // Now and then a hesitation instead of the pause, when it fits what is left of the cap (one that does not is
+        // not taken: no time cut short at a limit).
+        if (random() < RHYTHM.hesitation) {
           const [low, high] = RHYTHM.hesitationMs;
           const ms = low + random() * (high - low);
           if (hesitated + ms <= RHYTHM.hesitationCap) {
@@ -809,27 +816,30 @@
       out.iki.push(iki);
       out.pause.push(pause);
       out.extra.push(extra);
-      out.long.push(long);
+      out.start.push(groupStart);
       const space = !blind && key.kind === 'space' ? 0.9 : 1;
-      out.hold.push(logNormal(session.hold * space, RHYTHM.holdSigma, RHYTHM.holdMin, RHYTHM.holdMax));
+      // A blind plan has no rollover, so each key waits for the one before to come up: inside a group its holds are
+      // shorter (the same draw for every key), or the wait would swallow the quicker interval there.
+      const shorter = blind && !groupStart ? RHYTHM.blindInGroupHold : 1;
+      out.hold.push(logNormal(session.hold * space * shorter, RHYTHM.holdSigma, RHYTHM.holdMin, RHYTHM.holdMax));
       out.lead.push(groupStart ? logNormal(RHYTHM.lead, 0.3, 20, 90) : logNormal(RHYTHM.inGroupLead, 0.3, 14, 60));
-      out.flight.push(RHYTHM.flight[0] + logNormal(RHYTHM.flight[1], RHYTHM.flight[2], 0, 120));
+      out.flight.push(RHYTHM.flight[0] + logNormal(shorter < 1 ? RHYTHM.blindInGroupFlight : RHYTHM.flight[1], RHYTHM.flight[2], 0, 120));
       out.pad.push({ two: pad(), order: pad(), gap: pad(), mod: pad(), hold: pad() });
       out.shiftAt.push(RHYTHM.shiftAt[0] + random() * (RHYTHM.shiftAt[1] - RHYTHM.shiftAt[0]));
     }
-    out.start = logNormal(RHYTHM.lead, 0.3, 30, 90);
+    out.begin = logNormal(RHYTHM.lead, 0.3, 30, 90);
     out.tail = logNormal(42, 0.3, 30, 75);
     out.shiftEnd = RHYTHM.shiftAt[0] + random() * (RHYTHM.shiftAt[1] - RHYTHM.shiftAt[0]);
     return out;
   }
 
   const rollable = key => key.kind !== 'enter' && key.kind !== 'foreign' && key.kind !== 'back';
-  // The pause before stroke i on top of its interval: a group's own pause, or the hesitation or long pause that
-  // replaces it (never both); without `hesitate`, always the group's own.
+  // The pause before stroke i on top of its interval: a group's own pause, or the hesitation that replaces it (never
+  // both); without `hesitate`, always the group's own.
   const pauseBefore = (d, i, hesitate) => (hesitate && d.extra[i] > 0 ? d.extra[i] : d.pause[i]);
 
   // The events of the first `count` strokes: { at, type: 'down'|'up'|'shift', index? (stroke), on? }, in time order
-  // from 0. `hesitate` false lays them out without the hesitations and long pauses (each group keeps its pause).
+  // from 0. `hesitate` false lays them out without the hesitations (each group keeps its pause).
   function rhythmLayout(strokes, d, count, hesitate = true) {
     const { sep } = RHYTHM;
     const events = [];
@@ -888,11 +898,12 @@
   function rhythmLayoutBlind(strokes, d, count, hesitate = true) {
     const events = [];
     let shift = false;
-    let down = d.start;
+    let down = d.begin;
     let prevDown = 0;
     let prevUp = 0;
     for (let i = 0; i < count; i++) {
-      if (i > 0) down = Math.max(prevDown + d.iki[i] + pauseBefore(d, i, hesitate), prevUp + 2 * RHYTHM.sep + d.flight[i]);
+      // A group's pause comes after the wait for the key before to come up, so it shows whatever that wait was.
+      if (i > 0) down = Math.max(prevDown + d.iki[i], prevUp + 2 * RHYTHM.sep + d.flight[i]) + pauseBefore(d, i, hesitate);
       if (strokes[i].key.shift !== shift) {
         shift = !shift;
         events.push({ at: prevUp + d.shiftAt[i] * (down - prevUp), type: 'shift', on: shift });
@@ -909,11 +920,11 @@
 
   /**
    * The plan for typing `text`: { events, total, typed, chunked, blind, strokes ([{ ch, back?, index? }], what each
-   * event's `index` presses), groups (stroke indices that start one: the first is 0), slips, hesitations,
-   * hesitationMs, longPauses (within what is typed) }. Groups (chooseGroups) are drawn before slips, on the characters
-   * typed, and the slip plan and the plain plan share them. A value within maxTyped is typed in full when its plan fits
-   * within budgetMs * RHYTHM.slack, dropping first its hesitations and long pauses (each group keeps its own pause),
-   * then its slips, to fit (and always, without them, up to RHYTHM.fullChars characters); else the longest prefix
+   * event's `index` presses), groups (stroke indices that start one: the first is 0), pauses (each later group's own
+   * pause, ms, whether or not a hesitation took its place), slips, hesitations, hesitationMs (within what is typed) }.
+   * Groups (chooseGroups) are drawn before slips, on the characters typed, and the slip plan and the plain plan share
+   * them. A value within maxTyped is typed in full when its plan fits within budgetMs * RHYTHM.slack, dropping first
+   * its hesitations (each group keeps its own pause), then its slips, to fit (and always, without them, up to RHYTHM.fullChars characters); else the longest prefix
    * whose plan (no slips) fits within budgetMs is typed and the rest goes in as one insertion. `slips` allows slips
    * (never with `blind`); `slipRate` overrides their chance per letter.
    */
@@ -945,15 +956,14 @@
     }
     const strokes = plan.strokes.slice(0, plan.count);
     const typed = strokes.reduce((most, stroke) => (stroke.back ? most : Math.max(most, stroke.index + 1)), 0);
-    const within = Array.from({ length: plan.count }, (_, i) => i);
-    const extras = plan.hesitate ? within.filter(i => plan.d.extra[i] > 0 && !plan.d.long[i]).map(i => plan.d.extra[i]) : [];
+    const groups = plan.d.groups.filter(i => i < plan.count);
+    const extras = plan.hesitate ? plan.d.extra.slice(0, plan.count).filter(ms => ms > 0) : [];
     return {
       events: plan.events, total: plan.total, typed, chunked: typed < chars.length, blind,
       strokes: strokes.map(stroke => ({ ch: stroke.ch, ...(stroke.back ? { back: true } : { index: stroke.index }) })),
-      groups: plan.d.groups.filter(i => i < plan.count),
+      groups, pauses: groups.slice(1).map(i => plan.d.pause[i]),
       slips: strokes.filter(stroke => stroke.slip).length,
       hesitations: extras.length, hesitationMs: extras.reduce((sum, ms) => sum + ms, 0),
-      longPauses: plan.hesitate ? within.filter(i => plan.d.long[i]).length : 0,
     };
   }
 
