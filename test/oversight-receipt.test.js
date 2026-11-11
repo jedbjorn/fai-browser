@@ -144,6 +144,10 @@ test('config.json accepts thresholds and budget and rejects invalid ones', async
     assert.doesNotThrow(() => loadConfig(paths));
     await writeFile(paths.config, JSON.stringify({ budget: { maxCalls: 0 } }));
     assert.throws(() => loadConfig(paths), /budget\.maxCalls/);
+    await writeFile(paths.config, JSON.stringify({ budget: { maxCalls: 10_000, maxMs: 14_400_000 } }));
+    assert.deepEqual(loadConfig(paths).budget, { maxCalls: 10_000, maxMs: 14_400_000 });
+    await writeFile(paths.config, JSON.stringify({ budget: { maxCalls: 10_001 } }));
+    assert.throws(() => loadConfig(paths), /budget\.maxCalls must be 1 to 10000/);
   } finally {
     await rm(home, { recursive: true, force: true });
   }

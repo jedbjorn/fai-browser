@@ -1266,7 +1266,7 @@ test('arm.html offers Testing only when every requested origin is a listed envir
   assert.match(await bare.$eval('#detail', node => node.textContent), /Codex asks for that page/);
 });
 
-// --- per-request budget (Setup & connection) ---------------------------------------------------------------------
+// --- per-request budget (Advanced) -------------------------------------------------------------------------------
 
 test('normalizeBudget: integers within the bounds, else null (not set); the bounds match src/settings.js', async () => {
   const settings = await import('../src/settings.js');
@@ -1275,7 +1275,9 @@ test('normalizeBudget: integers within the bounds, else null (not set); the boun
   assert.equal(normalizeBudget(undefined), null);
   assert.equal(normalizeBudget(null), null);
   assert.equal(normalizeBudget({ maxCalls: 0, maxMs: 60_000 }), null);
-  assert.equal(normalizeBudget({ maxCalls: 501, maxMs: 60_000 }), null);
+  assert.deepEqual(BUDGET_LIMITS.maxCalls, { min: 1, max: 10_000 });
+  assert.deepEqual(normalizeBudget({ maxCalls: 10_000, maxMs: 60_000 }), { maxCalls: 10_000, maxMs: 60_000 });
+  assert.equal(normalizeBudget({ maxCalls: 10_001, maxMs: 60_000 }), null);
   assert.equal(normalizeBudget({ maxCalls: 5, maxMs: 999 }), null);
   assert.equal(normalizeBudget({ maxCalls: 5, maxMs: 14_400_001 }), null);
   assert.equal(normalizeBudget({ maxCalls: '5', maxMs: 60_000 }), null);
@@ -1289,14 +1291,16 @@ test('budgetFromFields: whole numbers within the bounds; both empty removes the 
   assert.deepEqual(budgetFromFields({ calls: ' 12 ', minutes: '5' }), { budget: { maxCalls: 12, maxMs: 300_000 } });
   assert.match(budgetFromFields({ calls: '', minutes: '5' }).error, /Fill in both calls and minutes, or leave both empty/);
   assert.match(budgetFromFields({ calls: '12', minutes: '' }).error, /Fill in both/);
-  assert.match(budgetFromFields({ calls: '0', minutes: '5' }).error, /Calls must be a whole number from 1 to 500/);
-  assert.match(budgetFromFields({ calls: '501', minutes: '5' }).error, /Calls must be/);
+  assert.match(budgetFromFields({ calls: '0', minutes: '5' }).error, /Calls must be a whole number from 1 to 10000/);
+  assert.deepEqual(budgetFromFields({ calls: '10000', minutes: '240' }), { budget: { maxCalls: 10_000, maxMs: 14_400_000 } });
+  assert.match(budgetFromFields({ calls: '10001', minutes: '5' }).error, /Calls must be/);
   assert.match(budgetFromFields({ calls: '1.5', minutes: '5' }).error, /Calls must be/);
   assert.match(budgetFromFields({ calls: '0', minutes: '' }).error, /Calls must be/, 'a bad value is named before the missing one');
   assert.match(budgetFromFields({ calls: '12', minutes: '241' }).error, /Minutes must be a whole number from 1 to 240/);
   assert.match(budgetFromFields({ calls: '12', minutes: '-3' }).error, /Minutes must be/);
   assert.equal(describeBudget({ maxCalls: 50, maxMs: 1_200_000 }), '50 calls, 20 min');
   assert.equal(describeBudget({ maxCalls: 1, maxMs: 90_000 }), '1 call, 1.5 min');
+  assert.equal(describeBudget({ maxCalls: 10_000, maxMs: 14_400_000 }), '10000 calls, 240 min');
   assert.equal(describeBudget(null), '');
 });
 
@@ -1310,8 +1314,21 @@ test('popup: the per-request budget fields are empty by default, validate whole 
   // A bad value shows an error and saves nothing.
   await page.fill('#budget-calls', '0');
   await page.dispatchEvent('#budget-calls', 'change');
-  assert.match(await page.$eval('#budget-error', node => node.textContent), /Calls must be a whole number from 1 to 500/);
+  assert.match(await page.$eval('#budget-error', node => node.textContent), /Calls must be a whole number from 1 to 10000/);
   assert.equal(await page.evaluate(() => __local.budget), undefined);
+  await page.fill('#budget-calls', '10001');
+  await page.fill('#budget-minutes', '5');
+  await page.dispatchEvent('#budget-minutes', 'change');
+  assert.match(await page.$eval('#budget-error', node => node.textContent), /Calls must be a whole number from 1 to 10000/);
+  assert.equal(await page.evaluate(() => __local.budget), undefined);
+  // The most it takes: five digits, saved, and the value fits its field.
+  assert.equal(await page.$eval('#budget-calls', node => node.max), '10000');
+  await page.fill('#budget-calls', '10000');
+  await page.fill('#budget-minutes', '240');
+  await page.dispatchEvent('#budget-minutes', 'change');
+  assert.equal(await page.$eval('#budget-error', node => node.textContent), '');
+  assert.deepEqual(await page.evaluate(() => __local.budget), { maxCalls: 10_000, maxMs: 14_400_000 });
+  assert.equal(await page.$eval('#budget-calls', node => node.scrollWidth <= node.clientWidth), true, 'five digits fit the field');
   // Both fields valid: saved as milliseconds.
   await page.fill('#budget-calls', '12');
   await page.fill('#budget-minutes', '5');
