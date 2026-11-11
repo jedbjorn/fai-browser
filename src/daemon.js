@@ -851,10 +851,14 @@ export function createDaemon(options = {}) {
     if (record.state === 'released' && record.stateReason === 'stopped') {
       return outcomeResult('stopped', base);
     }
+    // The user refused the request (issue #36): said so, never as a technical close.
+    if (record.state === 'denied') return outcomeResult('denied', base);
     const closed = outcomeResult('request_closed', base);
     // Replaced by another request approved in the same browser: the agent continues with that one.
     if (record.stateReason === 'superseded') {
       closed.needs.message = 'Another tab request approved in this browser replaced this one. Continue with that requestId.';
+    } else if (record.stateReason === 'replaced') {
+      closed.needs.message = 'A newer request of yours was approved instead. Continue with that requestId.';
     }
     return closed;
   }
@@ -918,6 +922,7 @@ export function createDaemon(options = {}) {
       record.ask = prior.ask;
     } else {
       record.undo = { leaseId: reply.leaseId, at: now(), prior };
+      expireReplaced(record);
       if (asked) {
         delete record.askDeclined;
         log('request_ask_approved', { requestId: record.requestId, level: record.grant?.level, origins: asked.origins.length });
@@ -968,6 +973,27 @@ export function createDaemon(options = {}) {
     const bound = bindRecord(record, event);
     if (!bound.error) wakeOwner(record, resumed ? 'resume' : 'approved');
     return bound;
+  }
+
+  /**
+   * The user approved `record`: the older requests its agent still has waiting (the same owner session, else the same
+   * client instance) in the same browser are replaced by it, so they expire now (`replaced`). Left pending, a late
+   * click on one of them (a modal or permission prompt that answers after the fact) would supersede the request just
+   * approved (issue #36). A request the agent asked for after this one is left alone; so are invited tabs.
+   */
+  function expireReplaced(record) {
+    const owner = record.ownerSession ?? null;
+    const instance = owner ? null : record.clientInstance ?? null;
+    if (!owner && !instance) return;
+    const browserId = record.lease?.browserId ?? null;
+    for (const other of [...requests.values()]) {
+      if (other === record || other.state !== 'pending' || other.invite || (other.seq ?? 0) >= (record.seq ?? 0)) continue;
+      const same = owner ? other.ownerSession === owner : !other.ownerSession && other.clientInstance === instance;
+      if (!same) continue;
+      if (browserId && other.browserPinned && other.browser?.id && other.browser.id !== browserId) continue;
+      setState(other, 'expired', 'replaced');
+      log('request_replaced', { requestId: other.requestId, by: record.requestId });
+    }
   }
 
   /**

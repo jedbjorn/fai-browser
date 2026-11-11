@@ -29,7 +29,7 @@ async function setup(t) {
     await daemon.close();
     await rm(home, { recursive: true, force: true });
   });
-  const api = (method, path, body) => call(daemon.port, method, path, body, { token: daemon.token });
+  const api = (method, path, body, extra = {}) => call(daemon.port, method, path, body, { token: daemon.token, ...extra });
   return { home, hub, daemon, api };
 }
 
@@ -214,6 +214,107 @@ test('#31: a lease code from the browser while the request is active is checked 
   assert.equal(paused.body.result.code, 'child_tab');
   assert.equal(paused.body.result.childOrigin, PARTNER);
   assert.match(paused.body.result.needs.message, /^Paused: the page opened a tab or window/);
+});
+
+// --- issue #36: the order of hub events from a live Firefox session (daemon and extension 0.7.0) -------------------
+
+async function agentSession(ctx) {
+  const response = await ctx.api('POST', '/v1/sessions', { host: 'claude', repo: 'repo', pid: process.pid, wake: 'none' });
+  assert.equal(response.status, 201, JSON.stringify(response.body));
+  const { sessionId, key } = response.body;
+  return { sessionId, headers: { 'X-Fai-Session': `${sessionId}:${key}` } };
+}
+
+// The issue's timeline, replayed: a pending request whose Approve did not get through (tpk), an invite the agent
+// joins (e_8), then either a successor request (0.7.0's MCP server) or an ask on the invited request.
+async function issue36(ctx) {
+  const session = await agentSession(ctx);
+  const ask = (body, headers = session.headers) => ctx.api('POST', '/v1/requests', body, { headers });
+  const stale = (await ask({ origins: [ORIGIN, PARTNER], mode: 'interactive', reason: 'Portal task' })).body.requestId;
+  const invited = await ctx.hub.emit({ type: 'invite', tabId: 7, origin: ORIGIN, title: 'Portal', level: 'full',
+    sessionId: session.sessionId, text: '', browserId: 'b1' });
+  assert.ok(invited.leaseId, JSON.stringify(invited));
+  const joined = await ctx.api('POST', `/v1/invites/${invited.invite.inviteId}/join`, {}, { headers: session.headers });
+  assert.equal(joined.status, 200, JSON.stringify(joined.body));
+  return { session, stale, invited: invited.requestId, inviteLease: invited.leaseId, ask };
+}
+
+test('#36 item 3: a request whose approval superseded the browser\'s older session is never reported "stopped"', async t => {
+  const ctx = await setup(t);
+  const { session, invited, ask } = await issue36(ctx);
+  // 0.7.0's MCP server minted a successor for the invited request's extra origins (still possible without requestId).
+  const successor = (await ask({ origins: [ORIGIN, PARTNER], mode: 'full', reason: 'Portal with its frames' })).body.requestId;
+  const bridge = ctx.hub.bridgeForTab(7);
+  const real = bridge.observe.bind(bridge);
+  // The worker still holds the invited tab's session, which the approval just superseded (stopped), when the
+  // successor's first command arrives.
+  bridge.observe = async () => {
+    bridge.observe = real;
+    throw bridgeError('stopped', 'Browser session is stopped', false);
+  };
+  const lease = await ctx.hub.emit({ type: 'lease', requestId: successor, tabId: 7, origin: ORIGIN, title: 'Portal',
+    level: 'full', browserId: 'b1' });
+  assert.ok(lease.leaseId, JSON.stringify(lease));
+  assert.deepEqual([ctx.daemon.request(invited).state, ctx.daemon.request(invited).stateReason], ['released', 'superseded']);
+  const first = await ctx.api('POST', '/v1/observe', { requestId: successor }, { headers: session.headers });
+  assert.equal(first.body.result.code, 'tab_not_ready', JSON.stringify(first.body.result));
+  assert.doesNotMatch(JSON.stringify(first.body.result), /stopped|released/i);
+  assert.ok((await ctx.api('POST', '/v1/observe', { requestId: successor }, { headers: session.headers })).body.actions);
+  // The superseded invited request says it was replaced, not stopped.
+  const old = await ctx.api('POST', '/v1/observe', { requestId: invited }, { headers: session.headers });
+  assert.equal(old.body.result.code, 'request_closed');
+  assert.match(old.body.result.needs.message, /replaced this one/);
+});
+
+test('#36 items 4 and 5: an ask on an invited request keeps its id; the older pending request expires, its late click refused', async t => {
+  const ctx = await setup(t);
+  const { session, stale, invited, inviteLease } = await issue36(ctx);
+  // Item 5: more origins on the invited request are asked on that request (the same id), not a new request.
+  const asked = await ctx.api('POST', `/v1/requests/${invited}/ask`, { origins: [PARTNER] }, { headers: session.headers });
+  assert.equal(asked.body.asked, true, JSON.stringify(asked.body));
+  assert.equal((await ctx.api('GET', '/v1/requests', undefined, { headers: session.headers })).body.requests.length, 2,
+    'the invited request and the older pending one: no third');
+  const reply = await ctx.hub.emit({ type: 'lease', requestId: invited, tabId: 7, origin: ORIGIN, title: 'Portal',
+    level: 'full', browserId: 'b1', ask: true });
+  assert.equal(reply.leaseId, inviteLease, 'the invited lease, approved again in place');
+  // Item 4: the agent's older pending request is replaced by this approval, so it expires now...
+  assert.deepEqual([ctx.daemon.request(stale).state, ctx.daemon.request(stale).stateReason], ['expired', 'replaced']);
+  // ...and the click on it that arrives late (a site-access prompt that answered after the fact) approves nothing.
+  const late = await ctx.hub.emit({ type: 'lease', requestId: stale, tabId: 9, origin: ORIGIN, title: 'Blank', level: 'interactive',
+    browserId: 'b1' });
+  assert.equal(late.error.code, 'request_not_pending');
+  assert.equal(ctx.daemon.request(invited).state, 'active', 'the approved request stays');
+  const waited = await ctx.api('POST', '/v1/observe', { requestId: stale }, { headers: session.headers });
+  assert.match(waited.body.result.needs.message, /newer request of yours was approved/);
+});
+
+test('#36: a request the agent made after the approved one is left alone; another session\'s is too', async t => {
+  const ctx = await setup(t);
+  const mine = await agentSession(ctx);
+  const theirs = await agentSession(ctx);
+  const make = headers => ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Read' }, { headers })
+    .then(response => response.body.requestId);
+  const first = await make(mine.headers);
+  const other = await make(theirs.headers);
+  const second = await make(mine.headers);
+  const older = await make(mine.headers);
+  await ctx.hub.approve(second, { level: 'read-only' });
+  assert.equal(ctx.daemon.request(first).state, 'expired', 'an older one of the same session');
+  assert.equal(ctx.daemon.request(older).state, 'pending', 'asked for after the approved one');
+  assert.equal(ctx.daemon.request(other).state, 'pending', 'another agent session');
+});
+
+test('#36 item 2: a request the user denied is reported as denied, with a stop that says not to ask again', async t => {
+  const ctx = await setup(t);
+  const created = await ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Read' });
+  const { requestId } = created.body;
+  await ctx.hub.emit({ type: 'deny', requestId });
+  const blocked = await ctx.api('POST', '/v1/observe', { requestId });
+  assert.deepEqual([blocked.body.result.status, blocked.body.result.code], ['stopped', 'denied']);
+  assert.match(blocked.body.result.needs.message, /The user denied this tab request/);
+  const next = directNext(blocked.body.result, { requestId });
+  assert.equal(next.kind, 'stop');
+  assert.match(next.text, /denied.*only if the user asks/);
 });
 
 // --- through the spawned MCP server -----------------------------------------------------------------------------

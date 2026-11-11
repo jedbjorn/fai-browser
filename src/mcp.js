@@ -986,6 +986,9 @@ function nextForRequest(state, view, requestId, resume = undefined) {
           + 'task, then call ' : 'Ask the user to return to the tab and click Resume in the FAI Browser extension, then call ')
         + `fai_browser_observe with requestId ${requestId}.`, requestId, resume));
     default:
+      if (state === 'denied') {
+        return nextStep('stop', 'The user denied this tab request. Report that; ask again only if the user asks you to.');
+      }
       if (TERMINAL_REQUEST_STATES.has(state)) {
         return nextStep('stop', `This tab request has ended (${state}). Ask the user before requesting a tab again.`);
       }

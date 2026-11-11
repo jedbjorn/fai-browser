@@ -164,6 +164,13 @@ const OUTCOMES = {
     reason: 'Cancelled by caller',
     message: '',
   },
+  // The user denied the tab request (issue #36): their answer, not a technical end.
+  denied: {
+    status: 'stopped',
+    who: 'none',
+    reason: 'Denied by the user',
+    message: 'The user denied this tab request. Do not ask again unless the user asks you to.',
+  },
   paused: {
     status: 'needs_user',
     who: 'user',
@@ -1116,6 +1123,7 @@ function directNextStep(result, context = {}) {
     return { kind: 'stop', text: 'This tab request has ended. Call fai_browser_open with origins and reason only if the user still wants this.' };
   }
   if (code === 'stopped') return { kind: 'stop', text: 'The user pressed Stop. Report that and do not retry without asking.' };
+  if (code === 'denied') return { kind: 'stop', text: 'The user denied the request. Report that; ask again only if the user asks you to.' };
   return { kind: 'stop', text: 'Report the outcome to the user (needs.message explains it). Do not retry automatically.' };
 }
 
