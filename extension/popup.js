@@ -248,8 +248,9 @@ function approveAsk(request, wanted, level, own) {
   const origins = [...(Array.isArray(request.ask?.origins) ? request.ask.origins : []),
     ...(Array.isArray(request.ask?.access) ? request.ask.access : [])].filter(origin => !String(origin).includes('*'));
   const asked = askSiteAccess(null, { requestId: request.requestId, level, origins, tabMode: 'multiple' });
+  const attemptId = reportAttempt(request, true);
   // askId: exactly the ask this card shows; a changed ask is refused (ask_changed) and the card shows the new one.
-  return asked.granted.then(() => send('start', { requestId: request.requestId, level, ask: true, askId: request.ask?.id,
+  return asked.granted.then(() => send('start', { requestId: request.requestId, level, ask: true, askId: request.ask?.id, attemptId,
     tabMode: own ? view.session?.tabMode ?? 'single' : tabMode.value, ...(own ? { onSessionTab: true } : {}) }));
 }
 
@@ -503,11 +504,22 @@ function approveRequest(request, level, scope, onSessionTab = false) {
     status.textContent = ENDING_REMEMBERED;
     return Promise.resolve();
   }
+  const attemptId = reportAttempt(request);
   return asked.granted.then(ok => {
     const extra = scope ? { scope: ok ? 'domain' : 'origin' } : {};
     const note = asked.domain && !ok ? 'Chrome site access was not allowed: approved for this tab\'s origin only.' : '';
-    return send('start', { requestId: request.requestId, level, tabMode: tabMode.value, ...(onSessionTab ? { onSessionTab: true } : {}), ...extra }, note);
+    return send('start', { requestId: request.requestId, level, tabMode: tabMode.value, attemptId, ...(onSessionTab ? { onSessionTab: true } : {}), ...extra }, note);
   });
+}
+
+// The click for daemon.log (the worker's approval_attempt), sent after the browser's prompt opened in it: if no
+// `start` or `open` naming it follows in time (this popup closed with the prompt), the worker logs that, and refuses
+// one that comes later.
+function reportAttempt(request, ask = false) {
+  const attemptId = `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  chrome.runtime.sendMessage({ type: 'approval_attempt', requestId: request.requestId, attemptId, ...(ask ? { ask: true } : {}) })
+    .catch(() => {});
+  return attemptId;
 }
 
 // Open <host>. No Chrome permission is needed for that: the worker opens the request's start URL in a new tab and
@@ -520,10 +532,11 @@ function openRequest(request, level, scope, target) {
     status.textContent = ENDING_REMEMBERED;
     return Promise.resolve();
   }
+  const attemptId = reportAttempt(request);
   return asked.granted.then(ok => {
     const note = asked.domain && !ok ? `Chrome site access was not allowed: ${target.host} opened for its own origin only. ${OPEN_ARMED}`
       : OPEN_ARMED;
-    return send('open', { requestId: request.requestId, level, tabMode: tabMode.value, scope: asked.domain && ok ? 'domain' : 'origin' }, note)
+    return send('open', { requestId: request.requestId, level, tabMode: tabMode.value, attemptId, scope: asked.domain && ok ? 'domain' : 'origin' }, note)
       .then(opened => {
         if (opened && windowMode) window.close();
       });

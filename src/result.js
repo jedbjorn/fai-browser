@@ -989,12 +989,22 @@ export function approvalSteps(approval) {
   if (approval === 'page') {
     return 'its task page opened in an existing browser window; click Approve in the page request modal (grant browser site access if asked), or use the FAI Browser toolbar icon';
   }
+  if (approval === 'toolbar') {
+    // The last approval in the browser did not complete (the browser's site-access prompt never answered, the page had
+    // not loaded, the popup closed): the toolbar icon on the task tab gets past it (daemon approvalOf).
+    return 'the last approval attempt in the browser did not complete, so click the FAI Browser toolbar icon on its task tab once that tab shows the site (allow browser site access if asked)';
+  }
+  if (approval === 'declined') {
+    // The user declined the browser's site-access prompt: their choice, so no instructions to push past it.
+    return 'the user declined the browser\'s site-access prompt for it, so nothing was approved; only if they want to continue, they approve again (the page request modal or the FAI Browser toolbar icon) and allow site access';
+  }
   return 'click Open in the FAI Browser window, then Approve in the page request modal (grant browser site access if asked), or use the FAI Browser toolbar icon';
 }
 
 /** The select_tab needs.message for how the request is presented (see approvalSteps). */
 export function selectTabMessage(approval) {
-  if (approval === 'page') return `Not approved yet. Ask the user to approve: ${approvalSteps(approval)}.`;
+  if (approval === 'page' || approval === 'toolbar') return `Not approved yet. Ask the user to approve: ${approvalSteps(approval)}.`;
+  if (approval === 'declined') return `Not approved: ${approvalSteps(approval)}.`;
   return OUTCOMES.select_tab.message;
 }
 
