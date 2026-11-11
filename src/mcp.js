@@ -1035,6 +1035,21 @@ function approveHint(origin, requestId, approval = null, resume = undefined, bro
     + `${approvalSteps(approval)}. Then call fai_browser_observe with requestId ${requestId}.`, requestId, resume);
 }
 
+/**
+ * The trusted first line when a pending request's ask gave a successor (a request the user may be looking at never
+ * grows): the new id replaces the old one, and what the agent attached to it moved along.
+ */
+export function successorNote(from, to) {
+  return `requestId ${to} replaces ${from} (it was still waiting for approval, so asking for more made a new request; `
+    + `supplied values, policy and allowed URLs moved to it). Use ${to} from now on.`;
+}
+
+/** The trusted first line when the request the agent named had ended and a new one was made for its origins. */
+export function newRequestNote(from, to) {
+  return `requestId ${to} is a new request: ${from} had ended, so nothing of it carries over (suppliedText, policy and `
+    + `allowedUrls are only what this call gave). Use ${to} from now on.`;
+}
+
 // `resume`: {env, wake} (src/resume.js): the wait command's daemon location, or the wake that makes it unnecessary.
 function nextForRequest(state, view, requestId, resume = undefined) {
   switch (state) {
@@ -1563,6 +1578,7 @@ class McpServer {
       return; // The client cancelled this request: send no response.
     }
     if (call.inviteNote && result?.content && !result.isError) result.content.unshift({ type: 'text', text: call.inviteNote });
+    if (call.requestNote && result?.content && !result.isError) result.content.unshift({ type: 'text', text: call.requestNote });
     this.send({ jsonrpc: '2.0', id, result });
   }
 
@@ -1848,6 +1864,8 @@ class McpServer {
         'reason is required when origins are given and no usable tab request exists (one line shown to the user).');
     }
     const created = await this.createRequest(client, call, args);
+    // The agent named a request that cannot take more (it ended): say plainly that this is a new one.
+    if (args.requestId && created.requestId !== args.requestId) call.requestNote = newRequestNote(args.requestId, created.requestId);
     return { requestId: created.requestId, state: created.state, view: { origins }, created };
   }
 
@@ -1862,6 +1880,11 @@ class McpServer {
       this.ownedRequests.delete(requestId);
       this.ownedRequests.add(current);
       this.noteOpencodeOwner(call, current);
+      // The calls and time used so far count against the successor (the same task); the daemon moved the supplied
+      // values, policy and allowed URLs to it.
+      const used = this.ledgers.get(requestId);
+      if (used && !this.ledgers.has(current)) this.ledgers.set(current, used);
+      call.requestNote = successorNote(requestId, current);
       // A pending request's successor: its first page is still the request's first.
       if (this.introducing?.delete(requestId)) this.introducing.add(current);
     }

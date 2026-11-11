@@ -21,9 +21,9 @@ const PAGES = {
   '/about': { title: 'About', text: 'About us', controls: [link('1', 'Home', '/')] },
 };
 
-async function setup(t) {
+async function setup(t, pages = PAGES) {
   const home = await mkdtemp(join(tmpdir(), 'fai-continuity-'));
-  const hub = createFakeHub({ bridgeOptions: { pages: PAGES } });
+  const hub = createFakeHub({ bridgeOptions: { pages } });
   const daemon = createDaemon({ home, env: {}, port: 0, hub, sweepIntervalMs: 60_000 });
   await daemon.listen();
   t.after(async () => {
@@ -537,10 +537,10 @@ test('links: a reachable lease origin is a click (id and point, read-only); unli
 
 // --- through the spawned MCP server -----------------------------------------------------------------------------
 
-async function mcpSetup(t) {
-  const ctx = await setup(t);
+async function mcpSetup(t, { pages = PAGES, approvalWaitMs = 4000 } = {}) {
+  const ctx = await setup(t, pages);
   const mcp = spawnMcp({ PATH: process.env.PATH, HOME: ctx.home, FAI_HOME: ctx.home, FAI_DAEMON_PORT: String(ctx.daemon.port),
-    FAI_MCP_APPROVAL_WAIT_MS: '4000', FAI_WAKE: 'off' });
+    FAI_MCP_APPROVAL_WAIT_MS: String(approvalWaitMs), FAI_WAKE: 'off' });
   t.after(() => mcp.close());
   await mcp.request('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: 'test' } });
   mcp.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
@@ -598,4 +598,79 @@ test('MCP #30: fai_browser_open with the requestId and an extra origin adds it a
   assert.match(text(added), /status: observed/);
   assert.deepEqual(ctx.daemon.request(pending.requestId).origins, [ORIGIN, PARTNER]);
   assert.equal(ctx.hub.published.at(-1).length, 1, 'still one request');
+});
+
+// A contact form: what the agent attached to the request (supplied values, policy) stays with it across an origin add
+// and a level raise, on the same request id, without passing them again.
+const FORM_PAGES = {
+  '/': { title: 'Contact', text: 'Write to us', controls: [
+    { id: '1', role: 'textbox', label: 'Name', type: 'text', name: 'name', enabled: true, visible: true },
+    { id: '2', role: 'button', label: 'Upgrade plan', enabled: true, visible: true },
+  ] },
+};
+
+test('MCP: supplied values and policy stay with the request across a level raise and an origin add (same id)', async t => {
+  const ctx = await mcpSetup(t, { pages: FORM_PAGES });
+  const opening = ctx.mcp.callTool('fai_browser_open', { origins: [ORIGIN], reason: 'Contact form', task: 'write to them',
+    suppliedText: { name: 'Ada Example' }, policy: { forbid: ['Upgrade'] } });
+  const pending = await until(() => ctx.hub.published.at(-1)?.find(item => item.state === 'pending'), 'the request');
+  await ctx.hub.approve(pending.requestId, { level: 'read-only' });
+  assert.ok(!(await opening).isError);
+  // Raise to reversible, values not passed again.
+  const raising = ctx.mcp.callTool('fai_browser_open', { requestId: pending.requestId, mode: 'reversible', task: 'write to them' });
+  await until(() => ctx.daemon.request(pending.requestId).ask, 'the level ask');
+  await approveAsk(ctx, pending.requestId, { level: 'reversible' });
+  const raised = text(await raising);
+  assert.match(raised, new RegExp(`requestId: ${pending.requestId}`));
+  assert.doesNotMatch(raised, /replaces/);
+  assert.match(raised, /fill textbox "Name" with supplied name/);
+  assert.doesNotMatch(raised, /click button "Upgrade plan"/, 'the policy still holds');
+  // Add an origin, again without the values.
+  const adding = ctx.mcp.callTool('fai_browser_open', { requestId: pending.requestId, origins: [PARTNER], task: 'write to them' });
+  await until(() => ctx.daemon.request(pending.requestId).ask, 'the origin ask');
+  await approveAsk(ctx, pending.requestId, { level: 'reversible' });
+  const added = text(await adding);
+  assert.match(added, new RegExp(`requestId: ${pending.requestId}`));
+  const fill = /(a\d+)  fill textbox "Name" with supplied name/.exec(added)?.[1];
+  assert.ok(fill, added);
+  assert.doesNotMatch(added, /click button "Upgrade plan"/);
+  const acted = await ctx.mcp.callTool('fai_browser_act', { requestId: pending.requestId, actionId: fill });
+  assert.ok(!acted.isError, text(acted));
+  assert.equal(ctx.hub.bridges.get(1).lastText, 'Ada Example', 'the supplied value is typed without being passed again');
+});
+
+test('ask on a pending request: the successor keeps the supplied values, policy and URLs the agent attached', async t => {
+  const ctx = await setup(t, FORM_PAGES);
+  const { requestId } = (await ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Contact' })).body;
+  // An open whose approval wait ran out: its observe finds the request pending, and its terms still attach.
+  const blocked = await ctx.api('POST', '/v1/observe', { requestId, mode: 'reversible', suppliedText: { name: 'Ada Example' },
+    policy: { forbid: ['Upgrade'] }, allowedUrls: [`${ORIGIN}/about`] });
+  assert.equal(blocked.body.result.code, 'select_tab');
+  const asked = await ctx.api('POST', `/v1/requests/${requestId}/ask`, { mode: 'reversible', origins: [PARTNER] });
+  const successor = asked.body.requestId;
+  assert.notEqual(successor, requestId);
+  await ctx.hub.approve(successor, { level: 'reversible' });
+  const seen = (await ctx.api('POST', '/v1/observe', { requestId: successor, mode: 'reversible' })).body;
+  const fills = seen.actions.filter(action => action.type === 'fill_supplied_text');
+  assert.deepEqual(fills.map(action => action.suppliedName), ['name']);
+  assert.ok(!seen.actions.some(action => action.label === 'Upgrade plan'), 'the policy moved too');
+  assert.ok(seen.actions.some(action => action.type === 'navigate_allowed_url' && action.url === `${ORIGIN}/about`),
+    'the allowed URLs moved too');
+});
+
+test('MCP: an ask on a still-pending request names the successor id plainly; the session owns the successor', async t => {
+  const ctx = await mcpSetup(t, { pages: FORM_PAGES, approvalWaitMs: 300 });
+  const first = text(await ctx.mcp.callTool('fai_browser_open', { origins: [ORIGIN], reason: 'Contact form', task: 'write',
+    suppliedText: { name: 'Ada Example' } }));
+  const old = /requestId: (\S+)/.exec(first)?.[1];
+  assert.ok(old, first);
+  const raising = ctx.mcp.callTool('fai_browser_open', { requestId: old, mode: 'reversible', task: 'write' });
+  const successor = await until(() => ctx.hub.published.at(-1)?.find(item => item.state === 'pending' && item.requestId !== old),
+    'the successor');
+  await ctx.hub.approve(successor.requestId, { level: 'reversible' });
+  const raised = text(await raising);
+  assert.match(raised, new RegExp(`^requestId ${successor.requestId} replaces ${old} .*Use ${successor.requestId} from now on`));
+  assert.match(raised, /fill textbox "Name" with supplied name/);
+  const status = text(await ctx.mcp.callTool('fai_browser_status', {}));
+  assert.match(status, new RegExp(`owned requests: ${successor.requestId}`));
 });
