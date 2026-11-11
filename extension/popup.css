@@ -27,6 +27,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .eyebrow { display: block; color: var(--amber-dark); }
 h1 { margin: 1px 0 0; font-size: 17px; line-height: 1.15; font-weight: 630; }
 .local-label { padding: 4px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); }
+.tab-card:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .tab-card { padding: 14px 15px 15px; border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 12px; background: var(--surface); box-shadow: 0 4px 14px #6950250a; }
 .card-topline { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .card-label { color: var(--muted); }

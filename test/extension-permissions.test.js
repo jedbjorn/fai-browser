@@ -858,6 +858,17 @@ test('popup: Pause and Stop stay above the pin hint, update, approval, invite an
   await checkTop(setup, 'setup card', { atLeast: 5 });
 });
 
+// Waits that fail fast (an old popup that never follows the status times out in 3 s, not 30).
+const FAST = { timeout: 3000 };
+const rowGone = page => page.waitForFunction(() => document.getElementById('controls').hidden, undefined, FAST);
+const rowBack = page => page.waitForFunction(() => !document.getElementById('controls').hidden, undefined, FAST);
+const sentTypes = (page, from = 0) => page.evaluate(n => __sent.slice(n).map(message => message.type), from);
+// How far the row moves what is below it: its height and its own margins, measured.
+const rowSpace = page => page.$eval('#controls', node => {
+  const style = getComputedStyle(node);
+  return node.getBoundingClientRect().height + parseFloat(style.marginTop) + parseFloat(style.marginBottom);
+});
+
 // The popup and the approval window follow the session while they are open (the worker's storage `status`): the row
 // appears when a session starts (approved in the page's request modal) and goes when it ends (released, tab closed,
 // budget spent). Focus stays where the user has it, and nothing moves under a press until it ends.
@@ -868,49 +879,63 @@ test('popup: Pause and Stop appear and disappear with the session while the popu
   await page.setViewportSize(POPUP);
   assert.equal(await rowShown(page), true);
   assert.deepEqual(await tabOrder(page, 2), ['pause', 'stop']);
-  const connects = await page.evaluate(() => __sent.filter(message => message.type === 'connect').length);
+  const sentBefore = await page.evaluate(() => __sent.length);
   await workerSays(page, { status: 'stopped', requests: [PAUSED, FRESH] });
-  await page.waitForFunction(() => document.getElementById('controls').hidden);
+  await rowGone(page);
   assert.equal(await page.$eval('#state-label', node => node.textContent), 'Stopped');
   assert.equal(await page.$eval('#status', node => node.textContent), 'Stopped');
-  // Focus moved on to the next control, never to nothing.
-  assert.equal(await page.evaluate(() => document.activeElement !== document.body
-    && !document.getElementById('controls').contains(document.activeElement)), true);
-  assert.equal(await page.evaluate(() => Boolean(document.activeElement.closest('.request-card, .requests, #advanced'))), true);
-  // It asked the worker for the session itself once.
-  await page.waitForFunction(count => __sent.filter(message => message.type === 'connect').length > count, connects);
+  // Focus went to the tab card, which does nothing on Enter or Space.
+  assert.equal(await page.evaluate(() => document.activeElement.classList.contains('tab-card')), true);
+  // It re-read the session with the read-only `state`, never `connect`.
+  await page.waitForFunction(n => __sent.slice(n).some(message => message.type === 'state'), sentBefore, FAST);
+  assert.equal((await sentTypes(page, sentBefore)).includes('connect'), false);
   // The same status again (this popup's own Stop already applied it) changes nothing.
   await page.evaluate(() => { document.getElementById('status').textContent = 'Request denied.'; });
   await workerSays(page, { status: 'stopped' });
   assert.equal(await page.$eval('#status', node => node.textContent), 'Request denied.');
+  // A connection text the worker writes into `status` keeps a note on the status line, and only reads (no `connect`:
+  // that one reconnects and reports this browser as used, as if the user had opened the popup).
+  const sentNow = await page.evaluate(() => __sent.length);
+  await workerSays(page, { status: 'Not connected to the FAI service. Retrying.' });
+  await page.waitForFunction(n => __sent.slice(n).some(message => message.type === 'state'), sentNow, FAST);
+  assert.equal(await page.$eval('#status', node => node.textContent), 'Request denied.', 'the note stays');
+  assert.equal(await page.$eval('#state-label', node => node.textContent), 'Ready');
+  assert.deepEqual(await sentTypes(page, sentNow), ['state']);
+  // Without a note, the status line says what the worker said (as on opening the popup).
+  await page.evaluate(() => { document.getElementById('status').textContent = 'Stopped'; });
+  await workerSays(page, { status: '' });
+  await workerSays(page, { status: 'Not connected to the FAI service. Retrying.' });
+  assert.equal(await page.$eval('#status', node => node.textContent), 'Not connected to the FAI service. Retrying.');
 
   // (b) A session starts while the popup is open (approved in the page's modal): the row appears and keyboard focus on
-  // a card's level select stays there.
+  // a card's button stays there.
   const idle = await popup(t, { local: { ...PAIRED }, requests: [PAUSED, FRESH], tabUrl: 'https://shop.example.com/cart' });
   await idle.setViewportSize(POPUP);
   assert.equal(await rowShown(idle), false);
   await idle.focus('[data-request-id="req_new"] .open-request');
   await workerSays(idle, { status: 'active', session: LIVE_SESSION, requests: [PAUSED, LIVE, FRESH] });
-  await idle.waitForFunction(() => !document.getElementById('controls').hidden);
-  await idle.waitForSelector('[data-request-id="req_live"][data-state="active"]');
+  await rowBack(idle);
+  await idle.waitForSelector('[data-request-id="req_live"][data-state="active"]', FAST);
   assert.equal(await idle.$eval('#state-label', node => node.textContent), 'In use');
+  assert.equal(await idle.$eval('#status', node => node.textContent),
+    "The agent is using its tab. Close that tab's window or press Stop to end it.");
   assert.deepEqual(await idle.evaluate(() => [document.activeElement.closest('.request-card')?.dataset.requestId,
     document.activeElement.classList.contains('open-request')]), ['req_new', true], 'focus stays on the card');
   await checkTop(idle, 'started while open');
 
   // (c) A press in progress (here on the Update button, above the list): the row waits for it to end, so nothing under
-  // the pointer moves mid-press; then only the row's own height moves it.
+  // the pointer moves mid-press; then only the row's own space moves it.
   const update = { available: true, latest: 'v9.9.9', current: 'v0.7.0', installable: true,
     notesUrl: 'https://github.com/jedbjorn/fai-browser/releases/tag/v9.9.9' };
   const pressed = await popup(t, { local: { ...PAIRED, status: 'active' }, requests: [LIVE, FRESH],
     tabUrl: 'https://shop.example.com/cart', state: { status: 'active', session: LIVE_SESSION, connection: { update } } });
   await pressed.setViewportSize(POPUP);
-  await pressed.waitForSelector('#update-install', { state: 'visible' });
+  await pressed.waitForSelector('#update-install', { state: 'visible', ...FAST });
   const button = await pressed.$eval('#update-install', node => {
     const rect = node.getBoundingClientRect();
     return { x: rect.left + 20, y: rect.top + rect.height / 2, top: rect.top };
   });
-  const row = await box(pressed, '#controls');
+  const space = await rowSpace(pressed);
   await pressed.mouse.move(button.x, button.y);
   await pressed.mouse.down();
   await workerSays(pressed, { status: 'stopped' });
@@ -918,13 +943,13 @@ test('popup: Pause and Stop appear and disappear with the session while the popu
   assert.equal(await pressed.$eval('#state-label', node => node.textContent), 'Stopped', 'the label follows at once');
   assert.equal(await rowShown(pressed), true, 'the row waits for the press');
   assert.equal(await pressed.$eval('#update-install', node => node.getBoundingClientRect().top), button.top, 'nothing moved');
-  // Released away from the button (no click): the row goes, and the button moves up by the row's height only.
+  // Released away from the button (no click): the row goes, and the button moves up by the row's space only.
   await pressed.mouse.move(2, 2);
   await pressed.mouse.up();
-  await pressed.waitForFunction(() => document.getElementById('controls').hidden);
+  await rowGone(pressed);
   const after = await pressed.$eval('#update-install', node => node.getBoundingClientRect().top);
-  assert.equal(Math.round(button.top - after), Math.round(row.bottom - row.top + 12 - 5), 'the row and its margins only');
-  assert.equal(await pressed.evaluate(() => __sent.some(message => message.type === 'update_install')), false);
+  assert.ok(Math.abs(button.top - after - space) < 1, `the row's space only (${button.top - after} vs ${space})`);
+  assert.equal((await sentTypes(pressed)).includes('update_install'), false);
 
   // (d) The approval window: a session starts (one request approved in its page's modal) while another still waits.
   const second = { ...FRESH, requestId: 'req_two', reason: 'Second request', origins: ['https://docs.example.org'],
@@ -935,13 +960,88 @@ test('popup: Pause and Stop appear and disappear with the session while the popu
   const started = { ...FRESH, state: 'active', lease: { leaseId: 'l2', tabId: 11 } };
   await workerSays(win, { status: 'active', session: { ...LIVE_SESSION, requestId: 'req_new', tabId: 11,
     origin: 'https://partner.example.net' }, requests: [started, second] });
-  await win.waitForFunction(() => !document.getElementById('controls').hidden);
-  await win.waitForSelector('[data-request-id="req_new"][data-state="active"]');
+  await rowBack(win);
+  await win.waitForSelector('[data-request-id="req_new"][data-state="active"]', FAST);
   assert.equal(await win.evaluate(() => __closed), 0, 'a request still waits: the window stays');
   await checkTop(win, 'approval window, started while open');
   // And it goes again when the session ends.
   await workerSays(win, { status: 'stopped', requests: [second] });
-  await win.waitForFunction(() => document.getElementById('controls').hidden);
+  await rowGone(win);
+});
+
+// An older re-read never brings the row back: the reply to a status change that a later one (or this popup's own Stop)
+// overtook is dropped.
+test('popup: a stale session re-read after a stop does not show Pause and Stop again', async t => {
+  const page = await popup(t, { local: { ...PAIRED }, requests: [FRESH], tabUrl: 'https://shop.example.com/cart' });
+  // The worker answers `state` reads late, in reverse order: the first read (session active) arrives last.
+  await page.evaluate(session => {
+    const original = chrome.runtime.sendMessage;
+    let reads = 0;
+    chrome.runtime.sendMessage = async message => {
+      if (message.type !== 'state') return original(message);
+      const first = reads++ === 0;
+      await new Promise(resolve => setTimeout(resolve, first ? 400 : 50));
+      return first ? { status: 'active', session, requests: [], connection: { connected: true, transport: 'websocket' } }
+        : { status: null, session: null, requests: [], connection: { connected: true, transport: 'websocket' } };
+    };
+  }, LIVE_SESSION);
+  await workerSays(page, { status: 'active', session: LIVE_SESSION });
+  await rowBack(page);
+  await workerSays(page, { status: 'stopped' });
+  await rowGone(page);
+  await page.waitForTimeout(600);
+  assert.equal(await rowShown(page), false, 'the late reply to the first read was dropped');
+  assert.equal(await page.$eval('#state-label', node => node.textContent), 'Stopped');
+});
+
+// Focus never lands on a control that acts: after a keyboard Stop, or a session ending by itself while Stop has focus,
+// it goes to the tab card, so a held or repeated Enter or a Space presses nothing (not Update, not Pair), and Tab goes
+// on from there to the next control.
+test('popup: after Stop hides the row, Enter and Space press nothing (update card, setup card)', async t => {
+  const update = { available: true, latest: 'v9.9.9', current: 'v0.7.0', installable: true };
+  const cards = {
+    'update card without notes': { connected: true, state: { connection: { update } }, next: 'update-install' },
+    'setup card': { connected: false, state: {}, next: 'pair' },
+  };
+  for (const [name, { connected, state, next }] of Object.entries(cards)) {
+    for (const how of ['keyboard Stop', 'session ended']) {
+      const what = `${name}, ${how}`;
+      const page = await popup(t, { local: { ...PAIRED, status: 'active' }, connected, requests: [LIVE, FRESH],
+        tabUrl: 'https://shop.example.com/cart', state: { status: 'active', session: LIVE_SESSION, ...state } });
+      await page.setViewportSize(POPUP);
+      assert.equal(await page.locator(`#${next}`).isVisible(), true, `${what}: #${next} shows`);
+      assert.equal(await page.locator('#update-notes').isVisible(), false, `${what}: no notes link`);
+      assert.deepEqual(await tabOrder(page, 2), ['pause', 'stop'], what);
+      const from = await page.evaluate(() => __sent.length);
+      if (how === 'keyboard Stop') {
+        await page.evaluate(() => { __state.status = 'stopped'; __state.session = null; });
+        await page.keyboard.press('Enter');
+        await page.waitForFunction(n => __sent.slice(n).some(message => message.type === 'stop'), from, FAST);
+      } else {
+        await workerSays(page, { status: 'stopped', requests: [FRESH] });
+        await page.waitForFunction(n => __sent.slice(n).some(message => message.type === 'state'), from, FAST);
+      }
+      await rowGone(page);
+      await page.waitForTimeout(100);
+      assert.equal(await page.evaluate(() => document.activeElement.classList.contains('tab-card')), true,
+        `${what}: focus on the tab card`);
+      const settled = await page.evaluate(() => __sent.length);
+      await page.keyboard.press('Enter');
+      await page.keyboard.press('Space');
+      // A held Enter (auto-repeat).
+      await page.keyboard.down('Enter');
+      await page.keyboard.down('Enter');
+      await page.keyboard.up('Enter');
+      await page.waitForTimeout(150);
+      assert.deepEqual(await sentTypes(page, settled), [], `${what}: Enter and Space press nothing`);
+      // Tab goes on from the tab card.
+      await page.keyboard.press('Tab');
+      const reached = await page.evaluate(() => document.activeElement.id || document.activeElement.className);
+      assert.notEqual(reached, 'pause');
+      assert.notEqual(reached, 'stop');
+      await page.close();
+    }
+  }
 });
 
 test('approval window: it closes itself when no pending or paused request is left', async t => {
