@@ -366,11 +366,13 @@ test('MCP #30: fai_browser_open with the requestId and an extra origin adds it a
   await ctx.hub.approve(pending.requestId, { level: 'read-only' });
   assert.ok(!(await opening).isError);
   // Not answered within the call: the agent is told the ask still waits, on the same request.
-  const waiting = await ctx.mcp.callTool('fai_browser_open', { requestId: pending.requestId, origins: [PARTNER], task: 'read' });
+  const waiting = await ctx.mcp.callTool('fai_browser_open', { requestId: pending.requestId, origins: [PARTNER], task: 'read',
+    allowedUrls: [`${PARTNER}/start`] });
   assert.match(text(waiting), /ask_pending/);
   assert.match(text(waiting), /next \(relay\)/);
   assert.deepEqual(ctx.daemon.request(pending.requestId).ask.origins, [PARTNER]);
-  const adding = ctx.mcp.callTool('fai_browser_open', { requestId: pending.requestId, origins: [PARTNER], task: 'read' });
+  const adding = ctx.mcp.callTool('fai_browser_open', { requestId: pending.requestId, origins: [PARTNER], task: 'read',
+    allowedUrls: [`${PARTNER}/start`] });
   await delay(200);
   await approveAsk(ctx, pending.requestId, { level: 'read-only' });
   const added = await adding;

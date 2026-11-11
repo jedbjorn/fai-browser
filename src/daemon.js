@@ -2287,6 +2287,15 @@ export function createDaemon(options = {}) {
     const record = getRecord(body.requestId);
     checkUse(record, caller);
     touch(record);
+    // The open that asked for more (afterAsk): the ask still waits, or the user declined it. Answered before the
+    // allowed URLs are checked, which may name the origin that was asked for.
+    if (body.afterAsk !== undefined && typeof body.afterAsk !== 'boolean') throw badOptions('afterAsk must be a boolean');
+    if (body.afterAsk === true && LEASED.has(record.state) && (record.ask || record.askDeclined)) {
+      const code = record.ask ? 'ask_pending' : 'ask_declined';
+      if (!record.ask) delete record.askDeclined;
+      return { state: 'done', requestId: record.requestId, result: outcomeResult(code, {
+        lease: { requestId: record.requestId, state: record.state }, permissions: permissionsOf(checkMode(body, record), record) }) };
+    }
     const spec = {
       mode: checkMode(body, record),
       allowedUrls: checkAllowedUrls(body, record),
@@ -2315,14 +2324,6 @@ export function createDaemon(options = {}) {
     if (body.capture !== undefined && typeof body.capture !== 'boolean') throw badOptions('capture must be a boolean');
     const capture = body.capture ?? false;
     if (record.state !== 'active') return { state: 'done', requestId: record.requestId, result: blockedResult(record, undefined, spec.mode) };
-    // The open that asked for more (afterAsk): the ask still waits, or the user declined it.
-    if (body.afterAsk !== undefined && typeof body.afterAsk !== 'boolean') throw badOptions('afterAsk must be a boolean');
-    if (body.afterAsk === true && (record.ask || record.askDeclined)) {
-      const code = record.ask ? 'ask_pending' : 'ask_declined';
-      if (!record.ask) delete record.askDeclined;
-      return { state: 'done', requestId: record.requestId, result: outcomeResult(code, {
-        lease: { requestId: record.requestId, state: record.state }, permissions: permissionsOf(spec.mode, record) }) };
-    }
     ensureIdle(record);
     const observeStart = now();
     const terms = standingTerms(record, spec);

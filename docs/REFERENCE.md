@@ -690,11 +690,16 @@ Stdout is exactly one JSON line (`--pretty` indents it). `act` prints the lean a
 | `budget_exhausted` | The act's time ran out, or the request's call budget (MCP) | `time_budget`, `task_budget` | 2 |
 | `needs_user` | The user must act (for `refused_action` with `needs.level`: approve that level on the same request) | `select_tab`, `paused`, `approval_pending`, `blocked`, `js_dialog`, `cross_origin`, `child_tab`, `tab_changed`, `origin_changed`, `session_inactive`, `disconnected`, `blocked_risky`, `refused_action`, `ask_pending`, `ask_declined` | 2 |
 | `needs_host` | The host agent must decide | `fill_not_kept`, `line_break_input`, `stale`, `target_unavailable`, `unsupported`, `no_control`, `point_outside`, `tab_not_ready`, `request_closed` | 2 |
-| `stopped` | The user pressed Stop, or Ctrl+C | `stopped`, `cancelled`, `interrupted` | 2 |
+| `stopped` | The user pressed Stop or denied the request, or Ctrl+C | `stopped`, `denied`, `cancelled`, `interrupted` | 2 |
 
 **Which pause, truthfully** (issue #31). `stopped` ("The user pressed Stop and released the tab") is reported only
 for a request the user stopped (the extension's status `stopped` with reason `stopped`); a request ended any other
-way is `request_closed` (a replaced one says another approved request replaced it). Each pause names its cause in
+way is `request_closed` (a replaced one says another approved request replaced it). A request the user denied is
+`stopped` / `denied` ("The user denied this tab request"; `next.kind: "stop"`: ask again only if the user asks), never a
+technical close. When the user approves a request, the older requests its agent still has pending (the same owner
+session, else the same client instance; never an invited tab, never a newer one) expire as `replaced` at once, so a
+click on one of them that arrives late (a request modal still waiting for the browser's site-access answer) approves
+nothing and cannot supersede the approved one (issue #36). Each pause names its cause in
 `needs.message`: `tab_changed` (another tab came to the front in the task tab's window, or the task tab closed),
 `origin_changed` (the tab left the approved sites; `leftOrigin`), `child_tab` (the page opened a tab or window the task
 cannot follow; `childOrigin`), `session_inactive` (the extension restarted), `disconnected`, `paused` (the user's
