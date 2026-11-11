@@ -1047,15 +1047,26 @@ function sessionCovers(url) {
     session.origin = next;
     return true;
   }
+  // Another exact origin the user approved for this request (listed in it, or added on the agent's ask) whose host
+  // access the browser gives: the tab's URL is only readable here with it, so the session follows (issue #30).
+  if (reachableOrigin(next)) {
+    session.origin = next;
+    return true;
+  }
   return followConsentRedirect(url);
 }
 
-// A navigation the session may start: the current origin, or with domain scope a page under a root that also covers
-// the current origin.
+// An exact origin of the lease that this extension holds host access to (session.reachable, see reachableOrigins).
+function reachableOrigin(origin) {
+  return Boolean(origin) && Array.isArray(session?.reachable) && session.reachable.includes(origin);
+}
+
+// A navigation the session may start: the current origin, another approved exact origin it can follow, or with domain
+// scope a page under a root that also covers the current origin.
 function sameSessionSite(url) {
   const next = originOf(url);
   if (!session || !next) return false;
-  if (next === session.origin) return true;
+  if (next === session.origin || reachableOrigin(next)) return true;
   const from = siteHost(session.origin);
   const to = siteHost(next);
   return Boolean(from && to) && sessionSites().some(root => hostInSite(from, root) && hostInSite(to, root));
@@ -1862,7 +1873,10 @@ function secretOptions() {
   // `input`: input.js's settings for the call (trusted input on or off, trusted-input.js; the lease's rhythm seed).
   const trusted = typeof trustedInputOn === 'function' && trustedInputOn();
   // `context`: what the tab's approved frames add to the page's restrictions (frames.js); none without frames.
-  const context = globalThis.faiFrames?.topContext(session?.tabId) ?? null;
+  // `origins` there: the other approved exact origins the tab may go to (page.js onApprovedSite).
+  const top = globalThis.faiFrames?.topContext(session?.tabId) ?? null;
+  const reachable = Array.isArray(session?.reachable) ? session.reachable : [];
+  const context = reachable.length ? { ...(top ?? {}), origins: reachable } : top;
   return { ...secretRedaction, salt: secretNumbering().salt, gates: approvalSettings, vault: true, input: { trusted, rhythmSeed: rhythmSeed() }, context };
 }
 
@@ -2308,23 +2322,45 @@ async function followChild(tab) {
     url = fresh.pendingUrl || fresh.url || '';
   }
   if (session !== current || current.status !== 'active') return;
-  if (!url || url === 'about:blank' || !sessionCovers(url) || current.tabs.length >= MAX_LEASE_TABS) {
+  if (!url || url === 'about:blank' || !sessionAllows(url) || current.tabs.length >= MAX_LEASE_TABS) {
     await endSession('paused', 'child_tab', childOrigin(url));
     return;
   }
   const permitted = await hasSitePermission([taskOriginPattern(new URL(url).origin)]);
-  if (session !== current || current.status !== 'active' || tabMode !== 'multiple') return;
+  // The user turned Multiple task tabs off meanwhile: the child pauses the request as in one-tab mode (never silently).
+  if (session === current && current.status === 'active' && tabMode !== 'multiple') {
+    await endSession('paused', 'child_tab', childOrigin(url));
+    return;
+  }
+  if (session !== current || current.status !== 'active') return;
   if (!permitted || current.tabs.length >= MAX_LEASE_TABS) {
     await endSession('paused', 'child_tab', childOrigin(url));
     return;
   }
-  if (session !== current || current.status !== 'active' || tabMode !== 'multiple') return;
   if (leaseTab(tab.id)) return;
   const entry = { id: `t${Math.max(...current.tabs.map(item => Number(item.id.slice(1)))) + 1}`,
-    tabId: tab.id, opener: opener.tabId, url: reportedUrl(url), title: '' };
+    tabId: tab.id, opener: opener.tabId, url: reportedUrl(url), title: '', origin: originOf(url) };
   current.tabs.push(entry);
-  await groupLeaseTab(current, tab.id);
-  if (session === current && current.status === 'active') current.tabId = tab.id;
+  // Grouping is cosmetic: a tab the browser will not move or group (a popup window's) still belongs to the request.
+  await groupLeaseTab(current, tab.id).catch(() => {});
+  if (session !== current || current.status !== 'active') return;
+  // Commands follow the child when it is in front (a link's new tab, a popup window). One the page opened in the
+  // background stays listed in `tabs` for `tab: "tN"`: making it current would act on a tab the user does not see,
+  // and the next command would find the request's tab no longer active (issue #30: tab_changed).
+  const fresh = await chrome.tabs.get(tab.id).catch(() => null);
+  if (fresh?.active && session === current && current.status === 'active') {
+    current.tabId = tab.id;
+    current.origin = originOf(fresh.url ?? url) ?? current.origin;
+  }
+}
+
+// True when a page at `url` is one this session may work on, without moving the session there (see sessionCovers):
+// its current origin, another reachable exact origin of the lease, or under an approved domain root.
+function sessionAllows(url) {
+  const next = originOf(url);
+  if (!session || !next) return false;
+  if (next === session.origin || reachableOrigin(next)) return true;
+  return session.scope === 'domain' && originCovered(next, session.sites ?? []);
 }
 
 // Only tabs recorded in this lease can join its group. Personal tabs are never adopted by group membership.
@@ -2337,6 +2373,9 @@ async function groupLeaseTab(current, tabId) {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab || (tab.groupId ?? NO_GROUP) !== NO_GROUP) return;
   if (session !== current || current.status !== 'active' || tabMode !== 'multiple') return;
+  // A popup window's tab stays in its window (the browser moves and groups only tabs of normal windows).
+  const win = tab.windowId !== home.windowId ? await chrome.windows.get(tab.windowId).catch(() => null) : null;
+  if (win && win.type !== 'normal') return;
   if (tab.windowId !== home.windowId) await chrome.tabs.move(tabId, { windowId: home.windowId, index: -1 });
   if (session !== current || current.status !== 'active') return;
   await chrome.tabs.group({ groupId: current.groupId, tabIds: [tabId] });
@@ -2364,7 +2403,7 @@ async function openLeaseTab(url) {
     throw new ExtensionError('blocked_risky', 'This request changed while opening its tab');
   }
   const id = `t${Math.max(...current.tabs.map(item => Number(item.id.slice(1)))) + 1}`;
-  current.tabs.push({ id, tabId: tab.id, opener: current.tabId, url: reportedUrl(url), title: '' });
+  current.tabs.push({ id, tabId: tab.id, opener: current.tabId, url: reportedUrl(url), title: '', origin: parsed.origin });
   await groupLeaseTab(current, tab.id);
   if (session !== current || current.status !== 'active' || tabMode !== 'multiple') throw inactiveError();
   current.tabId = tab.id;
@@ -2405,6 +2444,7 @@ function leaseTabClosed(tabId) {
   const back = leaseTab(entry.opener) ?? session.tabs.at(-1);
   if (!back) return false;
   session.tabId = back.tabId;
+  if (back.origin) session.origin = back.origin;
   ignore(chrome.tabs.update(back.tabId, { active: true }).catch(() => {}));
   return true;
 }
@@ -3280,10 +3320,12 @@ function wireError(error) {
 
 function checkCommand(command) {
   if (command?.version !== PROTOCOL_VERSION) throw new ExtensionError('unsupported', 'Unsupported protocol version');
-  if (session?.status !== 'active') throw inactiveError();
-  if (command.lease?.tabId !== (session.homeTabId ?? session.tabId) || command.lease?.id !== session.leaseId) {
-    throw new ExtensionError('session_inactive', 'Invalid tab lease');
+  // The lease first: a command for a lease this worker does not hold (yet) never reports the status of another
+  // session (issue #31: an older, superseded session's `stopped` read as "the user stopped the tab").
+  if (!session || command.lease?.tabId !== (session.homeTabId ?? session.tabId) || command.lease?.id !== session.leaseId) {
+    throw new ExtensionError('session_inactive', 'This browser does not hold that tab lease');
   }
+  if (session.status !== 'active') throw inactiveError();
   if (Array.isArray(command.allowedOrigins) && !originCovered(session.origin, command.allowedOrigins)) {
     throw new ExtensionError('cross_origin', 'Selected tab origin is not approved for this command');
   }
@@ -3291,6 +3333,9 @@ function checkCommand(command) {
 }
 
 async function handleCommand(command) {
+  // A lease the daemon bound a moment ago: its first command can arrive while startSession is still finishing (a modal
+  // approval checks the tab again after the lease reply). Wait for it, briefly, instead of failing on the old session.
+  if (startingLease && command?.lease?.id !== session?.leaseId) await resolvesWithin(startingLease, START_WAIT_MS);
   const current = session;
   let reply;
   let endReason = null;
@@ -3365,8 +3410,12 @@ async function openTaskTab(url) {
     win = candidates.find(candidate => suitable(candidate) && candidate.focused) ?? candidates.find(suitable);
   }
   if (suitable(win)) {
+    // The tab a live request works on stays in front: another request's page opens behind it (its prompt window's
+    // Approve brings it forward). Opening it in front paused the working request as if the user had switched tabs.
+    const working = session?.status === 'active' ? await chrome.tabs.get(session.tabId).catch(() => null) : null;
+    const behind = Boolean(working?.active && working.windowId === win.id);
     // A window can close between lookup and create; only a failed create falls back to a new window.
-    const tab = await chrome.tabs.create({ windowId: win.id, url, active: true }).catch(() => null);
+    const tab = await chrome.tabs.create({ windowId: win.id, url, active: !behind }).catch(() => null);
     if (Number.isInteger(tab?.id)) {
       await ignore(chrome.windows.update(win.id, { focused: true }));
       return { tab, window: win };
@@ -3378,9 +3427,47 @@ async function openTaskTab(url) {
   return { tab, window: created };
 }
 
+// The exact origins of a lease other than the tab's own, in host-permission form: what an approval that added origins
+// (an agent's ask) obtained in its click, held for the session (reconcileSites keeps them while it lives).
+function askPatterns(message, leaseOrigins) {
+  if (message?.ask !== true) return [];
+  return leaseOrigins.filter(entry => typeof entry === 'string' && !entry.includes('*') && originOf(entry) === entry)
+    .map(taskOriginPattern);
+}
+
+// The lease's exact origins the browser lets this extension read (host permission): a navigation to one of them keeps
+// the session (sessionCovers), and page.js may follow a link there (its context `origins`). Without the permission
+// the tab's address would be hidden after the hop, so such a link stays refused up front.
+async function reachableOrigins(current) {
+  const exact = [...new Set([current.origin, ...(current.origins ?? [])])]
+    .filter(entry => typeof entry === 'string' && !entry.includes('*') && /^https?:\/\/[^/\s]+$/.test(entry));
+  const held = [];
+  for (const entry of exact.slice(0, 20)) {
+    if (await hasSitePermission([taskOriginPattern(entry)])) held.push(entry);
+  }
+  return held;
+}
+
+// While an approval is binding a lease (startSession), the promise it settles when done (never rejects): a command for
+// the new lease waits for it (handleCommand) rather than failing on the session it replaces.
+let startingLease = null;
+const START_WAIT_MS = 5_000;
+
 // The popup click is the activeTab gesture: the active tab at this moment is bound to the chosen request. `given` is
 // a tab the worker already holds activeTab on (the toolbar icon click on an armed tab, or the live session's own tab).
 async function startSession(message, given = null) {
+  let settle;
+  const marker = new Promise(resolve => { settle = resolve; });
+  startingLease = marker;
+  try {
+    return await bindSession(message, given);
+  } finally {
+    settle();
+    if (startingLease === marker) startingLease = null;
+  }
+}
+
+async function bindSession(message, given) {
   const next = validPairing(message.endpoint ?? pairing?.endpoint, message.secret ?? pairing?.secret);
   if (!next) {
     serviceEndpoint(message.endpoint ?? pairing?.endpoint ?? '');
@@ -3435,6 +3522,12 @@ async function startSession(message, given = null) {
     ignore(reconcileSites());
     throw new Error('Multiple task tabs needs browser site access. Allow access, or choose One task tab and approve again.');
   }
+  // The same request's own session, approved again on one of its tabs (a higher level or another origin the agent
+  // asked for, or a resume): the request keeps its tabs. An active lease approved again keeps its lease id and is
+  // updated in place (the daemon's re-approval names the tab the lease was bound to).
+  const own = session && session.requestId === requestId && ['active', 'paused'].includes(session.status)
+    && session.tabs?.some(entry => entry.tabId === tab.id) ? session : null;
+  const leaseTabId = own?.status === 'active' ? own.homeTabId ?? tab.id : tab.id;
   let scope = 'origin';
   let data;
   // This approval claims (or declines) what the popup obtained for it: pending until the session holds it.
@@ -3455,7 +3548,8 @@ async function startSession(message, given = null) {
       ? await send('invite', { tabId: tab.id, origin, title, level, tabMode: 'single',
         sessionId: typeof invite.sessionId === 'string' ? invite.sessionId : null,
         text: typeof invite.text === 'string' ? invite.text.slice(0, 500) : '' })
-      : await send('lease', { requestId, tabId: tab.id, origin, title, level, tabMode: approvedTabMode, ...asked });
+      : await send('lease', { requestId, tabId: leaseTabId, origin, title, level, tabMode: approvedTabMode, ...asked,
+        ...(message.ask === true ? { ask: true } : {}) });
   } catch (error) {
     settlePending();
     // A failed start (refused lease, daemon unreachable) never leaves the permission it just obtained behind.
@@ -3467,7 +3561,7 @@ async function startSession(message, given = null) {
     // The daemon bound the lease to an origin the user did not list: give the lease back rather than run it.
     settlePending();
     ignore(reconcileSites());
-    await send('status', { leaseId: data.leaseId ?? data.id, status: 'stopped', reason: 'stopped' }).catch(() => {});
+    await send('status', { leaseId: data.leaseId ?? data.id, status: 'stopped', reason: 'not_approved' }).catch(() => {});
     throw new Error('Testing mode needs every requested origin listed under Testing environments.');
   }
   // The roots the lease covers (the daemon keeps them only for a `domain` lease) whose permission Chrome holds.
@@ -3477,11 +3571,27 @@ async function startSession(message, given = null) {
   if (given?.approvalGuard) {
     try { await given.approvalGuard(data); } catch (error) {
       settlePending();
-      await send('status', { leaseId: data.leaseId ?? data.id, status: 'stopped', reason: 'stopped' }).catch(() => {});
+      await send('status', { leaseId: data.leaseId ?? data.id, status: 'stopped', reason: 'not_approved' }).catch(() => {});
       throw error;
     }
   }
   const previous = session;
+  if (own && previous === own && (data.leaseId ?? data.id) === own.leaseId) {
+    // Re-approved in place: the level, origins and tab mode change; the tabs, the current tab and the page stay.
+    own.level = level;
+    own.origins = leaseOrigins;
+    own.tabMode = approvedTabMode === 'multiple' && data.grant?.tabMode === 'multiple' ? 'multiple' : 'single';
+    own.patterns = [...new Set([...(own.patterns ?? []), ...askPatterns(message, leaseOrigins)])];
+    if (own.tabMode === 'multiple' && !own.patterns.includes(taskPattern)) own.patterns.push(taskPattern);
+    if (own.tabMode !== 'multiple') own.tabs = own.tabs.filter(entry => entry.tabId === own.tabId);
+    own.reachable = await reachableOrigins(own);
+    settlePending();
+    await setStatus('active');
+    return;
+  }
+  // A resumed request keeps the tabs it had when it paused (with Multiple task tabs), and works on the approved tab.
+  const keptTabs = own && own.tabMode === 'multiple' && approvedTabMode === 'multiple' && data.grant?.tabMode === 'multiple'
+    ? own.tabs.map(entry => ({ ...entry })) : null;
   session = {
     requestId: data.requestId ?? requestId,
     leaseId: data.leaseId ?? data.id,
@@ -3490,7 +3600,7 @@ async function startSession(message, given = null) {
     // the approved origins (followChild). `tabId` is the one commands act on.
     homeTabId: tab.id,
     tabMode: approvedTabMode === 'multiple' && data.grant?.tabMode === 'multiple' ? 'multiple' : 'single',
-    tabs: [{ id: 't0', tabId: tab.id, url: reportedUrl(tab.url ?? ''), title: reportedText(String(tab.title ?? '')).slice(0, 120) }],
+    tabs: keptTabs ?? [{ id: 't0', tabId: tab.id, url: reportedUrl(tab.url ?? ''), title: reportedText(String(tab.title ?? '')).slice(0, 120), origin }],
     origin,
     // The lease's approved origins, for following a consent wall's redirect (followConsentRedirect).
     origins: leaseOrigins,
@@ -3509,8 +3619,11 @@ async function startSession(message, given = null) {
   if (given?.modalPattern && !session.patterns.includes(given.modalPattern)) session.patterns.push(given.modalPattern);
   for (const extra of given?.modalPatterns ?? []) if (!session.patterns.includes(extra)) session.patterns.push(extra);
   if (session.tabMode === 'multiple' && !session.patterns.includes(taskPattern)) session.patterns.push(taskPattern);
+  for (const extra of askPatterns(message, leaseOrigins)) if (!session.patterns.includes(extra)) session.patterns.push(extra);
+  session.reachable = await reachableOrigins(session);
   // An armed tab's FAI ? group becomes the session's FAI mark (markTab retitles it).
   if (Number.isInteger(given?.armGroupId)) session.groupId = given.armGroupId;
+  else if (keptTabs && Number.isInteger(own.groupId)) session.groupId = own.groupId;
   // Other tabs armed for this request (Open clicked twice) are done: it is served now.
   for (const arm of [...armed.values()]) {
     if (arm.requestId === requestId && arm.tabId !== tab.id) ignore(disarm(arm.tabId));
@@ -4154,11 +4267,31 @@ chrome.tabs.onActivated.addListener(async info => {
   // The user brought another tab of the lease forward: commands follow it.
   if (leaseTab(info.tabId)) {
     session.tabId = info.tabId;
+    if (leaseTab(info.tabId).origin) session.origin = leaseTab(info.tabId).origin;
     return;
   }
   // Only a switch inside the leased tab's window matters; working in another window is fine.
   const leased = await chrome.tabs.get(session.tabId).catch(() => null);
-  if (!leased || leased.windowId === info.windowId) endSession('paused', 'tab_changed');
+  if (leased && leased.windowId !== info.windowId) return;
+  // A tab the request's page opened, seen activated before (or without) its creation event: it is a child (followed,
+  // or a child_tab pause naming its origin), never a tab switch by the user.
+  const tab = await chrome.tabs.get(info.tabId).catch(() => null);
+  if (session !== current || current.status !== 'active') return;
+  if (tab && leaseTab(tab.openerTabId)) {
+    if (!current.childFollow) {
+      const following = followChild(tab).catch(() => {});
+      current.childFollow = following;
+      await following;
+      if (current.childFollow === following) current.childFollow = null;
+    } else {
+      await current.childFollow;
+    }
+    if (session === current && current.status === 'active' && !leaseTab(info.tabId) && current.tabId !== info.tabId) {
+      endSession('paused', 'child_tab', childOrigin(tab.pendingUrl || tab.url || ''));
+    }
+    return;
+  }
+  endSession('paused', 'tab_changed');
 });
 // An armed tab's events: closed, or seen committing a page off its request's origins (a url is only visible with a
 // grant; the icon click re-checks, which is the authoritative check). A finished load re-applies its look.

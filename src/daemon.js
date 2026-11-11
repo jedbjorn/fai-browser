@@ -71,7 +71,7 @@ const ACT_KEYS = new Set(['requestId', 'actionId', 'point', 'revision', 'expecta
 // The parts of an act body that make up the runtime's choice.
 const CHOICE_KEYS = ['actionId', 'point', 'text', 'submit', 'fills', 'hover', 'key', 'url', 'openTab', 'nav', 'tab', 'dialog', 'file'];
 const OBSERVE_KEYS = new Set(['requestId', 'mode', 'allowedUrls', 'suppliedText', 'capture', 'prune', 'outputDir',
-  'instruction', 'expectation', 'answerQuestion', 'policy', 'focus', 'digestChars', 'waitFor', 'maxMs', 'logs']);
+  'instruction', 'expectation', 'answerQuestion', 'policy', 'focus', 'digestChars', 'waitFor', 'maxMs', 'logs', 'afterAsk']);
 // observe {waitFor, maxMs}: the conditions a host may wait for (matched on the redacted page), the default and longest
 // wait, and the poll interval.
 const WAIT_FOR_FIELDS = new Set(['textIncludes', 'textAbsent', 'urlIncludes']);
@@ -91,7 +91,16 @@ const INVITE_KEEP_MS = 60 * 60_000;
 const SESSION_KEYS = new Set(['host', 'hostSessionId', 'repo', 'pid', 'startedAt', 'wake', 'client', 'previous']);
 const CHALLENGE = /^[A-Za-z0-9_-]{16,64}$/;
 const SESSION_UPDATE_KEYS = new Set(['lastToolCallAt', 'hostSessionId', 'wake', 'maxMs']);
-const WAIT_KEYS = new Set(['requestId', 'runId', 'maxMs', 'afterStep', 'while']);
+const WAIT_KEYS = new Set(['requestId', 'runId', 'maxMs', 'afterStep', 'while', 'ask']);
+// An agent's ask for more on a request it holds (POST /v1/requests/:id/ask): a higher level, more origins, or both.
+const ASK_KEYS = new Set(['mode', 'origins']);
+// Bridge codes that describe the lease rather than the page: an act or observe that fails with one while the request
+// is still active waits this long for the extension's status report, then reports what the request really is.
+const LEASE_CODES = new Set(['stopped', 'paused', 'session_inactive', 'tab_changed', 'origin_changed', 'child_tab',
+  'disconnected']);
+const LEASE_SETTLE_MS = 1500;
+// How long after an approval the extension may still give it back (`not_approved`: its own check of the tab failed).
+const UNDO_APPROVAL_MS = 30_000;
 
 function readPackageVersion() {
   try {
@@ -572,6 +581,10 @@ export function createDaemon(options = {}) {
       origins: [...record.origins],
       mode: record.mode,
       grant: record.grant ? { ...record.grant } : null,
+      // The agent asked for more on this approved request (a higher level, more origins): it waits for the user's
+      // Approve on the same request and tab (issue #30). `askDeclined`: the user declined the last ask.
+      ...(record.ask ? { ask: { level: record.ask.level, origins: [...record.ask.origins], at: iso(record.ask.at) } } : {}),
+      ...(record.askDeclined ? { askDeclined: iso(record.askDeclined) } : {}),
       reason: record.reason,
       instruction: record.instruction,
       url: record.url,
@@ -793,15 +806,13 @@ export function createDaemon(options = {}) {
       // The origin itself goes in `leftOrigin` (untrusted: a page chooses where it sends the tab); the trusted message
       // only says where to find it.
       result.leftOrigin = record.leftOrigin;
-      result.needs.message = `${result.needs.message} The tab went to an origin this request does not list (leftOrigin; `
-        + 'page-chosen, check it with the user). If the task needs it, ask the user, then request it in origins (a new '
-        + 'fai_browser_open).';
+      result.needs.message = `${result.needs.message} It went to leftOrigin (page-chosen: check it with the user). To `
+        + 'add it to this task, fai_browser_open with this requestId and it in origins.';
     } else if (result.code === 'child_tab' && record.childOrigin) {
       // The same for a tab or window the page opened (issue #13): its origin is page-chosen, so untrusted.
       result.childOrigin = record.childOrigin;
-      result.needs.message = `${result.needs.message} The page opened a tab or window on another page (childOrigin; `
-        + 'page-chosen, check it with the user). If the task needs it, ask the user, then request it in origins (a new '
-        + 'fai_browser_open).';
+      result.needs.message = `${result.needs.message} It opened childOrigin (page-chosen: check it with the user). To `
+        + 'add it to this task, fai_browser_open with this requestId and it in origins.';
     }
     return result;
   }
@@ -825,6 +836,36 @@ export function createDaemon(options = {}) {
     const record = event.requestId ? requests.get(event.requestId) : pickRequestFor(event.origin, event.tabId,
       typeof event.browserId === 'string' ? event.browserId : null);
     if (!record) return replyTo(event, { error: { code: 'no_request', message: 'No such tab request' } });
+    // What the request was before this approval, so the extension can still give it back (`not_approved`, see
+    // revertApproval) and a refused one changes nothing.
+    const prior = { state: record.state, stateReason: record.stateReason, lease: record.lease, grant: record.grant,
+      origins: [...record.origins], mode: record.mode, ask: record.ask ?? null, runtime: record.runtime,
+      bridge: record.bridge, childOrigin: record.childOrigin ?? null, leftOrigin: record.leftOrigin ?? null };
+    // The user approved the agent's ask (issue #30): the origins and level it named join this request first.
+    const asked = event.ask === true && event.requestId === record.requestId && record.ask ? record.ask : null;
+    if (asked) {
+      record.origins = [...new Set([...record.origins, ...asked.origins])];
+      if (asked.level && levelRank(asked.level) > levelRank(record.mode)) record.mode = asked.level;
+      record.ask = null;
+    }
+    const reply = leaseReply(record, event);
+    if (reply?.error) {
+      record.origins = prior.origins;
+      record.mode = prior.mode;
+      record.ask = prior.ask;
+    } else {
+      record.undo = { leaseId: reply.leaseId, at: now(), prior };
+      if (asked) {
+        delete record.askDeclined;
+        log('request_ask_approved', { requestId: record.requestId, level: record.grant?.level, origins: asked.origins.length });
+        changed();
+      }
+    }
+    return replyTo(event, reply);
+  }
+
+  // The lease reply for an approval of `record` (see onLeaseEvent): a re-approval of its active lease, or a binding.
+  function leaseReply(record, event) {
     // Re-approval: the user changes the level of the active lease on the same tab (no new lease). A lower level
     // takes effect on the next command (the hub clamps every command to it); a higher one on the next run.
     if (record.state === 'active' && event.requestId && record.lease?.tabId === event.tabId
@@ -833,7 +874,7 @@ export function createDaemon(options = {}) {
       const scope = leaseScope(event, record);
       const grant = grantFor(event.level, record, iso(now()), scope, event.tabMode ?? 'single');
       if (!grant) {
-        return replyTo(event, { error: { code: 'bad_request', message: `level must be one of ${LEVELS.join(', ')}` } });
+        return { error: { code: 'bad_request', message: `level must be one of ${LEVELS.join(', ')}` } };
       }
       const origins = leaseOrigins(record.origins, event.origin, scope);
       record.grant = grant;
@@ -843,27 +884,69 @@ export function createDaemon(options = {}) {
       hub.setLeaseOrigins?.(record.lease.leaseId, event.origin, origins);
       record.lastCallAt = now();
       log('lease_regranted', { requestId: record.requestId, level: grant.level, scope });
+      // The agent waits for this approval of its ask (fai_browser_open): wake it as for any approval.
+      if (event.ask === true) wakeOwner(record, 'approved');
       changed();
-      return replyTo(event, {
-        leaseId: record.lease.leaseId, requestId: record.requestId, origins: [...origins], grant: { ...grant },
-      });
+      return { leaseId: record.lease.leaseId, requestId: record.requestId, origins: [...origins], grant: { ...grant } };
     }
     if (record.state !== 'pending' && record.state !== 'paused') {
-      return replyTo(event, { error: { code: 'request_not_pending', message: `This request is ${record.state}` } });
+      return { error: { code: 'request_not_pending', message: `This request is ${record.state}` } };
     }
     if (!Number.isInteger(event.tabId) || !originCovered(event.origin, record.origins)) {
-      return replyTo(event, {
+      return {
         error: {
           code: 'origin_not_requested',
           message: "This tab's origin was not requested",
           origins: [...record.origins],
         },
-      });
+      };
     }
     const resumed = record.state === 'paused';
     const bound = bindRecord(record, event);
     if (!bound.error) wakeOwner(record, resumed ? 'resume' : 'approved');
-    return replyTo(event, bound);
+    return bound;
+  }
+
+  /**
+   * The extension gave an approval back right after making it (status `not_approved`: its own last check of the tab
+   * failed, so nothing was approved): the request returns to what it was before, the same request id still waiting
+   * (pending), paused, or active at its earlier level. Leases the approval superseded stay ended. Returns true when
+   * reverted.
+   */
+  function revertApproval(record, leaseId) {
+    const undo = record.undo;
+    if (!undo || undo.leaseId !== leaseId || now() - undo.at > UNDO_APPROVAL_MS) return false;
+    const { prior } = undo;
+    record.undo = null;
+    const regrant = prior.lease?.leaseId === leaseId;
+    record.origins = prior.origins;
+    record.mode = prior.mode;
+    record.ask = prior.ask;
+    record.grant = prior.grant;
+    record.lease = prior.lease;
+    record.childOrigin = prior.childOrigin;
+    record.leftOrigin = prior.leftOrigin;
+    if (regrant) {
+      // The same lease at its earlier grant, active again (the extension's session never changed).
+      hub.setLeaseLevel?.(leaseId, prior.grant.level);
+      hub.setLeaseTabMode?.(leaseId, prior.grant.tabMode);
+      hub.setLeaseOrigins?.(leaseId, prior.lease.origin, prior.lease.origins);
+      hub.updateLease(leaseId, 'active');
+      log('approval_reverted', { requestId: record.requestId, to: 'active' });
+      changed();
+      return true;
+    }
+    interruptActive(record, 'session_inactive');
+    try {
+      hub.forgetLease?.(leaseId);
+    } catch (error) {
+      log('hub_update_error', { message: String(error?.message ?? error) });
+    }
+    record.runtime = prior.runtime;
+    record.bridge = prior.bridge;
+    setState(record, prior.state, prior.stateReason);
+    log('approval_reverted', { requestId: record.requestId, to: prior.state });
+    return true;
   }
 
   /**
