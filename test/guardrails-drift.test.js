@@ -279,7 +279,7 @@ test('page.js judges link names like src/oversight.js destructiveLinkClass (byte
   for (const label of ['Sign out', 'Log out', 'Logout', 'Sign in', 'Delete account', 'Remove', 'Buy now', 'Checkout',
     'Proceed to checkout', 'Place order', 'Subscribe', 'Unsubscribe', 'Cancel my subscription', 'Close my account', 'Save',
     'Send message', 'Confirm', 'Publish', 'Invite', 'Apply now', 'Delete account help', '→ Sign out', 'S i g n out',
-    'Sign up', 'Order history', 'How to delete a branch', 'Where to buy', 'Account deletion policy', 'Home', 'Profile',
+    'Log me out', 'Sign me out', 'Sign me up', 'Sign up', 'Order history', 'How to delete a branch', 'Where to buy', 'Account deletion policy', 'Home', 'Profile',
     'Delete your account: a step-by-step guide', 'Continue shopping', 'Subscriptions', 'Apply', 'Cancellation terms']) {
     assert.equal(pageClass(label), runtimeClass(label), label);
   }

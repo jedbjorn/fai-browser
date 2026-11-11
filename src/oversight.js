@@ -67,7 +67,7 @@ export { COMMIT_ACTION, COMMIT_OTHER, DANGEROUS, DELETE_WORDS, PURCHASE, SIGN_IN
 // ---------------------------------------------------------------------------------------------------------------
 
 // A link label that starts with one of these verbs does something rather than going somewhere: it is never offered.
-export const LINK_DANGER_LEAD = /^(?:delete|remove|erase|purchase|buy|pay|place\s+(?:an?\s+|the\s+|your\s+|my\s+)?order|order\s+now|check\s?out|proceed\s+to\s+check\s?out|confirm|submit|send|save|publish|invite|unsubscribe|subscribe|cancel\s+(?:my\s+|your\s+|the\s+)?(?:subscription|membership|account|plan|order)|close\s+(?:my\s+|your\s+|the\s+)?account|deactivate|sign\s?(?:in|out)|log\s?(?:in|out)|login|logout|signout)\b/i;
+export const LINK_DANGER_LEAD = /^(?:delete|remove|erase|purchase|buy|pay|place\s+(?:an?\s+|the\s+|your\s+|my\s+)?order|order\s+now|check\s?out|proceed\s+to\s+check\s?out|confirm|submit|send|save|publish|invite|unsubscribe|subscribe|cancel\s+(?:my\s+|your\s+|the\s+)?(?:subscription|membership|account|plan|order)|close\s+(?:my\s+|your\s+|the\s+)?account|deactivate|sign\s?(?:in|out)|log\s?(?:in|out)|(?:sign|log)\s+me\s+(?:in|out)|login|logout|signout)\b/i;
 const MAX_GATED_LINK_WORDS = 4;
 
 function words(text) {
@@ -96,7 +96,7 @@ export function destructiveLink(label) {
 // The class of a link action's leading verb, for the level check (destructiveLink decides whether it is one).
 // extension/page.js keeps byte copies of this and LINK_DANGER_LEAD (test/guardrails-drift.test.js).
 export const LINK_LEAD_CLASSES = [
-  ['sign_in', /^(?:sign\s?(?:in|out)|log\s?(?:in|out)|login|logout|signout)\b/i],
+  ['sign_in', /^(?:sign\s?(?:in|out)|log\s?(?:in|out)|(?:sign|log)\s+me\s+(?:in|out)|login|logout|signout)\b/i],
   ['purchase', /^(?:purchase|buy|pay|place\s+(?:an?\s+|the\s+|your\s+|my\s+)?order|order\s+now|check\s?out|proceed\s+to\s+check\s?out|subscribe)\b/i],
   ['delete', /^(?:delete|remove|erase|unsubscribe|cancel\s+(?:my\s+|your\s+|the\s+)?(?:subscription|membership|account|plan|order)|close\s+(?:my\s+|your\s+|the\s+)?account|deactivate)\b/i],
   ['submit', /^(?:confirm|submit|send|save|publish|invite)\b/i],

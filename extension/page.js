@@ -84,14 +84,16 @@
   // Link actions (src/oversight.js destructiveLink / destructiveLinkClass; byte copies, drift check in
   // test/guardrails-drift.test.js): a short link label (at most MAX_GATED_LINK_WORDS words) that leads with one of these
   // verbs does something rather than going somewhere.
-  const LINK_DANGER_LEAD = /^(?:delete|remove|erase|purchase|buy|pay|place\s+(?:an?\s+|the\s+|your\s+|my\s+)?order|order\s+now|check\s?out|proceed\s+to\s+check\s?out|confirm|submit|send|save|publish|invite|unsubscribe|subscribe|cancel\s+(?:my\s+|your\s+|the\s+)?(?:subscription|membership|account|plan|order)|close\s+(?:my\s+|your\s+|the\s+)?account|deactivate|sign\s?(?:in|out)|log\s?(?:in|out)|login|logout|signout)\b/i;
+  const LINK_DANGER_LEAD = /^(?:delete|remove|erase|purchase|buy|pay|place\s+(?:an?\s+|the\s+|your\s+|my\s+)?order|order\s+now|check\s?out|proceed\s+to\s+check\s?out|confirm|submit|send|save|publish|invite|unsubscribe|subscribe|cancel\s+(?:my\s+|your\s+|the\s+)?(?:subscription|membership|account|plan|order)|close\s+(?:my\s+|your\s+|the\s+)?account|deactivate|sign\s?(?:in|out)|log\s?(?:in|out)|(?:sign|log)\s+me\s+(?:in|out)|login|logout|signout)\b/i;
   const LINK_LEAD_CLASSES = [
-    ['sign_in', /^(?:sign\s?(?:in|out)|log\s?(?:in|out)|login|logout|signout)\b/i],
+    ['sign_in', /^(?:sign\s?(?:in|out)|log\s?(?:in|out)|(?:sign|log)\s+me\s+(?:in|out)|login|logout|signout)\b/i],
     ['purchase', /^(?:purchase|buy|pay|place\s+(?:an?\s+|the\s+|your\s+|my\s+)?order|order\s+now|check\s?out|proceed\s+to\s+check\s?out|subscribe)\b/i],
     ['delete', /^(?:delete|remove|erase|unsubscribe|cancel\s+(?:my\s+|your\s+|the\s+)?(?:subscription|membership|account|plan|order)|close\s+(?:my\s+|your\s+|the\s+)?account|deactivate)\b/i],
     ['submit', /^(?:confirm|submit|send|save|publish|invite)\b/i],
   ];
   const MAX_GATED_LINK_WORDS = 4;
+  // The index of `title` in riskOf's names: a tooltip, judged for a link only when it shows no text of its own.
+  const TITLE_NAME = 4;
   const CLASS_ORDER = ['forbid', 'purchase', 'sign_in', 'delete', 'submit', 'consent_accept', 'submit_safe', 'reversible', 'navigation'];
   const DEFAULT_ALLOW = ['navigate', 'controls'];
   // Guardrail additions (src/guardrails.js): plain phrases the request forbids, received from the worker as strings
@@ -559,7 +561,7 @@
     } catch {
       // An unparsable base: every href is parsed.
     }
-    flatCache = { text: new Map(), parts: new Map(), hostAncestors, links: new Map(), backgrounds: new Map(), baseHere,
+    flatCache = { text: new Map(), parts: new Map(), hostAncestors, links: new Map(), backgrounds: new Map(), clips: new Map(), baseHere,
       webPage: location.protocol === 'https:' || location.protocol === 'http:' };
   }
 
@@ -1699,8 +1701,10 @@
   // A destination that names signing out or a delete (`/logout`, `/sign-out`, `?action=delete`): such a link is an
   // action whatever its label says. Narrow on purpose: the fixtures and bench pages hold no such honest link, while
   // label words anywhere in a URL ("/login/forum.html") would refuse ordinary ones.
-  const SIGN_OUT_PATH = /(?:^|\/)(?:log[-_]?out|sign[-_]?out|log[-_]?off|sign[-_]?off)(?:[/.;]|$)/i;
+  const SIGN_OUT_PATH = /(?:^|\/)(?:log[-_]?out|sign[-_]?out|log[-_]?off|sign[-_]?off)(?:[/.;?]|$)/i;
   const ACTION_QUERY = /(?:^|[?&;])(?:action|do|op|cmd)=(delete|remove|destroy|log[-_]?out|sign[-_]?out|unsubscribe)(?:[&;#]|$)/i;
+  // A query key that is itself the sign-out (`?logout=1`, `?signout`).
+  const SIGN_OUT_KEY = /(?:^|[?&;])(?:log[-_]?out|sign[-_]?out|log[-_]?off|sign[-_]?off)(?:[=&;#]|$)/i;
   function hrefActionClass(el) {
     if (el.tagName !== 'A' || !el.hasAttribute('href')) return null;
     let url;
@@ -1709,8 +1713,12 @@
     } catch {
       return null;
     }
-    if (SIGN_OUT_PATH.test(url.pathname)) return 'sign_in';
-    const action = ACTION_QUERY.exec(url.search)?.[1];
+    // A hash route (`#/logout`, `#!/sign-out`) is a path too.
+    const route = url.hash.replace(/^#!?/, '');
+    if (SIGN_OUT_PATH.test(url.pathname) || (route.startsWith('/') && SIGN_OUT_PATH.test(route.split('?')[0]))) return 'sign_in';
+    const query = `${url.search}${route.includes('?') ? `&${route.slice(route.indexOf('?') + 1)}` : ''}`;
+    if (SIGN_OUT_KEY.test(query)) return 'sign_in';
+    const action = ACTION_QUERY.exec(query)?.[1];
     if (!action) return null;
     return /out$/i.test(action) ? 'sign_in' : 'delete';
   }
@@ -1723,13 +1731,18 @@
       .replace(/[‪-‮⁦-⁩]/g, '');
   }
 
-  // What a person reads in a link, for its guard: rendered text only (never what is invisible: opacity 0, a zero font
-  // size, a clipped 1px box, a box off the page, text in the background colour, display none, visibility hidden), CSS
-  // generated content (::before / ::after) when the visible text is short, overridden bidirectional runs reversed, and
-  // the text in visual order (by box position) when its pieces are few and laid out apart from the DOM order (flex
-  // `order`, grid placement). Returns the readings to judge (DOM order, visual order), at most SEEN_TEXT_NODES nodes.
+  // What a person reads in a control, for its guard: its rendered text minus what nobody sees (display none, visibility
+  // hidden, a faint opacity, a tiny font, text in or near the background colour, a clipped or collapsed box, a box off
+  // the page, text outside the boxes that clip it), CSS generated content (::before / ::after), overridden
+  // bidirectional runs reversed, and the text in visual order (by box position) when its pieces are few and laid out
+  // apart from the DOM order (flex `order`, grid placement). Returns the readings to judge (DOM order, visual order),
+  // at most SEEN_TEXT_NODES nodes. Costly reads (text boxes against clips) run only when a part of the control can hide
+  // text that way (a transform, overflow clipping, an indent, a height cap) or its text is long.
   const SEEN_TEXT_NODES = 80;
   const SEEN_ORDER_PIECES = 8;
+  const FAINT_OPACITY = 0.1;
+  const TINY_FONT_PX = 3;
+  const NEAR_COLOUR = 24;
   // The background colour behind an element (the nearest one set), cached per observation.
   const TRANSPARENT = /^(?:transparent|rgba\(.*,\s*0\))$/;
   function backgroundOf(el) {
@@ -1741,8 +1754,76 @@
     cache?.set(el, value);
     return value;
   }
+  function rgbOf(colour) {
+    const parts = /rgba?\(([^)]+)\)/.exec(colour ?? '')?.[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+    return parts && parts.length >= 3 ? { r: parts[0], g: parts[1], b: parts[2], a: parts.length > 3 ? parts[3] : 1 } : null;
+  }
+  // Text a person cannot tell from its background: a nearly transparent colour, or one close to the background's.
+  function blendsIn(colour, background) {
+    const text = rgbOf(colour);
+    if (!text) return false;
+    if (text.a < FAINT_OPACITY) return true;
+    const under = rgbOf(background);
+    return Boolean(under) && Math.abs(text.r - under.r) + Math.abs(text.g - under.g) + Math.abs(text.b - under.b) < NEAR_COLOUR;
+  }
+  // The strings of a `content` value ("Sign out " counter(n), attr(data-label), several strings), joined; '' for none.
+  function contentText(content, node) {
+    if (!content || content === 'none' || content === 'normal') return '';
+    let out = '';
+    for (const match of content.matchAll(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|attr\(\s*([\w-]+)\s*\)|counters?\([^)]*\)/g)) {
+      if (match[3]) out += node.getAttribute?.(match[3]) ?? '';
+      else if (match[0].startsWith('counter')) out += '1';
+      else out += (match[1] ?? match[2] ?? '').replace(/\\(.)/g, '$1');
+    }
+    return out;
+  }
+  // The box that clips an element's content: its own box when it clips (overflow other than visible, a clip path),
+  // intersected with its ancestors' up to `stop` (inclusive) or the document; null when nothing clips. Cached.
+  function clipBoxOf(el, stop) {
+    if (flatCache && !flatCache.clips.has(stop)) flatCache.clips.set(stop, new Map());
+    const cache = flatCache?.clips.get(stop);
+    const key = el;
+    if (cache?.has(key)) return cache.get(key);
+    const view = el.ownerDocument.defaultView;
+    let box = null;
+    for (let node = el, depth = 0; node && node.nodeType === Node.ELEMENT_NODE && depth < 24; node = parentOf(node), depth++) {
+      const style = view.getComputedStyle(node);
+      if (style.overflowX !== 'visible' || style.overflowY !== 'visible' || (style.clipPath && style.clipPath !== 'none')) {
+        const rect = node.getBoundingClientRect();
+        box = box ? { left: Math.max(box.left, rect.left), top: Math.max(box.top, rect.top),
+          right: Math.min(box.right, rect.right), bottom: Math.min(box.bottom, rect.bottom) } : { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+      }
+      if (node === stop) break;
+    }
+    cache?.set(key, box);
+    return box;
+  }
+  // The part of a text node a person sees: '' when its box is collapsed, off the page or outside its clip; its leading
+  // part when the clip cuts it (found by halving); else all of it.
+  function visibleTextOf(textNode, parent, stop, range) {
+    const text = textNode.nodeValue;
+    range.selectNodeContents(textNode);
+    const rect = range.getBoundingClientRect();
+    const view = textNode.ownerDocument.defaultView;
+    if (rect.width < 1 || rect.height < 1 || rect.right + view.scrollX < 0 || rect.bottom + view.scrollY < 0) return '';
+    const clip = clipBoxOf(parent, stop);
+    if (!clip) return text;
+    const inside = r => r.left >= clip.left - 1 && r.top >= clip.top - 1 && r.right <= clip.right + 1 && r.bottom <= clip.bottom + 1;
+    if (inside(rect)) return text;
+    if (rect.right <= clip.left || rect.left >= clip.right || rect.bottom <= clip.top || rect.top >= clip.bottom) return '';
+    let low = 0;
+    let high = text.length;
+    range.setStart(textNode, 0);
+    while (low < high) {
+      const middle = (low + high + 1) >> 1;
+      range.setEnd(textNode, middle);
+      if (inside(range.getBoundingClientRect())) low = middle;
+      else high = middle - 1;
+    }
+    return text.slice(0, low);
+  }
 
-  function seenReadings(el, short, ownGenerated) {
+  function seenReadings(el) {
     const doc = el.ownerDocument;
     const view = doc.defaultView;
     if (!view) return [];
@@ -1751,50 +1832,82 @@
     const scrollY = view.scrollY;
     const pieces = [];
     let budget = SEEN_TEXT_NODES;
+    const own = view.getComputedStyle(el);
+    const hiding = style => style.transform !== 'none' || style.overflowX !== 'visible' || style.overflowY !== 'visible'
+      || parseFloat(style.textIndent) !== 0 || style.maxHeight !== 'none' || style.maxWidth !== 'none';
+    // Long text: the clip of the control and its containers counts (a short action, then words clipped away).
+    const long = cleanText(el.textContent).split(' ').length > MAX_GATED_LINK_WORDS;
     const pseudo = (node, which) => {
-      const content = view.getComputedStyle(node, which).content;
-      const quoted = /^["'](.*)["']$/s.exec(content || '');
-      if (quoted && quoted[1].trim()) pieces.push({ text: quoted[1], rect: null, node, which });
+      const style = view.getComputedStyle(node, which);
+      if (style.display === 'none' || Number(style.opacity) < FAINT_OPACITY || parseFloat(style.fontSize) < TINY_FONT_PX) return;
+      const text = contentText(style.content, node);
+      if (text.trim()) pieces.push({ text, rect: null, node, which });
     };
-    const walk = (node, reversed) => {
+    const walk = (node, reversed, opacity, check) => {
       for (const child of flatChildren(node)) {
         if (--budget < 0) return;
         if (child.nodeType === Node.TEXT_NODE) {
           if (child.nodeValue.trim()) {
-            const text = reversed ? Array.from(child.nodeValue).reverse().join('') : child.nodeValue;
-            pieces.push({ text, rect: null, node: child });
+            pieces.push({ text: child.nodeValue, rect: null, node: child, parent: node, reversed, check });
           }
           continue;
         }
         if (child.nodeType !== Node.ELEMENT_NODE || SKIP_TEXT_TAGS.has(child.tagName.toUpperCase())) continue;
         if (child.tagName === 'SLOT') {
-          walk(child, reversed);
+          walk(child, reversed, opacity, check);
           continue;
         }
         const style = view.getComputedStyle(child);
         if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') continue;
-        if (Number(style.opacity) === 0 || parseFloat(style.fontSize) === 0) continue;
+        // A box-less element (display: contents) passes its content through.
+        if (style.display === 'contents') {
+          pseudo(child, '::before');
+          walk(child, reversed, opacity, check);
+          pseudo(child, '::after');
+          continue;
+        }
+        const seen = opacity * Number(style.opacity);
+        if (seen < FAINT_OPACITY || parseFloat(style.fontSize) < TINY_FONT_PX) continue;
         if (/inset\(\s*50%/.test(style.clipPath) || (style.position === 'absolute' && /^rect\(\s*(?:0|1)px/.test(style.clip))) continue;
         if (background === undefined) background = backgroundOf(el);
-        if (TRANSPARENT.test(style.color) || (background && style.color === background)) continue;
+        if (blendsIn(style.color, background)) continue;
         const box = child.getBoundingClientRect();
-        if ((box.width <= 1 && box.height <= 1 && style.overflow !== 'visible') || box.right + scrollX < 0 || box.bottom + scrollY < 0) continue;
+        if ((box.width < 1 || box.height < 1) && (style.display !== 'inline' || style.overflowX !== 'visible' || style.overflowY !== 'visible')) continue;
+        if (box.right + scrollX < 0 || box.bottom + scrollY < 0) continue;
         const override = /override/.test(style.unicodeBidi) && style.direction === 'rtl';
-        if (short) pseudo(child, '::before');
-        walk(child, reversed !== override);
-        if (short) pseudo(child, '::after');
+        pseudo(child, '::before');
+        walk(child, reversed !== override, seen, check || hiding(style));
+        pseudo(child, '::after');
       }
     };
-    // The link's own generated content was read already (generatedText): re-read in place only when there is some.
-    if (short && ownGenerated) pseudo(el, '::before');
-    walk(el, false);
-    if (short && ownGenerated) pseudo(el, '::after');
-    const domOrder = pieces.map(piece => piece.text).join('');
-    const readings = [domOrder];
+    const rootOpacity = Number(own.opacity);
+    background = blendsIn(own.color, backgroundOf(el)) ? null : undefined;
+    if (rootOpacity < FAINT_OPACITY || parseFloat(own.fontSize) < TINY_FONT_PX || background === null) return [];
+    pseudo(el, '::before');
+    walk(el, false, rootOpacity, long || hiding(own));
+    pseudo(el, '::after');
+    // Two readings: the text as styled (what a style hides is left out), and, where a part can hide text by layout,
+    // only what lies inside the boxes that clip it. Both are judged: the first does not depend on where the layout put
+    // the words, the second drops a suffix clipped away.
+    const range = doc.createRange();
+    let clipped = false;
+    for (const piece of pieces) {
+      piece.inside = piece.text;
+      if (piece.check && piece.node.nodeType === Node.TEXT_NODE) {
+        piece.inside = visibleTextOf(piece.node, piece.parent, long ? null : el, range);
+        if (piece.inside !== piece.text) clipped = true;
+      }
+      if (piece.reversed) {
+        piece.text = Array.from(piece.text).reverse().join('');
+        piece.inside = Array.from(piece.inside).reverse().join('');
+      }
+    }
+    const readings = [pieces.map(piece => piece.text).join('')];
+    if (clipped) readings.push(pieces.map(piece => piece.inside).join(''));
+    const shown = pieces.filter(piece => piece.inside.trim());
     // Visual order: the pieces sorted by their boxes (top to bottom, left to right), when there are a few.
-    if (pieces.length >= 2 && pieces.length <= SEEN_ORDER_PIECES) {
-      const range = doc.createRange();
-      for (const piece of pieces) {
+    if (shown.length >= 2 && shown.length <= SEEN_ORDER_PIECES) {
+      for (const piece of shown) {
         if (piece.node.nodeType === Node.TEXT_NODE) {
           range.selectNodeContents(piece.node);
           piece.rect = range.getBoundingClientRect();
@@ -1802,18 +1915,19 @@
           piece.rect = piece.node.getBoundingClientRect();
         }
       }
-      const sorted = pieces.slice().sort((a, b) => (Math.abs(a.rect.top - b.rect.top) > Math.min(a.rect.height, b.rect.height) / 2
+      const sorted = shown.slice().sort((a, b) => (Math.abs(a.rect.top - b.rect.top) > Math.min(a.rect.height, b.rect.height) / 2
         ? a.rect.top - b.rect.top : a.rect.left - b.rect.left));
-      if (sorted.some((piece, i) => piece !== pieces[i])) readings.push(sorted.map(piece => piece.text).join(' '));
+      if (sorted.some((piece, i) => piece !== shown[i])) readings.push(sorted.map(piece => piece.inside).join(' '));
     }
     return readings;
   }
 
   // The class of a real link (an <a> with a web href) that is an action, judged on every name a person could read as
-  // its name, uncut: the label and the page's own names for it (aria-label, aria-labelledby, title, the text, its text
-  // content with hidden parts, a component's rendered text), what is actually seen (seenReadings), bidirectional
-  // overrides as read, and its destination (hrefActionClass); null for navigation. As the runtime judges the label.
-  function linkGuardClass(el, names, innerText) {
+  // its name, uncut: the label and the page's own names for it (aria-label, aria-labelledby, the text, its text content
+  // with hidden parts, a component's rendered text, generated content), what is actually seen (seenReadings),
+  // bidirectional overrides as read, and its destination (hrefActionClass); a tooltip (title, aria-describedby) only
+  // when the link shows no text of its own. Null for navigation. As the runtime judges the label.
+  function linkGuardClass(el, names) {
     let worst = hrefActionClass(el);
     const judge = name => {
       if (typeof name !== 'string' || !name.trim()) return;
@@ -1821,14 +1935,15 @@
       const bidi = bidiReading(name);
       if (bidi !== null) worst = severer(worst, linkActionClass(bidi));
     };
-    for (const name of names) judge(name);
+    for (const [index, name] of names.entries()) if (index !== TITLE_NAME) judge(name);
     if (worst) return worst;
-    // What is seen: needed when the text is long (invisible padding can push the action past the word limit), when
-    // pieces may be reordered, or when the visible text is short (generated content may name it).
-    const text = cleanText(el.textContent);
-    if (text.length > 2000) return null;
-    const short = cleanText(innerText).split(' ').filter(Boolean).length <= MAX_GATED_LINK_WORDS;
-    for (const reading of seenReadings(el, short, Boolean(names[8]))) judge(reading);
+    if (cleanText(el.textContent).length > 2000) return null;
+    const readings = seenReadings(el);
+    for (const reading of readings) judge(reading);
+    if (!worst && !readings.some(reading => reading.trim())) {
+      judge(names[TITLE_NAME]);
+      judge(describedByText(el));
+    }
     return worst;
   }
 
@@ -1837,12 +1952,8 @@
     const view = el.ownerDocument.defaultView;
     if (!view) return '';
     const parts = [];
-    for (const pseudo of ['::before', '::after']) {
-      const content = view.getComputedStyle(el, pseudo).content;
-      const quoted = /^["'](.*)["']$/s.exec(content || '');
-      if (quoted) parts.push(quoted[1]);
-    }
-    return parts.join(' ').slice(0, 300);
+    for (const pseudo of ['::before', '::after']) parts.push(contentText(view.getComputedStyle(el, pseudo).content, el));
+    return parts.filter(Boolean).join(' ').slice(0, 300);
   }
 
   // The risk class of one control: { cls, consentReject? }. `cls` is one of purchase | submit | delete |
@@ -1876,15 +1987,14 @@
         if (bidi !== null) worst = severer(worst, labelClass(bidi));
       }
       // What is seen when the names say nothing: generated content on the control's parts, text a CSS bidi override
-      // reverses (only for a control with content, and with a short visible text: the label rules match anywhere).
-      if (!worst && !['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)
-        && cleanText(names[2]).split(' ').filter(Boolean).length <= MAX_GATED_LINK_WORDS && cleanText(el.textContent).length <= 2000) {
-        for (const reading of seenReadings(el, true, Boolean(names[8]))) worst = severer(worst, labelClass(reading));
+      // reverses (only for a control with content).
+      if (!worst && !['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) && cleanText(el.textContent).length <= 2000) {
+        for (const reading of seenReadings(el)) worst = severer(worst, labelClass(reading));
       }
     } else if (role === 'link' && el.tagName === 'A') {
       // A real link is navigation unless one of its names (or its destination) makes it an action, as the runtime's
       // link rule judges its label: never only on the label the page shaped.
-      worst = linkGuardClass(el, names, names[2]);
+      worst = linkGuardClass(el, names);
     }
     const fromLabels = worst;
     if (paymentField(el)) worst = severer(worst, 'purchase');

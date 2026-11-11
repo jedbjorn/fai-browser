@@ -15,7 +15,8 @@ import { PageBridge } from './helpers/page-bridge.js';
 const ORIGIN = 'https://example.com';
 const RLO = '‮';
 const PDF = '‬';
-const pad = style => `<span style="${style}">${'Your profile and settings menu entry. '.repeat(6)}</span>`;
+const PADDING = 'Your profile and settings menu entry. '.repeat(6);
+const pad = style => `<span style="${style}">${PADDING}</span>`;
 const reversed = text => Array.from(text).reverse().join('');
 // [name, inner html for a two-word action [first, second], extra attributes]: each becomes links (neutral
 // destinations) for "Sign out" and "Delete account", and a button with the "Delete account" content (a button's rule).
@@ -30,6 +31,18 @@ const TRICKS = [
   ['flex-order', ([a, b]) => `<span style="display:inline-flex"><span style="order:2">${b}</span><span style="order:1">${a}&nbsp;</span></span>`],
   ['bidi-control', ([a, b]) => `${RLO}${reversed(`${a} ${b}`)}${PDF}`],
   ['bidi-css', ([a, b]) => `<span style="direction:rtl;unicode-bidi:bidi-override">${reversed(`${a} ${b}`)}</span>`],
+  // Generated text with invisible padding after it; faint, tiny, near-background or collapsed padding; text pushed
+  // out of its box; a suffix the link's own box clips away; a tooltip on a link that shows no text of its own.
+  ['generated-padded', ([a, b]) => `<span class="gen" data-text="${a} ${b}"></span>${pad('opacity:0')}`],
+  ['faint', ([a, b]) => `${pad('opacity:0.01')}${a} ${b}`],
+  ['tiny-font', ([a, b]) => `${pad('font-size:0.1px')}${a} ${b}`],
+  ['near-colour', ([a, b]) => `${pad('color:#fefefe')}${a} ${b}`],
+  ['scaled-away', ([a, b]) => `<span style="display:inline-block;transform:scale(0)">${PADDING}</span>${a} ${b}`],
+  ['height-capped', ([a, b]) => `<span style="display:block;max-height:0;overflow:hidden">${PADDING}</span>${a} ${b}`],
+  ['indented-away', ([a, b]) => `<span style="display:inline-block;text-indent:-9999px;width:1px;overflow:hidden">${PADDING}</span>${a} ${b}`],
+  ['clipped-suffix', ([a, b]) => `${a} ${b}<br>${PADDING}`, 'style="height:15px;overflow:hidden;line-height:15px"'],
+  ['title-only', () => '<span class="icon"></span>', 'title="__PHRASE__"'],
+  ['several-strings', ([a, b]) => `<span class="gen2" data-a="${a}" data-b="${b}"></span>`],
 ];
 const PHRASES = { signout: ['Sign', 'out'], delete: ['Delete', 'account'] };
 const HONEST = [
@@ -41,19 +54,29 @@ const HONEST = [
   ['/settings', '<span style="display:inline-flex"><span>⚙</span><span>Settings</span></span>'],
   ['/blog/logout-tips', 'Why a logout matters'],
   ['/login/forum.html', 'Threads'],
+  // A tooltip is not the name a person reads when the link shows text.
+  ['/p/4', 'Nike Air', 'title="Buy Nike Air"'],
+  ['/projects/9/settings', 'Settings', 'title="Delete or rename project"'],
+  ['/docs/next', 'Next \u2192', 'title="Delete records (next page)"'],
 ];
 const DESTINATIONS = [
   ['/logout', 'Profile'],
   ['/account/sign-out', 'My account'],
   ['/items/5?action=delete', 'Open'],
+  ['/#/logout', 'Account'],
+  ['/?logout=1', 'Account'],
+  ['/auth/signout?next=/', 'Account'],
+  ['/me', 'Log me out'],
+  ['/me2', 'Sign me out'],
 ];
 const attrs = extra => (extra ? ` ${extra}` : '');
 const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Guard</title>
 <style>body { margin: 0; font: 12px sans-serif; background: white; } .r { height: 22px; overflow: hidden; white-space: nowrap; margin: 2px; }
-.gen::before { content: attr(data-text); } .arrow::before { content: "\\2192 "; } a, button { display: inline-block; }</style></head><body>
+.gen::before { content: attr(data-text); } .gen2::before { content: attr(data-a) " " attr(data-b); }
+.icon { display: inline-block; width: 12px; height: 12px; background: #333; } .arrow::before { content: "\\2192 "; } a, button { display: inline-block; }</style></head><body>
 ${TRICKS.map(([name, inner, extra], i) => [
-    ...Object.entries(PHRASES).map(([phrase, words]) => `<div class="r"><a id="l-${phrase}-${name}" href="/account/${phrase}-${i}"${attrs(extra)}>${inner(words)}</a></div>`),
-    `<div class="r"><button id="b-${name}"${attrs(extra)}>${inner(PHRASES.delete)}</button></div>`,
+    ...Object.entries(PHRASES).map(([phrase, words]) => `<div class="r"><a id="l-${phrase}-${name}" href="/account/${phrase}-${i}"${attrs(extra?.replace('__PHRASE__', words.join(' ')))}>${inner(words)}</a></div>`),
+    `<div class="r"><button id="b-${name}"${attrs(extra?.replace('__PHRASE__', PHRASES.delete.join(' ')))}>${inner(PHRASES.delete)}</button></div>`,
   ].join('\n')).join('\n')}
 <div class="r"><a id="l-signout-plain" href="/account/signout-plain">Sign out</a></div>
 <div class="r"><a id="l-delete-plain" href="/account/delete-plain">Delete account</a></div>
@@ -78,7 +101,7 @@ for (const engine of ENGINES) {
   test.after(() => browser?.close());
 
   async function open(t, level = 'read-only') {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 1600 } });
+    const context = await browser.newContext({ viewport: { width: 1280, height: 2600 } });
     t.after(() => context.close());
     const tab = await context.newPage();
     await tab.route(`${ORIGIN}/**`, route => (new URL(route.request().url()).pathname === '/guard'
@@ -86,7 +109,7 @@ for (const engine of ENGINES) {
     await tab.goto(`${ORIGIN}/guard`);
     const bridge = new PageBridge(tab, { level });
     const runtime = new BrowserRuntime({ bridge });
-    return { tab, bridge, runtime, look: () => runtime.observe({ mode: level, allowedOrigins: [ORIGIN] }) };
+    return { context, tab, bridge, runtime, look: () => runtime.observe({ mode: level, allowedOrigins: [ORIGIN] }) };
   }
   const offeredPaths = observed => new Set(observed.actions.filter(action => action.href).map(action => {
     const url = new URL(action.href);
@@ -111,8 +134,12 @@ for (const engine of ENGINES) {
       const box = await opened.tab.locator(selector).boundingBox();
       const result = await opened.runtime.act({ point: { x: Math.round(box.x + Math.min(box.width / 2, 20)), y: Math.round(box.y + box.height / 2) } },
         { revision: observed.observation.revision });
-      assert.equal(opened.bridge.executions.length, 0, `${selector} ran`);
-      assert.equal(opened.tab.url(), `${ORIGIN}/guard`, `${selector} navigated`);
+      const ran = opened.bridge.executions.length;
+      const url = opened.tab.url();
+      // One browser context at a time: the attempts are many.
+      await opened.context.close();
+      assert.equal(ran, 0, `${selector} ran`);
+      assert.equal(url, `${ORIGIN}/guard`, `${selector} navigated`);
       return `${result.code}/${result.needs?.level ?? ''}`;
     };
     const plain = { signout: await attempt('#l-signout-plain'), delete: await attempt('#l-delete-plain') };
@@ -122,6 +149,7 @@ for (const engine of ENGINES) {
     }
     assert.equal(await attempt('#d-0'), plain.signout, 'a /logout link labelled "Profile"');
     assert.equal(await attempt('#d-2'), plain.delete, 'an ?action=delete link labelled "Open"');
+    assert.equal(await attempt('#d-3'), plain.signout, 'a #/logout hash route');
   });
 
   test(`${engine.name}: the button twins stay refused, and the honest links stay clickable`, { skip }, async t => {
