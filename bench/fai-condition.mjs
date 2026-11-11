@@ -34,7 +34,7 @@ import { faiResultFrom } from './lib/metrics.mjs';
 const ROOT = resolve(import.meta.dirname, '..');
 export const FAI_TOOLS = [
   'fai_browser_open', 'fai_browser_act', 'fai_browser_observe', 'fai_browser_wait', 'fai_browser_status',
-  'fai_browser_release', 'fai_browser_evidence',
+  'fai_browser_release', 'fai_browser_evidence', 'fai_browser_guide',
 ];
 const REQUIRED_TOOLS = ['fai_browser_open', 'fai_browser_wait', 'fai_browser_observe', 'fai_browser_act'];
 const APPROVED_RE = new RegExp(process.env.FAI_BENCH_APPROVED_RE || 'available to the agent|approved|tab is ready|agent is using its tab', 'i');

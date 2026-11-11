@@ -31,12 +31,15 @@ Or ask your agent to call `fai_browser_status`. Reference: [REFERENCE.md: The da
 | Nothing to approve / the agent says `needs_user` `select_tab` | You did not approve within the wait (default 60 s). Click the FAI Browser icon on the page that opened (pin the icon first), then ask the agent to continue. A request for Act or Test site shows the FAI Browser window first |
 | The approval window did not appear | Popup, Advanced: **Show a window when an agent asks** and **Open requested pages right away** must be on; otherwise look for the `?` badge on the icon |
 | Chrome asks to allow the site | Domain-root requests (`*.example.com`) trigger Chrome's site-access prompt. Allow it, or have the agent ask for the exact origin |
-| The agent asks for a higher level | `needs.level` in the result: approve the new request, which is preselected at that level. Or lower the task |
+| The agent asks for a higher level | `needs.level` in the result: approve the **agent asks for more** card on the same task (its level is preselected); the task keeps its tab and page. Or lower the task |
 | `approval_pending` after an Approve-gate request | You did not click **Approve once** in time. The agent repeats the same act; the request waits 5 minutes |
 | Deny / `refused_action` | By design: the agent must tell you, not retry. Ask it to do it another way, or do it yourself |
 | `stale` / "revision spent" | The page changed or the revision was used already. The agent should `fai_browser_observe` and choose again |
 | `line_break_input` | A fill with a line break was aimed at a single-line field, where Enter would submit the form. The agent fills without the line break, then submits with `submit_field` |
 | A purchase button is "refused", not "asks the user" | Approve gate is off (popup, Permissions), or you are below the level that offers it. With the gate on, purchases ask |
+| Session pauses with `child_tab` or `tab_changed` | The page opened a tab or window (with **One task tab**), or another tab came to the front in the task window. Close or use that tab, return to the task tab and click **Resume**. For pages that open tabs, turn on **Multiple task tabs** (Advanced, Tab access), then Pause and Resume. An agent that cannot explain a result can call `fai_browser_guide` (topic `tabs`, `states`, or `{code: "child_tab"}`) |
+| The agent's first result says the versions differ | The MCP server, the service and the extension come from different releases and may behave unlike the docs. Update (popup **Update**, or `node src/cli.js update`), reload the extension and start a new agent session |
+| Reporting a bug | Ask the agent for what `fai_browser_guide` topic `troubleshooting` lists: request and run ids, each result's status, code and next, `fai_browser_status`, the act's trace, and `daemon logs` lines for those ids |
 | Session pauses with `origin_changed` | The tab left the approved origins (or, on Firefox, `activeTab` ended at the first navigation and you declined the origin prompt). With a toolbar-icon approval, Chrome also withdraws access when it shows its own error page (an HTTP error without a page, an unreachable site). Approve again; approving in the request modal (browser site access) keeps the session through such errors |
 
 ## Invites and wakes

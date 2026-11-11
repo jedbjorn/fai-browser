@@ -7,7 +7,7 @@ const PUBLIC = [
   'BrowserRuntime', 'legalActions', 'redactorFor', 'buildDigest', 'pickAnswerCandidates',
   'EXPECTATION_FIELDS', 'describeExpectation', 'evaluateExpectation', 'validateExpectation', 'verifyExpectation',
   'RECOVERABLE_CODES', 'RESULT_VERSION', 'STATUSES', 'bridgeError', 'LEASE_MESSAGES', 'agentResult', 'leanObserve',
-  'DEFAULT_THRESHOLDS', 'checkOriginEntry', 'originCovered',
+  'DEFAULT_THRESHOLDS', 'checkOriginEntry', 'originCovered', 'GUIDE_TOPICS', 'guideText', 'guideCode',
   'LEVELS', 'CAPABILITIES', 'capabilitiesOf', 'clampLevel', 'guardrailPolicy',
   'createHub', 'BridgeError', 'BRIDGE_ERROR_CODES', 'PROTOCOL_VERSION', 'PINNED_EXTENSION_ID', 'DEFAULT_PORT',
   'writeRun', 'readRun', 'toAgentResult',

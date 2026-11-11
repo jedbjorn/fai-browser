@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "site": "fixtures/site",
+  "notes": "Issue #33 onboarding checks: does a host that knows FAI Browser only from the server instructions (condition R) follow the page's own link, or type a guessed address with the url act? The answer is only on /people/desk-e.html, reached from the 'Write to us' link far below the fold of a 60-link directory page (past the read-only listing cap of 40, so it is counted in moreActions until a focus or scroll brings it up). Guessed addresses (/contact.html, /editorial.html, /press.html) are a different page or a 404. Grade: the answer; then count url acts and fai_browser_guide calls in events.jsonl.",
+  "tasks": [
+    {
+      "id": "unlisted-editorial-email",
+      "difficulty": "multi-step",
+      "instruction": "Starting from the staff directory page, find the email address of the editorial desk (where press questions go).",
+      "start": "{{ORIGIN}}/directory.html",
+      "allowedOrigins": [
+        "{{ORIGIN}}"
+      ],
+      "match": "all",
+      "expected": [
+        "quill-room@lanternfish.example"
+      ]
+    }
+  ]
+}

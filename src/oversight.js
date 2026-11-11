@@ -212,7 +212,7 @@ export function levelRefusalText({ granted, needed }) {
       + `with mode "${needed}".`;
   }
   const text = `The user approved ${LEVEL_NAMES[granted] ?? granted} for this tab; this task needs ${want}. Ask them to `
-    + `approve the new request at ${want} in FAI Browser (it is preselected).`;
+    + `approve ${want} for this task in FAI Browser (it is preselected); the task keeps its tab and page.`;
   return needed === 'testing'
     ? `${text} Test site can be granted only on origins the user listed as test sites.`
     : text;

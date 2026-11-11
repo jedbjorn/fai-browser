@@ -17,6 +17,7 @@ export {
   leanObserve,
 } from './result.js';
 export { DEFAULT_THRESHOLDS } from './oversight.js';
+export { GUIDE_TOPICS, guideCode, guideText } from './guide.js';
 export { CAPABILITIES, LEVELS, capabilitiesOf, clampLevel, guardrailPolicy } from './guardrails.js';
 export { checkOriginEntry, originCovered } from './origins.js';
 export {

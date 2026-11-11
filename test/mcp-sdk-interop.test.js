@@ -27,7 +27,7 @@ test('the MCP SDK client can list and call every core tool', { skip: !sdk && 'no
   assert.equal(client.getServerVersion().name, 'fai-browser');
   assert.match(client.getInstructions(), /tab the user approves/);
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 7);
+  assert.equal(tools.length, 8);
   // The per-tool eager-load hint survives the wire and the SDK's schema parsing, on the loop's tools only.
   const eager = tools.filter(tool => tool._meta?.['anthropic/alwaysLoad'] === true).map(tool => tool.name);
   assert.deepEqual(eager, ['fai_browser_open', 'fai_browser_act', 'fai_browser_observe']);
@@ -44,6 +44,8 @@ test('the MCP SDK client can list and call every core tool', { skip: !sdk && 'no
   assert.equal(mcpData(waited).state, 'active');
   const bad = await client.callTool({ name: 'fai_browser_open', arguments: { origins: [] } });
   assert.equal(bad.isError, true);
+  const guide = await client.callTool({ name: 'fai_browser_guide', arguments: { code: 'child_tab' } });
+  assert.match(guide.content[0].text, /^child_tab \(status needs_user/);
   const released = await client.callTool({ name: 'fai_browser_release', arguments: { requestId: page.requestId } });
   assert.equal(mcpData(released).state, 'released');
 });

@@ -24,7 +24,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const FAI_TOOL = /_fai_browser_(open|act|observe|wait|status|release|evidence|run|stop)$/;
+const FAI_TOOL = /_fai_browser_(open|act|observe|wait|status|release|evidence|guide|run|stop)$/;
 const SESSION = /^ses_[A-Za-z0-9]{10,60}$/;
 // FAI's wake texts (src/wake.js wakeText), matched whole: ids as FAI writes them, a level name, the tool, and for an
 // invite the user's own words as one JSON string of at most 500 characters.

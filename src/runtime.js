@@ -13,6 +13,7 @@ import { aggregateItems, answerScope, buildMemory, coverage, itemValue, lineText
 import {
   ANSWER_STATUSES, MAX_ANSWER_CANDIDATES, bridgeError, buildVerdict, compactPage, pageExtras,
   compactStepObservation, createResult, isKnownCode, nextFor, outcomeFor, redactSecrets, setOutcome,
+  DIALOG_LEVEL_TEXT, ONE_TAB_TEXT, URL_REFUSED_TEXT, URL_SCHEME_TEXT,
 } from './result.js';
 import {
   COMMIT_ACTION, DANGEROUS, FORBID_REFUSAL_TEXT, PURCHASE_REFUSAL_TEXT, REFUSAL_TEXT, commitIntent,
@@ -37,6 +38,22 @@ const MAX_OPTIONS = 30;
 const MAX_ALLOWED_URLS = 10;
 const SCREENSHOT_WAIT_MS = 5000; // safety cap; the bridge contract says the promise always resolves
 const OFFER_CACHE_SIZE = 4;
+// Addresses a runtime remembers as shown by its pages (#remember), for the url:unseen note.
+const SEEN_URLS = 2000;
+
+/** An address as the seen-URL set keys it: absolute http(s), without its fragment; null for anything else. */
+function seenKey(href) {
+  if (typeof href !== 'string' || !href) return null;
+  try {
+    const url = new URL(href);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    url.hash = '';
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
 // Whether an instruction-only run asks anything (auto-confirm gate, instructionAsks): a real question mark, a wh-word
 // or a read verb outside quoted labels and URLs ("Click the 'Where to?' field" asks nothing). A run that only performs
 // actions ("Click Where to?, type London and choose London") keeps its ranked candidates but never auto-confirms one.
@@ -723,7 +740,11 @@ export function offeredActions(observation, options = {}) {
     reserved.push({ type: 'copy_secret', handle: secret.handle, label: secret.label, source: secretSource(secret), needsApproval: 'secret',
       description: `Copy secret:${secret.handle} (${secretSource(secret)}) to the clipboard (asks the user)` });
   }
+  const here = seenKey(observation.url);
   for (const url of (options.allowedUrls ?? []).slice(0, MAX_ALLOWED_URLS)) {
+    // The page the tab is on already is not offered again (`nav: "reload"` reloads it): an `open <this page>` line read
+    // as an invitation to type addresses (issue #33).
+    if (here && seenKey(url) === here) continue;
     // The extension only navigates within the selected origin, or its approved domain root.
     if (leaseOrigin && navigable(observation, observation.url, url, allowedOrigins)) {
       reserved.push({
@@ -2930,7 +2951,7 @@ export class BrowserRuntime {
     if (spec.url !== undefined || spec.openTab !== undefined) {
       if (spec.openTab !== undefined && config.grant?.tabMode !== 'multiple') {
         setOutcome(result, 'refused_action');
-        result.needs.message = 'This request allows one task tab. Choose Multiple task tabs and approve a new request to open another.';
+        result.needs.message = ONE_TAB_TEXT;
         return { result };
       }
       let target;
@@ -2941,7 +2962,7 @@ export class BrowserRuntime {
       }
       if (!target || !['https:', 'http:'].includes(target.protocol)) {
         setOutcome(result, 'refused_action');
-        result.needs.message = 'Only an http(s) URL on the approved origins can be opened.';
+        result.needs.message = URL_SCHEME_TEXT;
         session.why('url:scheme');
         return { result };
       }
@@ -2959,18 +2980,22 @@ export class BrowserRuntime {
       }
       if (urlHopRefused(target.href, config.guardrails)) {
         setOutcome(result, 'refused_action');
-        result.needs.message = 'This URL names an action (sign-out, delete, payment and the like) that FAI Browser does '
-          + 'not open directly. Use the page\'s own control, or tell the user.';
+        result.needs.message = URL_REFUSED_TEXT;
         session.why('url:refused');
         return { result };
       }
+      // An address no page of this tab showed and the user did not list: allowed (the user may have given it in
+      // chat), but the result says so once, since a constructed address is the usual cause of a wrong page.
+      const key = seenKey(target.href);
+      const listed = (config.allowedUrls ?? []).some(url => seenKey(url) === key);
+      if (spec.url !== undefined && key && !listed && !this.seenUrls?.has(key)) session.why('url:unseen');
       return { plan: [{ action: { type: spec.openTab !== undefined ? 'open_tab' : 'navigate_allowed_url', url: target.href, label: target.href, composed: true } }] };
     }
     if (spec.nav !== undefined) return { plan: [{ action: { type: 'history', move: spec.nav, label: `go ${spec.nav}` } }] };
     if (spec.tab !== undefined) {
       if (config.grant?.tabMode !== 'multiple') {
         setOutcome(result, 'refused_action');
-        result.needs.message = 'This request allows one task tab; switching task tabs requires Multiple task tabs approval.';
+        result.needs.message = ONE_TAB_TEXT;
         return { result };
       }
       return { plan: [{ action: { type: 'switch_tab', tab: spec.tab, label: `tab ${spec.tab}` } }] };
@@ -2978,8 +3003,7 @@ export class BrowserRuntime {
     if (spec.dialog !== undefined) {
       if (config.level !== 'testing') {
         setOutcome(result, 'refused_action');
-        result.needs.message = 'JavaScript dialogs are answered by FAI Browser only on a Test site; ask the user to answer '
-          + 'it in the tab, then observe.';
+        result.needs.message = DIALOG_LEVEL_TEXT;
         session.why('dialog:level');
         return { result };
       }
@@ -3283,6 +3307,16 @@ export class BrowserRuntime {
   }
 
   #remember(offer) {
+    // Every address a page of this tab showed (its URL and its controls' links), so a url act can tell a followed
+    // address from a constructed one (`why` url:unseen). Bounded; the oldest go first.
+    const seen = this.seenUrls ??= new Set();
+    for (const href of [offer.observation?.url, ...(offer.observation?.controls ?? []).map(control => control?.href)]) {
+      const key = seenKey(href);
+      if (!key) continue;
+      seen.delete(key);
+      seen.add(key);
+    }
+    while (seen.size > SEEN_URLS) seen.delete(seen.values().next().value);
     this.offers.delete(offer.revision);
     this.offers.set(offer.revision, offer);
     while (this.offers.size > OFFER_CACHE_SIZE) this.offers.delete(this.offers.keys().next().value);
