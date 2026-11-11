@@ -2867,8 +2867,8 @@ export class BrowserRuntime {
       }
       if (!navigable(before, before.url, target.href, config.allowedOrigins)) {
         setOutcome(result, 'cross_origin');
-        result.needs.message = `${target.origin} is not covered by this request. If the task needs it, request the tab `
-          + `again with ${target.origin} added to origins (fai_browser_open with the requestId).`;
+        result.needs.message = `${target.origin} is not covered by this request. If the task needs it, ask the user, then `
+          + `fai_browser_open with this requestId and ${target.origin} in origins: the same request and tab ask for it.`;
         session.why(`url:${target.origin}`);
         return { result };
       }
