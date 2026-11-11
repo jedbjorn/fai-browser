@@ -25,6 +25,7 @@ Options:
   -AllowAdministrator
               run even from an elevated (administrator) window. Only for throwaway machines and CI: FAI Browser's
               local service would then run with administrator rights.
+  -SetupArgs  arguments for setup (for example: -SetupArgs --no-firefox)
   -Help       this text
 The installer never reads or prints the pairing secret; setup writes it to your settings directory itself.
 #>
@@ -36,6 +37,7 @@ param(
   [string]$Tag = '',
   [switch]$NoSetup,
   [switch]$AllowAdministrator,
+  [string[]]$SetupArgs = @(),
   [switch]$Help
 )
 
@@ -322,14 +324,15 @@ if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) {
 Say ''
 Say 'Running the one-time setup (npm run setup) ...'
 Say ''
-$setupArgs = @((Join-Path $Dir 'scripts\setup.mjs'))
-if ($Yes) { $setupArgs += '--yes' }
+$setupArgv = @((Join-Path $Dir 'scripts\setup.mjs'))
+if ($Yes) { $setupArgv += '--yes' }
+$setupArgv += $SetupArgs
 # Called directly (not through Invoke-Native): setup needs this console as its terminal to ask its questions.
 Push-Location -LiteralPath $Dir
 $ErrorActionPreference = 'Continue'
 try {
   $global:LASTEXITCODE = 0
-  & $node.Path @setupArgs
+  & $node.Path @setupArgv
   $setupExit = $global:LASTEXITCODE
 } finally {
   $ErrorActionPreference = 'Stop'

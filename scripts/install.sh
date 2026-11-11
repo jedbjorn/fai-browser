@@ -26,6 +26,7 @@
 #   --tag vX.Y.Z   install this release instead of the latest
 #   --no-setup     stop after the checkout; run `npm run setup` yourself later
 #   --help         this text
+#   -- ARGS        everything after -- goes to setup (for example: -- --no-firefox)
 # The installer never reads or prints the pairing secret; setup writes it to your settings directory itself.
 
 set -eu
@@ -65,6 +66,7 @@ while [ $# -gt 0 ]; do
     --tag) [ $# -ge 2 ] || die '--tag needs a release tag such as v0.8.0'; TAG="$2"; shift ;;
     --tag=*) TAG="${1#--tag=}" ;;
     --help|-h) usage; exit 0 ;;
+    --) shift; break ;;
     *) die "unknown option $1 (see --help)" ;;
   esac
   shift
@@ -411,11 +413,11 @@ fi
 say ''
 say 'Running the one-time setup (npm run setup) ...'
 say ''
-if [ "$YES" = 1 ]; then
-  node scripts/setup.mjs --yes || die "setup failed (see above). Fix the cause and run: cd \"$DIR\" && npm run setup"
-else
-  node scripts/setup.mjs || die "setup failed (see above). Fix the cause and run: cd \"$DIR\" && npm run setup"
-fi
+# The arguments after -- go to setup as they are (argv, no shell). ${1+"$@"}: bash 3.2 (macOS /bin/sh) calls an empty
+# "$@" unbound under set -u.
+if [ "$YES" = 1 ]; then set -- --yes ${1+"$@"}; fi
+node scripts/setup.mjs ${1+"$@"} || die "setup failed (see above). Fix the cause and run: cd \"$DIR\" && npm run setup"
+
 
 say ''
 say "FAI Browser is installed in $DIR."
