@@ -4223,8 +4223,10 @@ async function approveArmed(tab, access = Promise.resolve()) {
   }
   if (!connected && pairing) await waitForAttempt(CONNECT_WAIT_MS);
   // Another click on the icon may have approved (or the arm ended) while this one waited for the connection: the arm
-  // is read again, and only the click that still finds it current goes on (disarm takes it synchronously).
-  if (armed.get(tab.id) !== arm) return;
+  // is read again, and only a click that still finds one for the same request goes on (disarm takes it synchronously).
+  const still = armed.get(tab.id);
+  if (!still || still.requestId !== arm.requestId) return;
+  arm = still;
   // Clicked while the page was still blank (its first page loading, or a redirect on the way): the click's tab
   // snapshot has no http(s) address yet. Wait for the page, then read the tab again.
   if (!/^https?:/.test(tab.url ?? '') && typeof arm.origin === 'string') {

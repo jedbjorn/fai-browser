@@ -341,7 +341,7 @@ test('Firefox: the popup\'s Approve whose site-access prompt is not answered is 
   const clicked = await clickIcon(ctx, '/mine');
   assert.notEqual(clicked.popup, '', 'an ordinary tab: the icon opens the popup');
   assert.ok(await until(() => popupScript(ctx, 'const b = content.document.querySelector(".approve-request:not(:disabled)"); '
-    + 'if (b) { const h = content.windowUtils.setHandlingUserInput(true); try { b.click(); } finally { h.destruct(); } '
+    + 'if (b && !content.faiClicked) { content.faiClicked = true; const h = content.windowUtils.setHandlingUserInput(true); try { b.click(); } finally { h.destruct(); } '
     + 'sendAsyncMessage("fai-test:clicked", true); }').then(async ok => ok && await promptOpen(ctx)), 15_000),
   'Approve this tab clicked in the popup; Firefox asked for site access');
   assert.ok(await until(async () => (await steps(ctx, created.requestId, 'popup')).includes('failed:popup_no_outcome'), WAIT_MS + 8000),
@@ -379,7 +379,7 @@ for (const surface of ['popup', 'toolbar']) {
     if (surface === 'popup') {
       await clickIcon(ctx, '/mine');
       assert.ok(await until(() => popupScript(ctx, 'const b = content.document.querySelector(".approve-request:not(:disabled)"); '
-        + 'if (b) { const h = content.windowUtils.setHandlingUserInput(true); try { b.click(); } finally { h.destruct(); } }')
+        + 'if (b && !content.faiClicked) { content.faiClicked = true; const h = content.windowUtils.setHandlingUserInput(true); try { b.click(); } finally { h.destruct(); } }')
         .then(async ok => ok && await promptOpen(ctx)), 15_000), 'Approve this tab asked for site access');
     } else {
       await clickIcon(ctx, '/start');
