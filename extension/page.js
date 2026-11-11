@@ -1879,9 +1879,9 @@
       for (const child of flatChildren(node)) {
         if (--budget < 0) return;
         if (child.nodeType === Node.TEXT_NODE) {
-          if (child.nodeValue.trim()) {
-            pieces.push({ text: child.nodeValue, rect: null, node: child, parent: node, reversed, check, masked });
-          }
+          // A blank text node is the space between two parts ("<b>Delete</b> <i>account</i>"): kept, so words stay apart.
+          if (child.nodeValue.trim()) pieces.push({ text: child.nodeValue, rect: null, node: child, parent: node, reversed, check, masked });
+          else if (child.nodeValue) pieces.push({ text: ' ', rect: null, node: child, parent: node, reversed: false, check: false, masked, blank: true });
           continue;
         }
         if (child.nodeType !== Node.ELEMENT_NODE || SKIP_TEXT_TAGS.has(child.tagName.toUpperCase())) continue;
