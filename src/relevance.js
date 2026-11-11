@@ -14,6 +14,9 @@ export const DEFAULT_OPTION_CAP = 40;
  */
 export const OFFER_CAPS = Object.freeze({ 'read-only': 40, reversible: 40, interactive: 80, full: 80, testing: 80 });
 
+/** Links to other sites a listing shows when neither the task nor a focus names any (capOffer). */
+export const OTHER_SITE_LISTED = 5;
+
 /** The observe listing cap for a level (40 for an unknown level). */
 export function offerCap(level) {
   return Object.hasOwn(OFFER_CAPS, level) ? OFFER_CAPS[level] : OFFER_CAPS['read-only'];
@@ -183,6 +186,14 @@ export function capActions(actions, cap, hints, pinned = null) {
  */
 export function capOffer(actions, level, hints, pinned = null) {
   const cap = offerCap(level);
-  const extra = actions.filter(action => (essentialAction(action) || Boolean(pinned?.(action)))).length;
-  return { ...capActions(actions, cap + extra, hints, pinned), cap };
+  // Links to other sites (src/runtime.js other_site: listed with their destination, never clicked) are listed when
+  // the task or a focus names them, else only the first OTHER_SITE_LISTED: a footer of social links must not crowd
+  // the listing. The rest count as dropped (moreActions) and a focus brings them in.
+  const others = actions.filter(action => action.type === 'other_site' && !matchesExpectation(action, hints)
+    && relevanceScore(action, hints) === 0 && !pinned?.(action));
+  const parked = new Set(others.slice(OTHER_SITE_LISTED));
+  const pool = parked.size ? actions.filter(action => !parked.has(action)) : actions;
+  const extra = pool.filter(action => (essentialAction(action) || Boolean(pinned?.(action)))).length;
+  const capped = capActions(pool, cap + extra, hints, pinned);
+  return { actions: capped.actions, dropped: capped.dropped + parked.size, cap };
 }

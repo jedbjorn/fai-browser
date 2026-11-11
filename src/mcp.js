@@ -631,14 +631,14 @@ function oneLine(value, limit = SUMMARY_LINE_LIMIT) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, limit);
 }
 
+// A digest line: one block, which a digest asking for more shows whole (src/digest.js, up to 1500 characters plus
+// its cut mark). A longer line is cut here and marked like a cut block.
+const DIGEST_LINE_LIMIT = 1600;
 function digestLine(block) {
-  if (typeof block === 'string') {
-    return oneLine(block);
-  }
-  if (block && typeof block === 'object') {
-    return oneLine(block.text ?? block.content ?? JSON.stringify(block));
-  }
-  return '';
+  const text = typeof block === 'string' ? block
+    : block && typeof block === 'object' ? String(block.text ?? block.content ?? JSON.stringify(block)) : '';
+  const line = oneLine(text, Infinity);
+  return line.length > DIGEST_LINE_LIMIT ? `${line.slice(0, DIGEST_LINE_LIMIT - 1)}…` : line;
 }
 
 // The untrusted lines for a result's lease tabs, JavaScript dialog and Test-site logs (src/result.js pageExtras).

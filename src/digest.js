@@ -30,6 +30,10 @@ export const DIGEST_MAX_CHARS = 1500;
 export const CANDIDATE_MAX = 12;
 
 const BLOCK_TEXT_LIMIT = 300;
+// The whole text of a long block (extension/page.js MAX_BLOCK_FULL), shown only when a digest asks for more.
+const BLOCK_FULL_LIMIT = 1500;
+// The end of a block the digest shows shorter than the page has it.
+const CUT_MARK = '…';
 const MAX_BLOCKS = 200;
 const MIN_CLIP_CHARS = 40; // a block is clipped into the remaining digest budget only if at least this much fits
 const SECTION_WINDOW = 12;
@@ -132,9 +136,15 @@ export function blocksOf(observation) {
     const origins = [];
     for (const [index, block] of observation.blocks.entries()) {
       if (blocks.length >= MAX_BLOCKS) break;
-      const text = clip(block?.text, BLOCK_TEXT_LIMIT);
+      const normalized = clip(block?.text, Infinity);
+      const whole = normalized.slice(0, BLOCK_FULL_LIMIT);
+      const text = whole.slice(0, BLOCK_TEXT_LIMIT);
       if (!text) continue;
       const entry = { t: VALID_TYPES.has(block.t) ? block.t : 'p', text };
+      // A longer block keeps its whole text (as far as the page script read it) for a digest that asks for more;
+      // `cut` marks a block the page script itself cut (extension/page.js MAX_BLOCK_FULL).
+      if (whole.length > text.length) entry.full = whole;
+      if (block.cut === true || normalized.length > BLOCK_FULL_LIMIT) entry.cut = true;
       if (block.ref !== undefined && block.ref !== null) entry.ref = String(block.ref);
       if (block.offscreen === true) entry.offscreen = true;
       // Visually hidden status text (extension/page.js visuallyHidden): never a loading placeholder.
@@ -444,12 +454,23 @@ function isLabelLike(block) {
  * the remaining budget is filled with the leading content blocks so the digest is never empty for a page with text.
  * Returns `{ digest, truncated }`, where `truncated` means relevant blocks (or rows) did not fit.
  */
-export function buildDigest(observation, instruction, { maxBlocks = DIGEST_MAX_BLOCKS, maxChars = DIGEST_MAX_CHARS } = {}) {
+export function buildDigest(observation, instruction, { maxBlocks = DIGEST_MAX_BLOCKS, maxChars = DIGEST_MAX_CHARS,
+  fullBlocks = null } = {}) {
   const { blocks, scores, matched } = scoreBlocks(observation, instruction);
   const chosen = new Map(); // index -> text (possibly clipped)
   const seen = new Set();
   let chars = 0;
   let truncated = false;
+
+  // A block longer than BLOCK_TEXT_LIMIT is shown whole (as far as the page script read it) when the host asked for
+  // more: `fullBlocks` 'all' (a larger digestChars) or 'matched' (a focus: the blocks that hold its words). Any block
+  // shown shorter than the page has it ends in CUT_MARK.
+  const textOf = index => {
+    const block = blocks[index];
+    const long = block.full && (fullBlocks === 'all' || (fullBlocks === 'matched' && matched[index]));
+    const text = long ? block.full : block.text;
+    return block.cut || (block.full && !long) ? { text, cut: true } : { text, cut: false };
+  };
 
   // `whole`: never clip (a row clipped at the end loses its price).
   const add = (index, { whole = false } = {}) => {
@@ -458,13 +479,18 @@ export function buildDigest(observation, instruction, { maxBlocks = DIGEST_MAX_B
     const key = `${block.t}\u0000${block.text}`;
     if (seen.has(key)) return false;
     const room = maxChars - chars;
-    let text = block.text;
+    let { text, cut } = textOf(index);
+    if (cut) {
+      text = `${text}${CUT_MARK}`;
+      truncated = true;
+    }
     if (text.length > room) {
       if (whole || room < MIN_CLIP_CHARS) {
         truncated = true;
         return false;
       }
-      text = `${text.slice(0, room - 1)}…`;
+      text = `${text.slice(0, room - 1)}${CUT_MARK}`;
+      truncated = true;
     }
     seen.add(key);
     chosen.set(index, text);

@@ -177,6 +177,47 @@ function clip(value, limit) {
 // Legal actions
 // ---------------------------------------------------------------------------------------------------------------
 
+// A link to another site: its destination (page data, redacted like the rest of the page) is shown up to this many
+// characters, its label up to OTHER_SITE_LABEL_CHARS, so the line stays one short line.
+const OTHER_SITE_URL_CHARS = 120;
+const OTHER_SITE_LABEL_CHARS = 80;
+
+/**
+ * The trusted text of an act on a link to another site (an offered other_site action, or a point on such a link). The
+ * destination is page data: it stays in the untrusted action line and is never repeated here.
+ */
+export const OTHER_SITE_TEXT = 'This link leaves the approved site; nothing ran. Its destination is in the action line. '
+  + 'If the task needs that page, request the tab again with its origin added to origins and the link\'s address as '
+  + 'allowedUrls (fai_browser_open with the requestId); never guess another address.';
+
+/** An act on a link that leaves the approved site: refused as cross_origin, with how to follow it. */
+function otherSiteRefusal(session, why = 'link:other_site') {
+  setOutcome(session.result, 'cross_origin');
+  session.result.needs.message = OTHER_SITE_TEXT;
+  session.why(why);
+  return { result: session.result };
+}
+
+/** Whether a link's href is an http(s) address (a page another site serves), not mailto:, javascript: and the like. */
+function offSiteHref(href) {
+  try {
+    return ['http:', 'https:'].includes(new URL(href).protocol);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The offered entry for a link that leaves the approved site: never clicked (act on it is refused with how to follow
+ * it); its line names the destination, so the host can request that origin and open the link's own address.
+ */
+function otherSiteAction(base, href) {
+  const shown = href.length > OTHER_SITE_URL_CHARS ? `${href.slice(0, OTHER_SITE_URL_CHARS - 1)}…` : href;
+  const label = base.label.length > OTHER_SITE_LABEL_CHARS ? `${base.label.slice(0, OTHER_SITE_LABEL_CHARS - 1)}…` : base.label;
+  return { type: 'other_site', ...base, href, origin: new URL(href).origin,
+    description: `Link ${base.target}: ${label} → ${shown} (another site: request its origin to open it)` };
+}
+
 function isTextEntry(control) {
   if (TOGGLE_TYPES.has(control.type)) return false;
   if (control.role === 'textbox') return true;
@@ -566,6 +607,8 @@ export function offeredActions(observation, options = {}) {
             newTab: true,
             description: `Open link ${ref}: ${label} in this tab (it would open a new tab)`,
           });
+        } else if (offSiteHref(control.href)) {
+          controlActions.push(otherSiteAction(base, control.href));
         }
         continue;
       }
@@ -575,6 +618,10 @@ export function offeredActions(observation, options = {}) {
         const action = { type: 'click', ...base, description: `Click link ${ref}: ${label}` };
         if (control.href) action.href = control.href;
         controlActions.push(action);
+      } else if (offSiteHref(control.href)) {
+        // A link that leaves the approved site is never clicked: it is listed with its destination, so the host can
+        // request that origin and open the real address instead of guessing one (act on it says how).
+        controlActions.push(otherSiteAction(base, control.href));
       }
       continue;
     }
@@ -909,6 +956,30 @@ export function redactorFor(suppliedText) {
     }
     return out;
   };
+}
+
+/**
+ * `{ linksDropped }` when the page script's control cap left real links out of the observation (a long nav rail): the
+ * listing counts them in moreActions, since a focus naming one brings it in. Empty otherwise.
+ */
+function linksDroppedOf(observation) {
+  const count = observation?.linksDropped;
+  return Number.isInteger(count) && count > 0 ? { linksDropped: Math.min(count, 100_000) } : {};
+}
+
+// At most this many terms reach the page script (extension/page.js MAX_TERMS).
+const MAX_FOCUS_TERMS = 30;
+
+/**
+ * An observe's focus on top of the task's relevance hints: the whole phrase (lower-cased, at most 40 characters, the
+ * page script's term length) and its words lead the terms, and the phrase is a named page, so a link labelled with
+ * it ranks first. `terms` also feeds the page script's control order.
+ */
+function focusRelevance(focus, hints) {
+  const phrase = focus.replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 40);
+  const base = hints ?? relevanceHints({});
+  const terms = [...new Set([phrase, ...instructionTerms(focus), ...base.terms])].filter(term => term.length >= 3);
+  return { ...base, terms, hops: [...new Set([phrase, ...base.hops])].filter(hop => hop.length >= 2) };
 }
 
 /** relevanceHints over the instruction, answerQuestion and expectation with supplied values redacted. */
@@ -2316,6 +2387,8 @@ export function pointAction(offer, found, config) {
   const click = built.find(action => action.type === 'click') ?? built.find(action => action.type === 'navigate_allowed_url');
   const place = action => (id === null || id === undefined ? { ...action, point: config.point } : action);
   if (click) return run(place({ ...click, id: 'point' }), false);
+  // A link that leaves the approved site is never clicked, by id or by point.
+  if (built.some(action => action.type === 'other_site')) return { refusal: { kind: 'cross_origin', capability: null }, control };
   if (built.length) {
     const role = control.role || 'control';
     const label = clip(control.label, 180) || `unlabelled ${role} ${ref}`;
@@ -2551,18 +2624,27 @@ export class BrowserRuntime {
     // Dev logs (console errors, failed requests) are read only on a Test site; elsewhere the observe says so.
     const logs = options.logs === true;
     session.wantLogs = logs && config.level === 'testing';
+    const focus = typeof options.focus === 'string' && options.focus.trim() ? options.focus : null;
+    // A focus also reaches the controls: the page script picks matching ones first under its control cap (off-screen
+    // ones too, a nav rail's item below the fold), and the listing ranks matching actions first. The phrase itself is
+    // a term and a named page ("go here" is a label of two short words).
+    const focusHints = focus ? focusRelevance(focus, session.hints) : null;
+    if (focusHints) session.terms = focusHints.terms.slice(0, MAX_FOCUS_TERMS);
     try {
       const observation = await session.observe();
       session.resolveOrigins(observation);
       // The digest is ranked by the task the host named (its question, else its instruction), which an act on this
-      // offer keeps for the page it lands on; `focus` ranks this observe's digest only, `digestChars` widens it.
+      // offer keeps for the page it lands on; `focus` ranks this observe's digest and listing only, `digestChars`
+      // widens the digest.
       const question = session.question();
-      const { offer, actions, listing } = this.#offerOn(observation, config, session.hints, question);
-      const focus = typeof options.focus === 'string' && options.focus.trim() ? options.focus : null;
+      const { offer, actions, listing } = this.#offerOn(observation, config, session.hints, question, focusHints ?? session.hints);
       const maxChars = Number.isInteger(options.digestChars) && options.digestChars > DIGEST_MAX_CHARS
         ? options.digestChars : DIGEST_MAX_CHARS;
+      // Long blocks (a banner, a paragraph) are shown whole when the host asked for more: all of them with a larger
+      // digestChars, the ones holding the focus words with a focus; otherwise they end in "…".
       const built = buildDigest(observation, focus ?? question, {
         maxChars, maxBlocks: Math.max(DIGEST_MAX_BLOCKS, Math.round(DIGEST_MAX_BLOCKS * maxChars / DIGEST_MAX_CHARS)),
+        fullBlocks: maxChars > DIGEST_MAX_CHARS ? 'all' : focus ? 'matched' : null,
       });
       const capped = cappedWarning(observation, offer.dropped + listing.dropped);
       const warnings = [...(Array.isArray(observation.warnings) ? observation.warnings : [])
@@ -2571,6 +2653,7 @@ export class BrowserRuntime {
       if (logs && !session.wantLogs) warnings.push('logs_need_testing');
       return redactSecrets({
         observation: { ...compactForDecision(observation), warnings, consent: observation.consent ?? null,
+          ...linksDroppedOf(observation),
           ...(observation.records ? { records: observation.records, recordLists: observation.recordLists,
             recordsTruncated: observation.recordsTruncated === true,
             ...(observation.recordState ? { recordState: observation.recordState } : {}) } : {}),
@@ -2904,6 +2987,7 @@ export class BrowserRuntime {
       return { plan: [{ action: { type: 'hover', target: action.target, role: action.role, label: action.label } }] };
     }
     if (action.type === 'fill' && !controls) return need('reversible');
+    if (action.type === 'other_site') return otherSiteRefusal(session);
     const plan = [{ action }];
     if (spec.submit) plan.push({ submitFor: action });
     return { plan };
@@ -3077,12 +3161,8 @@ export class BrowserRuntime {
       session.why(why);
       return { result };
     };
-    if (levelRank(config.level) < levelRank('reversible')) {
-      setOutcome(result, 'refused_action');
-      session.needLevel('reversible');
-      session.why('point:level');
-      return { result };
-    }
+    // Below reversible a point may only follow a plain link (navigation), as an action id could: the control under it
+    // is located and classified like any other (pointAction), and anything but a link click there needs reversible.
     const mapped = mapPoint(offer, point);
     if (!mapped) return refuse('point_outside', 'point:off_image');
     result.point = { image: mapped.image, css: mapped.css, scale: mapped.scale, imageSize: mapped.imageSize };
@@ -3107,7 +3187,11 @@ export class BrowserRuntime {
     if (resolved.refusal) {
       const { kind, capability } = resolved.refusal;
       if (kind === 'unavailable') return refuse('target_unavailable', 'point:unavailable');
-      if (kind === 'cross_origin') return refuse('cross_origin', 'point:cross_origin');
+      if (kind === 'cross_origin') {
+        // A real link to another site: the same answer as acting on its offered other_site entry.
+        if (control.role === 'link' && offSiteHref(control.href)) return otherSiteRefusal(session, 'point:cross_origin');
+        return refuse('cross_origin', 'point:cross_origin');
+      }
       if (kind === 'level') {
         setOutcome(result, 'refused_action');
         session.needLevel('reversible');
@@ -3134,7 +3218,7 @@ export class BrowserRuntime {
    * a host is shown (capOffer: at most offerCap(level) control actions, the most relevant to `hints`; scroll, wait,
    * allowed URLs and the consent dialog's buttons always listed). Shared by observe() and an act() landing page.
    */
-  #offerOn(observation, config, hints, question = null) {
+  #offerOn(observation, config, hints, question = null, listHints = hints) {
     // Host-driven offers also press Enter in a filled field (a search box), gated like the form submit it is.
     // The Approve gate: gated controls are offered (marked needsApproval) when the bridge can ask the user.
     const approvals = typeof this.bridge.approve === 'function' && levelRank(config.level) >= levelRank('reversible')
@@ -3148,7 +3232,8 @@ export class BrowserRuntime {
     this.#remember({ revision: observation.revision, observation, actions, config, hints, question: question || null, flags });
     const consentTargets = new Set((observation.consent?.buttons ?? [])
       .filter(button => button?.id !== undefined && button.id !== null).map(button => String(button.id)));
-    const listing = capOffer(actions, config.level, hints,
+    // `listHints` (an observe's focus on top of the task) rank this listing only.
+    const listing = capOffer(actions, config.level, listHints,
       action => action.target !== undefined && consentTargets.has(String(action.target)));
     return { offer, actions, listing };
   }
@@ -3167,6 +3252,7 @@ export class BrowserRuntime {
       listed: listing.actions.map(action => action.id),
       cap: listing.cap,
       dropped: offer.dropped + listing.dropped,
+      ...linksDroppedOf(observation),
     };
   }
 

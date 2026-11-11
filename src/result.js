@@ -800,13 +800,19 @@ const RELAY_CODES = new Set(['login', 'blocked', 'cross_origin', 'js_dialog']);
  * cap, dropped}: the listing as `actions` [{id, description}], the rest counted in `moreActions`) or from an already
  * lean result (`revision`, `actions`, `moreActions`). Null when the result offers nothing (a run, a refused act).
  */
+/** The links the page script's control cap left out of an observation or offer (`linksDropped`), else 0. */
+function linksDroppedCount(source) {
+  const count = source?.linksDropped;
+  return Number.isInteger(count) && count > 0 ? count : 0;
+}
+
 export function offerOf(result) {
   const offer = result?.offer;
   if (offer && typeof offer === 'object' && Array.isArray(offer.actions) && typeof offer.revision === 'string') {
     const listed = Array.isArray(offer.listed) ? new Set(offer.listed) : null;
     const shown = listed ? offer.actions.filter(action => listed.has(action.id)) : offer.actions;
     const out = { revision: offer.revision, actions: shown.map(listedAction) };
-    const left = offer.actions.length - shown.length;
+    const left = offer.actions.length - shown.length + linksDroppedCount(offer);
     if (left > 0) out.moreActions = left;
     return out;
   }
@@ -1410,7 +1416,8 @@ export function leanObserve(response, options = {}) {
       ...(results?.truncated ? { truncated: true } : {}) },
     actions: listed.map(listedAction),
   };
-  const left = all.length - listed.length;
+  // Links the page script's control cap left out count too: a focus naming one brings it into the listing.
+  const left = all.length - listed.length + linksDroppedCount(page);
   if (left > 0) out.moreActions = left;
   if (permissions) out.permissions = permissions;
   // Machine codes from the page script and the runtime (password_field, login_wall, controls_capped:<n>,
