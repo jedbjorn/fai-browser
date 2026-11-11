@@ -577,7 +577,10 @@ function requestLine(view) {
   const browser = view.browser?.name ? `, in ${oneLine(view.browser.name, 40)}` : '';
   // A paused request nobody is expected to continue (the daemon's staleOf): the popup no longer offers it for Resume.
   const stale = ['newer_request', 'idle'].includes(view.stale) ? `, stale (${view.stale})` : '';
-  return `request: ${ids}${active}${origins}${browser}${stale}`;
+  // An ask waiting for the user's Approve on this request (issue #30): what it adds.
+  const asked = view.ask ? [view.ask.level, ...(Array.isArray(view.ask.origins) ? view.ask.origins : [])].filter(Boolean) : [];
+  const ask = asked.length ? `, asks ${asked.join(' ')}` : '';
+  return `request: ${ids}${active}${origins}${browser}${stale}${ask}`;
 }
 
 // One line per connected browser in status: which ones an agent can name as `browser`, and what each holds.

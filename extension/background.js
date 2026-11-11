@@ -3595,6 +3595,7 @@ async function bindSession(message, given) {
     own.reachable = await reachableOrigins(own);
     settlePending();
     await setStatus('active');
+    if (cleanLevel(level) === 'testing' && !own.devHooks) ignore(armDevHooks(own));
     return;
   }
   // A resumed request keeps the tabs it had when it paused (with Multiple task tabs), and works on the approved tab.

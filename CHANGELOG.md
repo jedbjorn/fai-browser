@@ -5,6 +5,20 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## Unreleased
+
+### Changed
+
+- **More on the same request** (#30). An agent that needs a higher level or another origin asks on the request it holds: `fai_browser_open` with its `requestId` and a higher `mode` (as `needs.level` says) or the extra origin in `origins` no longer opens a new request, a new tab at the start URL and a single-tab grant. The ask (`POST /v1/requests/:id/ask`, `ask` in the request view, `wait {ask: true}`) shows as an **AGENT ASKS FOR MORE** card in the popup and approval window ("Same task and tab: add … · allow …", **Approve on the FAI tab**, **Decline**); Approve asks the browser for site access to the added origins inside the click and re-approves the same lease in place (same lease id, tabs, page and tab mode) or resumes a paused request on the same id. Nothing is granted before the click. An open the user did not answer returns `ask_pending`; a declined ask `ask_declined`. `cross_origin`, `origin_changed` and `child_tab` results name this remedy, also for invited tabs.
+- A lease's other exact origins are followed when the extension holds host access to them (the observation's `reachable`): links and `url` acts there are offered and the session moves with the tab. Before, two exact origins of one request never linked to each other, so an added origin could not be reached.
+- Pauses say what paused them (`tab_changed`: another tab came to the front or the task tab closed; `child_tab`; `origin_changed`; the extension restarted; the connection dropped), each resumable; "The user pressed Stop and released the tab" only for the user's Stop. A request replaced by another approval says so.
+
+### Fixed
+
+- With **Multiple task tabs**, a tab the page opened stopped the task as `tab_changed` when the browser named its opener only after creating it (Chromium for some tabs) or showed it before its creation event: such a tab is now followed as the page's child (#30). A child the page opens behind the working tab joins the request without taking the commands (before, the next command found the request's tab not in front: `tab_changed`). A popup window that cannot be moved or grouped still joins.
+- Another request's page that FAI opens by itself opened in front of the tab a live request was working on and paused it as `tab_changed`; it now opens behind it (#30).
+- "The user stopped and released the tab" was reported for a request that was not stopped (#31): a command for a newly approved lease could reach the worker while the request modal's approval was still finishing, and was answered with the superseded session's `stopped`. The worker now waits for a lease it is binding, answers a lease it does not hold `session_inactive`, and the daemon checks every lease code against the request (a request still active is `tab_not_ready`, observe again). An approval the worker gives back (its last check of the tab failed) is `not_approved` and restores the request instead of releasing it as stopped by the user.
+
 ## 0.7.0 (2026-11-10)
 
 ### Removed
