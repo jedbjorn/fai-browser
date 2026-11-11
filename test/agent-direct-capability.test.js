@@ -180,6 +180,39 @@ test('fills batch: four fields in one call, then submit at full; password and pa
   assert.equal(passwordFill.isError, true);
 });
 
+test('fills batch with supplied values: each value in its own field, without text or with the same value; other text refused', async t => {
+  const ctx = await setup(t);
+  const supplied = { name: 'Ada Example', email: 'ada@example.com', message: 'A short note' };
+  await opened(ctx, 'full', { suppliedText: supplied });
+  const contact = await act(ctx, { url: `${ORIGIN}/contact` });
+  // One supplied fill per field, the value whose name fits it, never "fill Name with supplied email".
+  const supplies = contact.actions.filter(action => / with supplied /.test(action.description)).map(action => action.description);
+  assert.deepEqual(supplies, ['fill textbox "Name" with supplied name', 'fill textbox "Email" with supplied email',
+    'fill textbox "Message" with supplied message'], contact.text);
+  const ids = Object.fromEntries(['name', 'email', 'message'].map(name => [name, find(contact, new RegExp(`with supplied ${name}$`)).id]));
+  // Text that is not the supplied value: refused, and the error says what to do instead.
+  const wrong = await act(ctx, { fills: [{ actionId: ids.email, text: 'someone@else.example' }], revision: contact.revision });
+  assert.equal(wrong.isError, true);
+  const subject = find(contact, /^fill textbox "Email" \(act with text\)$/).id;
+  assert.match(wrong.text, new RegExp(`${ids.email} fills the supplied value email: give it without text \\(or with that same value\\)\\. `
+    + `To type other text there, use ${subject}`));
+  assert.equal(ctx.bridge().typed ?? undefined, undefined, 'nothing was typed');
+  const sent = await act(ctx, {
+    fills: [{ actionId: ids.name }, { actionId: ids.email, text: supplied.email }, { actionId: ids.message },
+      { actionId: find(contact, /^fill textbox "Subject" \(act with text\)$/).id, text: 'Hello' }],
+    revision: contact.revision,
+  });
+  assert.ok(!sent.isError, sent.text);
+  assert.deepEqual(sent.did, ['fill "Name" with supplied name', 'fill "Email" with supplied email',
+    'fill "Message" with supplied message', 'fill "Subject" (5 chars)']);
+  assert.deepEqual(ctx.bridge().typed.map(entry => entry.text), [supplied.name, supplied.email, supplied.message, 'Hello']);
+  assert.ok(!sent.text.includes(supplied.email), 'the supplied value is never echoed');
+  // A single act names the supplied fill the same way: the same value is fine, other text is not.
+  const again = await act(ctx, { actionId: find(sent, /with supplied name$/).id, text: 'Someone else' });
+  assert.equal(again.isError, true);
+  assert.match(again.text, /fills the supplied value name: give it without text/);
+});
+
 test('navigation: url on the granted origins, back, forward; another origin is cross_origin with the open hint', async t => {
   const ctx = await setup(t);
   await opened(ctx, 'read-only');

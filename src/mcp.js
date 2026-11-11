@@ -297,8 +297,8 @@ export const TOOLS = [
       submit: { type: 'boolean', description: 'After text or fills: press Enter in that field (a search or form submit, gated by level).' },
       fills: {
         type: 'array', minItems: 1, maxItems: MAX_BATCH_FILLS,
-        description: 'Several fields in one call, in order: [{actionId, text}].',
-        items: objectSchema({ actionId: { type: 'string', minLength: 1 }, text: { type: 'string', maxLength: MAX_TYPED_CHARS } }, ['actionId', 'text']),
+        description: 'Several fields in one call, in order: [{actionId, text}]; a "with supplied" fill takes no text.',
+        items: objectSchema({ actionId: { type: 'string', minLength: 1 }, text: { type: 'string', maxLength: MAX_TYPED_CHARS } }, ['actionId']),
       },
       key: { type: 'string', minLength: 1, maxLength: 20, description: 'Press a key (in actionId\'s control if given): Escape, Tab, Shift+Tab, arrows, Home, End, PageUp, PageDown, Space, Enter; Ctrl/Cmd+letter at full.' },
       hover: { type: 'boolean', description: 'Hover over actionId\'s control instead of acting on it (menus, tooltips).' },

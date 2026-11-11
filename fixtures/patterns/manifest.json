@@ -165,6 +165,15 @@
         { "id": "grid-named", "level": "reversible", "steps": [{ "click": "Date" }], "expect": { "controls": ["14 October 2026"], "overlay": null, "marked": [] } },
         { "id": "day-click", "level": "reversible", "steps": [{ "click": "Date" }, { "click": "14 October 2026" }], "expect": { "text": ["Chosen: 14 October 2026"] } }
       ]
+    },
+    {
+      "id": "contact-modal",
+      "file": "contact-modal.html",
+      "exercises": "a contact form in a role=dialog modal that a button opens: fields named only by placeholder and name, a spam-trap field placed off the page, and a status line that says sending, then sent, then the modal closes",
+      "checks": [
+        { "id": "buttons-reported", "expect": { "controls": ["Contact", "get in touch"] } },
+        { "id": "fields-own-names", "level": "reversible", "steps": [{ "click": "Contact" }], "expect": { "controls": ["Name", "Email", "Message", "Send message"], "controlsAbsent": ["company"] } }
+      ]
     }
   ]
 }

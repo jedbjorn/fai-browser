@@ -259,6 +259,77 @@ function isTextEntry(control) {
   return control.role === 'combobox' && !control.options?.length && (!control.type || TEXT_TYPES.has(control.type));
 }
 
+// Supplied values and the fields they belong to. A form with several fields and several supplied values used to offer
+// every value in every field ("fill "Name" with supplied email"), and a capped listing could show only the first
+// field's fills. A value whose name fits a field (its own name, id, autocomplete token or input type; else its label or
+// placeholder; else every word of the value's name in them) is offered in the fields it fits best; a value that fits
+// none is offered in the fields no value claims (in every field when all are claimed).
+const plainKey = value => String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const keyWords = value => String(value ?? '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+const AUTOCOMPLETE_NOISE = new Set(['on', 'off', 'section', 'shipping', 'billing', 'home', 'work', 'mobile']);
+
+/** How well the supplied value `name` fits a text field: 3 its own name, id, autocomplete or type; 2 its label or placeholder; 1 their words; 0. */
+export function suppliedFit(control, name) {
+  const key = plainKey(name);
+  if (!key) return 0;
+  const autocomplete = String(control?.autocomplete ?? '').split(/\s+/).filter(token => token && !AUTOCOMPLETE_NOISE.has(token.toLowerCase())
+    && !/^section-/i.test(token));
+  const own = [control?.name, control?.inputId, control?.type === 'text' ? '' : control?.type, ...autocomplete].map(plainKey).filter(Boolean);
+  if (own.includes(key)) return 3;
+  const shown = [control?.label, control?.placeholder];
+  if (shown.map(plainKey).includes(key)) return 2;
+  const words = new Set(shown.flatMap(keyWords));
+  const wanted = keyWords(name);
+  return wanted.length && wanted.every(word => words.has(word)) ? 1 : 0;
+}
+
+/**
+ * For each supplied name, the text fields (by control id) it is offered in: `Map<name, Set<id>>`. `fields` are the
+ * observation's text fields that could take a supplied value.
+ */
+export function suppliedTargets(fields, names) {
+  const fits = new Map(names.map(name => [name, new Map(fields.map(field => [String(field.id), suppliedFit(field, name)]))]));
+  const best = new Map(names.map(name => [name, Math.max(0, ...fits.get(name).values())]));
+  const claimed = new Set();
+  for (const name of names) {
+    if (!best.get(name)) continue;
+    for (const [id, fit] of fits.get(name)) if (fit === best.get(name)) claimed.add(id);
+  }
+  const ids = fields.map(field => String(field.id));
+  const unclaimed = ids.filter(id => !claimed.has(id));
+  const out = new Map();
+  for (const name of names) {
+    const top = best.get(name);
+    out.set(name, new Set(top ? ids.filter(id => fits.get(name).get(id) === top) : unclaimed.length ? unclaimed : ids));
+  }
+  return out;
+}
+
+/**
+ * Text fields that share a label get a short hint after it from their own placeholder, name, id or type (page data
+ * like the label), so two fields called "Name" can be told apart: `Map<id, label>` for those only.
+ */
+function distinctFieldLabels(fields) {
+  const byLabel = new Map();
+  for (const field of fields) {
+    const key = String(field.label ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!key) continue;
+    byLabel.set(key, [...(byLabel.get(key) ?? []), field]);
+  }
+  const out = new Map();
+  for (const group of byLabel.values()) {
+    if (group.length < 2) continue;
+    for (const field of group) {
+      const label = String(field.label).replace(/\s+/g, ' ').trim();
+      const hint = [field.placeholder, field.name, field.inputId, field.type && field.type !== 'text' ? `${field.type} field` : '']
+        .map(value => String(value ?? '').replace(/\s+/g, ' ').trim())
+        .find(value => value && value.toLowerCase() !== label.toLowerCase());
+      if (hint) out.set(String(field.id), `${label} (${hint.slice(0, 60)})`);
+    }
+  }
+  return out;
+}
+
 // A date- or time-ish field name or placeholder: a field whose click usually opens a picker.
 const PICKER_FIELD = /\b(?:dates?|day|departure|departing|depart|return(?:ing)?|check[\s-]?in|check[\s-]?out|arrival|arrive|time|calendar|when|dd[/.-]mm|mm[/.-]dd|yyyy)\b/i;
 const PICKER_TYPES = new Set(['date', 'datetime-local', 'month', 'week', 'time']);
@@ -586,6 +657,11 @@ export function offeredActions(observation, options = {}) {
   const asks = options.approvals ? (typeof options.approvals === 'object' ? cleanAsks(options.approvals) : APPROVAL_ASKS) : null;
   const secrets = asks && controls ? vaultSecrets(observation) : [];
   let secretFields = 0;
+  // The text fields a supplied value could go into: which value goes where, and labels two fields share.
+  const textFields = controls ? (observation.controls ?? []).slice(0, MAX_CONTROLS).filter(control => control.enabled !== false
+    && control.visible !== false && (control.type === 'password' || (!control.sensitive && isTextEntry(control)))) : [];
+  const suppliedIn = suppliedText.length ? suppliedTargets(textFields, suppliedText.map(([name]) => name)) : new Map();
+  const fieldLabels = distinctFieldLabels(textFields);
 
   // Links are offered only on the approved site: to the current page's origin, or (with a domain root the user
   // approved) to another https subdomain of the same root. The extension refuses any other link click.
@@ -625,7 +701,7 @@ export function offeredActions(observation, options = {}) {
     const role = control.role || 'control';
     // A control is never offered with an empty label: the page script names unnamed controls itself ("unlabelled
     // button 1 of 2 next to ..."); an observation without one (an older page script, an SDK bridge) gets its role and ref.
-    const label = clip(control.label, 180) || `unlabelled ${role} ${ref}`;
+    let label = clip(control.label, 180) || `unlabelled ${role} ${ref}`;
     const block = controlBlock(gatedControl(control, facts), guard, facts);
     // The Approve gate (host-driven offers only): a control the user may approve once is offered, marked.
     const gate = asks ? approvalGate(gatedControl(control, facts), block, guard, asks) : null;
@@ -686,7 +762,14 @@ export function offeredActions(observation, options = {}) {
     }
 
     if (password || isTextEntry(control)) {
+      const own = fieldLabels.get(ref);
+      if (own) {
+        base.label = own;
+        label = own;
+      }
       for (const [name] of suppliedText) {
+        // A value goes into the fields it fits (suppliedTargets), not into every field of the form.
+        if (!suppliedIn.get(name)?.has(ref)) continue;
         const secret = secretNames.has(name);
         // When the host named a secret value, a password field takes only secret values (never the username).
         if (password && secretNames.size && !secret) continue;
@@ -2541,6 +2624,21 @@ export function pressKey(name) {
   return null;
 }
 
+/**
+ * Why `text` given with the supplied fill `action` cannot run, or null: a supplied fill types the user's value only.
+ * Text equal to that value is accepted (and ignored); other text is refused with what to do instead. A sensitive
+ * value (a password at testing) is never compared: such a fill takes no text.
+ */
+function suppliedTextProblem(offer, action, text) {
+  if (text === undefined) return null;
+  const value = offer?.config?.suppliedText?.[action.suppliedName];
+  if (!action.sensitive && typeof value === 'string' && text === value) return null;
+  const field = offer?.actions?.find(candidate => candidate.type === 'fill' && candidate.target === action.target);
+  return `${action.id} fills the supplied value ${action.suppliedName}: give it without text`
+    + `${action.sensitive ? '' : ' (or with that same value)'}.`
+    + (field ? ` To type other text there, use ${field.id} ("fill ... (act with text)") with your text.` : '');
+}
+
 function actChoice(choice) {
   if (typeof choice === 'string') return { actionId: choice };
   if (choice && typeof choice === 'object') return choice;
@@ -2579,15 +2677,32 @@ export function checkActChoice(offer, choice, { revisionless = false } = {}) {
     for (const fill of spec.fills) {
       const offered = fill && typeof fill.actionId === 'string' ? find(fill.actionId) : null;
       if (!offered) return `fills: action ${String(fill?.actionId).slice(0, 20)} was not offered for revision ${offer.revision}.`;
-      if (offered.type !== 'fill') return `fills: ${fill.actionId} is not a fill the host types (a "fill ... with text" action).`;
-      if (typeof fill.text !== 'string' || fill.text.length > MAX_TYPED_CHARS) return `fills: each text is a string of at most ${MAX_TYPED_CHARS} characters.`;
+      if (fill.text !== undefined && (typeof fill.text !== 'string' || fill.text.length > MAX_TYPED_CHARS)) {
+        return `fills: each text is a string of at most ${MAX_TYPED_CHARS} characters.`;
+      }
+      if (offered.type === 'fill_supplied_text') {
+        // A "with supplied <name>" fill types the value the user gave, never other text: give it without text (or with
+        // exactly that value, which changes nothing).
+        const problem = suppliedTextProblem(offer, offered, fill.text);
+        if (problem) return `fills: ${problem}`;
+      } else if (offered.type === 'fill') {
+        if (fill.text === undefined) return `fills: ${fill.actionId} is a fill: give the text to type.`;
+      } else {
+        return `fills: ${fill.actionId} is not a fill: list "fill ... (act with text)" actions with their text and "fill ... with `
+          + 'supplied <name>" actions without text.';
+      }
       if (seen.has(fill.actionId)) return `fills: ${fill.actionId} appears twice.`;
       seen.add(fill.actionId);
     }
   }
   if (spec.text !== undefined && kind !== 'dialog') {
     if (typeof spec.text !== 'string' || spec.text.length > MAX_TYPED_CHARS) return `text is a string of at most ${MAX_TYPED_CHARS} characters.`;
-    if (action?.type !== 'fill') return 'text goes with a fill action ("fill ... with text"); passwords and secrets never (use fill_secret).';
+    if (action?.type === 'fill_supplied_text') {
+      const problem = suppliedTextProblem(offer, action, spec.text);
+      if (problem) return problem;
+    } else if (action?.type !== 'fill') {
+      return 'text goes with a fill action ("fill ... with text"); passwords and secrets never (use fill_secret).';
+    }
   }
   if (action?.type === 'fill' && spec.text === undefined && !spec.hover && kind !== 'key') return `${action.id} is a fill: give the text to type.`;
   if (spec.submit !== undefined && spec.submit !== false
@@ -2766,7 +2881,7 @@ export class BrowserRuntime {
     let action = actionId !== null && !spec.fills ? offer.actions.find(candidate => candidate.id === actionId) : null;
     if (point && typeof this.bridge.locate !== 'function') throw new Error('This bridge cannot locate a point');
     // The host's text rides on its own copy of the offered fill (the offer itself never holds it), as an upload's file.
-    if (action && typeof spec.text === 'string') action = { ...action, text: spec.text };
+    if (action?.type === 'fill' && typeof spec.text === 'string') action = { ...action, text: spec.text };
     if (action?.type === 'upload' && spec.file) action = { ...action, file: spec.file };
 
     const config = configure({
@@ -2978,7 +3093,11 @@ export class BrowserRuntime {
     const controls = config.capabilities.has('controls');
     if (spec.fills) {
       if (!controls) return need('reversible');
-      const plan = spec.fills.map(fill => ({ action: { ...offer.actions.find(candidate => candidate.id === fill.actionId), text: fill.text } }));
+      // A supplied fill carries no text of the host's (toCommand types the supplied value); a host fill carries its text.
+      const plan = spec.fills.map(fill => {
+        const offered = offer.actions.find(candidate => candidate.id === fill.actionId);
+        return { action: offered.type === 'fill' ? { ...offered, text: fill.text } : { ...offered } };
+      });
       if (spec.submit) plan.push({ submitFor: plan.at(-1).action });
       return { plan };
     }

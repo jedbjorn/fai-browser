@@ -868,6 +868,14 @@
     return style.visibility !== 'hidden' && style.display !== 'none';
   }
 
+  // A form field whose box lies wholly left of or above its document: no scroll position shows it.
+  function offPage(el) {
+    if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return false;
+    const view = el.ownerDocument?.defaultView ?? window;
+    const box = el.getBoundingClientRect();
+    return box.right + view.scrollX <= 0 || box.bottom + view.scrollY <= 0;
+  }
+
   function visible(el) {
     const rect = boxOf(el);
     return intersectsViewport(rect) && rendered(el, rect);
@@ -3908,6 +3916,9 @@
       }) : null;
       const rect = pickerLabel ? boxOf(pickerLabel) : own;
       if (!(rect.width > 0 && rect.height > 0)) continue;
+      // A form field placed where no scrolling reaches it (left of or above the document, a spam trap's usual spot)
+      // is not one a person can see or fill.
+      if (!pickerLabel && offPage(el)) continue;
       if (intersectsViewport(rect)) {
         if (rendered(pickerLabel ?? el, rect)) inView.push({ el, rect, offscreen: false });
       } else {
