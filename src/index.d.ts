@@ -125,8 +125,10 @@ export interface Observation {
   frames?: PageFrame[];
   /** With controls_capped: how many rendered controls the page script's 100-control cap left out. */
   controlsDropped?: number;
-  /** Of controlsDropped, the real links (an <a> with a navigating href); counted in moreActions. */
+  /** Of controlsDropped, the web links (never mailto: and the like, nor an action label); counted in moreActions. */
   linksDropped?: number;
+  /** Of linksDropped, the links to other sites; counted in moreOtherSites. */
+  offSiteDropped?: number;
   /** The document's HTTP status (Navigation Timing responseStatus) while the URL is still the loaded one. */
   httpStatus?: number;
   /**
@@ -1045,6 +1047,8 @@ export interface AgentResult {
   revision?: string;
   actions?: Array<{ id: string; description: string }>;
   moreActions?: number;
+  /** Of moreActions, the links to other sites the listing shows nothing of (a focus naming one brings it in). */
+  moreOtherSites?: number;
   lease?: { requestId: string; state: RequestState };
   trace: string | null;
 }
@@ -1066,6 +1070,8 @@ export interface LeanObserveResult {
   actions: Array<{ id: string; description: string }>;
   /** Offered actions left out of the list (ids keep their offered numbers); they can still be passed to act. */
   moreActions?: number;
+  /** Of moreActions, the links to other sites the listing shows nothing of (a focus naming one brings it in). */
+  moreOtherSites?: number;
   permissions?: { requested: string; granted: string | null; effective: string; testing: boolean };
 }
 

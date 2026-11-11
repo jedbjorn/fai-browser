@@ -114,16 +114,18 @@ The current page again: digest, actions, a fresh revision. Nothing runs. Can add
 |---|---|---|
 | `task` | string | Re-rank by a sharper task |
 | `focus` | string (<= 300) | Words to rank **this digest and listing** by: a link labelled with them is listed, the blocks holding them are shown whole |
-| `digestChars` | integer 500-6000 (default 1500) | Digest size in characters; above 1500 long blocks are shown whole (a cut block ends in `…`) |
+| `digestChars` | integer 500-6000 (default 1500) | Digest size in characters; above 1500 long blocks are shown whole (a block shown cut ends in `…`) |
 | `waitFor` | `{textIncludes?, textAbsent?, urlIncludes?}` | Poll the page (every 400 ms, on the redacted text) until it shows this; the result says `waited {passed, ms}` |
 | `maxMs` | integer 500-30000 (default 10000) | With `waitFor`: the longest wait |
 | `logs` | boolean | Test site only: console errors and warnings, uncaught errors and failed fetch/XHR (method, URL without query, status; never bodies) since the last read. The hook that collects them runs in the page's world, so the page can see it |
 | `mode`, `suppliedText`, `allowedUrls`, `policy`, `returnImages`, `requestId` | | As in `open` |
 
 `moreActions` in a result counts actions not listed (the listed ones are the most relevant to the task), links the page
-script's control cap left out included; use `observe` with a sharper `task` or `focus` to bring them up. A link to another
-site reads `link "<label>" → <url> (other site: request its origin)`: it is never clicked; to follow it, call
-`fai_browser_open` with the `requestId`, that origin added to `origins` and the url in `allowedUrls`.
+script's control cap left out included, and says how many of them are links to other sites; use `observe` with a sharper
+`task` or `focus` (a link's text, host or path) to bring them up. A link to another site reads
+`link to https://jane.example.org/site/ (other site): "Our site"`: it is never clicked; to follow it, call
+`fai_browser_open` with `origins` set to that origin and `allowedUrls` set to the address (only the origin when the line
+says `address not shown`); the user approves the new request.
 
 ### `fai_browser_wait`
 
