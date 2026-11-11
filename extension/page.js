@@ -1823,6 +1823,38 @@
     return text.slice(0, low);
   }
 
+  // The opacity a `filter` applies (opacity(0.2), opacity(20%)), 1 without one.
+  function filterOpacity(filter) {
+    let value = 1;
+    for (const match of String(filter ?? '').matchAll(/opacity\(\s*([\d.]+)(%?)\s*\)/g)) {
+      value *= match[2] ? Number(match[1]) / 100 : Number(match[1]);
+    }
+    return Number.isFinite(value) ? value : 1;
+  }
+  // The colour text is painted in: -webkit-text-fill-color when it is set, else the colour.
+  function fillColour(style) {
+    const fill = style.webkitTextFillColor;
+    return fill && fill !== 'currentcolor' ? fill : style.color;
+  }
+  // A clip path or a mask: either can hide any part of the text, so its text is also judged without it.
+  function masks(style) {
+    return (Boolean(style.clipPath) && style.clipPath !== 'none') || (Boolean(style.maskImage) && style.maskImage !== 'none')
+      || (Boolean(style.webkitMaskImage) && style.webkitMaskImage !== 'none');
+  }
+  // The deepest element at a viewport point of `doc`, through open shadow roots; null off the viewport.
+  function deepHit(doc, x, y) {
+    let hit = doc.elementFromPoint(x, y);
+    while (hit?.shadowRoot) {
+      const inner = hit.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === hit) break;
+      hit = inner;
+    }
+    return hit;
+  }
+  // Text pieces hit-tested per control (the first ones in the viewport): what lies under another element (an overlay,
+  // a part painted behind a background) is not seen.
+  const HIT_TESTS = 12;
+
   function seenReadings(el, ownGenerated = true) {
     const doc = el.ownerDocument;
     const view = doc.defaultView;
@@ -1843,18 +1875,18 @@
       const text = contentText(style.content, node);
       if (text.trim()) pieces.push({ text, rect: null, node, which });
     };
-    const walk = (node, reversed, opacity, check) => {
+    const walk = (node, reversed, opacity, check, masked = false) => {
       for (const child of flatChildren(node)) {
         if (--budget < 0) return;
         if (child.nodeType === Node.TEXT_NODE) {
           if (child.nodeValue.trim()) {
-            pieces.push({ text: child.nodeValue, rect: null, node: child, parent: node, reversed, check });
+            pieces.push({ text: child.nodeValue, rect: null, node: child, parent: node, reversed, check, masked });
           }
           continue;
         }
         if (child.nodeType !== Node.ELEMENT_NODE || SKIP_TEXT_TAGS.has(child.tagName.toUpperCase())) continue;
         if (child.tagName === 'SLOT') {
-          walk(child, reversed, opacity, check);
+          walk(child, reversed, opacity, check, masked);
           continue;
         }
         const style = view.getComputedStyle(child);
@@ -1862,26 +1894,26 @@
         // A box-less element (display: contents) passes its content through.
         if (style.display === 'contents') {
           pseudo(child, '::before');
-          walk(child, reversed, opacity, check);
+          walk(child, reversed, opacity, check, masked);
           pseudo(child, '::after');
           continue;
         }
-        const seen = opacity * Number(style.opacity);
+        const seen = opacity * Number(style.opacity) * filterOpacity(style.filter);
         if (seen < FAINT_OPACITY || parseFloat(style.fontSize) < TINY_FONT_PX) continue;
         if (/inset\(\s*50%/.test(style.clipPath) || (style.position === 'absolute' && /^rect\(\s*(?:0|1)px/.test(style.clip))) continue;
         if (background === undefined) background = backgroundOf(el);
-        if (blendsIn(style.color, background)) continue;
+        if (blendsIn(fillColour(style), background)) continue;
         const box = child.getBoundingClientRect();
         if ((box.width < 1 || box.height < 1) && (style.display !== 'inline' || style.overflowX !== 'visible' || style.overflowY !== 'visible')) continue;
         if (box.right + scrollX < 0 || box.bottom + scrollY < 0) continue;
         const override = /override/.test(style.unicodeBidi) && style.direction === 'rtl';
         pseudo(child, '::before');
-        walk(child, reversed !== override, seen, check || hiding(style));
+        walk(child, reversed !== override, seen, check || hiding(style), masked || masks(style));
         pseudo(child, '::after');
       }
     };
-    const rootOpacity = Number(own.opacity);
-    background = blendsIn(own.color, backgroundOf(el)) ? null : undefined;
+    const rootOpacity = Number(own.opacity) * filterOpacity(own.filter);
+    background = blendsIn(fillColour(own), backgroundOf(el)) ? null : undefined;
     if (rootOpacity < FAINT_OPACITY || parseFloat(own.fontSize) < TINY_FONT_PX || background === null) return [];
     // The control's own generated content was read already (generatedText): re-read in place only when there is some.
     if (ownGenerated) pseudo(el, '::before');
@@ -1903,8 +1935,37 @@
         piece.inside = Array.from(piece.inside).reverse().join('');
       }
     }
+    // A third reading leaves out what a mask or clip path may hide and what a hit test finds under another element:
+    // the first text pieces of a control in the viewport are hit-tested at their middle (a piece off the viewport, or
+    // one the test cannot reach, is kept).
+    let hidden = pieces.some(piece => piece.masked);
+    const box = el.getBoundingClientRect();
+    if (box.bottom > 0 && box.right > 0 && box.top < view.innerHeight && box.left < view.innerWidth) {
+      let tests = 0;
+      for (const piece of pieces) {
+        if (tests >= HIT_TESTS) break;
+        if (piece.node.nodeType !== Node.TEXT_NODE || !piece.inside.trim() || piece.masked) continue;
+        range.selectNodeContents(piece.node);
+        const rect = range.getClientRects()[0];
+        if (!rect) continue;
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        if (x < 0 || y < 0 || x >= view.innerWidth || y >= view.innerHeight) continue;
+        // The element holding the text answers a hit on it (or, for slotted text, its shadow tree); anything else there
+        // lies over the text. A holder that takes no pointer events cannot be tested.
+        const owner = piece.node.parentElement;
+        if (!owner || view.getComputedStyle(owner).pointerEvents === 'none') continue;
+        tests++;
+        const hit = deepHit(doc, x, y);
+        if (hit && hit !== owner && !owner.shadowRoot?.contains(hit)) {
+          piece.under = true;
+          hidden = true;
+        }
+      }
+    }
     const readings = [pieces.map(piece => piece.text).join('')];
     if (clipped) readings.push(pieces.map(piece => piece.inside).join(''));
+    if (hidden) readings.push(pieces.filter(piece => !piece.masked && !piece.under).map(piece => piece.text).join(''));
     const shown = pieces.filter(piece => piece.inside.trim());
     // Visual order: the pieces sorted by their boxes (top to bottom, left to right), when there are a few.
     if (shown.length >= 2 && shown.length <= SEEN_ORDER_PIECES) {
@@ -1944,7 +2005,8 @@
     const plain = !el.firstElementChild && !el.shadowRoot && !names[8] && text.split(' ').length <= MAX_GATED_LINK_WORDS;
     const readings = plain ? [text] : seenReadings(el, Boolean(names[8]));
     for (const reading of readings) judge(reading);
-    if (!worst && !readings.some(reading => reading.trim())) {
+    // No letters or digits (an arrow, a cross, an emoji): the link shows no words, and its tooltip names it.
+    if (!worst && !readings.some(reading => /[\p{L}\p{N}]/u.test(reading))) {
       judge(names[TITLE_NAME]);
       judge(describedByText(el));
     }
