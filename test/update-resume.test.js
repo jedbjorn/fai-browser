@@ -272,7 +272,7 @@ test('items 5/6: any *_KEY is a secret; GCM_* and GH_CONFIG_DIR reach git', () =
 
 // --- item 7: the process group ----------------------------------------------------------------------------------------
 
-test('item 7: a git call that times out is killed with everything it started (no ssh orphans)', { skip: process.platform === 'win32' }, async t => {
+test('item 7: a git call that times out is killed with everything it started (no ssh orphans)', { skip: process.platform === 'win32' ? 'process groups are POSIX; on Windows runGrouped uses execFile, whose timeout ends git itself only' : false }, async t => {
   const dir = await mkdtemp(join(tmpdir(), 'fai-update-group-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const pidFile = join(dir, 'child.pid');

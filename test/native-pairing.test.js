@@ -42,18 +42,22 @@ test('default directories per platform; FAI_HOME keeps everything in one place',
   assert.ok(faiHome(process.env).startsWith(process.env.FAI_HOME ?? tmpdir()));
 });
 
-test('homePaths: default home splits settings and state; FAI_HOME is one directory', { skip: process.platform !== 'linux' }, () => {
-  const paths = homePaths({ env: { HOME: '/h' } });
+test('homePaths: default home splits settings and state; FAI_HOME is one directory', {
+  skip: process.platform === 'win32' ? 'POSIX paths (path.join writes backslashes on Windows)' : false }, () => {
+  const paths = homePaths({ env: { HOME: '/h' }, platform: 'linux' });
   assert.equal(paths.custom, false);
   assert.equal(paths.envFile, '/h/.config/fai-browser/.env.local');
   assert.equal(paths.config, '/h/.config/fai-browser/config.json');
   assert.equal(paths.clientToken, '/h/.local/state/fai-browser/client-token');
   assert.equal(paths.logFile, '/h/.local/state/fai-browser/logs/daemon.log');
   assert.equal(paths.artifacts, '/h/.local/state/fai-browser/artifacts');
-  const custom = homePaths({ env: { HOME: '/h', FAI_HOME: '/c' } });
+  const custom = homePaths({ env: { HOME: '/h', FAI_HOME: '/c' }, platform: 'linux' });
   assert.equal(custom.custom, true);
   for (const key of ['envFile', 'clientToken', 'logFile', 'artifacts']) assert.ok(custom[key].startsWith('/c/'), key);
-  assert.equal(homePaths({ env: { HOME: '/h', FAI_HOME: '/c', FAI_DAEMON_DIR: '/d' } }).clientToken, '/d/client-token');
+  assert.equal(homePaths({ env: { HOME: '/h', FAI_HOME: '/c', FAI_DAEMON_DIR: '/d' }, platform: 'linux' }).clientToken, '/d/client-token');
+  const mac = homePaths({ env: { HOME: '/Users/u' }, platform: 'darwin' });
+  assert.equal(mac.envFile, '/Users/u/Library/Application Support/fai-browser/.env.local');
+  assert.equal(mac.clientToken, '/Users/u/Library/Application Support/fai-browser/client-token');
 });
 
 test('migration moves settings out of a checkout, stops nothing that is not running and never overwrites', async t => {
