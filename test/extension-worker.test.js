@@ -983,6 +983,11 @@ test('multiple-tab approval creates a tab in the task window and group, switches
   assert.equal((await h.waitFor(m => m.type === 'result' && m.id === id)).error, undefined);
   const alien = h.command('execute', { action: { type: 'switch_tab', tab: 't99' }, expectedRevision: 'doc:1' }, { lease: multiLease });
   assert.equal((await h.waitFor(m => m.type === 'result' && m.id === alien)).error.code, 'target_unavailable');
+  // A four-digit id (a long session's later tabs) is a well-formed tab id: looked up, not refused as invalid.
+  const later = h.command('execute', { action: { type: 'switch_tab', tab: 't1000' }, expectedRevision: 'doc:1' }, { lease: multiLease });
+  const laterError = (await h.waitFor(m => m.type === 'result' && m.id === later)).error;
+  assert.equal(laterError.code, 'target_unavailable', JSON.stringify(laterError));
+  assert.match(laterError.message, /not part of this request/);
   await h.send({ type: 'stop' });
   await h.until(() => !h.groupOf.has(7) && !h.groupOf.has(9));
 });
