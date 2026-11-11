@@ -50,7 +50,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run test:browserless
+      # A per-test timeout: a test that hangs on one platform fails by name instead of running into the job timeout.
+      - run: npm run test:browserless -- --test-timeout=120000
 
   # The bootstrap installers on a throwaway runner, for real: check-only, a fresh clone of the latest release, a rerun
   # that reuses it, and (macOS, under a pseudo-terminal, since setup refuses to run without one) the full setup of this

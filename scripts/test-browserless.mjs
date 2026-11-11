@@ -5,6 +5,7 @@
 // the full `npm test` with Chromium.
 //   npm run test:browserless             run them (concurrency 2, kind to small machines)
 //   node scripts/test-browserless.mjs --list
+//   npm run test:browserless -- --test-timeout=120000   node's --test-* options pass through
 import { spawn } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -42,7 +43,10 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   if (process.argv.includes('--list')) {
     console.log(files.join('\n'));
   } else {
-    const child = spawn(process.execPath, ['--test', '--test-concurrency=2', ...files], { cwd: ROOT, stdio: 'inherit' });
+    // Node's own --test-* options pass through (CI: --test-timeout, so a hung test fails by name instead of the job).
+    const extra = process.argv.slice(2).filter(arg => /^--test-[a-z-]+(=.*)?$/.test(arg));
+    const child = spawn(process.execPath, ['--test', '--test-concurrency=2', ...extra, ...files],
+      { cwd: ROOT, stdio: 'inherit' });
     child.on('exit', code => { process.exitCode = code ?? 1; });
   }
 }
