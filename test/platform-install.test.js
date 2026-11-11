@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { PINNED_EXTENSION_ID } from '../src/bridge.js';
 import { FaiBrowserClient, probeHealth } from '../src/client.js';
 import { MCP_ENTRY, SERVER_NAME, batchCommandLine, claudeAddArgs, claudeAddCommandWindows, commandRunner, hostEntry,
-  isBatchFile, planInstall, registerHost } from '../src/install.js';
+  isBatchFile, planInstall, registerHost, stampedSkill } from '../src/install.js';
 import { applyNativeInstall, launcherFile, planNativeInstall, uninstallNative } from '../src/native.js';
 import { decodeMessages, encodeMessage } from '../src/native-host.js';
 import { saveSettings } from '../src/settings.js';
@@ -113,6 +113,17 @@ test('claude registration runs the real command on this system (a batch shim thr
     assert.deepEqual(JSON.parse(calls[1][5]), hostEntry('claude', server));
   }
   assert.ok(existsSync(join(home, '.claude', 'skills', 'fai-browser', 'SKILL.md')), 'the skill is installed for the user');
+});
+
+test('the skill marker goes after the frontmatter in a CRLF checkout too (a Windows clone before .gitattributes)', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const stamped = stampedSkill(['---', 'name: fai-browser', 'description: x', '---', '', '# FAI Browser', ''].join(eol));
+    assert.ok(stamped.startsWith(`---${eol}name: fai-browser`), JSON.stringify(stamped.slice(0, 40)));
+    assert.match(stamped, /---\r?\n<!-- fai-browser [^ ]+: re-run "fai-browser install" to update -->\n/);
+  }
+  // .gitattributes keeps every checkout LF, whatever core.autocrlf says.
+  assert.match(readFileSync(join(import.meta.dirname, '..', '.gitattributes'), 'utf8'), /^\* text=auto eol=lf$/m);
+  assert.doesNotMatch(readFileSync(join(import.meta.dirname, '..', 'skills', 'fai-browser', 'SKILL.md'), 'utf8'), /\r/);
 });
 
 // --- npm for the updater ------------------------------------------------------------------------------------------------

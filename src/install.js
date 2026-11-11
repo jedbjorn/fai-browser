@@ -242,7 +242,8 @@ export function taskGuides() {
 /** SKILL.md with the version marker as the first line after the frontmatter. */
 export function stampedSkill(text) {
   const marker = `<!-- fai-browser ${VERSION}: re-run "fai-browser install" to update -->`;
-  const match = text.match(/^---\n[\s\S]*?\n---\n/);
+  // \r?: a Windows clone made before .gitattributes pinned LF has CRLF files; the marker still goes after the frontmatter.
+  const match = text.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n/);
   if (!match) {
     return `${marker}\n${text}`;
   }
