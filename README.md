@@ -306,7 +306,7 @@ permissions take no port: approving `http://127.0.0.1:8080` grants `http://127.0
 
 ## Status and roadmap
 
-FAI Browser is an **early release (v0.7.0)**: the daemon, MCP server, skill, guardrails and benchmark
+FAI Browser is an **early release (v0.8.0)**: the daemon, MCP server, skill, guardrails and benchmark
 harness work and are tested, and interfaces may still change. Open items:
 
 - **Extension UX:** a side panel with a pending-request badge, live run view and real pause and
