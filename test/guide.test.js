@@ -18,6 +18,7 @@ import { call, createFakeHub } from './helpers/fake-hub.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
 import { mcpData } from './helpers/mcp-result.js';
 import { ORIGIN, PAGES, link } from './runtime-fixtures.js';
+import { fileURLToPath } from 'node:url';
 
 const words = text => text.split(/\s+/).filter(Boolean).length;
 
@@ -204,7 +205,7 @@ test('an allowed URL is not offered again as an action while the tab is on that 
 test('the CLI guide command prints one JSON line and starts no daemon', async t => {
   const home = await mkdtemp(join(tmpdir(), 'fai-guide-cli-'));
   t.after(() => rm(home, { recursive: true, force: true }));
-  const cli = new URL('../src/cli.js', import.meta.url).pathname;
+  const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
   const run = (...args) => new Promise(resolve => execFile(process.execPath, [cli, ...args],
     { env: { ...process.env, FAI_HOME: home, FAI_DAEMON_PORT: '1' } }, (error, stdout) => resolve({ code: error?.code ?? 0, stdout })));
   const tabs = await run('guide', 'tabs');

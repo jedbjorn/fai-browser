@@ -18,6 +18,8 @@ import { callerAllowed, decodeMessages, encodeMessage, handleMessage, serve } fr
 import { PINNED_EXTENSION_ID } from '../src/bridge.js';
 
 const CHROME_ORIGIN = `chrome-extension://${PINNED_EXTENSION_ID}/`;
+// File modes are POSIX: on Windows a file's access comes from the user profile's ACL and stat reports 0o666.
+const POSIX_MODES = process.platform !== 'win32';
 
 async function scratch(t, prefix = 'fai-native-') {
   const dir = await mkdtemp(join(tmpdir(), prefix));
@@ -75,7 +77,7 @@ test('migration moves settings out of a checkout, stops nothing that is not runn
   assert.equal(result.stopped, false);
   assert.deepEqual(result.left, [join(legacy, 'logs')]);
   assert.equal(await readFile(paths.envFile, 'utf8'), 'FAI_BRIDGE_SECRET="x"\n');
-  assert.equal((await stat(paths.envFile)).mode & 0o777, 0o600);
+  if (POSIX_MODES) assert.equal((await stat(paths.envFile)).mode & 0o777, 0o600);
   assert.equal(existsSync(join(legacy, '.env.local')), false);
   assert.equal(existsSync(join(legacy, 'client-token')), false);
   // A second checkout file never replaces the moved one.
@@ -112,7 +114,7 @@ test('install-native writes only for detected browsers in a temporary HOME; unin
   const launcher = await readFile(written.launcher, 'utf8');
   assert.match(launcher, /^#!\/bin\/sh\n/);
   assert.ok(launcher.includes(`exec '/opt/node/bin/node' '${NATIVE_HOST_ENTRY}' "$@"`));
-  assert.equal((await stat(written.launcher)).mode & 0o111, 0o100);
+  if (POSIX_MODES) assert.equal((await stat(written.launcher)).mode & 0o111, 0o100);
   const chrome = JSON.parse(await readFile(join(home, '.config', 'google-chrome', 'NativeMessagingHosts', 'fai_browser.json'), 'utf8'));
   assert.deepEqual(chrome, nativeManifest('chromium', { path: written.launcher }));
   const firefox = JSON.parse(await readFile(join(home, '.mozilla', 'native-messaging-hosts', 'fai_browser.json'), 'utf8'));

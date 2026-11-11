@@ -5,7 +5,8 @@ import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, realpat
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { MCP_ENTRY, OPENCODE_PLUGIN_SOURCE, SKILL_SOURCE, TASKS_SOURCE, refreshUserSkills, taskGuides } from '../src/install.js';
+import { MCP_ENTRY, OPENCODE_PLUGIN_SOURCE, SKILL_SOURCE, TASKS_SOURCE, claudeAddCommandWindows, refreshUserSkills,
+  taskGuides } from '../src/install.js';
 import { ALWAYS_LOAD_META, TOOLS } from '../src/mcp.js';
 
 const CLI = resolve(import.meta.dirname, '..', 'src', 'cli.js');
@@ -23,7 +24,9 @@ async function sandbox(t) {
     const child = spawnSync(NODE, [CLI, 'install', ...args], {
       cwd: project,
       encoding: 'utf8',
-      env: { PATH: process.env.PATH, HOME: home, ...env },
+      // USERPROFILE: Node's homedir() on Windows (HOME elsewhere); SystemRoot: what node itself needs there.
+      env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home,
+        ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), ...env },
     });
     const lines = child.stdout.split('\n').filter(Boolean);
     assert.equal(lines.length, 1, `one JSON line expected: ${child.stdout}${child.stderr}`);
@@ -93,9 +96,14 @@ test('claude user scope prints remove then add-json and installs the skill in ~/
   const result = install(['--host', 'claude', '--scope', 'user']);
   assert.equal(result.code, 0, result.stderr);
   const entry = JSON.stringify({ type: 'stdio', command: NODE, args: [MCP_ENTRY] });
-  assert.equal(result.json.command, 'claude mcp remove --scope user fai-browser 2>/dev/null; '
-    + `claude mcp add-json --scope user fai-browser '${entry}'`);
-  assert.match(result.stderr, /claude mcp remove --scope user fai-browser 2>\/dev\/null; claude mcp add-json/);
+  if (process.platform === 'win32') {
+    // A Windows terminal gets plain `claude mcp add` lines (PowerShell 5.1 drops the quotes inside a JSON argument).
+    assert.equal(result.json.command, claudeAddCommandWindows({ command: NODE, args: [MCP_ENTRY] }).trimEnd());
+  } else {
+    assert.equal(result.json.command, 'claude mcp remove --scope user fai-browser 2>/dev/null; '
+      + `claude mcp add-json --scope user fai-browser '${entry}'`);
+    assert.match(result.stderr, /claude mcp remove --scope user fai-browser 2>\/dev\/null; claude mcp add-json/);
+  }
   assert.ok(read(join(home, '.claude', 'skills', 'fai-browser', 'SKILL.md')).includes('name: fai-browser'));
   assert.deepEqual(readdirSync(project), []);
 });

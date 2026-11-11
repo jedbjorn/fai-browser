@@ -235,7 +235,8 @@ export function taskGuides() {
   }
   return entries.filter(entry => entry.isDirectory() && !entry.name.startsWith('_') && !entry.name.startsWith('.')
     && existsSync(join(TASKS_SOURCE, entry.name, 'SKILL.md')))
-    .map(entry => join('tasks', entry.name, 'SKILL.md'))
+    // A relative name with `/` on every platform (join() turns it into the platform's separators where it is used).
+    .map(entry => `tasks/${entry.name}/SKILL.md`)
     .sort();
 }
 

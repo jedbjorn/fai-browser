@@ -25,6 +25,8 @@ import { releaseAssetUrl, xpiName } from '../src/launcher/release.js';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const VERSION = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8')).version;
 const INI = version => `[App]\nVendor=Mozilla\nName=Firefox\nVersion=${version}\nBuildID=20261001000000\n`;
+// File modes are POSIX: on Windows a file's access comes from the user profile's ACL and stat reports 0o666.
+const POSIX_MODES = process.platform !== 'win32';
 
 async function scratch(t) {
   // realpath: macOS's tmpdir is a symlink (/var -> /private/var), and the launcher resolves real paths.
@@ -167,8 +169,10 @@ test('profile: user.js 0600 in a 0700 directory; the add-on as extensions/<gecko
   const profile = join(dir, 'profile');
   assert.deepEqual(await prepareProfile(profile), { created: true });
   assert.deepEqual(await prepareProfile(profile), { created: false });
-  assert.equal((await stat(profile)).mode & 0o777, 0o700);
-  assert.equal((await stat(join(profile, 'user.js'))).mode & 0o777, 0o600);
+  if (POSIX_MODES) {
+    assert.equal((await stat(profile)).mode & 0o777, 0o700);
+    assert.equal((await stat(join(profile, 'user.js'))).mode & 0o777, 0o600);
+  }
   assert.equal(await readFile(join(profile, 'user.js'), 'utf8'), userJs());
   const write = async (name, version) => {
     await writeFile(join(dir, name), signedXpi(version));

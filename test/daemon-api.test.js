@@ -10,6 +10,8 @@ import { ORIGIN } from './runtime-fixtures.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 
 const KEY = 'leftover-key-must-not-be-logged-9137';
+// File modes are POSIX: on Windows a file's access comes from the user profile's ACL and stat reports 0o666.
+const POSIX_MODES = process.platform !== 'win32';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function setup(t, options = {}) {
@@ -512,7 +514,7 @@ test('the log carries routes and states but never the key, secret, token or supp
   for (const forbidden of [KEY, secret, ctx.daemon.token, 'supplied-secret-value-4411', 'Profile form', 'wrong-token']) {
     assert.ok(!log.includes(forbidden), `log contains ${forbidden.slice(0, 6)}...`);
   }
-  assert.equal((await stat(ctx.logFile)).mode & 0o777, 0o600);
+  if (POSIX_MODES) assert.equal((await stat(ctx.logFile)).mode & 0o777, 0o600);
 });
 
 test('reload re-reads settings and config; shutdown is requested over the API', async t => {
