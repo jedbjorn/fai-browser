@@ -5,6 +5,12 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## Unreleased
+
+### Changed
+
+- **Pause and Stop come first in the popup.** While an agent holds a tab, the two buttons sit right under the header, above the tab card, new requests, paused tasks and every other card (also in the approval window), inside the popup's normal size and first in tab order, so you can release a tab at a glance. Same buttons, labels and styles; with no agent connected the popup looks as before.
+
 ## 0.7.0 (2026-11-10)
 
 ### Removed

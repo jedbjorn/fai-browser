@@ -1,5 +1,5 @@
 // Popup: pending tab requests from agents (level and, for a domain root, site scope), the active session's Pause and
-// Stop, setup state (pairing is automatic through the native host; Pair retries it), and an Advanced section
+// Stop (right under the header, before every card, while an agent holds a tab), setup state (pairing is automatic through the native host; Pair retries it), and an Advanced section
 // (approvals, test sites, budget, connection with the manual pairing fallback).
 // Everything an agent wrote (reason, instruction, client, origins) is rendered with textContent only. The pairing
 // secret is never shown or put into the page: its field only ever holds what the user types, and is cleared once saved.
