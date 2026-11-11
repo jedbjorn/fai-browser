@@ -6,7 +6,7 @@ description: Operate user-approved browser tabs for live tasks, never research o
 # FAI Browser
 
 Tool search: `mcp__fai-browser__fai_browser_open` or `mcp__fai_browser__fai_browser_open`.
-Flights or hotels: read `tasks/flights/SKILL.md` or `tasks/hotels/SKILL.md` beside this file first.
+Flights or hotels: read `tasks/<name>/SKILL.md` beside this file first (`tasks/flights/SKILL.md`, `tasks/hotels/SKILL.md`).
 
 ## A. Open the task
 `fai_browser_open` with `origins` (only those needed), `reason` (one line the user sees), `task` (ranks digest and actions) and the lowest `mode`. It returns the page once approved.
