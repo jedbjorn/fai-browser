@@ -2430,6 +2430,20 @@ test('the hello carries the stored budget, and the daemon\'s reply says what is 
   assert.deepEqual((await h.send({ type: 'connect' })).connection.budget, { ...stored, source: 'extension' });
 });
 
+test('budget bounds: 10000 calls is stored, reported and shown; 10001 (stored or reported by the daemon) counts as none', async () => {
+  const most = { maxCalls: 10_000, maxMs: 14_400_000 };
+  const h = harness({ local: { budget: most }, daemonBudget: { ...most, source: 'extension' } });
+  assert.deepEqual((await h.waitFor(m => m.type === 'hello')).settings.budget, most);
+  await h.until(() => h.session.connection?.budget);
+  assert.deepEqual(h.session.connection.budget, { ...most, source: 'extension' });
+  const over = { maxCalls: 10_001, maxMs: 14_400_000 };
+  const beyond = harness({ local: { budget: over }, daemonBudget: { ...over, source: 'config' } });
+  assert.equal((await beyond.waitFor(m => m.type === 'hello')).settings.budget, null);
+  await beyond.until(() => beyond.session.connection?.connected);
+  const reply = await beyond.send({ type: 'connect' });
+  assert.equal(reply.connection.budget, null, 'an out-of-bounds budget from the daemon is not shown as in effect');
+});
+
 test('a malformed stored budget is reported as none; a budget changed in the popup is sent as a settings message', async () => {
   const h = harness({ local: { budget: { maxCalls: 0, maxMs: 'x' } }, daemonBudget: { maxCalls: 50, maxMs: 1_200_000, source: 'default' } });
   const hello = await h.waitFor(m => m.type === 'hello');

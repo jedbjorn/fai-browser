@@ -571,6 +571,23 @@ test('the per-request budget in effect: the popup setting (hello or settings), e
   await ctx.hub.emit({ type: 'settings', settings: { budget: { maxCalls: 4, maxMs: 60_000 } } });
   const again = await ctx.hub.emit({ type: 'hello', session: null });
   assert.deepEqual(again.budget, { maxCalls: 4, maxMs: 60_000, source: 'extension' });
+  // The bound: 10000 calls applies; 10001 is out of bounds and config.json applies again.
+  reply = await ctx.hub.emit({ type: 'settings', settings: { budget: { maxCalls: 10_000, maxMs: 14_400_000 } } });
+  assert.deepEqual(reply.budget, { maxCalls: 10_000, maxMs: 14_400_000, source: 'extension' });
+  reply = await ctx.hub.emit({ type: 'settings', settings: { budget: { maxCalls: 10_001, maxMs: 14_400_000 } } });
+  assert.deepEqual(reply.budget, { maxCalls: 9, maxMs: 1_200_000, source: 'config' });
+});
+
+test('config.json budget.maxCalls takes up to 10000; 10001 is refused at reload', async t => {
+  const ctx = await setup(t);
+  await writeFile(join(ctx.home, 'config.json'), JSON.stringify({ budget: { maxCalls: 10_000 } }));
+  assert.equal((await ctx.api('POST', '/v1/daemon/reload')).body.ok, true);
+  assert.deepEqual((await ctx.api('GET', '/v1/status')).body.budget, { maxCalls: 10_000, maxMs: 1_200_000, source: 'config' });
+  await writeFile(join(ctx.home, 'config.json'), JSON.stringify({ budget: { maxCalls: 10_001 } }));
+  const refused = await ctx.api('POST', '/v1/daemon/reload');
+  assert.equal(refused.status, 400);
+  assert.match(JSON.stringify(refused.body), /budget\.maxCalls must be 1 to 10000/);
+  assert.equal((await ctx.api('GET', '/v1/status')).body.budget.maxCalls, 10_000, 'the last valid config.json stays in effect');
 });
 
 test('without config.json or a popup setting the budget in effect is the default', async t => {
