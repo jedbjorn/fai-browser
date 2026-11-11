@@ -24,7 +24,7 @@ never used.
   after its origin is checked again; a frame that moved to another origin refuses it. Inside an approved frame every
   layer below applies exactly as on the page, and one page context covers the tab: a checkout page, a password field or
   a credentials page in any frame restricts every frame and the page.
-- There is one active lease per browser. **Pause** and **Stop** are in the popup; a per-request call and time budget ends runaway agents (50 calls / 20 minutes by default, your setting is the ceiling).
+- There is one active lease per browser. **Pause** and **Stop** are at the top of the popup while an agent holds a tab; a per-request call and time budget ends runaway agents (50 calls / 20 minutes by default, your setting is the ceiling).
 
 ## 2. Levels you choose
 

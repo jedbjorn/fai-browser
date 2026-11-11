@@ -18,6 +18,11 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 
 - **Links to other sites are listed with their destination**: `link to <origin><path> (other site): "<label>"` (origin and path only, redacted like other page text; a long or token-bearing path is not shown), never clicked at any level, so the agent can request that origin with the link's own address in `allowedUrls` instead of guessing one. Acting on it returns `cross_origin` with its own `next`: request that origin with `fai_browser_open` and tell the user an approval is coming. At most 5 are listed, one per origin, on top of the control cap, and 5 off-screen ones keep a place under the page script's cap; the `moreActions` line says how many unlisted links go to other sites.
 
+### Changed
+
+- **Pause and Stop come first in the popup.** While an agent holds a tab, the two buttons sit right under the header, above the tab card, new requests, paused tasks and every other card (also in the approval window), inside the popup's normal size and first in tab order, so you can release a tab at a glance. Same buttons, labels and styles; with no agent connected the popup looks as before.
+- The popup and the approval window now follow the session while they are open: Pause and Stop appear when a session starts (for example approved in the page's request modal) and go when it ends (released, tab closed, budget spent), instead of staying as they were when the popup opened. Keyboard focus stays where it was; focus on a Stop that goes moves to the current-tab card, which Enter and Space leave alone, so a repeated key never presses Update or Pair. The row waits until a press in the popup ends, and notes on the status line stay. The popup re-reads the session with a new read-only `state` message, never `connect`, so an open popup never reconnects or takes the connection back from another copy of the profile by itself.
+
 ## 0.7.0 (2026-11-10)
 
 ### Removed
