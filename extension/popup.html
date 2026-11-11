@@ -18,6 +18,12 @@
       <span class="local-label">LOCAL</span>
     </header>
 
+    <!-- While an agent holds a tab, Pause and Stop come first (on screen and in tab order), above every card. -->
+    <section id="controls" class="secondary-controls session-controls" aria-label="Browser controls" hidden>
+      <button id="pause" class="secondary-button" type="button">Pause</button>
+      <button id="stop" class="secondary-button" type="button">Stop</button>
+    </section>
+
     <p id="pin-hint" class="pin-hint" role="note" hidden></p>
 
     <section id="update" class="setup-card update-card" aria-label="FAI Browser update" aria-live="polite" hidden>
@@ -36,7 +42,7 @@
       <p id="setup-all-sites-help" class="field-help" hidden>Optional: no site-access prompt per site. You still approve every tab.</p>
     </section>
 
-    <section class="tab-card" aria-label="Selected browser tab">
+    <section class="tab-card" aria-label="Selected browser tab" tabindex="-1">
       <div class="card-topline">
         <span class="card-label">CURRENT TAB</span>
         <span id="state-label" class="state-label" data-state="idle">Ready</span>
@@ -54,11 +60,7 @@
       <div id="request-list"></div>
     </section>
 
-    <section class="control-area" aria-label="Browser controls">
-      <div id="controls" class="secondary-controls" hidden>
-        <button id="pause" class="secondary-button" type="button">Pause</button>
-        <button id="stop" class="secondary-button" type="button">Stop</button>
-      </div>
+    <section class="control-area" aria-label="Status">
       <p id="status" class="status" role="status" aria-live="polite"></p>
       <p id="privacy-note" class="privacy-note">Only the approved tab is shared. Page text goes to your coding agent.</p>
     </section>

@@ -4090,6 +4090,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       if (toolbarPopup) reportUsed();
       // The daily check may have found a release since the hello (a service that knows updates said so in it).
       if (connected && updateInfo) await readUpdate().catch(() => {});
+    } else if (message.type === 'state') {
+      // An open popup re-reading the session after a status change: only the reply below (no connect, no "used").
     } else if (message.type === 'invite') {
       // "Invite agent": only the toolbar popup's click creates an invite (never a page, a content script or the
       // approval window); the daemon accepts it only over this paired channel.

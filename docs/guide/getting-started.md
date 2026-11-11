@@ -87,7 +87,7 @@ What happens:
 3. The agent receives the page: a digest, the actions you allowed, a revision.
 4. It answers, or acts (`fai_browser_act`) and gets the next page.
 
-Pause or stop at any time from the popup; the tab is marked with a `FAI` tab group while the agent has it. After you
+Pause or stop at any time from the top of the popup; the tab is marked with a `FAI` tab group while the agent has it. After you
 approve or resume, a Claude Code, Codex or OpenCode session that FAI can wake continues by itself (see
 [troubleshooting](troubleshooting.md) for the versions); otherwise tell the agent to continue.
 

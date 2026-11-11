@@ -27,6 +27,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .eyebrow { display: block; color: var(--amber-dark); }
 h1 { margin: 1px 0 0; font-size: 17px; line-height: 1.15; font-weight: 630; }
 .local-label { padding: 4px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); }
+.tab-card:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .tab-card { padding: 14px 15px 15px; border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 12px; background: var(--surface); box-shadow: 0 4px 14px #6950250a; }
 .card-topline { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .card-label { color: var(--muted); }
@@ -44,6 +45,7 @@ h1 { margin: 1px 0 0; font-size: 17px; line-height: 1.15; font-weight: 630; }
 .primary-button { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 42px; border: 1px solid var(--amber-dark); border-radius: 9px; background: var(--amber); color: white; font-weight: 650; box-shadow: 0 2px 0 #87581444; }
 .primary-button:hover { background: var(--amber-dark); }
 .secondary-controls { display: flex; justify-content: center; gap: 8px; }
+.session-controls { margin: -5px 0 12px; }
 .secondary-button { min-width: 104px; min-height: 39px; border: 1px solid #cfc5b6; border-radius: 8px; background: var(--surface); color: var(--ink); font-weight: 600; }
 .secondary-button:hover { border-color: var(--amber); background: #f8f0e4; }
 .status { min-height: 18px; margin: 11px 0 0; color: var(--amber-dark); font-size: 12px; }

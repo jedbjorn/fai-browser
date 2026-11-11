@@ -3205,6 +3205,30 @@ test('a 4003 close (this browser\'s newer connection took over) is never answere
   assert.equal(h.session.connection.conflict, undefined);
 });
 
+// The open popup re-reads the session after a status change (also a connection text) with `state`: unlike `connect`
+// (the user opening the popup) it never reports this browser as used, reconnects or clears a superseded conflict.
+test('the popup\'s state read only reads: no "used", no reconnect, a superseded conflict stays', async () => {
+  const h = harness({ timeScale: 0.01 });
+  await h.waitFor(m => m.type === 'hello');
+  await h.until(() => h.session.connection?.connected);
+  const popup = { id: 'ext', url: 'chrome-extension://ext/popup.html' };
+  const reply = await h.send({ type: 'state' }, popup);
+  assert.equal(reply.error, undefined);
+  assert.equal(reply.connection.connected, true);
+  assert.ok(Array.isArray(reply.requests));
+  assert.equal(reply.status, null);
+  await sleep(50);
+  assert.equal(h.sent.filter(m => m.type === 'used').length, 0, 'not "used"');
+  await h.send({ type: 'connect' }, popup);
+  await h.until(() => h.sent.some(m => m.type === 'used'));
+  h.socket.serverClose(4003);
+  await h.until(() => h.session.connection?.conflict === 'superseded');
+  assert.equal((await h.send({ type: 'state' }, popup)).connection.connected, false);
+  await sleep(200);
+  assert.equal(h.sockets.length, 1, 'no reconnect');
+  assert.equal(h.session.connection.conflict, 'superseded', 'the conflict stays');
+});
+
 test('repeated 4000 closes from an older service back off (never a tight loop) and say so', async () => {
   const h = harness({ timeScale: 0.001 });
   await h.waitFor(m => m.type === 'hello');
