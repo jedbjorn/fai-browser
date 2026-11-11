@@ -2423,7 +2423,7 @@ test('update: a service that cannot install says so; the cleaned view keeps inst
   assert.equal(h.session.connection.update.installable, false);
 });
 
-// --- per-request budget (Setup & connection) ---------------------------------------------------------------------
+// --- per-request budget (Advanced) -------------------------------------------------------------------------------
 
 test('the hello carries the stored budget, and the daemon\'s reply says what is in effect', async () => {
   const stored = { maxCalls: 120, maxMs: 2_400_000 };

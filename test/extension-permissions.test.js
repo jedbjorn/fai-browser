@@ -1266,7 +1266,7 @@ test('arm.html offers Testing only when every requested origin is a listed envir
   assert.match(await bare.$eval('#detail', node => node.textContent), /Codex asks for that page/);
 });
 
-// --- per-request budget (Setup & connection) ---------------------------------------------------------------------
+// --- per-request budget (Advanced) -------------------------------------------------------------------------------
 
 test('normalizeBudget: integers within the bounds, else null (not set); the bounds match src/settings.js', async () => {
   const settings = await import('../src/settings.js');

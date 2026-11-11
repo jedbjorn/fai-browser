@@ -1169,10 +1169,9 @@ class McpServer {
     let entry = this.ledgers.get(requestId);
     if (!entry) {
       // `ceiling`: the budget the daemon reports in effect (the user's popup setting, else its config.json, else the
-      // defaults); until a daemon response carries one, this process's config.json/defaults. `asked`: the host's own
-      // maxCalls/maxMs, which can only lower the ceiling (settleBudget writes the effective maxCalls/maxMs); `askedNow`
-      // the fields the current call asked for, warned about (`capped`) when the ceiling clamps them.
-      entry = { calls: 0, ms: 0, ...this.budgetDefaults, ceiling: null, asked: {}, askedNow: [], capped: [] };
+      // defaults); until a daemon response carries one, this process's config.json/defaults. settleBudget writes it
+      // to the entry's maxCalls/maxMs.
+      entry = { calls: 0, ms: 0, ...this.budgetDefaults, ceiling: null };
       this.ledgers.set(requestId, entry);
     }
     return entry;
@@ -1192,19 +1191,11 @@ class McpServer {
     return this.tools.find(tool => tool.name === name);
   }
 
-  /**
-   * The effective budget: each of the host's asked values clamped to the ceiling, else the ceiling itself. A field
-   * the current call asked for (`entry.askedNow`) that the ceiling clamps is warned about once, on that call
-   * (`entry.capped`); the run reads the warnings after its approval wait, where the ceiling may first arrive.
-   */
+  /** The effective budget: the ceiling the daemon reported, else this process's config.json/defaults. */
   settleBudget(entry) {
     const base = entry.ceiling ?? this.budgetDefaults;
-    entry.capped = [];
-    for (const key of ['maxCalls', 'maxMs']) {
-      const asked = entry.asked[key];
-      if (asked !== undefined && asked > base[key] && entry.askedNow.includes(key)) entry.capped.push(`budget_capped:${key}:${base[key]}`);
-      entry[key] = asked !== undefined ? Math.min(asked, base[key]) : base[key];
-    }
+    entry.maxCalls = base.maxCalls;
+    entry.maxMs = base.maxMs;
   }
 
   /** A daemon response's `budget` (wait, status): the ceiling for this request, re-read on every such response. */

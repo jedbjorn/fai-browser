@@ -755,7 +755,7 @@ Each tab request has a call budget the MCP server enforces (`maxCalls` open/obse
 2. **`config.json` `"budget": {"maxCalls", "maxMs"}`** in `$FAI_HOME`, validated at daemon start and reload; a missing field takes the default.
 3. **The defaults** (`DEFAULT_BUDGET` in `src/settings.js`).
 
-The result is the ceiling: `GET /v1/status` reports it as `budget {maxCalls, maxMs, source}` and every request wait (`POST /v1/wait` with `requestId`) carries the same `budget`, from which the MCP server reads the ceiling for that request on every run call (an act or observe before any run peeks once). A call's own `maxCalls`/`maxMs` can only lower it: a higher ask runs with the ceiling and warns once (`budget_capped:maxCalls:<ceiling>` / `budget_capped:maxMs:<ceiling>`); an ask holds for the request until the host sends another, so a raised popup setting takes effect at once for a host that asked nothing, and on its next ask for one that did. The MCP server's own read of `config.json` applies only against a daemon that reports no budget (older daemons).
+The result is the budget: `GET /v1/status` reports it as `budget {maxCalls, maxMs, source}` and every request wait (`POST /v1/wait` with `requestId`) carries the same `budget`, from which the MCP server reads the budget for that request on every run call (an act or observe before any run peeks once). The agent has no parameter to change it, and a raised popup setting takes effect on the request's next call. The MCP server's own read of `config.json` applies only against a daemon that reports no budget (older daemons).
 
 ### Domain roots
 
