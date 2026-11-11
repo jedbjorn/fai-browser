@@ -1,18 +1,17 @@
 // Real, headless Firefox with the Firefox build of the extension, a private daemon and FAI_HOME (issue #36 item 1):
-// approving a request whose page opened by itself.
+// approving a request whose page opened by itself, on every surface, never waits silently or approves late.
 //
-// - Firefox shows the site-access prompt of a permissions.request() only in the active window, and the request modal
-//   (arm.html) is a small window of its own that the desktop may not have activated. Clicked there, Approve used to
-//   wait for a prompt nobody could see, with nothing in daemon.log, and approved the request much later when the
-//   window became active and the prompt was allowed. Now the click brings the modal's window forward (the prompt
-//   shows), says where else to approve after a few seconds, gives the click up after a bound (a late answer approves
-//   nothing), and every step is logged.
-// - The toolbar icon clicked on the task tab while it is still blank (its first page loading): it used to open the
-//   popup, which offered to open the page again; now the tab is armed at once and the click approves once the page
-//   has loaded.
+// - Firefox shows the site-access prompt of a permissions.request() only in the active window. Clicked in a request
+//   modal (arm.html) whose window the desktop had not activated, Approve used to wait for a prompt nobody could see,
+//   with nothing in daemon.log, and approved the request much later when the window became active and the prompt was
+//   allowed. The same wait without a bound was behind the toolbar icon (compat.js asks for the exact origin inside the
+//   icon click) and the popup's Approve (which sends `start` only once the prompt answered).
+// - The toolbar icon on the task tab while it is blank or still loading: it used to open the popup (the armed look was
+//   applied only once the page had loaded, and Firefox clears it at the commit), which offered to open the page again.
 //
-// Skipped without a Firefox binary (FIREFOX_PATH, else `firefox` on PATH). Marionette drives only this throwaway
-// browser. Run it in a memory cap: systemd-run --user --scope -p MemoryMax=2500M ... node --test test/firefox-approve.test.js
+// The site-access wait is shortened for the test (storage.local siteAccessWaitMs). Skipped without a Firefox binary
+// (FIREFOX_PATH, else `firefox` on PATH). Marionette drives only this throwaway browser. Run it in a memory cap:
+// systemd-run --user --scope -p MemoryMax=2500M ... node --test test/firefox-approve.test.js
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -35,7 +34,7 @@ const FIREFOX = process.env.FIREFOX_PATH || 'firefox';
 const hasFirefox = spawnSync(FIREFOX, ['--version'], { stdio: 'ignore', env: headlessEnv() }).status === 0;
 const skip = hasFirefox ? false : 'no Firefox binary (set FIREFOX_PATH)';
 const sleep = ms => new Promise(done => setTimeout(done, ms));
-const SLOW_MS = 4000;
+const WAIT_MS = 6000;
 
 async function freePort() {
   const server = net.createServer();
@@ -79,13 +78,21 @@ async function setup(t) {
   let firefox = null;
   let marionette = null;
   let client = null;
+  // `/held`: no answer until the test calls release(). `/trickle`: the page commits at once, then its body streams
+  // until release().
+  const held = [];
+  const release = () => { for (const done of held.splice(0)) done(); };
   const site = http.createServer((req, res) => {
     const reply = () => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end('<!doctype html><title>Portal</title><h1>Portal</h1>');
     };
-    if (req.url.startsWith('/slow')) setTimeout(reply, SLOW_MS);
-    else reply();
+    if (req.url.startsWith('/held')) held.push(reply);
+    else if (req.url.startsWith('/trickle')) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.write(`<!doctype html><title>Loading</title><h1>Loading</h1>${' '.repeat(4096)}`);
+      held.push(() => res.end('<p>done</p>'));
+    } else reply();
   });
   t.after(async () => {
     try { await marionette?.send('Marionette:Quit', { flags: ['eForceQuit'] }); } catch { /* gone */ }
@@ -95,6 +102,7 @@ async function setup(t) {
       if (firefox.exitCode === null) firefox.kill('SIGKILL');
     }
     try { await client?.shutdown(); } catch { /* not running */ }
+    release();
     site.closeAllConnections?.();
     await new Promise(done => site.close(() => done()));
     await rm(scratch, { recursive: true, force: true });
@@ -132,6 +140,15 @@ async function setup(t) {
   await marionette.newSession();
   await marionette.installAddon(addon, { temporary: true });
   assert.ok(await until(async () => (await client.status()).extension?.connected, 30_000), 'the add-on paired and connected');
+  // The shortened site-access wait, set in the add-on's own storage from one of its pages.
+  await marionette.setContext('chrome');
+  const uuid = await marionette.execute(`return WebExtensionPolicy.getByID(${JSON.stringify(GECKO_ID)})?.mozExtensionHostname ?? null;`);
+  await marionette.setContext('content');
+  await marionette.navigate(`moz-extension://${uuid}/offscreen.html`);
+  await marionette.execute(`const done = arguments[arguments.length - 1];
+    chrome.storage.local.set({ siteAccessWaitMs: arguments[0] }).then(() => done(true), error => done(error.message));`,
+  [WAIT_MS], { async: true });
+  await marionette.navigate('about:blank');
 
   const chrome = async (body, args = []) => {
     await marionette.setContext('chrome');
@@ -157,7 +174,7 @@ async function setup(t) {
   const approvals = async requestId => (await readFile(paths.logFile, 'utf8')).split('\n').filter(Boolean)
     .map(line => JSON.parse(line)).filter(line => line.event === 'approval' && line.requestId === requestId);
   const stateOf = async requestId => (await client.status()).requests.find(item => item.requestId === requestId);
-  return { origin, client, marionette, chrome, handles, armWindow, approvals, stateOf };
+  return { origin, client, marionette, chrome, handles, armWindow, approvals, stateOf, release };
 }
 
 // The modal's own page: its status line and Approve button (Marionette in the arm window's content).
@@ -173,7 +190,34 @@ async function clickApprove(ctx, handle) {
   await ctx.marionette.send('WebDriver:ElementClick', { id: Object.values(found.value ?? found)[0] });
 }
 
-test('Firefox: Approve in a modal window that is not active shows the prompt, never hangs silently, never fires late', { skip, timeout: 180_000 }, async t => {
+// The Firefox site-access prompt, answered (Allow) or only looked at.
+const allowPrompt = ctx => ctx.chrome(`const found = permissionNote(); if (!found) return false;
+  found.note.mainAction.callback({ source: 'button' }); found.win.PopupNotifications.remove(found.note); return true;`);
+const promptOpen = ctx => ctx.chrome('return Boolean(permissionNote());');
+
+// The toolbar icon clicked on the task tab (Firefox's own browser-action path: onClicked on an armed tab, else the popup).
+async function clickIcon(ctx, match) {
+  const [first] = await ctx.handles();
+  await ctx.marionette.send('WebDriver:SwitchToWindow', { handle: first, focus: false });
+  return ctx.chrome(`return (async () => {
+    // ':loading': the tab still loading its first page (its address is about:blank until it commits).
+    const wanted = t => arguments[0] === ':loading' ? t.hasAttribute('busy') : t.linkedBrowser.currentURI.spec.includes(arguments[0]);
+    const win = browserWindows().find(w => w.gBrowser.tabs.some(wanted)) ?? taskWindow();
+    const tab = win.gBrowser.tabs.find(wanted) ?? win.gBrowser.selectedTab;
+    win.gBrowser.selectedTab = tab;
+    win.focus();
+    for (let i = 0; i < 20 && Services.focus.activeWindow !== win; i++) await new Promise(done => win.setTimeout(done, 100));
+    const action = ExtensionParent.apiManager.global.browserActionFor(extension);
+    const data = action.action?.getContextData?.(tab) ?? null;
+    const info = { loading: tab.hasAttribute('busy'), popup: data?.popup ?? null, uri: tab.linkedBrowser.currentURI.spec };
+    action.triggerAction(win);
+    return info; })();`, [match]);
+}
+
+const steps = async (ctx, requestId, surface) => (await ctx.approvals(requestId))
+  .filter(line => !surface || line.surface === surface).map(line => `${line.step}:${line.reason}`);
+
+test('Firefox: Approve in a modal window that is not active shows the prompt, never hangs silently, never fires late', { skip, timeout: 120_000 }, async t => {
   const ctx = await setup(t);
   const created = await ctx.client.requestTab({ origins: [ctx.origin, 'https://*.example.net', 'https://*.blade.example.net'],
     mode: 'interactive', reason: 'Check the portal', url: `${ctx.origin}/portal#view/deep/link` });
@@ -186,26 +230,20 @@ test('Firefox: Approve in a modal window that is not active shows the prompt, ne
     'the task window is the active one');
   await clickApprove(ctx, arm);
 
-  // The prompt shows (the click brought its window forward); before the fix it waited, unseen, in the background.
-  const shown = await until(() => ctx.chrome('const found = permissionNote(); return found && found.win.PopupNotifications.panel.state === "open";'), 4000);
-  assert.ok(shown, 'Firefox shows the site-access prompt');
-
-  // Nobody answers it: a few seconds later the modal says where else to approve, and daemon.log has it.
-  const hint = await until(async () => /click the FAI Browser icon on the 127\.0\.0\.1:\d+ tab instead/.test((await modal(ctx, arm)).status), 9000);
+  // Nobody answers the prompt: the modal says where else to approve, then gives the click up; daemon.log has each step.
+  const hint = await until(async () => /click the FAI Browser icon on the 127\.0\.0\.1:\d+ tab instead/.test((await modal(ctx, arm)).status), WAIT_MS);
   assert.ok(hint, `the modal says where else to approve: ${(await modal(ctx, arm)).status}`);
-  // After the bound the click is given up: nothing approved, and the toolbar icon named.
-  const gaveUp = await until(async () => /nothing\s+was approved/.test((await modal(ctx, arm)).status), 50_000);
+  const gaveUp = await until(async () => /nothing\s+was approved/.test((await modal(ctx, arm)).status), WAIT_MS + 5000);
   assert.ok(gaveUp, `the click is given up: ${(await modal(ctx, arm)).status}`);
-  assert.deepEqual((await ctx.approvals(created.requestId)).map(line => `${line.surface}:${line.step}:${line.reason}`), [
-    'page_modal:shown:null', 'page_modal:attempt:null', 'page_modal:waiting:site_access_pending',
-    'page_modal:failed:site_access_timeout']);
+  assert.deepEqual(await steps(ctx, created.requestId),
+    ['shown:null', 'attempt:null', 'waiting:site_access_pending', 'failed:site_access_timeout']);
   const waiting = await ctx.stateOf(created.requestId);
   assert.equal(waiting.state, 'pending');
   assert.equal(waiting.approval, 'toolbar', 'the agent is told to use the toolbar icon');
 
-  // The prompt is allowed late: the given-up click approves nothing.
-  assert.equal(await ctx.chrome(`const found = permissionNote(); if (!found) return false;
-    found.note.mainAction.callback({ source: 'button' }); found.win.PopupNotifications.remove(found.note); return true;`), true);
+  // The prompt is allowed late (Firefox shows it once its window is active): the given-up click approves nothing.
+  await ctx.chrome('const win = browserWindows().find(isArm); win?.focus(); return true;');
+  assert.ok(await until(() => allowPrompt(ctx), 5000), 'the pending prompt is still there to allow');
   await sleep(1500);
   assert.equal((await ctx.stateOf(created.requestId)).state, 'pending', 'a late answer approves nothing');
   assert.match((await modal(ctx, arm)).status, /allowed after this approval was given up/);
@@ -218,26 +256,101 @@ test('Firefox: Approve in a modal window that is not active shows the prompt, ne
     'the approval is logged');
 });
 
-test('Firefox: the toolbar icon on the blank, still-loading task tab approves once the page has loaded', { skip, timeout: 120_000 }, async t => {
+test('Firefox: the toolbar icon on the blank task tab, its first page still unanswered, approves once the page loads', { skip, timeout: 90_000 }, async t => {
   const ctx = await setup(t);
   const created = await ctx.client.requestTab({ origins: [ctx.origin], mode: 'interactive', reason: 'Check the slow portal',
-    url: `${ctx.origin}/slow#view/deep/link` });
+    url: `${ctx.origin}/held#view/deep/link` });
   assert.ok(await ctx.armWindow(), 'the request modal opened');
-  // Back to the task tab's window (the modal closes once approved), then the icon click while the page is still blank.
-  const [first] = await ctx.handles();
-  await ctx.marionette.send('WebDriver:SwitchToWindow', { handle: first, focus: false });
-  const clicked = await ctx.chrome(`const win = taskWindow(); win.focus();
-    const loading = win.gBrowser.selectedTab.hasAttribute('busy');
-    ExtensionParent.apiManager.global.browserActionFor(extension).triggerAction(win);
-    return { loading, uri: win.gBrowser.selectedBrowser.currentURI.spec };`);
+  // The server holds the page: the task tab is blank and loading at the click, however slow the machine.
+  const clicked = await clickIcon(ctx, ':loading');
   assert.equal(clicked.loading, true, `the page was still loading at the click: ${JSON.stringify(clicked)}`);
   // Firefox asks for the request's exact origin inside the click (compat.js): allowed.
-  const allowed = await until(() => ctx.chrome(`const found = permissionNote(); if (!found) return false;
-    found.note.mainAction.callback({ source: 'button' }); found.win.PopupNotifications.remove(found.note); return true;`), 5000);
-  assert.ok(allowed, 'the icon click asked for site access (it reached the armed tab, not the popup)');
-  const outcome = await ctx.client.wait({ requestId: created.requestId, maxMs: SLOW_MS + 15_000 });
+  assert.ok(await until(() => allowPrompt(ctx), 5000), 'the icon click asked for site access (it reached the armed tab, not the popup)');
+  await sleep(500);
+  assert.equal((await ctx.stateOf(created.requestId)).state, 'pending', 'nothing is approved before the page commits');
+  ctx.release();
+  const outcome = await ctx.client.wait({ requestId: created.requestId, maxMs: 20_000 });
   assert.equal(outcome.state, 'active', `approved once the page loaded: ${JSON.stringify(await ctx.approvals(created.requestId))}`);
-  const toolbar = async () => (await ctx.approvals(created.requestId)).filter(line => line.surface === 'toolbar').map(line => line.step);
-  await until(async () => (await toolbar()).includes('approved'), 5000);
-  assert.deepEqual(await toolbar(), ['attempt', 'approved']);
+  await until(async () => (await steps(ctx, created.requestId, 'toolbar')).includes('approved:null'), 5000);
+  assert.deepEqual(await steps(ctx, created.requestId, 'toolbar'), ['attempt:null', 'approved:null']);
+});
+
+test('Firefox: the toolbar icon while the page streams its body (committed, not loaded) is still the armed approval', { skip, timeout: 90_000 }, async t => {
+  const ctx = await setup(t);
+  const created = await ctx.client.requestTab({ origins: [ctx.origin], mode: 'interactive', reason: 'Check the streaming portal',
+    url: `${ctx.origin}/trickle` });
+  assert.ok(await ctx.armWindow(), 'the request modal opened');
+  // Committed (its address is the page's), still loading: Firefox cleared the per-tab action values at the commit.
+  assert.ok(await until(() => ctx.chrome(`return browserWindows().some(w => w.gBrowser.tabs.some(t =>
+    t.linkedBrowser.currentURI.spec.includes('/trickle') && t.hasAttribute('busy')));`), 10_000), 'the page committed and is loading');
+  await sleep(1000);
+  const clicked = await clickIcon(ctx, '/trickle');
+  assert.equal(clicked.loading, true, `still loading at the click: ${JSON.stringify(clicked)}`);
+  assert.equal(clicked.popup, '', 'the tab is still armed: the click approves instead of opening the popup');
+  assert.ok(await until(() => allowPrompt(ctx), 5000), 'the icon click asked for site access');
+  const outcome = await ctx.client.wait({ requestId: created.requestId, maxMs: 15_000 });
+  assert.equal(outcome.state, 'active', JSON.stringify(await ctx.approvals(created.requestId)));
+});
+
+test('Firefox: the toolbar icon\'s site-access prompt left unanswered is bounded, logged, and its late answer approves nothing', { skip, timeout: 90_000 }, async t => {
+  const ctx = await setup(t);
+  const created = await ctx.client.requestTab({ origins: [ctx.origin], mode: 'interactive', reason: 'Check the portal',
+    url: `${ctx.origin}/start` });
+  assert.ok(await ctx.armWindow(), 'the request modal opened');
+  assert.ok(await until(() => ctx.chrome(`return browserWindows().some(w => w.gBrowser.tabs.some(t =>
+    t.linkedBrowser.currentURI.spec.includes('/start') && !t.hasAttribute('busy')));`), 10_000), 'the page loaded');
+  await clickIcon(ctx, '/start');
+  assert.ok(await until(() => promptOpen(ctx), 5000), 'Firefox asked for site access');
+  // The attempt is logged at once, the wait after a few seconds, the give-up after the bound.
+  assert.ok(await until(async () => (await steps(ctx, created.requestId, 'toolbar'))[0] === 'attempt:null', 2000), 'the click is logged at once');
+  assert.ok(await until(async () => (await steps(ctx, created.requestId, 'toolbar')).includes('failed:site_access_timeout'), WAIT_MS + 5000),
+    `the click is given up: ${await steps(ctx, created.requestId, 'toolbar')}`);
+  assert.deepEqual(await steps(ctx, created.requestId, 'toolbar'),
+    ['attempt:null', 'waiting:site_access_pending', 'failed:site_access_timeout']);
+  assert.equal((await ctx.stateOf(created.requestId)).approval, 'toolbar');
+  // Allowed late: nothing is approved.
+  assert.ok(await allowPrompt(ctx), 'the prompt is still there to allow');
+  await sleep(2000);
+  assert.equal((await ctx.stateOf(created.requestId)).state, 'pending', 'a late answer approves nothing');
+  assert.deepEqual(await steps(ctx, created.requestId, 'toolbar'),
+    ['attempt:null', 'waiting:site_access_pending', 'failed:site_access_timeout']);
+  // The icon again: the access is held now, so it approves.
+  await clickIcon(ctx, '/start');
+  const outcome = await ctx.client.wait({ requestId: created.requestId, maxMs: 10_000 });
+  assert.equal(outcome.state, 'active');
+});
+
+// The toolbar popup's content runs in its own process: a frame script reads and clicks in it (with user input, so the
+// popup's permissions.request counts as a click).
+async function popupScript(ctx, code) {
+  return ctx.chrome(`const browser = browserWindows().flatMap(w => [...w.document.querySelectorAll('browser[webextension-view-type="popup"]')])[0];
+    if (!browser) return false;
+    browser.messageManager.loadFrameScript('data:,' + encodeURIComponent(arguments[0]), false);
+    return true;`, [code]);
+}
+
+test('Firefox: the popup\'s Approve whose site-access prompt is not answered is logged, bounded, and approves nothing late', { skip, timeout: 90_000 }, async t => {
+  const ctx = await setup(t);
+  // The user's own tab already on the site, not armed: the icon there opens the popup with "Approve this tab".
+  const [first] = await ctx.handles();
+  await ctx.marionette.send('WebDriver:SwitchToWindow', { handle: first, focus: false });
+  await ctx.marionette.navigate(`${ctx.origin}/mine`);
+  const created = await ctx.client.requestTab({ origins: [ctx.origin], mode: 'interactive', reason: 'Check the portal',
+    url: `${ctx.origin}/start` });
+  assert.ok(await ctx.armWindow(), 'the request modal opened');
+  const clicked = await clickIcon(ctx, '/mine');
+  assert.notEqual(clicked.popup, '', 'an ordinary tab: the icon opens the popup');
+  assert.ok(await until(() => popupScript(ctx, 'const b = content.document.querySelector(".approve-request:not(:disabled)"); '
+    + 'if (b) { const h = content.windowUtils.setHandlingUserInput(true); try { b.click(); } finally { h.destruct(); } '
+    + 'sendAsyncMessage("fai-test:clicked", true); }').then(async ok => ok && await promptOpen(ctx)), 15_000),
+  'Approve this tab clicked in the popup; Firefox asked for site access');
+  assert.ok(await until(async () => (await steps(ctx, created.requestId, 'popup')).includes('failed:popup_no_outcome'), WAIT_MS + 8000),
+    `the click with no outcome is logged: ${await steps(ctx, created.requestId, 'popup')}`);
+  assert.deepEqual((await steps(ctx, created.requestId, 'popup')).filter(step => step !== 'shown:null'),
+    ['attempt:null', 'failed:popup_no_outcome']);
+  assert.equal((await ctx.stateOf(created.requestId)).approval, 'toolbar');
+  // Allowed late: the popup's start names the given-up click and is refused.
+  assert.ok(await allowPrompt(ctx), 'the prompt is still there to allow');
+  await sleep(2000);
+  assert.equal((await ctx.stateOf(created.requestId)).state, 'pending', 'a late answer approves nothing');
 });

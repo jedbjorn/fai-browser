@@ -17,6 +17,7 @@ import { FaiBrowserClient } from '../src/client.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const sleep = ms => new Promise(done => setTimeout(done, ms));
+const WAIT_MS = 6000;
 
 async function until(predicate, ms = 10_000) {
   const deadline = Date.now() + ms;
@@ -68,7 +69,9 @@ async function setup(t, { grant }) {
   await daemon.listen();
   cleanup.push(async () => { await daemon.close(); log.close(); });
   // The daemon is on 127.0.0.1 too: without the grant the worker reaches it over its own host permission only.
-  await worker.evaluate(pairing => chrome.storage.local.set(pairing), { endpoint: `http://127.0.0.1:${daemon.port}`, secret });
+  // The site-access wait shortened for the test (storage.local siteAccessWaitMs; 45 s otherwise).
+  await worker.evaluate(pairing => chrome.storage.local.set(pairing),
+    { endpoint: `http://127.0.0.1:${daemon.port}`, secret, siteAccessWaitMs: WAIT_MS });
   assert.ok(await until(() => worker.evaluate(async () => (await chrome.storage.session.get('connection')).connection?.connected), 15_000),
     'the extension connects to the private daemon');
   const client = new FaiBrowserClient({ port: daemon.port, token: daemon.token, clientName: 'arm-events-test' });
@@ -96,7 +99,7 @@ test('arm.html: the modal shown, the click and the approval are logged to daemon
   assert.ok(steps.every(line => line.origin === origin), 'only the origin, never the page URL');
 });
 
-test('arm.html: a site-access prompt that never answers is bounded, logged, and its late answer approves nothing', { timeout: 120_000 }, async t => {
+test('arm.html: a site-access prompt that never answers is bounded, logged, and its late answer approves nothing', { timeout: 60_000 }, async t => {
   const { client, created, prompt, approvals } = await setup(t, { grant: false });
   // The browser's prompt stays unanswered (as an unseen Firefox prompt does): this page's request never settles, and
   // the test answers it late by hand.
@@ -106,9 +109,9 @@ test('arm.html: a site-access prompt that never answers is bounded, logged, and 
   });
   await prompt.click('#approve');
   const status = () => prompt.evaluate(() => document.querySelector('#status').textContent);
-  const hint = await until(async () => (/click the FAI Browser icon on the 127\.0\.0\.1:\d+ tab instead/.test(await status()) ? await status() : null), 9000);
+  const hint = await until(async () => (/click the FAI Browser icon on the 127\.0\.0\.1:\d+ tab instead/.test(await status()) ? await status() : null), WAIT_MS);
   assert.ok(hint, `the modal says where else to approve while it waits: ${await status()}`);
-  const gaveUp = await until(async () => (/nothing\s+was approved/.test(await status()) ? await status() : null), 50_000);
+  const gaveUp = await until(async () => (/nothing\s+was approved/.test(await status()) ? await status() : null), WAIT_MS + 5000);
   assert.ok(gaveUp, `the click is given up after the bound: ${await status()}`);
   assert.match(gaveUp, /FAI Browser icon on the 127\.0\.0\.1:\d+ tab/);
   assert.equal(await prompt.evaluate(() => document.querySelector('#approve').disabled), false, 'Approve can be clicked again');
