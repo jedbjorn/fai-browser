@@ -82,6 +82,10 @@ function render() {
   const pattern = request ? (sameArm(approval, arm) ? approval.pattern : sitePattern(arm, request)) : null;
   const asked = pattern ? askedPatterns(sameArm(approval, arm) ? approval : null, pattern, request) : [];
   approve.disabled = approving || !pattern || !checkHeld(asked);
+  if (request && !sameArm(shownReported, arm)) {
+    shownReported = arm;
+    report(arm, 'shown');
+  }
   if (!sameArm(approval, arm) && !sameArm(preparing?.arm, arm) && !approving && request) prepare(arm).catch(() => {});
 }
 
@@ -155,6 +159,58 @@ function prepare(arm) {
   return entry.job;
 }
 
+// The browser's site-access prompt can stay unseen: Firefox shows it only in the active window, and in this chromeless
+// window it has no toolbar to hang from, so a click on Approve could wait for it silently and then approve much later,
+// when the prompt finally showed and was allowed (issue #36). The wait is bounded: after SITE_ACCESS_HINT_MS the card
+// says where else to approve; after SITE_ACCESS_GIVE_UP_MS the click is given up (nothing is approved, ever, by a later
+// answer to it) and the card says to use the toolbar icon on the task tab. Both are reported to daemon.log.
+const SITE_ACCESS_HINT_MS = 5_000;
+const SITE_ACCESS_GIVE_UP_MS = 45_000;
+let shownReported = null;
+
+// arm_report: one event for daemon.log (the worker adds the request's origin). Best effort.
+function report(arm, step, reason = null) {
+  if (!arm) return;
+  chrome.runtime.sendMessage({ type: 'arm_report', tabId, requestId: arm.requestId, at: arm.at, step, reason }).catch(() => {});
+}
+
+function taskHost(arm) {
+  const request = requests.find(item => item.requestId === arm?.requestId);
+  return (request ? startTarget(request)?.host : null) || 'task';
+}
+
+// Resolves {granted} with the browser's answer, or {timedOut: true} once the click is given up. An answer that comes
+// after that is handed to `late` (its grant is tracked so it is removed again; it approves nothing).
+function siteAccessAnswer(arm, access, late) {
+  return new Promise(resolve => {
+    let done = false;
+    const hint = setTimeout(() => {
+      if (done) return;
+      say(`Waiting for your browser's site-access prompt. If you do not see it, click once inside this window, `
+        + `or click the FAI Browser icon on the ${taskHost(arm)} tab instead.`);
+      report(arm, 'waiting', 'site_access_pending');
+    }, SITE_ACCESS_HINT_MS);
+    const giveUp = setTimeout(() => {
+      done = true;
+      clearTimeout(hint);
+      resolve({ timedOut: true });
+    }, SITE_ACCESS_GIVE_UP_MS);
+    Promise.resolve(access).then(value => value === true, () => false).then(granted => {
+      if (done) {
+        late(granted);
+        return;
+      }
+      done = true;
+      clearTimeout(hint);
+      clearTimeout(giveUp);
+      resolve({ granted });
+    });
+  });
+}
+
+// A failure found here (not by the worker, which reports its own refusals): reported with its code.
+const localFailure = (code, message) => Object.assign(new Error(message), { code, local: true });
+
 approve.addEventListener('click', () => {
   const arm = currentArm();
   const request = arm ? requests.find(item => item.requestId === arm.requestId) : null;
@@ -173,8 +229,15 @@ approve.addEventListener('click', () => {
   select.disabled = true;
   // Native user gesture: no await, messaging or storage read before permissions.request.
   let access;
+  let threw = false;
   try { access = chrome.permissions.request({ origins: asked }); }
-  catch { access = Promise.resolve(false); }
+  catch { access = Promise.resolve(false); threw = true; }
+  report(arm, 'attempt', threw ? 'site_access_request_threw' : null);
+  // An inactive window (the desktop did not focus it) gets no visible prompt in Firefox: bring it forward, which shows
+  // the prompt once the window is active.
+  if (!threw && !document.hasFocus()) {
+    chrome.windows?.getCurrent?.().then(win => chrome.windows.update(win.id, { focused: true })).catch(() => {});
+  }
   // Clicked before arm_prepare answered: the click is kept, and approves as soon as the approval is ready.
   const prepared = ready ? Promise.resolve(ready) : sameArm(preparing?.arm, arm) ? preparing.job : prepare(arm);
   prepared.then(intent => {
@@ -186,18 +249,29 @@ approve.addEventListener('click', () => {
 
 const holds = pattern => Promise.resolve(chrome.permissions?.contains?.({ origins: [pattern] })).then(held => held === true, () => false);
 
+// What a click newly obtained goes to the worker, whatever happens to the approval, so it is removed again once no
+// session needs it.
+function trackObtained(arm, asked, before, granted) {
+  const obtained = granted === true ? asked.filter(item => before.get(item) === false) : [];
+  if (!obtained.length) return Promise.resolve();
+  return chrome.runtime.sendMessage({ type: 'arm_track', tabId, requestId: arm.requestId, at: arm.at, patterns: obtained })
+    .catch(() => {});
+}
+
 async function complete(arm, prepared, pattern, asked, before, access, level) {
   try {
-    let granted = await Promise.resolve(access).catch(() => false);
-    // What this click newly obtained goes to the worker first, whatever happens to the approval below, so it is
-    // removed again once no session needs it.
-    const obtained = granted === true ? asked.filter(item => before.get(item) === false) : [];
-    if (obtained.length) {
-      await chrome.runtime.sendMessage({ type: 'arm_track', tabId, requestId: arm.requestId, at: arm.at, patterns: obtained })
-        .catch(() => {});
+    const answer = await siteAccessAnswer(arm, access, granted => {
+      trackObtained(arm, asked, before, granted);
+      if (granted && !approving && !closing) say('Site access was allowed after this approval was given up. Click Approve again.');
+    });
+    if (answer.timedOut) {
+      throw localFailure('site_access_timeout', `Your browser did not show or answer its site-access prompt, so nothing `
+        + `was approved. Click the FAI Browser icon on the ${taskHost(arm)} tab to approve there, or click Approve again.`);
     }
+    let { granted } = answer;
+    await trackObtained(arm, asked, before, granted);
     let intent = await prepared;
-    if (!intent) throw new Error('This request changed. Check it and approve again.');
+    if (!intent) throw localFailure('request_changed', 'This request changed. Check it and approve again.');
     // The worker read the tab's own URL: the access it needs is the one asked for, or one the browser already holds.
     if (intent.pattern !== pattern) granted = await holds(intent.pattern);
     if (granted === true) say('Approving…');
@@ -213,10 +287,11 @@ async function complete(arm, prepared, pattern, asked, before, access, level) {
     }
     if (reply?.error) throw new Error(reply.error);
     if (reply?.status !== 'active' || reply?.session?.requestId !== intent.requestId || reply?.session?.tabId !== tabId) {
-      throw new Error('Approval was not confirmed. Use the toolbar icon to check this request.');
+      throw localFailure('not_confirmed', 'Approval was not confirmed. Use the toolbar icon to check this request.');
     }
     close();
   } catch (error) {
+    if (error.local) report(arm, 'failed', error.code);
     say(error.message);
     approval = null;
     restoreApprovalFocus = true;
@@ -261,6 +336,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
     render();
   }
   if (area !== 'session') return;
+  // The worker's word for this tab (an icon click on a page that had not loaded yet): shown here too.
+  if (changes.openNotice?.newValue?.tabId === tabId && typeof changes.openNotice.newValue.message === 'string' && !approving) {
+    say(changes.openNotice.newValue.message);
+  }
   if (changes.armedTabs) arms = Array.isArray(changes.armedTabs.newValue) ? changes.armedTabs.newValue : [];
   if (changes.requests) requests = Array.isArray(changes.requests.newValue) ? changes.requests.newValue : [];
   // Only a different arm on the tab (another request, or the tab armed again) drops the prepared approval; a re-armed

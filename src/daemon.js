@@ -589,6 +589,8 @@ export function createDaemon(options = {}) {
       // How a pending request is approved (`page`: its page opened by itself, the icon click on it approves; `window`:
       // Open in the FAI Browser window first); null once it is no longer pending.
       approval: record.state === 'pending' ? approvalOf(record) : null,
+      // The last approval attempt in the browser that failed (onApprovalEvent): codes only, while it is pending.
+      ...(record.state === 'pending' && record.approvalIssue ? { approvalIssue: { ...record.approvalIssue } } : {}),
       // The agent session that owns this request (it made it, or joined its invite), while it runs: host and repo
       // folder only. The popup warns before an invite ends another agent's task in the same browser.
       owner: ownerView(record),
@@ -1306,6 +1308,22 @@ export function createDaemon(options = {}) {
   // How the user approves a pending request, for the agent's wording (result.js approvalSteps): `page` when the
   // extension opens the request's page by itself (connected, the setting on, a page to open, Interactive or less,
   // and no live session on a tab that already covers it), where the icon click on that page approves; else `window`.
+  // An approval surface shown, an approval attempt, or why one failed, as the extension reports it (bridge
+  // approvalEvent: codes and an origin only): one daemon.log line each. A failure on the page request modal or the
+  // toolbar is kept on its pending request, so the agent's approval steps say to use the toolbar icon (approvalOf).
+  function onApprovalEvent(event) {
+    log('approval', { requestId: event.requestId, surface: event.surface, step: event.step, reason: event.reason,
+      origin: event.origin, browserId: event.browserId });
+    const record = event.requestId ? requests.get(event.requestId) : null;
+    if (!record || record.state !== 'pending') return;
+    if (event.step === 'failed' && ['page_modal', 'toolbar'].includes(event.surface)) {
+      record.approvalIssue = { surface: event.surface, reason: event.reason ?? 'error', at: iso(Date.now()) };
+      changed();
+    } else if (event.step === 'approved') {
+      delete record.approvalIssue;
+    }
+  }
+
   function approvalOf(record) {
     const extension = hub.extension();
     if (!extension.connected || settingsFor(browserOf(record))?.openRightAway !== true) return 'window';
@@ -1315,7 +1333,8 @@ export function createDaemon(options = {}) {
     if (live && ['active', 'paused'].includes(live.status) && live.origin && originCovered(live.origin, record.origins)) {
       return 'window';
     }
-    return 'page';
+    // Its page opened, but approving it on the page request modal (or an early icon click) failed: the toolbar icon.
+    return record.approvalIssue ? 'toolbar' : 'page';
   }
 
   function onSettingsEvent(event) {
@@ -1484,6 +1503,8 @@ export function createDaemon(options = {}) {
           return onAgentsEvent(event);
         case 'usage':
           return saveKnownBrowsers(event.browsers);
+        case 'approval':
+          return onApprovalEvent(event);
         default:
           return undefined;
       }

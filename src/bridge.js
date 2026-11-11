@@ -107,6 +107,7 @@ const HTTP_ROUTES = {
   '/screenshots': 'screenshot',
   '/heartbeat': 'heartbeat',
   '/used': 'used',
+  '/approval': 'approval',
   '/move': 'move',
   '/invite': 'invite',
   '/invite-cancel': 'invite_cancel',
@@ -121,6 +122,25 @@ const REPLY_HTTP_STATUS = {
   request_not_pending: 409,
   level_not_granted: 403,
 };
+
+// An approval event as the extension reports it, reduced to codes: the request id, which surface (the page request
+// modal, the toolbar icon, the toolbar popup, the approval window), which step, a reason code and an origin (never a
+// URL or page text). Null when it is not one.
+export const APPROVAL_SURFACES = Object.freeze(['page_modal', 'toolbar', 'popup', 'window']);
+export const APPROVAL_STEPS = Object.freeze(['shown', 'attempt', 'waiting', 'failed', 'approved', 'denied']);
+export function approvalEvent(message) {
+  if (!APPROVAL_SURFACES.includes(message?.surface) || !APPROVAL_STEPS.includes(message?.step)) return null;
+  const requestId = typeof message.requestId === 'string' && /^[\w-]{1,64}$/.test(message.requestId) ? message.requestId : null;
+  const reason = typeof message.reason === 'string' && /^[a-z][a-z0-9_]{0,39}$/.test(message.reason) ? message.reason : null;
+  let origin = null;
+  try {
+    const url = typeof message.origin === 'string' && message.origin.length <= 300 ? new URL(message.origin) : null;
+    if (url && /^https?:$/.test(url.protocol) && url.origin === message.origin) origin = url.origin;
+  } catch {
+    origin = null;
+  }
+  return { requestId, surface: message.surface, step: message.step, reason, origin };
+}
 
 /**
  * The level for a command's args: the requested level clamped to the lease's grant (when the lease has one). No
@@ -998,6 +1018,13 @@ export function createHub({
         // The user opened the popup or clicked the toolbar icon in this browser: new tab requests go here.
         noteUsage(browser, true);
         emit({ type: 'used', browserId });
+        if (message.ref !== undefined || via === 'http') answer(true, { ok: true });
+        return;
+      }
+      case 'approval': {
+        // An approval surface shown, an approval attempt, or why one failed (extension reportApproval): logged only.
+        const event = approvalEvent(message);
+        if (event) emit({ type: 'approval', browserId, ...event });
         if (message.ref !== undefined || via === 'http') answer(true, { ok: true });
         return;
       }

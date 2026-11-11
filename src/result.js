@@ -924,6 +924,10 @@ export function approvalSteps(approval) {
   if (approval === 'page') {
     return 'its task page opened in an existing browser window; click Approve in the page request modal (grant browser site access if asked), or use the FAI Browser toolbar icon';
   }
+  if (approval === 'toolbar') {
+    // The page request modal (or an icon click before the page loaded) could not approve it (daemon approvalOf).
+    return 'approving it in the page request modal did not work, so click the FAI Browser toolbar icon on its task tab once that tab shows the site (allow browser site access if asked)';
+  }
   return 'click Open in the FAI Browser window, then Approve in the page request modal (grant browser site access if asked), or use the FAI Browser toolbar icon';
 }
 

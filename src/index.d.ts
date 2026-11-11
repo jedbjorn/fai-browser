@@ -1275,9 +1275,13 @@ export interface RequestView {
    * How a pending request is approved: `page` when the extension opened its page by itself (its "Open requested pages
    * right away" setting, on by default, for Interactive or less), where one click on the FAI Browser icon approves;
    * `window` when the user opens it from the FAI Browser window first (Full or Testing, the setting off, no
-   * extension connected). Null once the request is no longer pending.
+   * extension connected); `toolbar` when its page opened but approving it on the page request modal (or an icon
+   * click before the page loaded) failed, so the toolbar icon on the task tab is the way. Null once the request is no
+   * longer pending.
    */
-  approval: 'page' | 'window' | null;
+  approval: 'page' | 'window' | 'toolbar' | null;
+  /** The last failed approval attempt in the browser while the request is pending: codes only (docs/REFERENCE.md). */
+  approvalIssue?: { surface: 'page_modal' | 'toolbar'; reason: string; at: string };
 }
 
 export interface TabRequestBody {

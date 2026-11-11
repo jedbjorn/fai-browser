@@ -130,6 +130,7 @@ const HTTP_PATHS = {
   invite: '/invite',
   invite_cancel: '/invite-cancel',
   agents: '/agents',
+  approval: '/approval',
 };
 const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
@@ -1639,6 +1640,47 @@ async function usePairing(next) {
 function reportUsed() {
   if (!connected || !pairing) return;
   ignore(send('used', {}));
+}
+
+// Approval events for daemon.log (docs/REFERENCE.md "Approval events"): an approval surface shown, an approval attempt
+// and why one failed, so an Approve that did nothing leaves a trace. Only codes, the request id and an origin: never a
+// URL, page text or anything the user typed. Best effort: nothing waits on it.
+const APPROVAL_SURFACES = new Set(['page_modal', 'toolbar', 'popup', 'window']);
+const APPROVAL_STEPS = new Set(['shown', 'attempt', 'waiting', 'failed', 'approved', 'denied']);
+const REASON_CODE = /^[a-z][a-z0-9_]{0,39}$/;
+function reportApproval({ requestId = null, surface, step, reason = null, origin = null }) {
+  if (!connected || !pairing || !APPROVAL_SURFACES.has(surface) || !APPROVAL_STEPS.has(step)) return;
+  ignore(send('approval', {
+    requestId: typeof requestId === 'string' ? requestId.slice(0, 64) : null,
+    surface, step,
+    reason: typeof reason === 'string' && REASON_CODE.test(reason) ? reason : null,
+    origin: typeof origin === 'string' ? originOf(origin) : null,
+  }));
+}
+
+// The reason code of an approval that failed: the error's own code, else the code of a known refusal text.
+function approvalReason(error) {
+  if (typeof error?.code === 'string' && REASON_CODE.test(error.code)) return error.code;
+  const text = String(error?.message ?? error ?? '');
+  const known = [[ARM_DECLINED, 'not_waiting'], [ARM_STALE, 'stale_approval'], [STILL_LOADING, 'still_loading'],
+    [MOVED_ON_SITE, 'moved_on_site'], [MOVED_AWAY, 'moved_away'], [PAGE_NOT_LOADED, 'page_not_loaded']];
+  for (const [message, code] of known) if (text === message) return code;
+  if (/site access was not granted/i.test(text)) return 'site_access_denied';
+  if (/did not ask for that level/.test(text)) return 'level_not_asked';
+  if (/Testing mode needs/.test(text)) return 'testing_not_listed';
+  if (/The page changed/.test(text)) return 'page_changed';
+  if (/Select an HTTP page/.test(text)) return 'not_http_page';
+  if (/Approve from this request window only/.test(text)) return 'wrong_sender';
+  if (/Connect to the FAI service|did not reply|pairing secret/i.test(text)) return 'not_connected';
+  return 'error';
+}
+
+// Which approval surface an extension page is: the page request modal, the approval window or the toolbar popup.
+function approvalSurface(sender) {
+  const url = typeof sender?.url === 'string' ? sender.url : '';
+  if (url.startsWith(chrome.runtime.getURL('arm.html'))) return 'page_modal';
+  if (url.split('?')[0] !== chrome.runtime.getURL('popup.html')) return null;
+  return url.includes('window=1') ? 'window' : 'popup';
 }
 
 // Daemon -> extension messages, from the socket or from a long-poll response.
@@ -3598,6 +3640,9 @@ async function openAndArm(requestId, level, wantDomain) {
   armed.set(tab.id, arm);
   saveArms();
   setTimeout(() => expireArms(), ARM_MS + 1_000);
+  // The armed look at once, while the page may still be blank and loading for a long time: an icon click then
+  // approves (approveArmed waits for the page) instead of opening the popup, which offers to open the page again.
+  await showArm(arm);
   await showPrompt(arm, opened);
   // Per-tab action values are set once the page has loaded (Chrome may reset them on the first commit).
   await waitTabComplete(tab.id, OPEN_LOAD_MS).catch(() => {});
@@ -3632,6 +3677,7 @@ async function showPrompt(arm, win) {
     }
   } catch {
     // No prompt: the badge, title and group still show the arm.
+    reportApproval({ requestId: arm.requestId, surface: 'page_modal', step: 'failed', reason: 'prompt_window_failed', origin: arm.origin });
   }
 }
 
@@ -3797,6 +3843,8 @@ async function waitCommitted(tabId, origin, ms = COMMIT_WAIT_MS) {
 }
 const ARM_STALE = 'This approval was prepared by an earlier run of the extension. Nothing was approved.';
 const STILL_LOADING = 'The page is still loading. Approve again once it has loaded.';
+const PAGE_NOT_LOADED = 'The task page has not loaded the site yet (it is blank, still loading or shows a browser error), '
+  + 'so nothing was approved. Once it shows the site, click the FAI Browser icon on that tab again.';
 const MOVED_ON_SITE = 'The page moved to another address on the site the agent asked for. Nothing was approved; click the '
   + 'FAI Browser icon on the tab to approve it there.';
 const MOVED_AWAY = 'The page moved to an address this approval does not cover. Nothing was approved. If it is still the '
@@ -3880,6 +3928,7 @@ async function finishModalApproval(message, sender) {
     await startSession({ requestId: arm.requestId, level: message.level, scope: arm.scope, tabMode: arm.tabMode },
       { ...tab, armGroupId: arm.groupId, modalPattern: pattern, modalPatterns: intent.extraPatterns, approvalGuard: validate });
     await disarm(arm.tabId, { keepGroup: true });
+    reportApproval({ requestId: arm.requestId, surface: 'page_modal', step: 'approved', origin: intent.origin });
     return popupState();
   } finally {
     modalIntents.delete(arm.tabId);
@@ -3902,9 +3951,27 @@ async function approveArmed(tab, access = Promise.resolve()) {
   }
   if (!connected && pairing) await waitForAttempt(CONNECT_WAIT_MS);
   const arm = armed.get(tab.id);
+  reportApproval({ requestId: arm.requestId, surface: 'toolbar', step: 'attempt', origin: arm.origin });
+  // Clicked while the page was still blank (its first page loading, or a redirect on the way): the click's tab
+  // snapshot has no http(s) address yet. Wait for the page, then read the tab again.
+  if (!/^https?:/.test(tab.url ?? '') && typeof arm.origin === 'string') {
+    await waitCommitted(tab.id, arm.origin);
+    tab = await chrome.tabs.get(tab.id).catch(() => tab);
+    if (armed.get(tab.id) !== arm) return;
+    if (!/^https?:/.test(tab.url ?? '')) {
+      // Nothing this extension can read or approve yet (a blank, loading or browser error page): the arm stays, so
+      // the next click (or the modal) can still approve once the page shows the site.
+      reportApproval({ requestId: arm.requestId, surface: 'toolbar', step: 'failed', reason: 'page_not_loaded', origin: arm.origin });
+      await ignore(chrome.storage.session?.set?.({ openNotice: { tabId: tab.id, requestId: arm.requestId, message: PAGE_NOT_LOADED } }));
+      ignore(chrome.action.setTitle?.({ tabId: tab.id, title: `FAI Browser: ${PAGE_NOT_LOADED}` }));
+      return;
+    }
+  }
   const request = requests.find(item => item.requestId === arm.requestId && ['pending', 'paused'].includes(item.state));
   const origin = originOf(tab.url ?? '');
   if (!request || !origin || !originCovered(origin, request.origins) || Date.now() - arm.at > ARM_MS) {
+    reportApproval({ requestId: arm.requestId, surface: 'toolbar', step: 'failed',
+      reason: !request ? 'not_waiting' : Date.now() - arm.at > ARM_MS ? 'arm_expired' : 'moved_away', origin: arm.origin });
     await disarm(tab.id, { notice: ARM_DECLINED });
     return;
   }
@@ -3912,7 +3979,10 @@ async function approveArmed(tab, access = Promise.resolve()) {
   if (arm.patterns?.length) pendingPatterns = arm.patterns;
   await disarm(tab.id, { keepGroup: true });
   const given = { ...tab, armGroupId: arm.groupId };
-  await startSession({ type: 'start', requestId: arm.requestId, level: arm.level, scope: arm.scope, tabMode: arm.tabMode }, given).catch(async error => {
+  await startSession({ type: 'start', requestId: arm.requestId, level: arm.level, scope: arm.scope, tabMode: arm.tabMode }, given).then(() => {
+    reportApproval({ requestId: arm.requestId, surface: 'toolbar', step: 'approved', origin });
+  }, async error => {
+    reportApproval({ requestId: arm.requestId, surface: 'toolbar', step: 'failed', reason: approvalReason(error), origin });
     if (arm.patterns?.length) {
       pendingPatterns = [];
       ignore(reconcileSites());
@@ -4016,6 +4086,14 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       return await finishModalApproval(message, sender);
     } else if (message.type === 'arm_track') {
       return await trackModalGrant(message, sender);
+    } else if (message.type === 'arm_report') {
+      // The page modal's own events (shown, the click, a site-access prompt that does not answer): logged only.
+      modalSender(message, sender);
+      await loadArms();
+      const arm = [armed.get(message.tabId), recentArms.get(message.tabId)].find(item => item?.requestId === message.requestId);
+      if (!arm || !['shown', 'attempt', 'waiting', 'failed'].includes(message.step)) throw new Error(ARM_DECLINED);
+      reportApproval({ requestId: arm.requestId, surface: 'page_modal', step: message.step, reason: message.reason, origin: arm.origin });
+      return { ok: true };
     } else if (message.type === 'start') {
       // `onSessionTab`: "Approve on the FAI tab" (approveOnSessionTab); else the popup's own activeTab gesture.
       if (message.onSessionTab === true) note = await approveOnSessionTab(message);
@@ -4070,6 +4148,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     } else if (message.type === 'deny') {
       if (typeof message.requestId !== 'string') throw new Error('No request to deny');
       for (const arm of [...armed.values()]) if (arm.requestId === message.requestId) await disarm(arm.tabId);
+      // Which surface's Deny (or Release) it was: a deny the user did not mean shows where the click came from.
+      reportApproval({ requestId: message.requestId, surface: approvalSurface(sender), step: 'denied' });
       await send('deny', { requestId: message.requestId });
     } else if (message.type === 'connect') {
       // Sent when the popup opens or its permissions change: connect with the saved pairing if not connected yet,
@@ -4088,6 +4168,10 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         await waitForAttempt(1_000);
       }
       if (toolbarPopup) reportUsed();
+      // The popup or approval window opened with requests waiting: the user saw their cards.
+      for (const request of requests.filter(item => item.state === 'pending' && here(item)).slice(0, 5)) {
+        reportApproval({ requestId: request.requestId, surface: approvalSurface(sender), step: 'shown' });
+      }
       // The daily check may have found a release since the hello (a service that knows updates said so in it).
       if (connected && updateInfo) await readUpdate().catch(() => {});
     } else if (message.type === 'state') {
@@ -4133,7 +4217,15 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       throw new Error('Unsupported control');
     }
     return note ? { ...popupState(), note } : popupState();
-  })().then(respond, error => respond({ error: error.message, ...(error.code === 'stale_approval' ? { code: error.code } : {}) }));
+  })().then(respond, error => {
+    // An approval attempt that was refused or threw: its reason goes to daemon.log (an Approve that did nothing).
+    if (['arm_prepare', 'arm_approve', 'arm_begin', 'start', 'open'].includes(message.type)) {
+      const requestId = typeof message.requestId === 'string' ? message.requestId : armed.get(message.tabId)?.requestId ?? null;
+      reportApproval({ requestId, surface: approvalSurface(sender) ?? 'popup', step: 'failed', reason: approvalReason(error),
+        origin: armed.get(message.tabId)?.origin ?? null });
+    }
+    respond({ error: error.message, ...(error.code === 'stale_approval' ? { code: error.code } : {}) });
+  });
   return true;
 });
 
