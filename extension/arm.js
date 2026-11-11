@@ -31,7 +31,8 @@ const deny = document.getElementById('deny');
 const status = document.getElementById('status');
 const pinHint = document.getElementById('pin-hint');
 
-let permissions = normalizePermissions((await chrome.storage.local.get(['permissions']).catch(() => ({}))).permissions);
+const stored = await chrome.storage.local.get(['permissions', 'siteAccessWaitMs']).catch(() => ({}));
+let permissions = normalizePermissions(stored.permissions);
 const shortcut = await actionShortcut();
 let arms = [];
 let requests = [];
@@ -164,8 +165,10 @@ function prepare(arm) {
 // when the prompt finally showed and was allowed (issue #36). The wait is bounded: after SITE_ACCESS_HINT_MS the card
 // says where else to approve; after SITE_ACCESS_GIVE_UP_MS the click is given up (nothing is approved, ever, by a later
 // answer to it) and the card says to use the toolbar icon on the task tab. Both are reported to daemon.log.
-const SITE_ACCESS_HINT_MS = 5_000;
-const SITE_ACCESS_GIVE_UP_MS = 45_000;
+// `siteAccessWaitMs` in storage.local (tests only) can shorten the give-up, never lengthen it (as in the worker).
+const SITE_ACCESS_GIVE_UP_MS = Number.isInteger(stored.siteAccessWaitMs) && stored.siteAccessWaitMs >= 1_000
+  && stored.siteAccessWaitMs < 45_000 ? stored.siteAccessWaitMs : 45_000;
+const SITE_ACCESS_HINT_MS = Math.min(5_000, Math.floor(SITE_ACCESS_GIVE_UP_MS / 2));
 let shownReported = null;
 
 // arm_report: one event for daemon.log (the worker adds the request's origin). Best effort.
@@ -186,7 +189,7 @@ function siteAccessAnswer(arm, access, late) {
     let done = false;
     const hint = setTimeout(() => {
       if (done) return;
-      say(`Waiting for your browser's site-access prompt. If you do not see it, click once inside this window, `
+      say(`Waiting for your answer to the browser's site-access prompt. If no prompt is showing, click once inside this window, `
         + `or click the FAI Browser icon on the ${taskHost(arm)} tab instead.`);
       report(arm, 'waiting', 'site_access_pending');
     }, SITE_ACCESS_HINT_MS);
@@ -233,8 +236,8 @@ approve.addEventListener('click', () => {
   try { access = chrome.permissions.request({ origins: asked }); }
   catch { access = Promise.resolve(false); threw = true; }
   report(arm, 'attempt', threw ? 'site_access_request_threw' : null);
-  // An inactive window (the desktop did not focus it) gets no visible prompt in Firefox: bring it forward, which shows
-  // the prompt once the window is active.
+  // Firefox shows the prompt only in the active window: when this window does not have focus, ask for it too (a desktop
+  // may refuse a programmatic focus; the bounded wait below covers that).
   if (!threw && !document.hasFocus()) {
     chrome.windows?.getCurrent?.().then(win => chrome.windows.update(win.id, { focused: true })).catch(() => {});
   }

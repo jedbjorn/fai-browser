@@ -1731,6 +1731,39 @@ function approvalReason(error) {
   return 'error';
 }
 
+// Popup and approval-window clicks waiting for the browser's site-access prompt, by attempt id: {requestId, surface,
+// timer, givenUp}. The popup asks inside its click and sends `start` (or `open`) only once the prompt is answered; if
+// the popup closes meanwhile (the prompt took focus) that never comes. So the attempt is bounded like the modal's:
+// after siteAccessWaitMs (and a moment for the message) it is logged as `popup_no_outcome`, and a `start` or `open`
+// that names it afterwards is refused, so a late answer approves nothing.
+const popupAttempts = new Map();
+const POPUP_ATTEMPT_SLACK_MS = 2_000;
+const POPUP_GAVE_UP = 'This approval waited too long for the browser\'s site-access prompt and was given up: nothing was '
+  + 'approved. Click Approve again.';
+async function popupAttempt(message, surface) {
+  const attemptId = message.attemptId.slice(0, 64);
+  const request = requests.find(item => item.requestId === message.requestId);
+  const origin = request ? requestTarget(request)?.origin ?? null : null;
+  reportApproval({ requestId: message.requestId, surface, step: 'attempt', origin });
+  const entry = { requestId: message.requestId, surface, givenUp: false, timer: null };
+  entry.timer = setTimeout(() => {
+    entry.givenUp = true;
+    setTimeout(() => popupAttempts.delete(attemptId), ARM_MS);
+    if (requests.some(item => item.requestId === entry.requestId && item.state === 'pending')) {
+      reportApproval({ requestId: entry.requestId, surface, step: 'failed', reason: 'popup_no_outcome', origin });
+    }
+  }, await siteAccessWaitMs() + POPUP_ATTEMPT_SLACK_MS);
+  popupAttempts.set(attemptId, entry);
+  while (popupAttempts.size > 50) popupAttempts.delete(popupAttempts.keys().next().value);
+}
+function popupAttemptDone(message) {
+  const entry = typeof message.attemptId === 'string' ? popupAttempts.get(message.attemptId.slice(0, 64)) : null;
+  if (!entry) return;
+  if (entry.givenUp) throw Object.assign(new Error(POPUP_GAVE_UP), { code: 'site_access_timeout' });
+  clearTimeout(entry.timer);
+  popupAttempts.delete(message.attemptId.slice(0, 64));
+}
+
 // Which approval surface an extension page is: the page request modal, the approval window or the toolbar popup.
 function approvalSurface(sender) {
   const url = typeof sender?.url === 'string' ? sender.url : '';
@@ -4169,10 +4202,24 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       if (!arm || !['shown', 'attempt', 'waiting', 'failed'].includes(message.step)) throw new Error(ARM_DECLINED);
       reportApproval({ requestId: arm.requestId, surface: 'page_modal', step: message.step, reason: message.reason, origin: arm.origin });
       return { ok: true };
+    } else if (message.type === 'approval_attempt') {
+      // The popup's or approval window's Approve or Open click, sent right after the browser's site-access prompt
+      // opened in it and before the popup waits for the answer: logged, and bounded (popupAttempt).
+      const surface = approvalSurface(sender);
+      if (!['popup', 'window'].includes(surface) || typeof message.requestId !== 'string' || typeof message.attemptId !== 'string') {
+        throw new Error('Unsupported control');
+      }
+      await popupAttempt(message, surface);
     } else if (message.type === 'start') {
+      // `attemptId`: a popup click given up meanwhile approves nothing (popupAttemptDone).
+      popupAttemptDone(message);
       // `onSessionTab`: "Approve on the FAI tab" (approveOnSessionTab); else the popup's own activeTab gesture.
       if (message.onSessionTab === true) note = await approveOnSessionTab(message);
       else await startSession(message);
+      const surface = approvalSurface(sender);
+      if (['popup', 'window'].includes(surface)) {
+        reportApproval({ requestId: message.requestId ?? session?.requestId ?? null, surface, step: 'approved', origin: session?.origin ?? null });
+      }
     } else if (message.type === 'intent') {
       // The popup is about to request the roots' `patterns` for "Open <host>" with "All of <root>" (see openFromIntent).
       const patterns = Array.isArray(message.patterns) ? message.patterns.filter(item => SITE_PERMISSION.test(item)) : [];
@@ -4190,6 +4237,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     } else if (message.type === 'open') {
       // "Open <host>": open the request's page in a new task tab and arm it (see openAndArm).
       if (typeof message.requestId !== 'string') throw new Error('No request to open');
+      popupAttemptDone(message);
       await openRequest(message);
     } else if (message.type === 'track') {
       // The popup is about to request these patterns in an Approve click (see trackSites).
@@ -4298,8 +4346,11 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     try {
       if (['arm_prepare', 'arm_approve', 'arm_begin', 'start', 'open'].includes(message.type)) {
         const requestId = typeof message.requestId === 'string' ? message.requestId : armed.get(message.tabId)?.requestId ?? null;
-        reportApproval({ requestId, surface: approvalSurface(sender) ?? 'popup', step: 'failed', reason: approvalReason(error),
-          origin: armed.get(message.tabId)?.origin ?? null });
+        const event = { requestId, surface: approvalSurface(sender) ?? 'popup', step: 'failed', reason: approvalReason(error),
+          origin: armed.get(message.tabId)?.origin ?? null };
+        // The modal prepares again on every render: a refusal that repeats without a click is logged once.
+        if (['arm_prepare', 'arm_begin'].includes(message.type)) reportFailureOnce(event);
+        else reportApproval(event);
       }
     } catch {
       // Nothing to log with.

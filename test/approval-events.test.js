@@ -33,10 +33,13 @@ test('approvalEvent keeps codes and an origin only', () => {
 });
 
 test('approval steps: a failed approval on the page says to use the toolbar icon on the task tab', () => {
-  assert.match(approvalSteps('toolbar'), /page request modal did not work/);
+  assert.match(approvalSteps('toolbar'), /last approval attempt in the browser did not complete/);
   assert.match(approvalSteps('toolbar'), /FAI Browser toolbar icon on its task tab/);
   assert.match(selectTabMessage('page'), /page request modal/);
-  assert.doesNotMatch(approvalSteps('page'), /did not work/);
+  assert.doesNotMatch(approvalSteps('page'), /did not complete/);
+  // A declined browser prompt is the user's choice: said as such, no instructions to push past it.
+  assert.match(selectTabMessage('declined'), /^Not approved: the user declined the browser's site-access prompt/);
+  assert.match(approvalSteps('declined'), /only if they want to continue/);
 });
 
 test('the extension\'s approval events land in daemon.log and a modal failure rewords the pending request', async t => {
@@ -75,7 +78,7 @@ test('the extension\'s approval events land in daemon.log and a modal failure re
   // The agent's open/observe result says the same.
   const blocked = (await client.observe({ requestId: created.requestId })).result;
   assert.equal(blocked.code, 'select_tab', JSON.stringify(blocked).slice(0, 300));
-  assert.match(blocked.needs.message, /page request modal did not work.*toolbar icon on its task tab/);
+  assert.match(blocked.needs.message, /did not complete.*toolbar icon on its task tab/);
 
   const lines = (await readFile(paths.logFile, 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line));
   const events = lines.filter(line => line.event === 'approval');
@@ -88,6 +91,31 @@ test('the extension\'s approval events land in daemon.log and a modal failure re
   assert.equal(events[3].origin, null);
   assert.equal(events[0].origin, ORIGIN);
   assert.doesNotMatch(JSON.stringify(events), /deep\/link|#view/);
+
+  // One line per event: no hub_event line besides.
+  assert.ok(!lines.some(line => line.event === 'hub_event' && line.type === 'approval'));
+
+  // A new click clears the issue; a refusal the surface retries itself (stale_approval) changes nothing.
+  report({ surface: 'page_modal', step: 'attempt', origin: ORIGIN });
+  for (let i = 0; i < 100 && (await view()).approvalIssue; i++) await sleep(20);
+  assert.equal((await view()).approvalIssue, undefined);
+  report({ surface: 'page_modal', step: 'failed', reason: 'stale_approval', origin: ORIGIN });
+  report({ surface: 'page_modal', step: 'failed', reason: 'request_changed', origin: ORIGIN });
+  await sleep(200);
+  assert.equal((await view()).approval, 'page', 'a refusal the toolbar would not fix leaves the steps alone');
+
+  // The user declined the browser's site-access prompt: said so, without the toolbar instructions.
+  report({ surface: 'page_modal', step: 'failed', reason: 'site_access_denied', origin: ORIGIN });
+  for (let i = 0; i < 100 && (await view()).approval !== 'declined'; i++) await sleep(20);
+  assert.equal((await view()).approval, 'declined');
+  const declined = (await client.observe({ requestId: created.requestId })).result;
+  assert.match(declined.needs.message, /^Not approved: the user declined/);
+  assert.doesNotMatch(declined.needs.message, /did not complete/);
+
+  // A popup click with no outcome (the popup closed with the prompt) points at the toolbar icon too.
+  report({ surface: 'popup', step: 'failed', reason: 'popup_no_outcome' });
+  for (let i = 0; i < 100 && (await view()).approval !== 'toolbar'; i++) await sleep(20);
+  assert.equal((await view()).approvalIssue.surface, 'popup');
 
   // An approval reported afterwards clears the issue (the lease itself makes the request active).
   report({ surface: 'toolbar', step: 'approved', origin: ORIGIN });
