@@ -399,6 +399,16 @@ function unwrittenResult(raw) {
  * Options: home, env, port (default FAI_DAEMON_PORT / FAI_BRIDGE_PORT / 4318; 0 = any), hub (injected hub),
  * hubFactory, now, log, version, maxWaitMs, sweepIntervalMs, onShutdownRequest.
  */
+// The failed approval reasons (bridge approvalEvent `reason`) that change how the agent words a pending request's
+// approval: `toolbar` when the icon on the task tab gets past them, `declined` when the user declined the browser's
+// site-access prompt. Any other reason is only logged.
+const APPROVAL_REMEDIES = Object.freeze({
+  site_access_timeout: 'toolbar', site_access_request_threw: 'toolbar', page_not_loaded: 'toolbar',
+  still_loading: 'toolbar', moved_on_site: 'toolbar', prompt_window_failed: 'toolbar', not_confirmed: 'toolbar',
+  popup_no_outcome: 'toolbar', error: 'toolbar',
+  site_access_denied: 'declined',
+});
+
 export function createDaemon(options = {}) {
   const env = options.env ?? process.env;
   const paths = homePaths({ home: options.home, env });
@@ -607,6 +617,8 @@ export function createDaemon(options = {}) {
       // How a pending request is approved (`page`: its page opened by itself, the icon click on it approves; `window`:
       // Open in the FAI Browser window first); null once it is no longer pending.
       approval: record.state === 'pending' ? approvalOf(record) : null,
+      // The last approval attempt in the browser that failed (onApprovalEvent): codes only, while it is pending.
+      ...(record.state === 'pending' && record.approvalIssue ? { approvalIssue: { ...record.approvalIssue } } : {}),
       // The agent session that owns this request (it made it, or joined its invite), while it runs: host and repo
       // folder only. The popup warns before an invite ends another agent's task in the same browser.
       owner: ownerView(record),
@@ -1586,10 +1598,34 @@ export function createDaemon(options = {}) {
     lastSettingsFrom = key;
   }
 
+  // An approval surface shown, an approval attempt, or why one failed, as the extension reports it (bridge
+  // approvalEvent: codes and an origin only): one daemon.log line each (no hub_event line besides). A failure that the
+  // toolbar icon on the task tab gets past is kept on its pending request, and so is the user declining the browser's
+  // site-access prompt; the agent's approval steps say so (approvalOf). Refusals the surface handles itself (a stale
+  // approval it retries, a request that changed) or that the toolbar would not fix are only logged.
+  function onApprovalEvent(event) {
+    log('approval', { requestId: event.requestId, surface: event.surface, step: event.step, reason: event.reason,
+      origin: event.origin, browserId: event.browserId });
+    const record = event.requestId ? requests.get(event.requestId) : null;
+    if (!record || record.state !== 'pending') return;
+    const remedy = event.step === 'failed' ? APPROVAL_REMEDIES[event.reason ?? 'error'] : null;
+    if (remedy) {
+      record.approvalIssue = { surface: event.surface, reason: event.reason ?? 'error', at: iso(Date.now()), remedy };
+      changed();
+    } else if (['attempt', 'approved'].includes(event.step) && record.approvalIssue) {
+      // A new click (or the approval itself): the earlier failure no longer describes the request.
+      delete record.approvalIssue;
+      changed();
+    }
+  }
+
   // How the user approves a pending request, for the agent's wording (result.js approvalSteps): `page` when the
   // extension opens the request's page by itself (connected, the setting on, a page to open, Interactive or less,
   // and no live session on a tab that already covers it), where the icon click on that page approves; else `window`.
+  // After a failed approval in the browser: `toolbar` (the icon on the task tab gets past it) or `declined` (the user
+  // declined the browser's site-access prompt).
   function approvalOf(record) {
+    if (record.approvalIssue?.remedy) return record.approvalIssue.remedy;
     const extension = hub.extension();
     if (!extension.connected || settingsFor(browserOf(record))?.openRightAway !== true) return 'window';
     const hasPage = Boolean(record.url) || record.origins.some(entry => !isSiteEntry(entry));
@@ -1735,7 +1771,8 @@ export function createDaemon(options = {}) {
 
   function onHubEvent(event) {
     try {
-      log('hub_event', { type: event?.type });
+      // An approval event is its own `approval` line (onApprovalEvent).
+      if (event?.type !== 'approval') log('hub_event', { type: event?.type });
       switch (event?.type) {
         case 'lease':
           return onLeaseEvent(event);
@@ -1767,6 +1804,8 @@ export function createDaemon(options = {}) {
           return onAgentsEvent(event);
         case 'usage':
           return saveKnownBrowsers(event.browsers);
+        case 'approval':
+          return onApprovalEvent(event);
         default:
           return undefined;
       }

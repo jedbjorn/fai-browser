@@ -1016,7 +1016,7 @@ function waitHint(runId) {
   return nextStep('wait', `Call fai_browser_wait with runId ${runId} (maxMs 45000) until state is "done".`);
 }
 
-// `approval`: the request view's `approval` (`page` when its page opened by itself, else `window`; see result.js).
+// `approval`: the request view's `approval` (`page` when its page opened by itself, `toolbar` or `declined` after a failed approval, else `window`; see result.js).
 // `env`: the MCP server's environment, whose daemon location the wait command carries (src/resume.js).
 function approveHint(origin, requestId, approval = null, resume = undefined, browser = null) {
   const root = siteRoot(origin);

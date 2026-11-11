@@ -1612,6 +1612,31 @@ test('capabilities reach settleAndObserve after a navigation too', async () => {
   assert.deepEqual(settle.args[3], ['navigate', 'controls', 'submit_safe']);
 });
 
+// Issue #36: a popup click's approval_attempt and its start arrive back to back when no site-access prompt opened in
+// the click (Chromium without a domain root, access already held). The attempt is settled by that start whatever it
+// answered: no "click with no outcome" is logged later over the start's own reason.
+test('approval_attempt then an immediate start: the attempt is settled, never logged later as popup_no_outcome', async () => {
+  const h = harness({ permissions: { defaultLevel: 'read-only', testingOrigins: [TEST_ORIGIN] }, timeScale: 0.01 });
+  await h.waitFor(m => m.type === 'hello');
+  await withRequest(h, [TEST_ORIGIN, 'https://prod.example.com']);
+  const popup = { id: 'ext', url: 'chrome-extension://ext/popup.html' };
+  const attempt = h.send({ type: 'approval_attempt', requestId: 'req_1', attemptId: 'a1' }, popup);
+  const refused = await h.send({ type: 'start', requestId: 'req_1', attemptId: 'a1', endpoint: ENDPOINT, secret: SECRET, level: 'testing' }, popup);
+  await attempt;
+  assert.match(refused.error, /Testing environments/);
+  // Well past the scaled bound (45 s + 2 s at timeScale 0.01).
+  await new Promise(done => setTimeout(done, 1500));
+  const events = h.sent.filter(m => m.type === 'approval').map(m => `${m.surface}:${m.step}:${m.reason}`);
+  assert.deepEqual(events, ['popup:attempt:null', 'popup:failed:testing_not_listed']);
+
+  // A click with no start at all is logged once the bound passes, and a start naming it afterwards is refused.
+  h.send({ type: 'approval_attempt', requestId: 'req_1', attemptId: 'a2' }, popup);
+  await h.until(() => h.sent.some(m => m.type === 'approval' && m.reason === 'popup_no_outcome'), 3000);
+  const late = await h.send({ type: 'start', requestId: 'req_1', attemptId: 'a2', endpoint: ENDPOINT, secret: SECRET, level: 'read-only' }, popup);
+  assert.match(late.error, /given up/);
+  assert.equal(h.sent.some(m => m.type === 'lease'), false, 'nothing is leased');
+});
+
 test('testing is granted only when every requested origin is a listed testing environment', async () => {
   const h = harness({ permissions: { defaultLevel: 'read-only', testingOrigins: [TEST_ORIGIN] } });
   await h.waitFor(m => m.type === 'hello');
@@ -1973,6 +1998,51 @@ test('a browser without tab groups still opens and arms a task tab in the existi
   assert.equal(h.windowsCreated.length, 0);
   assert.equal(h.tabBadges.get(9), '?');
   assert.equal(h.sent.some(m => m.type === 'lease'), false);
+});
+
+// Issue #36: two quick icon clicks while the service is disconnected both wait for the reconnect; only the first
+// that finds the arm current approves (the second re-reads it after the wait).
+test('two icon clicks during a disconnect lease the tab once', async () => {
+  const { h } = await armed();
+  h.state.ws = 'fail';
+  h.state.http = 'fail';
+  h.socket.close();
+  await h.until(() => h.session.connection?.connected === false);
+  const click = { id: 9, windowId: 2, url: `${SHOP}/cart`, title: 'Cart' };
+  h.chrome.action.onClicked.emit(click);
+  h.chrome.action.onClicked.emit(click);
+  await new Promise(done => setTimeout(done, 200));
+  h.state.ws = 'open';
+  h.state.http = 'ok';
+  await h.until(() => h.sent.some(m => m.type === 'lease'), 15_000);
+  await new Promise(done => setTimeout(done, 500));
+  assert.equal(h.sent.filter(m => m.type === 'lease').length, 1, 'one lease');
+});
+
+// Issue #36: tab updates landing while the icon click approves never put the armed look back on the session's tab.
+test('tab updates during the icon approval leave the approved tab without the armed look', async () => {
+  const { h } = await armed();
+  h.chrome.action.onClicked.emit({ id: 9, windowId: 2, url: `${SHOP}/cart`, title: 'Cart' });
+  for (let i = 0; i < 40 && !h.sent.some(m => m.type === 'lease'); i++) {
+    h.chrome.tabs.onUpdated.emit(9, { title: `Cart ${i}` });
+    await new Promise(done => setTimeout(done, 1));
+  }
+  await h.until(() => h.sent.some(m => m.type === 'lease'));
+  h.chrome.tabs.onUpdated.emit(9, { status: 'complete' });
+  await new Promise(done => setTimeout(done, 200));
+  assert.equal(h.tabPopups.get(9), 'popup.html');
+  assert.notEqual(h.tabBadges.get(9), '?');
+});
+
+// Issue #36 / #38: declining the agent's ask (the ask card's Decline) is logged as such, not as a deny of the request.
+test('a declined ask is logged with its own reason', async () => {
+  const h = harness();
+  await h.waitFor(m => m.type === 'hello');
+  await withRequest(h, [ORIGIN]);
+  await h.send({ type: 'deny', requestId: 'req_1', ask: true }, { id: 'ext', url: 'chrome-extension://ext/popup.html' });
+  await h.send({ type: 'deny', requestId: 'req_1' }, { id: 'ext', url: 'chrome-extension://ext/popup.html' });
+  const events = h.sent.filter(m => m.type === 'approval').map(m => `${m.surface}:${m.step}:${m.reason}`);
+  assert.deepEqual(events, ['popup:denied:ask_declined', 'popup:denied:null']);
 });
 
 test('the icon click on the armed tab leases it once at the armed level and restores the popup', async () => {
