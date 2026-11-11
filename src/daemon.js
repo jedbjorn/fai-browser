@@ -588,6 +588,8 @@ export function createDaemon(options = {}) {
       ...(record.ask ? { ask: { id: record.ask.id, level: record.ask.level, origins: [...record.ask.origins],
         access: [...(record.ask.access ?? [])], at: iso(record.ask.at) } } : {}),
       ...(record.askDeclined ? { askDeclined: iso(record.askDeclined) } : {}),
+      // A pending request made to ask for more than an earlier pending one, which it replaced (its id).
+      ...(record.replaces ? { replaces: record.replaces } : {}),
       reason: record.reason,
       instruction: record.instruction,
       url: record.url,
@@ -853,6 +855,9 @@ export function createDaemon(options = {}) {
           successor.browserPinned = true;
         }
         record.replacedBy = successor.requestId;
+        record.replacedHow = 'successor';
+        // The successor names it, so the extension can close this request's own task tab instead of keeping two.
+        successor.replaces = requestId;
         setState(record, 'expired', 'replaced');
         log('request_replaced', { requestId, by: successor.requestId });
       }
@@ -912,6 +917,9 @@ export function createDaemon(options = {}) {
       if (by && sameSession(by, record) && LIVE.has(by.state)) {
         closed.replacedBy = by.requestId;
         closed.needs.message = `Your request ${by.requestId} replaced this one.`;
+      } else if (record.replacedHow === 'successor') {
+        // A newer request asked for more than this one (an ask on it while it waited): nobody approved anything.
+        closed.needs.message = 'This request was replaced by a newer request.';
       } else {
         closed.needs.message = 'The user approved another task in this browser, which ended this one.';
       }
@@ -1884,6 +1892,8 @@ export function createDaemon(options = {}) {
   }
 
   async function finishRun(run, record, raw, spec) {
+    // An act that reached the page ends any run of tab_not_ready answers (settledLease counts them in a row).
+    if (!LEASE_CODES.has(raw?.code) && raw?.code !== 'tab_not_ready') record.notReady = 0;
     if (LEASE_CODES.has(raw?.code)) {
       const settled = await settledLease(record, raw.code);
       const code = settled.blocked?.code ?? settled.code;
@@ -2436,6 +2446,8 @@ export function createDaemon(options = {}) {
         ...(config.guardrails ? { guardrails: config.guardrails } : {}),
       });
       observed = await look();
+      // The browser answered for this lease: earlier tab_not_ready answers were transient (settledLease).
+      record.notReady = 0;
       // waitFor: look again until the page (as the host is shown it: redacted) meets the condition, or maxMs passed.
       if (spec.waitFor) {
         const until = observeStart + (spec.maxMs ?? OBSERVE_WAIT_DEFAULT_MS);

@@ -198,7 +198,8 @@ commands stay where they are (switch with `tab`). A tab the browser names its op
 creating it (Chromium for some tabs) is still recognised as the page's child, and a page-opened tab that
 comes to the front, created during the session, is a child too, never a `tab_changed`; a tab that existed
 before the session (a tab the user opened from the task page earlier) is never adopted: bringing it forward is a
-tab switch (`tab_changed`), also with Multiple task tabs. The worker keeps the tabs created during the session in
+tab switch (`tab_changed`), also with Multiple task tabs. A tab the user opens from the task page during the session
+(Ctrl+click, Duplicate) on an approved origin joins the request under Multiple task tabs, like a page-opened tab. The worker keeps the tabs created during the session in
 memory only; after a worker restart the session is gone anyway, so nothing is adopted from before. Firefox
 names no opener for a page's popup window: it is neither followed nor paused, and the request keeps
 working in its own tab. Another request's page that FAI opens by itself opens behind the tab a live
@@ -222,8 +223,9 @@ The request keeps its id, tab, page, lease and tab mode; nothing is granted unti
 
 - **Daemon.** `POST /v1/requests/:id/ask {mode?, origins?}` (client `ask(requestId, body)`). A pending request
   may be on the user's screen, so it never grows: asking more on one creates its successor with everything
-  (the answer's `requestId`, `replaced`: the old id), and the old one expires as `replaced`, so a click on its
-  card approves nothing. On an approved request (active or paused) it records `ask {id, level, origins,
+  (the answer's `requestId`, `replaced`: the old id; the successor's view names it as `replaces`), and the old one
+  expires as `replaced` ("This request was replaced by a newer request."), so a click on its card approves nothing;
+  the task tab FAI opened for the old one closes, so only the successor's page waits. On an approved request (active or paused) it records `ask {id, level, origins,
   access, at}` in the request view and answers `asked: true`: `origins` the request does not cover yet,
   `access` exact origins it lists that the extension cannot follow yet (no host access; the browser's site
   access is what is asked for). Origins are validated as for a new request (at most 10 in all); a domain root
@@ -237,7 +239,8 @@ The request keeps its id, tab, page, lease and tab mode; nothing is granted unti
   **Decline**. Invited tabs show it too. Approve asks the browser for site access to the asked exact origins
   inside the click, then sends the lease message with `ask: true` and the `askId` the card showed: the daemon
   applies only that exact ask (a changed or missing id is refused with `ask_changed`, nothing granted, and the
-  card shows the current ask), adds the origins and raises the request's mode, then
+  card shows the current ask, marked "Updated" with its Approve held for a second), adds the origins and raises the
+  request's mode, then
   re-approves the active lease in place (same `leaseId`; level, origins and tab mode updated, the worker's
   session keeps its tabs and page) or, for a paused request, binds the approved tab as a resume. A lease
   message without `ask` never applies an ask. Decline (`deny {requestId, ask: true}`) clears it and keeps the

@@ -4102,6 +4102,26 @@ test('#30: a new tab whose opener the browser names only when it comes to the fr
   assert.equal(switched.reason, 'tab_changed');
 });
 
+// Re-review item 3: a pending request replaced by its successor (the agent asked for more while it waited) closes the
+// task tab FAI opened for it, so only the successor's page waits for the user; a request that ends otherwise keeps it.
+test('#30: the task tab FAI opened for a request its successor replaced closes; one for a denied request stays', async () => {
+  const h = harness();
+  await h.waitFor(m => m.type === 'hello');
+  const first = { requestId: 'req_1', state: 'pending', origins: [ORIGIN], url: `${ORIGIN}/start`, mode: 'read-only' };
+  h.push({ type: 'requests', requests: [first] });
+  await h.until(() => h.tabsCreated.length === 1, 3000);
+  const firstTab = 8 + h.tabsCreated.length;
+  assert.ok(h.openedTabs.has(firstTab));
+  h.push({ type: 'requests', requests: [{ ...first, requestId: 'req_2', replaces: 'req_1', origins: [ORIGIN, 'https://partner.example.org'] }] });
+  await h.until(() => !h.openedTabs.has(firstTab), 3000);
+  await h.until(() => h.tabsCreated.length === 2, 3000);
+  // Denied (no successor names it): the tab stays, only disarmed.
+  const secondTab = 8 + h.tabsCreated.length;
+  h.push({ type: 'requests', requests: [] });
+  await sleep(200);
+  assert.ok(h.openedTabs.has(secondTab), 'a request that just ended keeps its tab');
+});
+
 // Review item 3: "existing personal tabs are never adopted". A tab the user opened from the task page before the
 // request existed has that page as its opener, but was never created in this session: bringing it forward is a tab
 // switch (paused), never a child that joins, also with Multiple task tabs.

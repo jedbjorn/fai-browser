@@ -3718,7 +3718,8 @@ async function openAndArm(requestId, level, wantDomain) {
   const scope = wantDomain && roots.length && await hasSitePermission(roots) ? 'domain' : 'origin';
   const armSettings = await chrome.storage.local.get(['tabMode']);
   const { tab, window: opened } = await openTaskTab(target.url);
-  const arm = { tabId: tab.id, requestId, tabMode: cleanTabMode(armSettings.tabMode), level: cleanLevel(level) ?? 'read-only', scope, patterns: scope === 'domain' ? roots : [],
+  // opened: FAI opened this task tab for the request (its own tab, which it may close again unapproved).
+  const arm = { tabId: tab.id, requestId, opened: true, tabMode: cleanTabMode(armSettings.tabMode), level: cleanLevel(level) ?? 'read-only', scope, patterns: scope === 'domain' ? roots : [],
     client: typeof request.client === 'string' ? request.client.slice(0, 80) : '', at: Date.now(), groupId: null,
     promptWindowId: null, origin: target.origin, origins: [...request.origins] };
   armed.set(tab.id, arm);
@@ -3839,7 +3840,14 @@ async function expireArms(byRequest = false) {
     // A request moved to another browser ("Open here" there) is no longer this tab's to approve.
     const live = requests.some(item => item.requestId === arm.requestId && ['pending', 'paused'].includes(item.state) && here(item));
     const leasing = modalIntents.get(arm.tabId)?.running && requests.some(item => item.requestId === arm.requestId && item.state === 'active');
-    if ((byRequest && !live && !leasing) || now - arm.at > ARM_MS) await disarm(arm.tabId);
+    if ((byRequest && !live && !leasing) || now - arm.at > ARM_MS) {
+      await disarm(arm.tabId);
+      // Replaced by a newer request of the agent's (it asked for more while this one waited): the task tab FAI opened
+      // for it closes, unapproved, so the successor's page is the only one left to approve.
+      const replaced = byRequest && !live && arm.opened === true
+        && requests.some(item => item.replaces === arm.requestId && item.state === 'pending' && here(item));
+      if (replaced) ignore(chrome.tabs.remove(arm.tabId).catch(() => {}));
+    }
   }
 }
 

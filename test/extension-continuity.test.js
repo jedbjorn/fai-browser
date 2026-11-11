@@ -272,6 +272,21 @@ test('#31 a command for a lease whose approval is still finishing is not answere
   assert.match(old.result.needs.message, /replaced this one/);
 });
 
+// Re-review item 4: an ask card whose ask changed under the user is marked and its Approve is held for a moment.
+test('#30 an ask that changes while its card is open: marked updated, Approve held about a second', async t => {
+  const env = await launch(t);
+  const requestId = await activeRequest(env, { mode: 'reversible', tabMode: 'single' });
+  await env.client.ask(requestId, { origins: [env.partner] });
+  const card = await faiWindow(env);
+  await card.waitForSelector('.ask-approve:not([disabled])', { timeout: 5000 });
+  assert.equal(await card.locator('.ask-changed').count(), 0);
+  await env.client.ask(requestId, { mode: 'interactive' });
+  await card.waitForSelector('.ask-changed', { timeout: 5000 });
+  assert.equal(await card.locator('.ask-approve[disabled]').count(), 1, 'Approve is held right after the change');
+  assert.match(await card.locator('.ask-meta').innerText(), /allow Use/);
+  await card.waitForSelector('.ask-approve:not([disabled])', { timeout: 3000 });
+});
+
 // Review item 3, the reviewer's probe: a tab the user opened from the task page before any request existed has that
 // page as its opener. With Multiple task tabs it must never join the request when it comes to the front.
 test('#30 a personal tab opened from the task page before the request is never adopted (Multiple task tabs)', async t => {

@@ -185,8 +185,17 @@ const STALE_TEXT = {
 // The agent asks for more on a task the user already approved (issue #30): another site and/or a higher level, on
 // the same request, tab and page. Approve applies it there (with site access for the added sites, asked in this
 // click); Decline keeps the task as it is. Nothing is granted until the click.
+// When each ask's card first showed it (request id -> {id, at, changed}): a card whose ask changed under the user is
+// marked and its Approve held for ASK_SETTLE_MS, so a press never lands on content that just changed.
+const seenAsks = new Map();
+const ASK_SETTLE_MS = 1000;
+
 function askCard(request) {
   const ask = request.ask;
+  const seen = seenAsks.get(request.requestId);
+  if (!seen || seen.id !== ask.id) seenAsks.set(request.requestId, { id: ask.id, at: Date.now(), changed: Boolean(seen) });
+  const shown = seenAsks.get(request.requestId);
+  const settling = shown.changed && Date.now() - shown.at < ASK_SETTLE_MS;
   const added = Array.isArray(ask.origins) ? ask.origins.map(String) : [];
   const wanted = { ...request, mode: ask.level ?? request.grant?.level ?? request.mode,
     origins: [...new Set([...(Array.isArray(request.origins) ? request.origins.map(String) : []), ...added])] };
@@ -198,6 +207,10 @@ function askCard(request) {
   const says = element('p', 'agent-says');
   says.append(element('strong', '', 'Agent says: '), element('span', 'request-reason', String(request.reason ?? '')));
   card.append(top, says);
+  if (shown.changed) {
+    card.classList.add('ask-updated');
+    card.append(element('p', 'level-warning ask-changed', 'Updated: the agent changed what it asks for.'));
+  }
   const access = Array.isArray(ask.access) ? ask.access.map(String) : [];
   const parts = [];
   if (added.length) parts.push(`add ${describeOrigins(added).join(', ')}`);
@@ -217,7 +230,8 @@ function askCard(request) {
   const actions = element('div', 'request-actions');
   const approve = element('button', 'primary-button approve-request ask-approve', own ? 'Approve on the FAI tab' : 'Approve this tab');
   approve.type = 'button';
-  approve.disabled = busy || (!own && (!covered || windowMode));
+  approve.disabled = busy || settling || (!own && (!covered || windowMode));
+  if (settling) setTimeout(render, ASK_SETTLE_MS - (Date.now() - shown.at) + 20);
   approve.addEventListener('click', () => approveAsk(request, wanted, level.value(), own));
   const decline = element('button', 'link-button deny-request ask-decline', 'Decline');
   decline.type = 'button';

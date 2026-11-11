@@ -458,6 +458,53 @@ test('#36 item 2: a request the user denied is reported as denied, with a stop t
   assert.match(next.text, /denied.*only if the user asks/);
 });
 
+// Re-review item 1: tab_not_ready counts only answers in a row; a command that reaches the page resets it.
+test('#31: transient tab_not_ready answers separated by a page read never pause the request', async t => {
+  const ctx = await setup(t);
+  const { requestId } = await active(ctx);
+  const bridge = ctx.hub.bridgeForTab(1);
+  const real = bridge.observe.bind(bridge);
+  let failures = 0;
+  bridge.observe = async (...args) => {
+    if (failures > 0) {
+      failures -= 1;
+      throw bridgeError('session_inactive', 'This browser does not hold that tab lease', false);
+    }
+    return real(...args);
+  };
+  const codes = [];
+  const observe = async () => (await ctx.api('POST', '/v1/observe', { requestId })).body;
+  failures = 2;
+  codes.push((await observe()).result.code, (await observe()).result.code);
+  assert.ok((await observe()).actions, 'the page reads');
+  failures = 2;
+  codes.push((await observe()).result.code, (await observe()).result.code);
+  assert.deepEqual(codes, ['tab_not_ready', 'tab_not_ready', 'tab_not_ready', 'tab_not_ready']);
+  assert.equal(ctx.daemon.request(requestId).state, 'active');
+  // An act that reaches the page resets the count too.
+  assert.ok((await observe()).actions);
+  failures = 2;
+  codes.push((await observe()).result.code, (await observe()).result.code);
+  const acted = await ctx.api('POST', '/v1/act', { requestId, actionId: (await observe()).actions.find(a => a.type === 'scroll')?.id ?? 'a0' });
+  assert.ok(acted.body.result, JSON.stringify(acted.body).slice(0, 200));
+  failures = 2;
+  codes.push((await observe()).result.code, (await observe()).result.code);
+  assert.equal(ctx.daemon.request(requestId).state, 'active');
+});
+
+// Re-review item 2: a request a successor replaced (an ask while it waited) never claims the user approved something.
+test('ask on a pending request without an agent session: the old one says it was replaced by a newer request', async t => {
+  const ctx = await setup(t);
+  const created = await ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Read' });
+  const { requestId } = created.body;
+  const asked = await ctx.api('POST', `/v1/requests/${requestId}/ask`, { origins: [PARTNER] });
+  assert.equal(asked.body.request.replaces, requestId, 'the successor names the request it replaced');
+  const old = (await ctx.api('POST', '/v1/observe', { requestId })).body.result;
+  assert.equal(old.code, 'request_closed');
+  assert.equal(old.needs.message, 'This request was replaced by a newer request.');
+  assert.doesNotMatch(old.needs.message, /approved/);
+});
+
 // --- through the spawned MCP server -----------------------------------------------------------------------------
 
 async function mcpSetup(t) {
