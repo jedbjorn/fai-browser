@@ -413,12 +413,16 @@ test('additions (forbid) block at every level, testing included', async t => {
 
 test('script links (role=link without <a href>) need controls and keep their label class; real links stay navigation', async t => {
   const page = await load(t, doc(`
-    <a href="/about">Buy tickets guide</a>
+    <a href="/about">A guide to buying tickets</a>
+    <a href="/tickets">Buy tickets guide</a>
     <span role="link" tabindex="0" onclick="document.title='bought'">Buy now</span>
     <span role="link" tabindex="0" onclick="document.title='opened'">Open panel</span>
     <div role="link" tabindex="0" onclick="document.title='deleted'">Delete account</div>`));
   const c = classes(await page.evaluate(allow => __faiPage.observe({ allow }), CAPS.full));
-  assert.equal(c['Buy tickets guide'], 'navigation');
+  assert.equal(c['A guide to buying tickets'], 'navigation');
+  // A real link gets the link rule (as the runtime's destructiveLink judges its label): a short label that leads with
+  // an action verb is that action, a descriptive one navigation.
+  assert.equal(c['Buy tickets guide'], 'purchase');
   assert.equal(c['Buy now'], 'purchase');
   assert.equal(c['Open panel'], 'reversible');
   assert.equal(c['Delete account'], 'delete');
