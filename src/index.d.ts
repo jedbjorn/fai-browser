@@ -960,6 +960,13 @@ export const STATUSES: RunStatus[];
 export const RECOVERABLE_CODES: Set<string>;
 /** needs.message overrides the daemon applies for lease-related codes. */
 export const LEASE_MESSAGES: Readonly<Record<string, string>>;
+/** The fai_browser_guide topics (issue #33), in index order; `index` lists the others. */
+export type GuideTopic = 'index' | 'loop' | 'finding' | 'tabs' | 'origins' | 'levels' | 'states' | 'tools' | 'troubleshooting';
+export const GUIDE_TOPICS: readonly GuideTopic[];
+/** A guide topic's text (the MCP tool fai_browser_guide, CLI `guide`); an unknown or missing topic gives the index. */
+export function guideText(topic?: GuideTopic | string): string;
+/** One result code explained (what happened, who acts, what to do), or null for a code FAI Browser does not use. */
+export function guideCode(code: string): string | null;
 /** Runtime-side error with the bridge error shape (a plain Error, not a BridgeError instance). */
 export function bridgeError(code: string, message?: string, recoverable?: boolean): BridgeErrorLike;
 

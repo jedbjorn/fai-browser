@@ -11,6 +11,7 @@ import { validateExpectation } from './expectation.js';
 import { LEVELS, normalizeAdditions } from './guardrails.js';
 import { requestStartUrl } from './origins.js';
 import { RESUME_WAIT_TIMEOUT } from './resume.js';
+import { GUIDE_TOPICS, guideCode, guideText } from './guide.js';
 
 const FAI_HOME = faiHome();
 const WAIT_SLICE_MS = 30_000;
@@ -32,6 +33,8 @@ const USAGE = `Usage (your agent chooses each action):
   fai-browser release <requestId>
   fai-browser runs [--limit N]    fai-browser evidence <runId> [--step N] [--kind screenshot|trace]
   fai-browser status              fai-browser pair
+  fai-browser guide [topic] [--code CODE]   how FAI Browser works (topics: index, loop, finding, tabs, origins,
+                           levels, states, tools, troubleshooting); no daemon needed
   fai-browser daemon [start|stop|restart|status|logs [--lines N]]
   fai-browser update [--check]    install the latest GitHub release into this checkout (--check: only look)
   fai-browser install --host claude|codex|opencode [--scope project|user] [--link] [--dry-run] [--force]
@@ -58,7 +61,7 @@ Stdout is one JSON line. Exit codes for act: 0 completed|unverified|checkpoint,
 2 needs_user|needs_host|budget_exhausted|stopped, 1 failed. wait --until active: 0 active, 3 the request ended
 (released, expired, denied, cancelled or unknown), 2 timeout (still pending or paused), 130 interrupted, 1 error.
 Other commands: 0 success, 1 error.
-First run: npm run setup. Every command except install, install-native and wait --until starts the daemon if it is
+First run: npm run setup. Every command except install, install-native, guide and wait --until starts the daemon if it is
 not running.`;
 
 class ConfigError extends Error {
@@ -157,6 +160,7 @@ function parseCli(argv) {
         check: { type: 'boolean' },
         finish: { type: 'boolean' },
         tag: { type: 'string' },
+        code: { type: 'string' },
       },
     });
   } catch (error) {
@@ -841,7 +845,22 @@ const OTHER_COMMANDS = {
   runs: flags => commandRuns(flags),
   evidence: (flags, positionals) => commandEvidence(flags, positionals),
   pair: () => commandPair(),
+  guide: (flags, positionals) => commandGuide(flags, positionals),
 };
+
+// The MCP tool fai_browser_guide on the command line: no daemon call (src/guide.js).
+function commandGuide(flags, positionals) {
+  const topic = positionals[1];
+  if (topic !== undefined && !GUIDE_TOPICS.includes(topic)) {
+    throw new ConfigError(`Unknown guide topic "${topic}"; expected one of ${GUIDE_TOPICS.join(', ')}`);
+  }
+  if (flags.code !== undefined) {
+    const text = guideCode(flags.code);
+    if (!text) throw new ConfigError(`"${flags.code}" is not a code FAI Browser uses; see fai-browser guide states`);
+    return topic === undefined ? { code: flags.code, text } : { code: flags.code, topic, text: `${text}\n\n${guideText(topic)}` };
+  }
+  return { topic: topic ?? 'index', text: guideText(topic) };
+}
 
 function failureJson(error) {
   const failure = clientConfigError(error);

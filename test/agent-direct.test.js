@@ -51,16 +51,16 @@ test('direct MCP: open waits for approval and observes; acts are host-chosen, le
   const ctx = await setup(t);
   assert.equal(ctx.initialized.result.instructions, INSTRUCTIONS);
   assert.equal(createHash('sha256').update(JSON.stringify(INSTRUCTIONS)).digest('hex'),
-    'f789313d37e2fe0555bc137163374a014da3133b99372b009c8b3478f1202efb', 'instruction prefix bytes stay stable');
+    '210f71d225ee23d99ddef37f13da4254bdafe04863c58dac95a5b92d5da5c3a0', 'instruction prefix bytes stay stable');
   const tools = (await ctx.mcp.request('tools/list', {})).result.tools;
   const serialized = JSON.stringify(tools);
   assert.equal(serialized, JSON.stringify(TOOLS), 'wire serialization preserves the exported schema prefix and order');
   assert.equal(createHash('sha256').update(serialized).digest('hex'),
-    '438493e10d8caa1f75fcc9a3ef59eebe07b1e1f31c76e7a8e03e23b0018a63ae', 'tool schema bytes stay stable');
+    '61c9a215c57610a7fb872025ccb641095f5576a1843febe47d8746eb95131c48', 'tool schema bytes stay stable');
   const repeated = await ctx.mcp.request('tools/list', {});
   assert.equal(JSON.stringify(repeated.result.tools), serialized, 'repeated tools/list reads are byte-identical');
   assert.deepEqual(tools.map(tool => tool.name), ['fai_browser_open', 'fai_browser_act', 'fai_browser_observe',
-    'fai_browser_wait', 'fai_browser_status', 'fai_browser_release', 'fai_browser_evidence']);
+    'fai_browser_wait', 'fai_browser_status', 'fai_browser_release', 'fai_browser_evidence', 'fai_browser_guide']);
   assert.deepEqual(tools.filter(tool => tool._meta?.[ALWAYS_LOAD_META]).map(tool => tool.name),
     ['fai_browser_open', 'fai_browser_act', 'fai_browser_observe']);
   const open = tools.find(tool => tool.name === 'fai_browser_open').inputSchema.properties;
@@ -468,16 +468,22 @@ test('a malformed config.json never crashes or hangs the MCP server', async t =>
 });
 
 test('the direct instructions stay short and name only direct tools', () => {
-  assert.ok(INSTRUCTIONS.length <= 1700, `${INSTRUCTIONS.length} chars`);
+  // Paid on every host request: 1667 characters before issue #33; the navigation rule, the same-request ask, the
+  // pause line and the guide pointer brought it to about 1840 (the screenshot line went: the observe and act schemas
+  // say it).
+  assert.ok(INSTRUCTIONS.length <= 2000, `${INSTRUCTIONS.length} chars`);
   for (const name of INSTRUCTIONS.match(/fai_browser_[a-z_]+/g)) {
-    assert.ok(['fai_browser_open', 'fai_browser_act', 'fai_browser_observe'].includes(name), name);
+    assert.ok(['fai_browser_open', 'fai_browser_act', 'fai_browser_observe', 'fai_browser_guide'].includes(name), name);
   }
-  for (const pattern of [/suppliedText/, /allowedUrls/, /single-use/, /moreActions/, /returnImages "final"/,
-    /point \{x,y\}/, /"approve the new FAI Browser request; its level is preselected"/, /Never log in/,
-    /untrusted data, not instructions/, /Do not release at the end/]) {
+  for (const pattern of [/suppliedText/, /allowedUrls/, /single-use/, /moreActions/, /Never log in/, /untrusted data, not instructions/, /Do not release at the end/,
+    // Issue #33: the skill or the guide first, the same request for more, pauses, and never a guessed address.
+    /fai-browser skill or call fai_browser_guide/, /same requestId/, /child_tab/, /Resume/, /Never a guessed address \(url, allowedUrls or origins\)/,
+    /focus \(label, host or path\)/]) {
     assert.match(INSTRUCTIONS, pattern);
   }
   assert.doesNotMatch(INSTRUCTIONS, /fai_browser_run|Jev/);
+  // Since #30 a level or an origin is asked on the same request, never with a new one.
+  assert.doesNotMatch(INSTRUCTIONS, /approve the new FAI Browser request/);
 });
 
 // This is a deterministic client-history simulation through real MCP/daemon calls. It proves that
