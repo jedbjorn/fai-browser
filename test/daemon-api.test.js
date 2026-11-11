@@ -315,9 +315,10 @@ test('an origin_changed pause that names the origin: the request view and needs.
   assert.equal(ctx.daemon.request(requestId).leftOrigin, 'https://login.example.org');
   const blocked = await ctx.api('POST', '/v1/act', { requestId, actionId: 'a0' });
   assert.equal(blocked.body.result.code, 'origin_changed');
-  assert.match(blocked.body.result.needs.message, /^The tab lease is paused\./);
-  // The origin is page-chosen: in leftOrigin (untrusted), never in the trusted needs.message.
-  assert.match(blocked.body.result.needs.message, /The tab went to an origin this request does not list \(leftOrigin/);
+  assert.match(blocked.body.result.needs.message, /^Paused: the tab left the approved sites\./);
+  // The origin is page-chosen: in leftOrigin (untrusted), never in the trusted needs.message, which names the remedy:
+  // the same request asks for it (issue #30).
+  assert.match(blocked.body.result.needs.message, /It went to leftOrigin \(page-chosen.*fai_browser_open with this requestId/);
   assert.doesNotMatch(blocked.body.result.needs.message, /login\.example\.org/);
   assert.equal(blocked.body.result.leftOrigin, 'https://login.example.org');
 });

@@ -1578,6 +1578,7 @@ export class FaiBrowserClient {
   requestTab(body: TabRequestBody): Promise<TabRequestResponse>;
   listRequests(): Promise<{ requests: RequestView[] }>;
   getRequest(requestId: string): Promise<RequestView>;
+  ask(requestId: string, body: { mode?: Level; origins?: string[] }): Promise<{ requestId: string; state: RequestState; asked: boolean; request: unknown }>;
   release(requestId: string, reason?: string): Promise<{ requestId: string; state: RequestState }>;
   wait(body: { requestId: string; maxMs?: number; while?: RequestState[] }, options?: ClientCallOptions):
     Promise<RequestWaitResponse>;

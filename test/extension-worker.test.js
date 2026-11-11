@@ -41,7 +41,7 @@ test.afterEach(() => {
 function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode = 'daemon', leaseOrigins = null, permissions,
   hostGrants, local: extraLocal = {}, leaseError = null, opened = null, sessionStore = {}, daemonBudget = null,
   native = null, actionOpenPopup = null, lastWindow = undefined, normalWindows = [], tabCreateFails = false,
-  daemonVersion = '0.2.0', daemonUpdate = null, manifest = {} } = {}) {
+  daemonVersion = '0.2.0', daemonUpdate = null, manifest = {}, leaseIdFor = null } = {}) {
   const reloads = []; // chrome.runtime.reload() calls (an update's reload of the unpacked extension)
   const nativeCalls = []; // chrome.runtime.sendNativeMessage(host, message) calls
   const events = name => ({
@@ -193,7 +193,8 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     if (message.type === 'lease') {
       if (leaseError) return { ok: false, error: { code: leaseError, message: 'Refused' } };
       const origins = typeof leaseOrigins === 'function' ? leaseOrigins(message) : leaseOrigins;
-      return { ok: true, data: { leaseId: LEASE_ID, requestId: message.requestId, grant: { tabMode: message.tabMode ?? 'single' }, ...(origins ? { origins } : {}) } };
+      const leaseId = typeof leaseIdFor === 'function' ? leaseIdFor(message) : LEASE_ID;
+      return { ok: true, data: { leaseId, requestId: message.requestId, grant: { tabMode: message.tabMode ?? 'single' }, ...(origins ? { origins } : {}) } };
     }
     if (message.type === 'validate') return { ok: true, data: { valid: true } };
     if (message.type === 'invite') {
@@ -229,7 +230,8 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       const message = JSON.parse(text);
       sent.push({ via: 'ws', ...message });
       if (message.ref !== undefined) {
-        setTimeout(() => this.deliver({ v: 3, type: 'reply', ref: message.ref, ...answer(message) }), 1);
+        // state.replyDelay: {type: ms}, a slow answer of the fake daemon to that message type.
+        setTimeout(() => this.deliver({ v: 3, type: 'reply', ref: message.ref, ...answer(message) }), state.replyDelay?.[message.type] ?? 1);
       }
     }
 
@@ -386,8 +388,8 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       },
       async get(id) {
         const groupId = groupOf.get(id) ?? -1;
-        if (openedTabs.has(id)) return { id, windowId: 2, groupId, ...openedTabs.get(id) };
-        return { id, url: tab.url, status: tab.status, windowId: 1, groupId };
+        if (openedTabs.has(id)) return { id, windowId: 2, groupId, active: id === activeTabId, ...openedTabs.get(id) };
+        return { id, url: tab.url, status: tab.status, windowId: 1, groupId, active: id === activeTabId };
       },
       async remove(id) { openedTabs.delete(id); },
       async update(id, info) {
@@ -4024,3 +4026,168 @@ test('invite: the worker binds only the tab and origin the popup showed', async 
   assert.ok(!h.sent.some(message => message.type === 'invite'), 'nothing was bound');
 });
 
+
+// --- issues #30 and #31: tabs, asks and truthful states ---------------------------------------------------------------
+
+test('#31: a command for a lease the worker does not hold is session_inactive, never the old session\'s "stopped"', async () => {
+  let next = 0;
+  const h = await started({ leaseIdFor: () => (next++ === 0 ? LEASE_ID : 'lease-2') });
+  // The daemon superseded the first lease (another approval in this browser): that session is stopped locally.
+  h.push({ type: 'lease_update', requestId: 'req_1', leaseId: LEASE_ID, state: 'released', reason: 'superseded' });
+  await h.until(() => h.local.status === 'stopped');
+  const stray = h.command('observe', {}, { lease: { id: 'lease-2', tabId: 7, requestId: 'req_2' } });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === stray)).error.code, 'session_inactive');
+  // While the second approval is still binding (its lease reply on the way), the new lease's first command waits for
+  // it instead of failing on the session it replaces.
+  h.state.replyDelay = { lease: 300 };
+  const starting = h.send({ type: 'start', requestId: 'req_2', endpoint: ENDPOINT, secret: SECRET });
+  await h.waitFor(m => m.type === 'lease' && m.requestId === 'req_2');
+  const early = h.command('observe', {}, { lease: { id: 'lease-2', tabId: 7, requestId: 'req_2' } });
+  const result = await h.waitFor(m => m.type === 'result' && m.id === early);
+  assert.equal(result.error, undefined, JSON.stringify(result.error));
+  assert.equal(result.result.revision, 'doc:1');
+  assert.equal((await starting).status, 'active');
+});
+
+test('#31: an approval whose last check fails is given back as not_approved, never as the user\'s stop', async () => {
+  const h = harness({ permissions: { testingOrigins: [ORIGIN] }, leaseOrigins: [ORIGIN, 'https://prod.example.com'] });
+  await h.waitFor(m => m.type === 'hello');
+  await withRequest(h, [ORIGIN]);
+  const reply = await h.send({ type: 'start', requestId: 'req_1', endpoint: ENDPOINT, secret: SECRET, level: 'testing' });
+  assert.match(reply.error, /Testing environments/);
+  const status = await h.waitFor(m => m.type === 'status');
+  assert.deepEqual({ status: status.status, reason: status.reason }, { status: 'stopped', reason: 'not_approved' });
+});
+
+test('#30: with Multiple task tabs a child in front joins and takes the commands; one opened behind joins but stays listed', async () => {
+  const h = await multipleTask();
+  h.openedTabs.set(90, { url: `${ORIGIN}/child`, status: 'complete', active: true, windowId: 1 });
+  h.chrome.tabs.onCreated.emit({ id: 90, openerTabId: 7, url: `${ORIGIN}/child`, windowId: 1 });
+  h.setActiveTab(90);
+  h.chrome.tabs.onActivated.emit({ tabId: 90, windowId: 1 });
+  await h.until(() => h.groupOf.get(90) === h.groupOf.get(7));
+  const id = h.command('observe', {}, { lease: multiLease });
+  const result = await h.waitFor(m => m.type === 'result' && m.id === id);
+  assert.equal(result.error, undefined, JSON.stringify(result.error));
+  assert.deepEqual(result.result.tabs.map(tab => [tab.id, tab.current === true]), [['t0', false], ['t1', true]]);
+  assert.equal(h.sent.some(m => m.type === 'status'), false, 'no pause: the child joined');
+  // A child the page opened behind the working tab joins the request but does not take the commands (the next
+  // command would otherwise find its tab not in front: tab_changed).
+  h.openedTabs.set(91, { url: `${ORIGIN}/later`, status: 'complete', active: false, windowId: 1 });
+  h.chrome.tabs.onCreated.emit({ id: 91, openerTabId: 90, url: `${ORIGIN}/later`, windowId: 1 });
+  await h.until(() => h.groupOf.has(91));
+  const again = h.command('observe', {}, { lease: multiLease });
+  const second = await h.waitFor(m => m.type === 'result' && m.id === again);
+  assert.equal(second.error, undefined, JSON.stringify(second.error));
+  assert.deepEqual(second.result.tabs.map(tab => [tab.id, tab.current === true]), [['t0', false], ['t1', true], ['t2', false]]);
+  assert.equal(h.sent.some(m => m.type === 'status'), false);
+});
+
+test('#30: a new tab whose opener the browser names only when it comes to the front is a child, not a tab switch', async () => {
+  const h = await started();
+  // Created without an opener (Chromium for some tabs), then in front with the request's tab as its opener.
+  h.openedTabs.set(95, { url: 'https://signup.example.net/x', status: 'complete', openerTabId: 7, active: true, windowId: 1 });
+  h.chrome.tabs.onCreated.emit({ id: 95, url: 'https://signup.example.net/x', windowId: 1 });
+  h.setActiveTab(95);
+  h.chrome.tabs.onActivated.emit({ tabId: 95, windowId: 1 });
+  const status = await h.waitFor(m => m.type === 'status');
+  assert.deepEqual({ status: status.status, reason: status.reason, origin: status.origin },
+    { status: 'paused', reason: 'child_tab', origin: 'https://signup.example.net' });
+  // A personal tab the user brings forward is still a tab switch.
+  const other = await started();
+  other.openedTabs.set(96, { url: 'https://mail.example.org/', status: 'complete', windowId: 1 });
+  other.setActiveTab(96);
+  other.chrome.tabs.onActivated.emit({ tabId: 96, windowId: 1 });
+  const switched = await other.waitFor(m => m.type === 'status');
+  assert.equal(switched.reason, 'tab_changed');
+});
+
+// Re-review item 3: a pending request replaced by its successor (the agent asked for more while it waited) closes the
+// task tab FAI opened for it, so only the successor's page waits for the user; a request that ends otherwise keeps it.
+test('#30: the task tab FAI opened for a request its successor replaced closes; one for a denied request stays', async () => {
+  const h = harness();
+  await h.waitFor(m => m.type === 'hello');
+  const first = { requestId: 'req_1', state: 'pending', origins: [ORIGIN], url: `${ORIGIN}/start`, mode: 'read-only' };
+  h.push({ type: 'requests', requests: [first] });
+  await h.until(() => h.tabsCreated.length === 1, 3000);
+  const firstTab = 8 + h.tabsCreated.length;
+  assert.ok(h.openedTabs.has(firstTab));
+  h.push({ type: 'requests', requests: [{ ...first, requestId: 'req_2', replaces: 'req_1', origins: [ORIGIN, 'https://partner.example.org'] }] });
+  await h.until(() => !h.openedTabs.has(firstTab), 3000);
+  await h.until(() => h.tabsCreated.length === 2, 3000);
+  // Denied (no successor names it): the tab stays, only disarmed.
+  const secondTab = 8 + h.tabsCreated.length;
+  h.push({ type: 'requests', requests: [] });
+  await sleep(200);
+  assert.ok(h.openedTabs.has(secondTab), 'a request that just ended keeps its tab');
+});
+
+// Review item 3: "existing personal tabs are never adopted". A tab the user opened from the task page before the
+// request existed has that page as its opener, but was never created in this session: bringing it forward is a tab
+// switch (paused), never a child that joins, also with Multiple task tabs.
+test('#30: a personal tab opened from the task page before the session is never adopted, also with Multiple task tabs', async () => {
+  const h = await multipleTask();
+  h.openedTabs.set(97, { url: `${ORIGIN}/mine`, status: 'complete', openerTabId: 7, active: true, windowId: 1 });
+  h.setActiveTab(97);
+  h.chrome.tabs.onActivated.emit({ tabId: 97, windowId: 1 });
+  const status = await h.waitFor(m => m.type === 'status');
+  assert.deepEqual({ status: status.status, reason: status.reason }, { status: 'paused', reason: 'tab_changed' });
+  assert.equal(h.groupOf.has(97), false, 'not grouped with the task');
+  const view = await h.send({ type: 'connect' });
+  assert.equal(view.session.tabId, 7, 'the commands never moved to it');
+});
+
+// Review item 11: the session's origin is the one checked for the child, never "null" from a tab still on about:blank.
+test('#30: a child that joins in front keeps the origin that was checked while its tab still reads about:blank', async () => {
+  const h = await multipleTask();
+  h.openedTabs.set(98, { url: 'about:blank', status: 'loading', active: true, windowId: 1 });
+  h.chrome.tabs.onCreated.emit({ id: 98, openerTabId: 7, pendingUrl: `${ORIGIN}/child`, windowId: 1 });
+  h.setActiveTab(98);
+  await h.until(() => h.groupOf.get(98) === h.groupOf.get(7));
+  await sleep(50);
+  const view = await h.send({ type: 'connect' });
+  assert.equal(view.session.tabId, 98);
+  assert.equal(view.session.origin, ORIGIN);
+});
+
+test('#30: another request\'s page opens behind the tab a live request works on, so that request keeps working', async () => {
+  // The leased tab is in front in window 1, the window the new page opens in.
+  const h = await started({ lastWindow: { id: 1, type: 'normal', incognito: false, left: 0, top: 0, width: 1200, height: 800 } });
+  h.push({ type: 'requests', requests: [{ requestId: 'req_9', state: 'pending', origins: ['https://other.example.org'],
+    url: 'https://other.example.org/', mode: 'read-only' }] });
+  await h.until(() => h.tabsCreated.length === 1, 3000);
+  assert.equal(h.tabsCreated[0].active, false, 'opened behind the working tab');
+  const id = h.command('observe');
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === id)).error, undefined);
+  assert.equal(h.sent.some(m => m.type === 'status'), false);
+});
+
+test('#30: an approved ask updates the session in place: same lease, tabs and page; site access for the added origin', async () => {
+  const PARTNER = 'https://partner.example.org';
+  const h = await started({ hostGrants: [`${ORIGIN}/*`], local: { tabMode: 'multiple' }, tabMode: 'multiple',
+    leaseOrigins: message => (message.ask ? [ORIGIN, PARTNER] : [ORIGIN]) });
+  h.push({ type: 'requests', requests: [{ requestId: 'req_1', state: 'active', origins: [ORIGIN], mode: 'read-only',
+    ask: { level: 'reversible', origins: [PARTNER], at: new Date().toISOString() } }] });
+  await h.until(() => h.session.requests?.[0]?.ask);
+  assert.equal(h.badge, '?', 'an ask waits for the user like a request');
+  h.grants.add(`${PARTNER}/*`);
+  const reply = await h.send({ type: 'start', requestId: 'req_1', level: 'reversible', ask: true, askId: 'a1b2c3', tabMode: 'multiple', onSessionTab: true });
+  assert.equal(reply.error, undefined, JSON.stringify(reply));
+  const lease = h.sent.filter(m => m.type === 'lease').at(-1);
+  // The card's ask id goes with the approval: the daemon applies exactly that ask.
+  assert.deepEqual({ ask: lease.ask, askId: lease.askId, tabId: lease.tabId, level: lease.level, tabMode: lease.tabMode },
+    { ask: true, askId: 'a1b2c3', tabId: 7, level: 'reversible', tabMode: 'multiple' });
+  assert.deepEqual({ level: reply.session.level, tabMode: reply.session.tabMode, leaseId: reply.session.leaseId },
+    { level: 'reversible', tabMode: 'multiple', leaseId: LEASE_ID });
+  // The added origin is reachable now: a navigation there is allowed, and the observation names it for the runtime.
+  const id = h.command('observe', {}, { lease: multiLease, allowedOrigins: [ORIGIN, PARTNER] });
+  const result = await h.waitFor(m => m.type === 'result' && m.id === id);
+  assert.deepEqual(result.result.reachable, [PARTNER]);
+  assert.deepEqual(h.secretCalls.at(-1).context.origins, [PARTNER], 'page.js may follow a link there');
+  const go = h.command('execute', { action: { type: 'navigate_allowed_url', url: `${PARTNER}/page` }, expectedRevision: 'doc:1' },
+    { lease: multiLease, allowedOrigins: [ORIGIN, PARTNER] });
+  assert.notEqual((await h.waitFor(m => m.type === 'result' && m.id === go)).error?.code, 'cross_origin');
+  // Declining sends the ask flag with the deny.
+  await h.send({ type: 'deny', requestId: 'req_1', ask: true });
+  assert.equal(h.sent.filter(m => m.type === 'deny').at(-1).ask, true);
+});

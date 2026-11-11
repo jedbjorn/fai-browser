@@ -189,7 +189,7 @@ test('act pending: approval_pending, next.kind approve with the label and the sa
   assert.equal(lean.next.kind, 'approve');
   assert.match(lean.next.text, /approve 'Yes' \(page text\) in the FAI Browser window/);
   assert.match(lean.next.text, new RegExp(`actionId ${yes.id} and revision "${observed.observation.revision}"`));
-  assert.match(lean.next.text, /Or ask for full: tell the user "approve the new FAI Browser request at Act; it is preselected"/);
+  assert.match(lean.next.text, /Or ask for full: tell the user "approve Act for this task in FAI Browser; it is preselected", then fai_browser_open with the requestId/);
   assert.equal(lean.needs.approval.class, 'delete');
   // The user approves meanwhile: the same act again runs it.
   answer = { decision: 'approved', approvalId: 'id-2' };

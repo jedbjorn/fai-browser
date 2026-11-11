@@ -175,7 +175,7 @@ test('child_tab: the pause names the child\'s origin in childOrigin (untrusted),
   const result = blocked.body.result;
   assert.equal(result.code, 'child_tab');
   assert.equal(result.childOrigin, 'https://signup.example.org');
-  assert.match(result.needs.message, /The page opened a tab or window on another page \(childOrigin; page-chosen/);
+  assert.match(result.needs.message, /^Paused: the page opened a tab or window.*It opened childOrigin \(page-chosen/);
   assert.doesNotMatch(result.needs.message, /signup\.example\.org/);
   // A pause that named it at once.
   const second = await request(ctx);

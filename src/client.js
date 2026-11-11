@@ -314,6 +314,14 @@ export class FaiBrowserClient {
     return this.request('GET', `/v1/requests/${encodeURIComponent(requestId)}`);
   }
 
+  /**
+   * Ask for more on a request (a higher `mode`, more `origins`): an approved one keeps its id, tab and page and waits
+   * for the user's Approve of the ask (`asked: true`); a pending one simply asks for it all.
+   */
+  ask(requestId, body) {
+    return this.request('POST', `/v1/requests/${encodeURIComponent(requestId)}/ask`, body);
+  }
+
   release(requestId, reason) {
     return this.request('DELETE', `/v1/requests/${encodeURIComponent(requestId)}`, reason ? { reason } : {});
   }
