@@ -3010,7 +3010,8 @@ export class BrowserRuntime {
         setOutcome(result, 'cross_origin');
         // Listed by the request but not reachable: the browser gives FAI Browser no access to that site yet.
         const listed = Array.isArray(config.allowedOrigins) && config.allowedOrigins.includes(target.origin);
-        if (unseen) {
+        // A site the request lists is the user's choice, not a guess: its text is about site access.
+        if (unseen && !listed) {
           result.needs.message = URL_UNSEEN_CROSS_TEXT;
           session.why('url:unseen');
         } else {
