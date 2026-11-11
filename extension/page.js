@@ -1823,7 +1823,7 @@
     return text.slice(0, low);
   }
 
-  function seenReadings(el) {
+  function seenReadings(el, ownGenerated = true) {
     const doc = el.ownerDocument;
     const view = doc.defaultView;
     if (!view) return [];
@@ -1883,9 +1883,10 @@
     const rootOpacity = Number(own.opacity);
     background = blendsIn(own.color, backgroundOf(el)) ? null : undefined;
     if (rootOpacity < FAINT_OPACITY || parseFloat(own.fontSize) < TINY_FONT_PX || background === null) return [];
-    pseudo(el, '::before');
+    // The control's own generated content was read already (generatedText): re-read in place only when there is some.
+    if (ownGenerated) pseudo(el, '::before');
     walk(el, false, rootOpacity, long || hiding(own));
-    pseudo(el, '::after');
+    if (ownGenerated) pseudo(el, '::after');
     // Two readings: the text as styled (what a style hides is left out), and, where a part can hide text by layout,
     // only what lies inside the boxes that clip it. Both are judged: the first does not depend on where the layout put
     // the words, the second drops a suffix clipped away.
@@ -1937,8 +1938,11 @@
     };
     for (const [index, name] of names.entries()) if (index !== TITLE_NAME) judge(name);
     if (worst) return worst;
-    if (cleanText(el.textContent).length > 2000) return null;
-    const readings = seenReadings(el);
+    const text = cleanText(el.textContent);
+    if (text.length > 2000) return null;
+    // A link of plain short text (no parts, no generated content) reads as its text, which the names judged already.
+    const plain = !el.firstElementChild && !el.shadowRoot && !names[8] && text.split(' ').length <= MAX_GATED_LINK_WORDS;
+    const readings = plain ? [text] : seenReadings(el, Boolean(names[8]));
     for (const reading of readings) judge(reading);
     if (!worst && !readings.some(reading => reading.trim())) {
       judge(names[TITLE_NAME]);
@@ -1988,8 +1992,10 @@
       }
       // What is seen when the names say nothing: generated content on the control's parts, text a CSS bidi override
       // reverses (only for a control with content).
-      if (!worst && !['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) && cleanText(el.textContent).length <= 2000) {
-        for (const reading of seenReadings(el)) worst = severer(worst, labelClass(reading));
+      // A control of plain text (no parts, no generated content of its own) adds nothing: its names hold its text.
+      if (!worst && !['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) && (el.firstElementChild || el.shadowRoot || names[8])
+        && cleanText(el.textContent).length <= 2000) {
+        for (const reading of seenReadings(el, Boolean(names[8]))) worst = severer(worst, labelClass(reading));
       }
     } else if (role === 'link' && el.tagName === 'A') {
       // A real link is navigation unless one of its names (or its destination) makes it an action, as the runtime's
