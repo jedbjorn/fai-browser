@@ -634,14 +634,14 @@ function oneLine(value, limit = SUMMARY_LINE_LIMIT) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, limit);
 }
 
+// A digest line: one block, which a digest asking for more shows whole (src/digest.js, up to 1500 characters plus
+// its cut mark). A longer line is cut here and marked like a cut block.
+const DIGEST_LINE_LIMIT = 1600;
 function digestLine(block) {
-  if (typeof block === 'string') {
-    return oneLine(block);
-  }
-  if (block && typeof block === 'object') {
-    return oneLine(block.text ?? block.content ?? JSON.stringify(block));
-  }
-  return '';
+  const text = typeof block === 'string' ? block
+    : block && typeof block === 'object' ? String(block.text ?? block.content ?? JSON.stringify(block)) : '';
+  const line = oneLine(text, Infinity);
+  return line.length > DIGEST_LINE_LIMIT ? `${line.slice(0, DIGEST_LINE_LIMIT - 1)}…` : line;
 }
 
 // The untrusted lines for a result's lease tabs, JavaScript dialog and Test-site logs (src/result.js pageExtras).
@@ -687,6 +687,7 @@ function directState(result) {
       needsApproval: action.needsApproval,
     })) : null,
     moreActions: result?.moreActions,
+    moreOtherSites: result?.moreOtherSites,
   };
 }
 
@@ -741,6 +742,13 @@ function actionIdRange(actions, start, length) {
   return length > 1 ? `a${ids[0]}-a${ids.at(-1)}` : `a${ids[0]}`;
 }
 
+// The count of unlisted actions; links to other sites among them are named, so the host knows to ask with a focus.
+function moreLine(current) {
+  const sites = Number.isInteger(current.moreOtherSites) && current.moreOtherSites > 0
+    ? `, ${current.moreOtherSites} of them links to other sites` : '';
+  return `(${current.moreActions} more not listed${sites}; these are the most relevant)`;
+}
+
 function actionLine(action) {
   return `${action.id}  ${action.description}${action.needsApproval ? ` [${action.needsApproval}]` : ''}`;
 }
@@ -750,7 +758,7 @@ function fullActionLines(current, revision) {
   if (current.actions?.length) {
     lines.push(`actions (revision ${revision}):`, ...current.actions.map(actionLine));
   }
-  if (current.moreActions) lines.push(`(${current.moreActions} more not listed; these are the most relevant)`);
+  if (current.moreActions) lines.push(moreLine(current));
   return lines;
 }
 
@@ -764,7 +772,7 @@ function actionDeltaLines(current, previous, revision) {
   if (!previous.actions || !current.actions) return full;
   if (sameActions(current.actions, previous.actions)) {
     const lines = [`actions: unchanged from revision ${revision}`];
-    if (current.moreActions) lines.push(`(${current.moreActions} more not listed; these are the most relevant)`);
+    if (current.moreActions) lines.push(moreLine(current));
     return lines;
   }
   if (!current.actions.length) {
@@ -795,7 +803,7 @@ function actionDeltaLines(current, previous, revision) {
       }
     }
   }
-  if (current.moreActions) delta.push(`(${current.moreActions} more not listed; these are the most relevant)`);
+  if (current.moreActions) delta.push(moreLine(current));
   return delta.join('\n').length < full.join('\n').length ? delta : full;
 }
 

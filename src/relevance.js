@@ -4,6 +4,7 @@
 // (instruction, answerQuestion, expectation). Scores use labels and URL paths of offered actions, never page text.
 
 import { instructionTerms, namedHops } from './oversight.js';
+import { otherSiteView } from './other-site.js';
 
 /** Default number of options kept when the option cap is on. */
 export const DEFAULT_OPTION_CAP = 40;
@@ -13,6 +14,9 @@ export const DEFAULT_OPTION_CAP = 40;
  * come on top): links at read-only and reversible, buttons, selects and fills from interactive up.
  */
 export const OFFER_CAPS = Object.freeze({ 'read-only': 40, reversible: 40, interactive: 80, full: 80, testing: 80 });
+
+/** Links to other sites a listing shows when neither the task nor a focus names any (capOffer). */
+export const OTHER_SITE_LISTED = 5;
 
 /** The observe listing cap for a level (40 for an unknown level). */
 export function offerCap(level) {
@@ -29,6 +33,15 @@ function pathWords(url) {
   try {
     const parsed = new URL(url);
     return lower(decodeURIComponent(`${parsed.pathname}${parsed.search}${parsed.hash}`).replace(/[-_/.?=&#+]+/g, ' '));
+  } catch {
+    return '';
+  }
+}
+
+/** The lower-cased host of a URL, its labels split into words ("widget company example"), or ''. */
+function hostWords(url) {
+  try {
+    return lower(new URL(url).hostname.replace(/[-.]+/g, ' '));
   } catch {
     return '';
   }
@@ -114,7 +127,8 @@ function formControl(action) {
 export function relevanceScore(action, hints) {
   if (!hints) return 0;
   const label = lower(`${action.label ?? ''} ${action.optionLabel ?? ''}`);
-  const path = pathWords(actionUrl(action));
+  // A link to another site is also found by its host ("widget-company" for a footer link labelled "Built by us").
+  const path = `${pathWords(actionUrl(action))}${action.type === 'other_site' ? ` ${hostWords(actionUrl(action))}` : ''}`;
   let score = matchesExpectation(action, hints) ? 3 : 0;
   // A supplied value's name ("email") the instruction mentions makes its fill relevant.
   const supplied = lower(action.suppliedName).replace(/[-_.]+/g, ' ');
@@ -177,12 +191,32 @@ export function capActions(actions, cap, hints, pinned = null) {
 
 /**
  * The offer cap for one observe listing: at most offerCap(level) control actions plus every essential action (scroll,
- * wait, explicit URLs, fills of supplied values) and every action `pinned` names (observe pins the consent dialog's
+ * wait, explicit URLs, fills of supplied values), up to OTHER_SITE_LISTED links to other sites, and every action `pinned` names (observe pins the consent dialog's
  * buttons), chosen by capActions. Returns `{ actions, dropped, cap }` with `actions` in the input order and their ids
  * unchanged.
  */
 export function capOffer(actions, level, hints, pinned = null) {
   const cap = offerCap(level);
-  const extra = actions.filter(action => (essentialAction(action) || Boolean(pinned?.(action)))).length;
-  return { ...capActions(actions, cap + extra, hints, pinned), cap };
+  // Links to other sites (src/runtime.js other_site: listed with their destination, never clicked): a footer of social
+  // links must not crowd the listing. The rest count as dropped (moreActions) and a focus brings them in.
+  // At most OTHER_SITE_LISTED of them, one per origin (the line says how many more go to it), the most relevant first
+  // (a generic focus word that every one of them holds does not list them all), then in page order.
+  // Among equals, a link whose line can show its whole address represents its origin.
+  const others = actions.map((action, index) => ({ action, index, score: relevanceScore(action, hints) }))
+    .filter(({ action }) => action.type === 'other_site' && !pinned?.(action))
+    .map(entry => ({ ...entry, exact: otherSiteView(entry.action.href)?.exact === true }))
+    .sort((a, b) => b.score - a.score || Number(b.exact) - Number(a.exact) || a.index - b.index);
+  const origins = new Set();
+  const parked = new Set();
+  for (const { action } of others) {
+    const origin = action.origin ?? '';
+    if (origins.has(origin) || origins.size >= OTHER_SITE_LISTED) parked.add(action);
+    else origins.add(origin);
+  }
+  // The ones kept are listed on top of the cap, like the essential actions: a long page's footer link stays visible.
+  const keep = action => Boolean(pinned?.(action)) || (action.type === 'other_site' && !parked.has(action));
+  const pool = parked.size ? actions.filter(action => !parked.has(action)) : actions;
+  const extra = pool.filter(action => (essentialAction(action) || keep(action))).length;
+  const capped = capActions(pool, cap + extra, hints, keep);
+  return { actions: capped.actions, dropped: capped.dropped + parked.size, cap };
 }

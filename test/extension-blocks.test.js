@@ -41,9 +41,10 @@ function assertShape(observation) {
   for (const block of observation.blocks) {
     assert.ok(TYPES.has(block.t), `unknown block type ${block.t}`);
     assert.equal(typeof block.text, 'string');
-    assert.ok(block.text.length > 0 && block.text.length <= 300);
+    assert.ok(block.text.length > 0 && block.text.length <= 1500);
     assert.equal(block.text, block.text.trim());
-    for (const key of Object.keys(block)) assert.ok(['t', 'text', 'ref', 'offscreen'].includes(key), key);
+    for (const key of Object.keys(block)) assert.ok(['t', 'text', 'ref', 'offscreen', 'cut'].includes(key), key);
+    if ('cut' in block) assert.equal(block.cut, true);
     if ('ref' in block) assert.ok(observation.controls.some(c => c.id === block.ref), `ref ${block.ref} is offered`);
     if ('offscreen' in block) assert.equal(block.offscreen, true);
   }
@@ -167,15 +168,17 @@ test('text joining: table cells, inline elements, line breaks and nested contain
   ]);
 });
 
-test('caps: at most 200 blocks with blocksTruncated, and 300 characters per block', async t => {
+test('caps: at most 200 blocks with blocksTruncated, and 1500 characters per block, a longer one marked cut', async t => {
   const paragraphs = Array.from({ length: 250 }, (_, i) => `<p>Paragraph ${i}</p>`).join('');
-  const page = await load(t, doc(`<p>${'word '.repeat(200)}</p>${paragraphs}`));
+  const page = await load(t, doc(`<p>${'word '.repeat(400)}</p>${paragraphs}`));
   const observation = await observe(page);
   assertShape(observation);
   assert.equal(observation.blocks.length, 200);
   assert.equal(observation.blocksTruncated, true);
-  assert.equal(observation.blocks[0].text.length, 300 - 1, 'cut at 300 characters, then trimmed');
+  assert.equal(observation.blocks[0].text.length, 1500 - 1, 'cut at 1500 characters, then trimmed');
   assert.ok(observation.blocks[0].text.startsWith('word word'));
+  assert.equal(observation.blocks[0].cut, true, 'a block cut by the page script says so');
+  assert.equal(observation.blocks[1].cut, undefined);
   // Document order within each group.
   const numbers = observation.blocks.slice(1).map(b => Number(b.text.split(' ')[1]));
   assert.deepEqual(numbers, [...numbers].sort((a, b) => a - b));

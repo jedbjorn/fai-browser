@@ -7,6 +7,17 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 
 ## Unreleased
 
+### Fixed
+
+- **Links a person sees are offered and named by their text** (#32). Text a web component renders inside its link (light-DOM text slotted into a shadow-root `<a>`, slot fallback text, text in a nested component's shadow root) names the link instead of `unlabelled link 1 of 2`, read like `innerText` so a component is never named more leniently than the same visible content in the light DOM (`Del<b>ete</b>` is `Delete`); pages with hundreds of shadow roots or deep component nesting no longer hide links (up to 1000 roots, 10 deep, was 64 and 4); a point on a component link's slotted text lands on the link in Chromium too.
+- **`focus` finds links.** An observe's `focus` also ranks the listing and the page script's control order (the phrase first, controls holding the most terms first), or a link's host or path, so a link it names is listed even past the page script's 100-control cap; links that cap left out count in `moreActions`.
+- **Long blocks are readable and marked when cut.** The page script reads a block's text up to 1500 characters (was 300): a `focus` shows the blocks holding its words whole, a `digestChars` above 1500 shows every long block whole, and any block shown shorter than the page has it ends in `…` (a banner used to end mid-word with no mark).
+- **A point on a plain link works at `read-only`**, exactly as its action id would; a point on a button, a field, a script link, a `javascript:` or `data:` link or a purchase, sign-in or delete control is refused as its action id would be. A point on span-wrapped text slotted into a component's link lands on the link.
+
+### Added
+
+- **Links to other sites are listed with their destination**: `link to <origin><path> (other site): "<label>"` (origin and path only, redacted like other page text; a long or token-bearing path is not shown), never clicked at any level, so the agent can request that origin with the link's own address in `allowedUrls` instead of guessing one. Acting on it returns `cross_origin` with its own `next`: request that origin with `fai_browser_open` and tell the user an approval is coming. At most 5 are listed, one per origin, on top of the control cap, and 5 off-screen ones keep a place under the page script's cap; the `moreActions` line says how many unlisted links go to other sites.
+
 ### Changed
 
 - **More on the same request** (#30). An agent that needs a higher level or another origin asks on the request it holds: `fai_browser_open` with its `requestId` and a higher `mode` (as `needs.level` says) or the extra origin in `origins` no longer opens a new request, a new tab at the start URL and a single-tab grant. The ask (`POST /v1/requests/:id/ask`, `ask` in the request view, `wait {ask: true}`) shows as an **AGENT ASKS FOR MORE** card in the popup and approval window ("Same task and tab: add … · allow …", **Approve on the FAI tab**, **Decline**); Approve asks the browser for site access to the added origins inside the click and re-approves the same lease in place (same lease id, tabs, page and tab mode) or resumes a paused request on the same id. Nothing is granted before the click. An open the user did not answer returns `ask_pending`; a declined ask `ask_declined`. `cross_origin`, `origin_changed` and `child_tab` results name this remedy, also for invited tabs.
