@@ -1855,6 +1855,81 @@
   // phrases): only text holding one can become an action name by hiding some of it, so only such text is hit-tested.
   const ACTION_WORD = /(?:^|[^\p{L}\p{N}])(?:delete|remove|erase|purchase|buy|pay|payment|place|order|checkout|check|proceed|confirm|submit|send|save|publish|invite|unsubscribe|subscribe|subscription|cancel|close|deactivate|sign|signout|log|login|logout|book|reserve|transfer|bid|renew|upgrade|pre-?order|trial|donate|donation|withdraw|apply|out|account|now)(?![\p{L}\p{N}])/iu;
 
+  // The elements of the top document that can carry generated text: a selector list of the style rules that give a
+  // ::before or ::after a non-empty `content`, read once per observation; '*' when a style sheet cannot be read (another
+  // origin), null when no rule does. An element in a shadow root or a frame is always read.
+  const PSEUDO_PART = /::?(?:before|after)\b/i;
+  function pseudoSelector() {
+    if (flatCache && flatCache.pseudo !== undefined) return flatCache.pseudo;
+    const parts = new Set();
+    let all = false;
+    const visit = rules => {
+      for (const rule of rules) {
+        if (all) return;
+        if (rule.cssRules && !rule.selectorText) {
+          visit(rule.cssRules);
+          continue;
+        }
+        if (!rule.selectorText || !PSEUDO_PART.test(rule.selectorText)) continue;
+        const content = rule.style?.content;
+        if (!content || /^(?:none|normal|""|''|initial|inherit|unset)$/.test(content.trim())) continue;
+        for (const selector of rule.selectorText.split(',')) {
+          if (!PSEUDO_PART.test(selector)) continue;
+          const base = selector.replace(/::?(?:before|after)\b/gi, '').trim() || '*';
+          try {
+            document.createDocumentFragment().querySelector(base);
+            parts.add(base);
+          } catch {
+            all = true;
+          }
+        }
+      }
+    };
+    for (const sheet of [...Array.from(document.styleSheets), ...(document.adoptedStyleSheets ?? [])]) {
+      try {
+        visit(sheet.cssRules);
+      } catch {
+        all = true;
+      }
+      if (all) break;
+    }
+    const value = all ? '*' : parts.size ? Array.from(parts).join(',') : null;
+    if (flatCache) flatCache.pseudo = value;
+    return value;
+  }
+  function mayGenerate(node) {
+    if (node.ownerDocument !== document || node.getRootNode() !== document) return true;
+    const selector = pseudoSelector();
+    if (!selector) return false;
+    if (selector === '*') return true;
+    try {
+      return node.matches(selector);
+    } catch {
+      return true;
+    }
+  }
+
+  // Whether what is seen can name an action the names do not: some text of the control holds an action word (as
+  // rendered, as stored, reversed, or with bidirectional overrides read), its tooltip does, it has generated content of
+  // its own or a part that may generate some, or it renders text from a shadow root. Otherwise its readings are its text.
+  function seenMayAct(el, names) {
+    if (names[8] || el.shadowRoot || hasFlatParts(el)) return true;
+    for (const text of [names[2], names[3], el.getAttribute('title'), describedByText(el)]) {
+      if (typeof text !== 'string' || !text.trim()) continue;
+      if (ACTION_WORD.test(text) || ACTION_WORD.test(Array.from(text).reverse().join(''))) return true;
+      const bidi = bidiReading(text);
+      if (bidi !== null && ACTION_WORD.test(bidi)) return true;
+    }
+    const selector = pseudoSelector();
+    if (!selector) return false;
+    if (selector === '*') return true;
+    try {
+      return el.matches(selector) || Boolean(el.querySelector(selector));
+    } catch {
+      return true;
+    }
+  }
+
   function seenReadings(el, ownGenerated = true) {
     const doc = el.ownerDocument;
     const view = doc.defaultView;
@@ -1870,6 +1945,7 @@
     // Long text: the clip of the control and its containers counts (a short action, then words clipped away).
     const long = cleanText(el.textContent).split(' ').length > MAX_GATED_LINK_WORDS;
     const pseudo = (node, which) => {
+      if (!mayGenerate(node)) return;
       const style = view.getComputedStyle(node, which);
       if (style.display === 'none' || Number(style.opacity) < FAINT_OPACITY || parseFloat(style.fontSize) < TINY_FONT_PX) return;
       const text = contentText(style.content, node);
@@ -1924,9 +2000,12 @@
     // the words, the second drops a suffix clipped away.
     const range = doc.createRange();
     let clipped = false;
+    // Only text holding an action word can become an action name by losing some of it (to a clip, a cover): the boxes
+    // are measured only then.
+    const actionText = ACTION_WORD.test(pieces.map(piece => (piece.reversed ? Array.from(piece.text).reverse().join('') : piece.text)).join(''));
     for (const piece of pieces) {
       piece.inside = piece.text;
-      if (piece.check && piece.node.nodeType === Node.TEXT_NODE) {
+      if (actionText && piece.check && piece.node.nodeType === Node.TEXT_NODE) {
         piece.inside = visibleTextOf(piece.node, piece.parent, long ? null : el, range);
         if (piece.inside !== piece.text) clipped = true;
       }
@@ -1942,8 +2021,7 @@
     const box = el.getBoundingClientRect();
     // Every piece is tested, when the text holds an action word (a hidden prefix, middle or suffix can then leave an
     // action name) and the control is on screen; dispatch judges an off-screen control again once it is revealed.
-    if (ACTION_WORD.test(pieces.map(piece => piece.text).join(''))
-      && box.bottom > 0 && box.right > 0 && box.top < view.innerHeight && box.left < view.innerWidth) {
+    if (actionText && box.bottom > 0 && box.right > 0 && box.top < view.innerHeight && box.left < view.innerWidth) {
       for (const piece of pieces) {
         if (piece.node.nodeType !== Node.TEXT_NODE || !piece.inside.trim() || piece.masked) continue;
         range.selectNodeContents(piece.node);
@@ -2008,7 +2086,7 @@
     if (text.length > 2000) return null;
     // A link of plain short text (no parts, no generated content) reads as its text, which the names judged already.
     const plain = !el.firstElementChild && !el.shadowRoot && !names[8] && text.split(' ').length <= MAX_GATED_LINK_WORDS;
-    const readings = plain ? [text] : seenReadings(el, Boolean(names[8]));
+    const readings = plain || !seenMayAct(el, names) ? [text] : seenReadings(el, Boolean(names[8]));
     for (const reading of readings) judge(reading);
     // No letters or digits (an arrow, a cross, an emoji): the link shows no words, and its tooltip names it.
     if (!worst && !readings.some(reading => /[\p{L}\p{N}]/u.test(reading))) {
@@ -2061,7 +2139,7 @@
       // reverses (only for a control with content).
       // A control of plain text (no parts, no generated content of its own) adds nothing: its names hold its text.
       if (!worst && !['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) && (el.firstElementChild || el.shadowRoot || names[8])
-        && cleanText(el.textContent).length <= 2000) {
+        && cleanText(el.textContent).length <= 2000 && seenMayAct(el, names)) {
         for (const reading of seenReadings(el, Boolean(names[8]))) worst = severer(worst, labelClass(reading));
       }
     } else if (role === 'link' && el.tagName === 'A') {
