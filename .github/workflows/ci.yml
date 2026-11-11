@@ -30,3 +30,24 @@ jobs:
         run: echo "CHROMIUM_PATH=$(node -e "console.log(require('playwright-core').chromium.executablePath())")" >> "$GITHUB_ENV"
       # One browser-backed file at a time: parallel browsers distort the observe-speed regression checks.
       - run: npm test
+
+  # Windows and macOS: the browserless suite (no Chromium on these runners). Real evidence for the platform branches in
+  # src/ (paths, the daemon, the lock, native messaging registration, agent registration, the updater).
+  platforms:
+    name: Browserless tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:browserless
