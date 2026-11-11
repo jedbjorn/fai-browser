@@ -99,6 +99,9 @@ if (-not $Dir) { $Dir = $env:FAI_INSTALL_DIR }
 if (-not $Dir) { $Dir = Join-Path $env:USERPROFILE 'fai-browser' }
 # Relative to this PowerShell location (not the process directory, which Set-Location does not move).
 $Dir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Dir)
+# No trailing separator: Windows PowerShell 5.1 quotes an argument with a space as "C:\my dir\", and the program then
+# reads \" as a literal quote.
+if ($Dir.Length -gt 3) { $Dir = $Dir.TrimEnd('\', '/') }
 
 function Confirm-Step([string]$Question) {
   if ($Yes) {

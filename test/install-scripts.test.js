@@ -220,7 +220,8 @@ test('install.ps1 reuses a FAI Browser checkout twice; stops at any other direct
   const base = scratch(t);
   const dir = fakeCheckout(join(base, 'checkout'));
   for (let round = 0; round < 2; round++) {
-    const run = ps(['-Yes', '-Dir', dir]);
+    // The second round names it with a trailing backslash, which the installer drops before it quotes the path.
+    const run = ps(['-Yes', '-Dir', round ? `${dir}\\` : dir]);
     assert.equal(run.status, 0, run.out);
     assert.match(run.out, /a checkout already at .* \(reused\)/);
     assert.match(run.out, /Using the existing checkout at /);
