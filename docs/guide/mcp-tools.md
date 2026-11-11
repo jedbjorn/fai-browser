@@ -71,7 +71,7 @@ act an `expectation`.
 | `revision` | string | for `needsApproval`, secrets, `point` | From the result the action came from (single-use); optional otherwise |
 | `text` | string (<= 5000) | with a fill | For `fill "Search" (act with text)`: the text to type. Never passwords or codes (never offered for password, payment or secret fields) |
 | `submit` | boolean | no | After `text` or `fills`: press Enter in the (last) field, gated as its form's submit (search at Use, other forms at Act) |
-| `fills` | `[{actionId, text}]` (<= 20) | one of | Several fields in one call, in order |
+| `fills` | `[{actionId, text?}]` (<= 20) | one of | Several fields in one call, in order; a `with supplied` fill takes no `text` |
 | `url` | string | one of | Open an address on the granted origins (any level) that the user gave or a result showed, never a guessed one; another origin is `cross_origin`. An address no page of the request showed and `allowedUrls` does not list still opens on an approved origin, and `next.text` says so once; on another origin nothing runs and the result says to find the link instead |
 | `nav` | `back` / `forward` / `reload` | one of | The tab's own history |
 | `key` | string | one of | Escape, Tab, Shift+Tab, arrows, Home, End, PageUp, PageDown, Space (Use and up), in `actionId`'s control if given; Enter only as a filled field's submit; Ctrl/Cmd+letter at Act |
@@ -95,7 +95,10 @@ same act picks up a click given meanwhile). Uploads always ask. See [approvals.m
 **Typed text and forms.** A form of four fields and a submit is one call: `{"fills": [{"actionId": "a2", "text": "Ada"},
 {"actionId": "a3", "text": "ada@example.com"}, ...], "submit": true, "expectation": {"textIncludes": "Thanks"}}`. A search
 is one call too: `{"actionId": "a1", "text": "blue kettle", "submit": true}`. `suppliedText` still works for values the user
-gave.
+gave: each value is offered in the field it fits (`fill textbox "Email" with supplied email`), and such a fill goes in a
+`fills` batch without `text` (`{"actionId": "a4"}`). The values stay with the request through a level raise or an added
+origin; do not pass them again. At Read, `warning: controls_need_reversible:<n>` counts the buttons and fields that need
+Use: ask for it at once when the task needs one.
 
 **Popups and new tabs.** With **One task tab** (the default; `granted: ...; task tabs: single`) a tab or window the page
 opens pauses the request (`child_tab`; `childOrigin` names its site when the browser shows it): the user handles it and
@@ -135,7 +138,9 @@ link is an ordinary click.
 ### `fai_browser_wait`
 
 Wait for a pending tab request (`requestId`) or a still-running act (`runId`). Returns within `maxMs` (0 to 45 000, default
-30 000). Use when `next.kind` is `wait`.
+30 000). Use when `next.kind` is `wait`, and in place of ending the turn when you cannot be woken (a subagent: FAI's wake
+goes to the main session; a script). Still pending, it says so in one short `wait` line: call it again (that is waiting,
+not a repeated call).
 
 ### `fai_browser_status`
 
@@ -193,9 +198,9 @@ the JSON `error` object in their text block. See [the host research and design](
 | `choose` | Answer from `page.digest` if it answers the task; else `fai_browser_act` with one `actions[].id` and the given revision |
 | `observe` | The page changed or the action could not land: `fai_browser_observe`, then choose |
 | `answer` | Verified; report from `page.digest` |
-| `relay` | Tell the user `needs.message`. With `needs.level`: "approve <level> for this task in FAI Browser; it is preselected", then `fai_browser_open` with the same `requestId` and that `mode` (same tab and page). A pause (`child_tab`, `tab_changed`, ...) waits for the user's Resume |
+| `relay` | Tell the user `needs.message`. With `needs.level`: "approve <level> for this task in FAI Browser; it is preselected", then `fai_browser_open` with the same `requestId` and that `mode` (same tab, page and id; only a request still waiting for approval gets a successor, named in a `requestId <new> replaces <old>` line). A pause (`child_tab`, `tab_changed`, ...) waits for the user's Resume: end your turn when FAI wakes you, else `fai_browser_wait` |
 | `approve` | A `needsApproval` action waits for the user's click: relay `next.text`, then repeat the act unchanged (each call waits up to 60 s) |
-| `wait` | `fai_browser_wait` with the `requestId` |
+| `wait` | `fai_browser_wait` with the `requestId`; again while it says pending |
 | `stop` | Report `next.text` (`refused_action`, `error_page`); never retry a refused action |
 
 Never repeat an identical call after a failure. Each request has a call budget (`callsLeft` when low). The full list of

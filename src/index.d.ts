@@ -826,6 +826,11 @@ export interface RunResult {
      * characters, control characters stripped), so the host can correct its wording. Also appended to next.text.
      */
     hint?: string;
+    /**
+     * A host act whose expectation did not hold on the settled page passed on a later read of it (up to 2.5 s after,
+     * every 300 ms): the milliseconds after the act settled when it was seen. `verdict.why` has `expect:late`.
+     */
+    seenAfterMs?: number;
   };
   page: PageSummary | null;
   answer: Answer;
