@@ -81,6 +81,17 @@
   };
   const KNOWN_CAPABILITIES = new Set(Object.values(CLASS_NEEDS));
   // Most restrictive first: a control that names several classes takes the first.
+  // Link actions (src/oversight.js destructiveLink / destructiveLinkClass; byte copies, drift check in
+  // test/guardrails-drift.test.js): a short link label (at most MAX_GATED_LINK_WORDS words) that leads with one of these
+  // verbs does something rather than going somewhere.
+  const LINK_DANGER_LEAD = /^(?:delete|remove|erase|purchase|buy|pay|place\s+(?:an?\s+|the\s+|your\s+|my\s+)?order|order\s+now|check\s?out|proceed\s+to\s+check\s?out|confirm|submit|send|save|publish|invite|unsubscribe|subscribe|cancel\s+(?:my\s+|your\s+|the\s+)?(?:subscription|membership|account|plan|order)|close\s+(?:my\s+|your\s+|the\s+)?account|deactivate|sign\s?(?:in|out)|log\s?(?:in|out)|login|logout|signout)\b/i;
+  const LINK_LEAD_CLASSES = [
+    ['sign_in', /^(?:sign\s?(?:in|out)|log\s?(?:in|out)|login|logout|signout)\b/i],
+    ['purchase', /^(?:purchase|buy|pay|place\s+(?:an?\s+|the\s+|your\s+|my\s+)?order|order\s+now|check\s?out|proceed\s+to\s+check\s?out|subscribe)\b/i],
+    ['delete', /^(?:delete|remove|erase|unsubscribe|cancel\s+(?:my\s+|your\s+|the\s+)?(?:subscription|membership|account|plan|order)|close\s+(?:my\s+|your\s+|the\s+)?account|deactivate)\b/i],
+    ['submit', /^(?:confirm|submit|send|save|publish|invite)\b/i],
+  ];
+  const MAX_GATED_LINK_WORDS = 4;
   const CLASS_ORDER = ['forbid', 'purchase', 'sign_in', 'delete', 'submit', 'consent_accept', 'submit_safe', 'reversible', 'navigation'];
   const DEFAULT_ALLOW = ['navigate', 'controls'];
   // Guardrail additions (src/guardrails.js): plain phrases the request forbids, received from the worker as strings
@@ -548,7 +559,7 @@
     } catch {
       // An unparsable base: every href is parsed.
     }
-    flatCache = { text: new Map(), parts: new Map(), hostAncestors, links: new Map(), baseHere,
+    flatCache = { text: new Map(), parts: new Map(), hostAncestors, links: new Map(), backgrounds: new Map(), baseHere,
       webPage: location.protocol === 'https:' || location.protocol === 'http:' };
   }
 
@@ -1664,6 +1675,161 @@
     return ids.map(id => el.ownerDocument.getElementById(id)?.textContent || '').join(' ').slice(0, 300);
   }
 
+  // The class of a link name that is an action, as the runtime's destructiveLinkClass judges a label: a short name
+  // (at most 4 words, decorative lead removed) that starts with an action verb, or with a purchase or commit phrase;
+  // null for navigation ("How to delete a branch", "Order history").
+  function linkActionClass(name) {
+    for (const spelling of labelSpellings(name)) {
+      const text = spelling.replace(/^[^\p{L}\p{N}]+/u, '').trim();
+      if (!text || text.split(' ').length > MAX_GATED_LINK_WORDS) continue;
+      if (/^(?:delete|remove)\s+(?:(?:my|your|the)\s+)?account\s+help[.!?]*$/i.test(text)) continue;
+      const lead = LINK_DANGER_LEAD.test(text);
+      const commit = !lead && [PURCHASE, COMMIT_OTHER].some(pattern => pattern.exec(text)?.index === 0);
+      if (!lead && !commit) continue;
+      for (const [kind, pattern] of LINK_LEAD_CLASSES) if (pattern.test(text)) return kind;
+      if (PURCHASE.test(text)) return 'purchase';
+      const other = text.match(COMMIT_OTHER);
+      return other ? (/\bcancel\b/i.test(other[0]) ? 'delete' : 'submit') : 'purchase';
+    }
+    return null;
+  }
+
+  // A destination that names signing out or a delete (`/logout`, `/sign-out`, `?action=delete`): such a link is an
+  // action whatever its label says. Narrow on purpose: the fixtures and bench pages hold no such honest link, while
+  // label words anywhere in a URL ("/login/forum.html") would refuse ordinary ones.
+  const SIGN_OUT_PATH = /(?:^|\/)(?:log[-_]?out|sign[-_]?out|log[-_]?off|sign[-_]?off)(?:[/.;]|$)/i;
+  const ACTION_QUERY = /(?:^|[?&;])(?:action|do|op|cmd)=(delete|remove|destroy|log[-_]?out|sign[-_]?out|unsubscribe)(?:[&;#]|$)/i;
+  function hrefActionClass(el) {
+    if (el.tagName !== 'A' || !el.hasAttribute('href')) return null;
+    let url;
+    try {
+      url = new URL(el.getAttribute('href'), el.baseURI);
+    } catch {
+      return null;
+    }
+    if (SIGN_OUT_PATH.test(url.pathname)) return 'sign_in';
+    const action = ACTION_QUERY.exec(url.search)?.[1];
+    if (!action) return null;
+    return /out$/i.test(action) ? 'sign_in' : 'delete';
+  }
+
+  // Bidirectional overrides make text read in the reverse of its stored order ("<RLO>tuo ngiS" shows "Sign out"):
+  // the overridden runs reversed, as a person reads them, or null when the text holds none.
+  function bidiReading(text) {
+    if (!/[‭‮]/.test(text)) return null;
+    return text.replace(/‮([^‪-‮⁦-⁩]*)(?:‬|$)/g, (_, run) => Array.from(run).reverse().join(''))
+      .replace(/[‪-‮⁦-⁩]/g, '');
+  }
+
+  // What a person reads in a link, for its guard: rendered text only (never what is invisible: opacity 0, a zero font
+  // size, a clipped 1px box, a box off the page, text in the background colour, display none, visibility hidden), CSS
+  // generated content (::before / ::after) when the visible text is short, overridden bidirectional runs reversed, and
+  // the text in visual order (by box position) when its pieces are few and laid out apart from the DOM order (flex
+  // `order`, grid placement). Returns the readings to judge (DOM order, visual order), at most SEEN_TEXT_NODES nodes.
+  const SEEN_TEXT_NODES = 80;
+  const SEEN_ORDER_PIECES = 8;
+  // The background colour behind an element (the nearest one set), cached per observation.
+  const TRANSPARENT = /^(?:transparent|rgba\(.*,\s*0\))$/;
+  function backgroundOf(el) {
+    const cache = flatCache?.backgrounds;
+    if (cache?.has(el)) return cache.get(el);
+    const own = el.ownerDocument.defaultView.getComputedStyle(el).backgroundColor;
+    const parent = parentOf(el);
+    const value = own && !TRANSPARENT.test(own) ? own : parent && parent.nodeType === Node.ELEMENT_NODE ? backgroundOf(parent) : null;
+    cache?.set(el, value);
+    return value;
+  }
+
+  function seenReadings(el, short, ownGenerated) {
+    const doc = el.ownerDocument;
+    const view = doc.defaultView;
+    if (!view) return [];
+    let background;
+    const scrollX = view.scrollX;
+    const scrollY = view.scrollY;
+    const pieces = [];
+    let budget = SEEN_TEXT_NODES;
+    const pseudo = (node, which) => {
+      const content = view.getComputedStyle(node, which).content;
+      const quoted = /^["'](.*)["']$/s.exec(content || '');
+      if (quoted && quoted[1].trim()) pieces.push({ text: quoted[1], rect: null, node, which });
+    };
+    const walk = (node, reversed) => {
+      for (const child of flatChildren(node)) {
+        if (--budget < 0) return;
+        if (child.nodeType === Node.TEXT_NODE) {
+          if (child.nodeValue.trim()) {
+            const text = reversed ? Array.from(child.nodeValue).reverse().join('') : child.nodeValue;
+            pieces.push({ text, rect: null, node: child });
+          }
+          continue;
+        }
+        if (child.nodeType !== Node.ELEMENT_NODE || SKIP_TEXT_TAGS.has(child.tagName.toUpperCase())) continue;
+        if (child.tagName === 'SLOT') {
+          walk(child, reversed);
+          continue;
+        }
+        const style = view.getComputedStyle(child);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') continue;
+        if (Number(style.opacity) === 0 || parseFloat(style.fontSize) === 0) continue;
+        if (/inset\(\s*50%/.test(style.clipPath) || (style.position === 'absolute' && /^rect\(\s*(?:0|1)px/.test(style.clip))) continue;
+        if (background === undefined) background = backgroundOf(el);
+        if (TRANSPARENT.test(style.color) || (background && style.color === background)) continue;
+        const box = child.getBoundingClientRect();
+        if ((box.width <= 1 && box.height <= 1 && style.overflow !== 'visible') || box.right + scrollX < 0 || box.bottom + scrollY < 0) continue;
+        const override = /override/.test(style.unicodeBidi) && style.direction === 'rtl';
+        if (short) pseudo(child, '::before');
+        walk(child, reversed !== override);
+        if (short) pseudo(child, '::after');
+      }
+    };
+    // The link's own generated content was read already (generatedText): re-read in place only when there is some.
+    if (short && ownGenerated) pseudo(el, '::before');
+    walk(el, false);
+    if (short && ownGenerated) pseudo(el, '::after');
+    const domOrder = pieces.map(piece => piece.text).join('');
+    const readings = [domOrder];
+    // Visual order: the pieces sorted by their boxes (top to bottom, left to right), when there are a few.
+    if (pieces.length >= 2 && pieces.length <= SEEN_ORDER_PIECES) {
+      const range = doc.createRange();
+      for (const piece of pieces) {
+        if (piece.node.nodeType === Node.TEXT_NODE) {
+          range.selectNodeContents(piece.node);
+          piece.rect = range.getBoundingClientRect();
+        } else {
+          piece.rect = piece.node.getBoundingClientRect();
+        }
+      }
+      const sorted = pieces.slice().sort((a, b) => (Math.abs(a.rect.top - b.rect.top) > Math.min(a.rect.height, b.rect.height) / 2
+        ? a.rect.top - b.rect.top : a.rect.left - b.rect.left));
+      if (sorted.some((piece, i) => piece !== pieces[i])) readings.push(sorted.map(piece => piece.text).join(' '));
+    }
+    return readings;
+  }
+
+  // The class of a real link (an <a> with a web href) that is an action, judged on every name a person could read as
+  // its name, uncut: the label and the page's own names for it (aria-label, aria-labelledby, title, the text, its text
+  // content with hidden parts, a component's rendered text), what is actually seen (seenReadings), bidirectional
+  // overrides as read, and its destination (hrefActionClass); null for navigation. As the runtime judges the label.
+  function linkGuardClass(el, names, innerText) {
+    let worst = hrefActionClass(el);
+    const judge = name => {
+      if (typeof name !== 'string' || !name.trim()) return;
+      worst = severer(worst, linkActionClass(name));
+      const bidi = bidiReading(name);
+      if (bidi !== null) worst = severer(worst, linkActionClass(bidi));
+    };
+    for (const name of names) judge(name);
+    if (worst) return worst;
+    // What is seen: needed when the text is long (invisible padding can push the action past the word limit), when
+    // pieces may be reordered, or when the visible text is short (generated content may name it).
+    const text = cleanText(el.textContent);
+    if (text.length > 2000) return null;
+    const short = cleanText(innerText).split(' ').filter(Boolean).length <= MAX_GATED_LINK_WORDS;
+    for (const reading of seenReadings(el, short, Boolean(names[8]))) judge(reading);
+    return worst;
+  }
+
   // CSS generated text (::before / ::after `content`), which innerText and textContent do not include.
   function generatedText(el) {
     const view = el.ownerDocument.defaultView;
@@ -1702,7 +1868,21 @@
     let worst = null;
     if (scriptLink || (role === 'link' && scriptHref) || ['button', 'tab', 'option', 'textbox', 'combobox'].includes(role)
       || MENU_ITEM_ROLES.has(role)) {
-      for (const name of names) worst = severer(worst, labelClass(name));
+      for (const name of names) {
+        worst = severer(worst, labelClass(name));
+        const bidi = typeof name === 'string' ? bidiReading(name) : null;
+        if (bidi !== null) worst = severer(worst, labelClass(bidi));
+      }
+      // What is seen when the names say nothing: generated content on the control's parts, text a CSS bidi override
+      // reverses (only for a control with content, and with a short visible text: the label rules match anywhere).
+      if (!worst && !['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)
+        && cleanText(names[2]).split(' ').filter(Boolean).length <= MAX_GATED_LINK_WORDS && cleanText(el.textContent).length <= 2000) {
+        for (const reading of seenReadings(el, true, Boolean(names[8]))) worst = severer(worst, labelClass(reading));
+      }
+    } else if (role === 'link' && el.tagName === 'A') {
+      // A real link is navigation unless one of its names (or its destination) makes it an action, as the runtime's
+      // link rule judges its label: never only on the label the page shaped.
+      worst = linkGuardClass(el, names, names[2]);
     }
     const fromLabels = worst;
     if (paymentField(el)) worst = severer(worst, 'purchase');

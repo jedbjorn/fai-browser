@@ -256,3 +256,31 @@ test('page.js labelTier is a byte copy of src/guardrails.js labelTier (the inten
   assert.ok(copy, 'extension/page.js defines labelTier');
   assert.equal(copy.trim().split('\n').map(line => line.replace(/^ {2}/, '')).join('\n'), guardrails.labelTier.toString());
 });
+
+test('page.js judges link names like src/oversight.js destructiveLinkClass (byte copies plus a behavioural check)', async () => {
+  const oversight = await import('../src/oversight.js');
+  const page = await readFile(PAGE_SCRIPT, 'utf8');
+  const lead = page.match(/\n {2}const LINK_DANGER_LEAD = (\/.+\/[a-z]*);\n/)?.[1];
+  assert.equal(lead, String(oversight.LINK_DANGER_LEAD));
+  const classes = page.match(/\n {2}const LINK_LEAD_CLASSES = (\[\n[\s\S]*?\n {2}\]);\n/)?.[1];
+  assert.ok(classes, 'extension/page.js defines LINK_LEAD_CLASSES');
+  // eslint-disable-next-line no-new-func
+  const copied = new Function(`return ${classes}`)();
+  assert.deepEqual(copied.map(([kind, pattern]) => [kind, String(pattern)]),
+    oversight.LINK_LEAD_CLASSES.map(([kind, pattern]) => [kind, String(pattern)]));
+  assert.match(page, /\n {2}const MAX_GATED_LINK_WORDS = 4;\n/);
+  const body = page.match(/\n {2}function linkActionClass\([^)]*\) \{[\s\S]*?\n {2}\}\n/)?.[0];
+  assert.ok(body);
+  // eslint-disable-next-line no-new-func
+  const pageClass = new Function('labelSpellings', 'LINK_DANGER_LEAD', 'LINK_LEAD_CLASSES', 'MAX_GATED_LINK_WORDS', 'PURCHASE',
+    'COMMIT_OTHER', `${body}\nreturn linkActionClass;`)(labelSpellings, oversight.LINK_DANGER_LEAD, oversight.LINK_LEAD_CLASSES, 4,
+    guardrails.PURCHASE, guardrails.COMMIT_OTHER);
+  const runtimeClass = label => labelSpellings(label).map(oversight.destructiveLinkClass).find(Boolean) ?? null;
+  for (const label of ['Sign out', 'Log out', 'Logout', 'Sign in', 'Delete account', 'Remove', 'Buy now', 'Checkout',
+    'Proceed to checkout', 'Place order', 'Subscribe', 'Unsubscribe', 'Cancel my subscription', 'Close my account', 'Save',
+    'Send message', 'Confirm', 'Publish', 'Invite', 'Apply now', 'Delete account help', '→ Sign out', 'S i g n out',
+    'Sign up', 'Order history', 'How to delete a branch', 'Where to buy', 'Account deletion policy', 'Home', 'Profile',
+    'Delete your account: a step-by-step guide', 'Continue shopping', 'Subscriptions', 'Apply', 'Cancellation terms']) {
+    assert.equal(pageClass(label), runtimeClass(label), label);
+  }
+});
