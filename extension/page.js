@@ -1738,7 +1738,7 @@
   // apart from the DOM order (flex `order`, grid placement). Returns the readings to judge (DOM order, visual order),
   // at most SEEN_TEXT_NODES nodes. Costly reads (text boxes against clips) run only when a part of the control can hide
   // text that way (a transform, overflow clipping, an indent, a height cap) or its text is long.
-  const SEEN_TEXT_NODES = 80;
+  const SEEN_TEXT_NODES = 200;
   const SEEN_ORDER_PIECES = 8;
   const FAINT_OPACITY = 0.1;
   const TINY_FONT_PX = 3;
@@ -1851,9 +1851,9 @@
     }
     return hit;
   }
-  // Text pieces hit-tested per control (the first ones in the viewport): what lies under another element (an overlay,
-  // a part painted behind a background) is not seen.
-  const HIT_TESTS = 12;
+  // A word that starts (or completes) an action a link name can lead with (LINK_DANGER_LEAD, the purchase and commit
+  // phrases): only text holding one can become an action name by hiding some of it, so only such text is hit-tested.
+  const ACTION_WORD = /(?:^|[^\p{L}\p{N}])(?:delete|remove|erase|purchase|buy|pay|payment|place|order|checkout|check|proceed|confirm|submit|send|save|publish|invite|unsubscribe|subscribe|subscription|cancel|close|deactivate|sign|signout|log|login|logout|book|reserve|transfer|bid|renew|upgrade|pre-?order|trial|donate|donation|withdraw|apply|out|account|now)(?![\p{L}\p{N}])/iu;
 
   function seenReadings(el, ownGenerated = true) {
     const doc = el.ownerDocument;
@@ -1940,10 +1940,11 @@
     // one the test cannot reach, is kept).
     let hidden = pieces.some(piece => piece.masked);
     const box = el.getBoundingClientRect();
-    if (box.bottom > 0 && box.right > 0 && box.top < view.innerHeight && box.left < view.innerWidth) {
-      let tests = 0;
+    // Every piece is tested, when the text holds an action word (a hidden prefix, middle or suffix can then leave an
+    // action name) and the control is on screen; dispatch judges an off-screen control again once it is revealed.
+    if (ACTION_WORD.test(pieces.map(piece => piece.text).join(''))
+      && box.bottom > 0 && box.right > 0 && box.top < view.innerHeight && box.left < view.innerWidth) {
       for (const piece of pieces) {
-        if (tests >= HIT_TESTS) break;
         if (piece.node.nodeType !== Node.TEXT_NODE || !piece.inside.trim() || piece.masked) continue;
         range.selectNodeContents(piece.node);
         const rect = range.getClientRects()[0];
@@ -1955,7 +1956,6 @@
         // lies over the text. A holder that takes no pointer events cannot be tested.
         const owner = piece.node.parentElement;
         if (!owner || view.getComputedStyle(owner).pointerEvents === 'none') continue;
-        tests++;
         const hit = deepHit(doc, x, y);
         if (hit && hit !== owner && !owner.shadowRoot?.contains(hit)) {
           piece.under = true;
@@ -1964,6 +1964,11 @@
       }
     }
     const readings = [pieces.map(piece => piece.text).join('')];
+    // More parts than are read: the text's last words are judged too (an action name after parts never read).
+    if (budget < 0) {
+      const words = cleanText(el.textContent).split(' ');
+      for (let count = 1; count <= MAX_GATED_LINK_WORDS && count <= words.length; count++) readings.push(words.slice(-count).join(' '));
+    }
     if (clipped) readings.push(pieces.map(piece => piece.inside).join(''));
     if (hidden) readings.push(pieces.filter(piece => !piece.masked && !piece.under).map(piece => piece.text).join(''));
     const shown = pieces.filter(piece => piece.inside.trim());
@@ -6027,10 +6032,12 @@
     }
     // Every action is checked against the granted capabilities: a control by its risk class, a targetless action
     // (scroll, wait, allowed URL) as navigation.
+    let approved = false;
+    let inert = false;
     if (control) {
       // An approval the worker minted for exactly this click (approvalHolds) stands in for the level; a credential
       // action asks at every level, testing included, while the user's setting says so.
-      const approved = approvalHolds(approval, action, control, risk, el, approval?.seen);
+      approved = approvalHolds(approval, action, control, risk, el, approval?.seen);
       // A secret fill runs only with the user's approval for exactly this field, at every level.
       if (action.type === 'fill_secret' && !approved) {
         throw new PageError('blocked_risky', 'A secret is filled only once the user approves it in the FAI Browser window');
@@ -6043,7 +6050,7 @@
       if (action.type === 'upload' && !approved) {
         throw new PageError('blocked_risky', 'A file is uploaded only once the user approves it in the FAI Browser window');
       }
-      const inert = action.type === 'hover' || action.type === 'press' || action.type === 'upload';
+      inert = action.type === 'hover' || action.type === 'press' || action.type === 'upload';
       if (!inert && !dispatchable(risk) && !approved) throw new PageError('blocked_risky', blockedMessage(risk?.cls));
     } else if (!permits('navigation')) {
       throw new PageError('blocked_risky', blockedMessage('navigation'));
@@ -6053,6 +6060,12 @@
     if (control?.offscreen && action.type !== 'scroll') {
       if (realInput()) await realInput().reveal(el);
       else el.scrollIntoView({ block: 'center', behavior: 'instant' });
+      // A link is judged again now that it is on screen: what covers its text is known only there. Refused as the
+      // check above refuses, before anything is clicked.
+      if (el.tagName === 'A' && control.role === 'link' && !inert && !approved) {
+        const again = riskOf(el, control.role, control.label ?? labelOf(el));
+        if (!dispatchable(again)) throw new PageError('blocked_risky', blockedMessage(again?.cls));
+      }
     }
     const result = {
       fromUrl: location.href,
