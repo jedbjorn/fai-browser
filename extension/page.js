@@ -1042,11 +1042,17 @@
   // outside one (a point's locate on a control the observation left out) a short walk stands in.
   const FLAT_PARTS_BUDGET = 60;
   function hasFlatParts(el) {
-    if (flatCache?.parts.has(el)) return flatCache.parts.get(el);
+    if (el.shadowRoot) return true;
+    if (flatCache) {
+      // A light-DOM control (the common case) costs a set lookup; a control in a shadow root one query, cached.
+      if (el.getRootNode() === el.ownerDocument) return flatCache.hostAncestors.has(el);
+      if (flatCache.parts.has(el)) return flatCache.parts.get(el);
+      const value = Boolean(el.querySelector('slot')) || flatCache.hostAncestors.has(el);
+      flatCache.parts.set(el, value);
+      return value;
+    }
     let value;
     if (el.getRootNode() !== el.ownerDocument && el.querySelector('slot')) value = true;
-    else if (el.shadowRoot) value = true;
-    else if (flatCache) value = flatCache.hostAncestors.has(el);
     else {
       value = false;
       const walker = el.ownerDocument.createTreeWalker(el, NodeFilter.SHOW_ELEMENT);
@@ -3427,10 +3433,20 @@
     // How many terms a control's label holds: a nav rail where every item holds "section" still brings the one that
     // also holds a focus phrase "section 99" in first.
     // A link's destination counts too (host and path): a focus naming a site finds its link whatever the label says.
+    const hits = new Map();
     const hitsOf = item => {
       if (!terms.length) return 0;
-      const text = `${labelFor(item)} ${linkWords(item.el)}`.toLowerCase();
-      return terms.reduce((count, term) => count + (text.includes(term) ? 1 : 0), 0);
+      let count = hits.get(item);
+      if (count !== undefined) return count;
+      const label = labelFor(item).toLowerCase();
+      let words = null;
+      count = 0;
+      for (const term of terms) {
+        if (label.includes(term)) count++;
+        else if ((words ??= linkWords(item.el).toLowerCase()) && words.includes(term)) count++;
+      }
+      hits.set(item, count);
+      return count;
     };
     const matches = item => hitsOf(item) > 0;
     const chosen = new Set();
