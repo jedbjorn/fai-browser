@@ -13,12 +13,15 @@ import { existsSync } from 'node:fs';
 import { chromium, firefox } from 'playwright-core';
 import { headlessEnv } from '../scripts/headless-env.mjs';
 import { BrowserRuntime, OTHER_SITE_TEXT } from '../src/runtime.js';
-import { leanObserve } from '../src/result.js';
+import { agentResult, leanObserve } from '../src/result.js';
+import { OTHER_SITE_NEXT } from '../src/other-site.js';
+import { directText } from '../src/mcp.js';
 import { PURCHASE_REFUSAL_TEXT } from '../src/oversight.js';
 import { PageBridge } from './helpers/page-bridge.js';
 
 const ORIGIN = 'https://example.com';
 const FAKE_TOKEN = ['FAKE', 'tok0123456789', 'abcdefABCDEF'].join('');
+const HIDDEN = 'Your profile and settings menu entry. '.repeat(6);
 
 // Web components, defined before the body is parsed (attributes are read once connected).
 const COMPONENTS = `<script>
@@ -35,10 +38,13 @@ shadow('x-fallback', el => '<a href="' + el.getAttribute('href') + '"><slot>' + 
 shadow('x-text', el => '<span>' + el.getAttribute('text') + '</span>');
 shadow('x-box', () => '<div class="box"><slot></slot></div>');
 shadow('x-icon', () => '<i class="icon">*</i>');
+// A button component: its name is slotted.
+shadow('x-btn', () => '<button onclick="document.title = \\'x-btn\\'"><slot></slot></button>');
 </script>`;
 
 const page = (body, title = 'Links') => `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>${COMPONENTS}
-<style>body { margin: 0; font: 14px sans-serif; } a, [role="link"] { display: inline-block; margin: 4px; }</style>
+<style>body { margin: 0; font: 14px sans-serif; } a, [role="link"] { display: inline-block; margin: 4px; }
+.r { display: block; width: 220px; margin: 4px; } .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }</style>
 </head><body>${body}</body></html>`;
 
 const PAGES = {
@@ -89,7 +95,30 @@ const PAGES = {
     <button id="plan" style="display:block;width:140px" onclick="document.title = 'clicked'">Show plan</button>
     <a id="script" href="javascript:void(document.title = 'script')" style="display:block;width:140px">Open panel</a>
     <button id="buy" style="display:block;width:140px" onclick="document.title = 'bought'">Buy now</button>
-    <x-link id="slotted" href="/team" style="display:block;width:140px">Team</x-link>`),
+    <x-link id="slotted" href="/team" style="display:block;width:140px">Team</x-link>
+    <x-link id="spanned" class="r" href="/team"><span>Team page</span></x-link>
+    <span id="rolelink" class="r" role="link" tabindex="0" onclick="document.title = 'rolelink'">More info</span>
+    <a id="data" class="r" href="data:text/html,hi">Data link</a>`),
+  // A web component and its light-DOM twin with the same visible content, side by side: split words, an aria-hidden
+  // name next to screen-reader-only text, a long display:none prefix.
+  '/guards': page(`
+    <x-link id="c-split" class="r" href="/account/delete">Del<b>ete</b> account</x-link>
+    <a id="l-split" class="r" href="/account/delete2">Del<b>ete</b> account</a>
+    <x-link id="c-so" class="r" href="/logout2">Sign <b>o</b>ut</x-link>
+    <a id="l-so" class="r" href="/logout3">Sign <b>o</b>ut</a>
+    <x-link id="c-hidden" class="r" href="/logout4"><span aria-hidden="true">Sign out</span><span class="sr">Profile</span></x-link>
+    <a id="l-hidden" class="r" href="/logout5"><span aria-hidden="true">Sign out</span><span class="sr">Profile</span></a>
+    <x-link id="c-prefix" class="r" href="/logout6"><span style="display:none">${HIDDEN}</span>Sign out</x-link>
+    <a id="l-prefix" class="r" href="/logout7"><span style="display:none">${HIDDEN}</span>Sign out</a>
+    <x-btn id="c-btn" class="r">Del<b>ete</b></x-btn>
+    <button id="l-btn" class="r">Del<b>ete</b></button>
+    <x-btn id="c-btn2" class="r"><span aria-hidden="true">Delete</span><span class="sr">Options</span></x-btn>
+    <button id="l-btn2" class="r"><span aria-hidden="true">Delete</span><span class="sr">Options</span></button>`),
+  // A long project page: 150 same-site links, then the one link to another site last, in the footer.
+  '/bigproject': page(`<main><h1>Widget</h1><p>Intro.</p><ul>${Array.from({ length: 150 }, (_, i) => `<li><a href="/docs/topic-${i + 1}">Topic ${i + 1}</a></li>`).join('')}</ul></main>
+    <footer><a href="/privacy">Privacy</a> <a href="https://widget-company.example/contact">Built by Widget Co</a></footer>`, 'Widget'),
+  // Twelve links to other sites in a profile.
+  '/profile': page(`<h1>Jane Doe</h1><p>Builds tools.</p>${Array.from({ length: 12 }, (_, i) => `<a href="https://site${i + 1}.example.net/jane">Profile ${i + 1}</a>`).join(' ')}`, 'Jane'),
   '/about': page('<h1>About</h1><a href="/point">Back</a>', 'About'),
   '/team': page('<h1>Team</h1>', 'Team'),
 };
@@ -169,7 +198,9 @@ for (const engine of ENGINES) {
     const learn = byLabel(observed, 'Learn more');
     assert.equal(learn?.type, 'other_site', 'the banner link to another site is listed with its destination');
     assert.ok(!learn.description.includes(FAKE_TOKEN), learn.description);
-    assert.match(learn.description, /^Link \d+: Learn more → https:\/\/learn\.other\.example\/docs\?token=\[secret:[^\]]+\] \(other site/);
+    assert.match(learn.description, /^Link \d+ to https:\/\/learn\.other\.example\/docs \(other site\): Learn more$/);
+    assert.ok(!learn.href.includes(FAKE_TOKEN), 'the href kept internally is redacted too');
+    assert.match(learn.href, /token=\[secret:[^\]]+\]/);
     assert.ok(observed.digest.some(block => block.t === 'alert' && /Verify your account/.test(block.text)));
   });
 
@@ -202,7 +233,7 @@ for (const engine of ENGINES) {
     const site = byLabel(observed, 'Our marketing site');
     assert.equal(site?.type, 'other_site');
     assert.equal(site.href, 'https://jane.example.org/site/');
-    assert.match(site.description, /→ https:\/\/jane\.example\.org\/site\/ \(other site: request its origin\)$/);
+    assert.equal(site.description, `Link ${site.target} to https://jane.example.org/site/ (other site): Our marketing site`);
     assert.equal(byLabel(observed, 'Social')?.type, 'other_site', 'a new-tab link to another site too');
     assert.ok(!observed.actions.some(action => action.label === 'Email'), 'a mailto: link is no site');
     assert.ok(listedLabels(observed).includes('Our marketing site'));
@@ -210,8 +241,68 @@ for (const engine of ENGINES) {
     const result = await runtime.act(site.id, { revision: observed.observation.revision });
     assert.equal(result.code, 'cross_origin');
     assert.equal(result.needs.message, OTHER_SITE_TEXT);
+    assert.equal(agentResult(result).next.text, OTHER_SITE_NEXT);
     assert.equal(bridge.executions.length, 0, 'nothing was clicked');
     assert.equal(tab.url(), `${ORIGIN}/footer`);
+  });
+
+  test(`${engine.name}: on a long page the footer link to another site is listed, and its host finds it`, { skip }, async t => {
+    const { look } = await open(t, '/bigproject');
+    const lean = observed => leanObserve({ revision: observed.observation.revision, page: observed.observation,
+      actions: observed.actions, offer: observed.offer, digest: observed.digest });
+    const plain = lean(await look());
+    assert.deepEqual(plain.actions.filter(action => /other site/.test(action.description)).map(action => action.description),
+      ['link to https://widget-company.example/contact (other site): "Built by Widget Co"'], 'listed with no task or focus');
+    for (const focus of ['widget-company', 'contact']) {
+      const focused = lean(await look({ focus }));
+      assert.ok(focused.actions.some(action => /widget-company\.example/.test(action.description)), focus);
+    }
+    // Twelve links to other sites: five listed, the rest named in the moreActions count.
+    const profile = await open(t, '/profile');
+    const many = lean(await profile.look());
+    assert.equal(many.actions.filter(action => /other site/.test(action.description)).length, 5);
+    assert.equal(many.moreOtherSites, 7);
+    const text = directText({ status: 'observed', ...many });
+    assert.match(text, /\(7 more not listed, 7 of them links to other sites; these are the most relevant\)/);
+    const generic = lean(await profile.look({ focus: 'jane' }));
+    assert.equal(generic.actions.filter(action => /other site/.test(action.description)).length, 5, 'a generic focus word lists no more');
+    const named = lean(await profile.look({ focus: 'site9' }));
+    assert.ok(named.actions.some(action => /site9\.example\.net/.test(action.description)), 'a host the focus names is listed');
+  });
+
+  test(`${engine.name}: a web component never names a control more leniently than its light-DOM twin`, { skip }, async t => {
+    const readOnly = await open(t, '/guards');
+    const observed = await readOnly.look();
+    const offeredHref = path => observed.actions.some(action => action.href === `${ORIGIN}${path}`);
+    // Each pair has the same visible content: the same verdict.
+    for (const [component, light] of [['/account/delete', '/account/delete2'], ['/logout2', '/logout3'], ['/logout4', '/logout5'],
+      ['/logout6', '/logout7']]) {
+      assert.equal(offeredHref(component), offeredHref(light), `${component} vs ${light}`);
+      assert.equal(offeredHref(component), false, `${component} is an action link: never offered at read-only`);
+    }
+    const labelOf = id => observed.observation.controls.find(control => control.href === `${ORIGIN}${id}`)?.label;
+    assert.equal(labelOf('/account/delete'), 'Delete account', 'split words join as they render');
+    assert.equal(labelOf('/logout2'), 'Sign out');
+    assert.equal(labelOf('/logout6'), 'Sign out', 'display:none text is no part of the name');
+    // A point on the component link is refused as its twin's would be.
+    for (const [component, light] of [['#c-split', '#l-split'], ['#c-hidden', '#l-hidden'], ['#c-prefix', '#l-prefix']]) {
+      const codes = [];
+      for (const selector of [component, light]) {
+        const opened = await open(t, '/guards');
+        const seen = await opened.look();
+        const box = await opened.tab.locator(selector).boundingBox();
+        const result = await opened.runtime.act({ point: { x: Math.round(box.x + 8), y: Math.round(box.y + box.height / 2) } },
+          { revision: seen.observation.revision });
+        codes.push(`${result.code}/${result.needs?.level ?? ''}`);
+        assert.equal(opened.tab.url(), `${ORIGIN}/guards`, `${selector} did not navigate`);
+      }
+      assert.equal(codes[0], codes[1], `${component} ${codes[0]} vs ${light} ${codes[1]}`);
+      assert.match(codes[0], /^refused_action\//);
+    }
+    // Buttons, at reversible: a split or aria-hidden "Delete" is a delete either way.
+    const reversible = await open(t, '/guards', 'reversible');
+    const buttons = (await reversible.look()).actions.filter(action => action.role === 'button').map(action => action.label);
+    assert.ok(!buttons.some(label => /del\s*ete/i.test(label)), JSON.stringify(buttons));
   });
 
   test(`${engine.name}: a long banner is marked when cut and read whole with focus or digestChars`, { skip }, async t => {
@@ -220,7 +311,6 @@ for (const engine of ENGINES) {
     const banner = digest => digest.find(block => block.t === 'alert' && /not verified/.test(block.text))?.text ?? '';
     assert.ok(banner(plain.digest).endsWith('…'), banner(plain.digest));
     assert.ok(!banner(plain.digest).includes('User Management'));
-    assert.equal(plain.digestTruncated, true);
 
     const focused = await look({ focus: 'Primary Contact' });
     assert.match(banner(focused.digest), /You must add the Primary Contact in Account Settings, then User Management\.$/);
@@ -252,13 +342,31 @@ for (const engine of ENGINES) {
     assert.equal(team.result.status, 'checkpoint', `${team.result.code}: ${team.result.reason}`);
     assert.equal(team.tab.url(), `${ORIGIN}/team`);
 
+    // Light-DOM text wrapped in a span and slotted into the component's <a>: the point still lands on the link.
+    const spanned = await attempt('#spanned');
+    assert.equal(spanned.result.status, 'checkpoint', `${spanned.result.code}: ${spanned.result.reason}`);
+    assert.equal(spanned.tab.url(), `${ORIGIN}/team`);
+
+    // A script link (role=link, no href) needs reversible, as its action id does.
+    const roleLink = await attempt('#rolelink');
+    assert.equal(roleLink.result.code, 'refused_action');
+    assert.equal(roleLink.result.needs.level, 'reversible');
+    assert.equal(await roleLink.tab.title(), 'Links');
+
+    // A data: link opens no page: refused at every level, never a level request or an origin to approve.
+    const data = await attempt('#data');
+    assert.equal(data.result.code, 'refused_action');
+    assert.equal(data.result.needs.level, undefined);
+    assert.equal(data.bridge.executions.length, 0);
+
     const plan = await attempt('#plan');
     assert.equal(plan.result.code, 'refused_action');
     assert.equal(plan.result.needs.level, 'reversible');
     assert.equal(await plan.tab.title(), 'Links', 'the button never ran');
 
     const script = await attempt('#script');
-    assert.notEqual(script.result.status, 'checkpoint');
+    assert.equal(script.result.code, 'refused_action', 'a javascript: link is a risk refusal, not an origin');
+    assert.equal(script.result.needs.level, undefined);
     assert.equal(script.bridge.executions.length, 0);
     assert.equal(await script.tab.title(), 'Links', 'the javascript: link never ran');
 

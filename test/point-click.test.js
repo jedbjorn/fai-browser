@@ -147,7 +147,15 @@ test('pointAction refuses unoffered controls exactly as the offer gate would', (
   assert.deepEqual(docs.action.point, { x: 1, y: 1 });
   const script = pointAction(readOnly.offer, found(link('u10', 'Open panel', '/x', { href: 'javascript:void(0)' })), readOnly.config);
   assert.equal(script.action, undefined);
-  assert.equal(script.refusal.kind, 'cross_origin');
+  assert.equal(script.refusal.kind, 'risk', 'a javascript: link runs a script: never, at any level');
+  for (const href of ['data:text/html,hi', 'mailto:a@example.com']) {
+    assert.equal(pointAction(readOnly.offer, found(link('u12', 'Other', '/x', { href })), readOnly.config).refusal?.kind, 'risk', href);
+  }
+  assert.equal(pointAction(full.offer, found(link('u10', 'Open panel', '/x', { href: 'javascript:void(0)' })), full.config).refusal?.kind, 'risk');
+  // A script link (role=link without an href) needs reversible, as its action id does; from reversible it is a click.
+  const roleLink = { id: 'point', role: 'link', label: 'More info', enabled: true, risk: 'reversible' };
+  assert.deepEqual(pointAction(readOnly.offer, { id: null, control: roleLink }, readOnly.config).refusal, { kind: 'level', capability: 'controls' });
+  assert.equal(pointAction(offer, { id: null, control: roleLink }, config).action?.type, 'click');
   assert.equal(pointAction(readOnly.offer, found(partner), readOnly.config).refusal?.kind, 'cross_origin');
   // A link labelled as an action stays refused as its offered id would be (none is offered).
   assert.equal(pointAction(readOnly.offer, found(link('u11', 'Sign out', '/logout')), readOnly.config).refusal?.kind, 'sign_in');

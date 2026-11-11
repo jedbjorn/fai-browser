@@ -464,7 +464,7 @@ export function buildDigest(observation, instruction, { maxBlocks = DIGEST_MAX_B
 
   // A block longer than BLOCK_TEXT_LIMIT is shown whole (as far as the page script read it) when the host asked for
   // more: `fullBlocks` 'all' (a larger digestChars) or 'matched' (a focus: the blocks that hold its words). Any block
-  // shown shorter than the page has it ends in CUT_MARK.
+  // shown shorter than the page has it ends in CUT_MARK, which neither sets `truncated` nor asks for another observe.
   const textOf = index => {
     const block = blocks[index];
     const long = block.full && (fullBlocks === 'all' || (fullBlocks === 'matched' && matched[index]));
@@ -479,18 +479,16 @@ export function buildDigest(observation, instruction, { maxBlocks = DIGEST_MAX_B
     const key = `${block.t}\u0000${block.text}`;
     if (seen.has(key)) return false;
     const room = maxChars - chars;
+    // The mark alone says a block is cut; `truncated` (the "more on the page" hint) stays for blocks left out, as
+    // before: a paragraph over 300 characters is no reason for another observe.
     let { text, cut } = textOf(index);
-    if (cut) {
-      text = `${text}${CUT_MARK}`;
-      truncated = true;
-    }
+    if (cut) text = `${text}${CUT_MARK}`;
     if (text.length > room) {
       if (whole || room < MIN_CLIP_CHARS) {
         truncated = true;
         return false;
       }
       text = `${text.slice(0, room - 1)}${CUT_MARK}`;
-      truncated = true;
     }
     seen.add(key);
     chosen.set(index, text);

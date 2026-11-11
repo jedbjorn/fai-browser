@@ -684,6 +684,7 @@ function directState(result) {
       needsApproval: action.needsApproval,
     })) : null,
     moreActions: result?.moreActions,
+    moreOtherSites: result?.moreOtherSites,
   };
 }
 
@@ -738,6 +739,13 @@ function actionIdRange(actions, start, length) {
   return length > 1 ? `a${ids[0]}-a${ids.at(-1)}` : `a${ids[0]}`;
 }
 
+// The count of unlisted actions; links to other sites among them are named, so the host knows to ask with a focus.
+function moreLine(current) {
+  const sites = Number.isInteger(current.moreOtherSites) && current.moreOtherSites > 0
+    ? `, ${current.moreOtherSites} of them links to other sites` : '';
+  return `(${current.moreActions} more not listed${sites}; these are the most relevant)`;
+}
+
 function actionLine(action) {
   return `${action.id}  ${action.description}${action.needsApproval ? ` [${action.needsApproval}]` : ''}`;
 }
@@ -747,7 +755,7 @@ function fullActionLines(current, revision) {
   if (current.actions?.length) {
     lines.push(`actions (revision ${revision}):`, ...current.actions.map(actionLine));
   }
-  if (current.moreActions) lines.push(`(${current.moreActions} more not listed; these are the most relevant)`);
+  if (current.moreActions) lines.push(moreLine(current));
   return lines;
 }
 
@@ -761,7 +769,7 @@ function actionDeltaLines(current, previous, revision) {
   if (!previous.actions || !current.actions) return full;
   if (sameActions(current.actions, previous.actions)) {
     const lines = [`actions: unchanged from revision ${revision}`];
-    if (current.moreActions) lines.push(`(${current.moreActions} more not listed; these are the most relevant)`);
+    if (current.moreActions) lines.push(moreLine(current));
     return lines;
   }
   if (!current.actions.length) {
@@ -792,7 +800,7 @@ function actionDeltaLines(current, previous, revision) {
       }
     }
   }
-  if (current.moreActions) delta.push(`(${current.moreActions} more not listed; these are the most relevant)`);
+  if (current.moreActions) delta.push(moreLine(current));
   return delta.join('\n').length < full.join('\n').length ? delta : full;
 }
 

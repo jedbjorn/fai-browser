@@ -13,6 +13,7 @@ import { siteRoot } from './origins.js';
 import { LEVEL_NAMES } from './oversight.js';
 import { capOffer, relevanceHints } from './relevance.js';
 import { withResumeWait } from './resume.js';
+import { OTHER_SITE_NEXT, OTHER_SITE_TEXT, otherSiteBrief } from './other-site.js';
 
 export const RESULT_VERSION = 2;
 
@@ -806,19 +807,45 @@ function linksDroppedCount(source) {
   return Number.isInteger(count) && count > 0 ? count : 0;
 }
 
+/**
+ * Links to other sites in a listing: `shown` is the listed actions with each listed other_site line carrying how many
+ * unlisted links go to the same origin (`sameOrigin`, folded into its line); `more` counts the other-site links the
+ * listing shows nothing of (other origins, plus the ones the page script's cap left out, `offSiteDropped`), so the
+ * host knows to ask for them with a focus.
+ */
+function otherSitesOf(all, listed, source) {
+  const shownSet = new Set(listed);
+  const origins = new Set(listed.filter(action => action.type === 'other_site').map(action => action.origin));
+  const folded = new Map();
+  let more = 0;
+  for (const action of all) {
+    if (action.type !== 'other_site' || shownSet.has(action)) continue;
+    if (origins.has(action.origin)) folded.set(action.origin, (folded.get(action.origin) ?? 0) + 1);
+    else more++;
+  }
+  const dropped = source?.offSiteDropped;
+  if (Number.isInteger(dropped) && dropped > 0) more += dropped;
+  const shown = folded.size ? listed.map(action => (action.type === 'other_site' && folded.has(action.origin)
+    ? { ...action, sameOrigin: folded.get(action.origin) } : action)) : listed;
+  return { shown, more };
+}
+
 export function offerOf(result) {
   const offer = result?.offer;
   if (offer && typeof offer === 'object' && Array.isArray(offer.actions) && typeof offer.revision === 'string') {
     const listed = Array.isArray(offer.listed) ? new Set(offer.listed) : null;
     const shown = listed ? offer.actions.filter(action => listed.has(action.id)) : offer.actions;
-    const out = { revision: offer.revision, actions: shown.map(listedAction) };
+    const sites = otherSitesOf(offer.actions, shown, offer);
+    const out = { revision: offer.revision, actions: sites.shown.map(listedAction) };
     const left = offer.actions.length - shown.length + linksDroppedCount(offer);
     if (left > 0) out.moreActions = left;
+    if (left > 0 && sites.more > 0) out.moreOtherSites = sites.more;
     return out;
   }
   if (typeof result?.revision === 'string' && Array.isArray(result.actions)) {
     const out = { revision: result.revision, actions: result.actions.map(action => ({ id: action.id, description: action.description, ...(typeof action.needsApproval === 'string' ? { needsApproval: action.needsApproval } : {}) })) };
     if (Number.isInteger(result.moreActions) && result.moreActions > 0) out.moreActions = result.moreActions;
+    if (out.moreActions && Number.isInteger(result.moreOtherSites) && result.moreOtherSites > 0) out.moreOtherSites = result.moreOtherSites;
     return out;
   }
   return null;
@@ -1056,6 +1083,8 @@ function directNextStep(result, context = {}) {
   }
   if (code === 'select_tab') return { kind: 'relay', text: directApproveText(context.origin, ref, context.approval ?? result.approval, resumeOf(context)) };
   if (code === 'approval_pending') return { kind: 'approve', text: approvalPendingText(result, context.gateWaitMs) };
+  // An act or a point on a link to another site (src/other-site.js): the agent requests that origin itself.
+  if (code === 'cross_origin' && result.needs?.message === OTHER_SITE_TEXT) return { kind: 'relay', text: OTHER_SITE_NEXT };
   if (level && (code === 'refused_action' || code === 'login')) {
     if (result.needs?.who === 'host') {
       return { kind: 'observe', text: `The grant already covers ${level}: call fai_browser_observe with mode "${level}", then choose.` };
@@ -1136,6 +1165,7 @@ export function directResult(source) {
   if (typeof result.revision === 'string') out.revision = result.revision;
   if (Array.isArray(result.actions)) out.actions = result.actions;
   if (Number.isInteger(result.moreActions) && result.moreActions > 0) out.moreActions = result.moreActions;
+  if (out.moreActions && Number.isInteger(result.moreOtherSites) && result.moreOtherSites > 0) out.moreOtherSites = result.moreOtherSites;
   if (result.consent) out.consent = result.consent;
   if (result.overlay) out.overlay = result.overlay;
   const kind = result.next?.kind;
@@ -1320,13 +1350,6 @@ export function cleanPermissions(value) {
   return out;
 }
 
-// The destination of an other_site link in its brief line, at most this many characters (cut ones end in "…").
-const OTHER_SITE_BRIEF_URL = 100;
-function otherSiteShown(href) {
-  const url = String(href ?? '').replace(/\s+/g, '');
-  return url.length > OTHER_SITE_BRIEF_URL ? `${url.slice(0, OTHER_SITE_BRIEF_URL - 1)}…` : url;
-}
-
 function quoted(label) {
   return JSON.stringify(String(label ?? '').replace(/\s+/g, ' ').trim().slice(0, BRIEF_LABEL_LIMIT));
 }
@@ -1376,10 +1399,10 @@ function actionBriefOf(action) {
       return 'wait';
     case 'navigate_allowed_url':
       return action.newTab ? `open ${quoted(action.label)} in this tab` : `open ${action.url}`;
-    // A link that leaves the approved site (src/runtime.js otherSiteAction): never clicked; its destination (page
-    // data, redacted) lets the host request that origin and open the link's own address.
+    // A link that leaves the approved site (src/other-site.js): never clicked; its destination (page data, redacted)
+    // lets the host request that origin and open the link's own address.
     case 'other_site':
-      return `link ${quoted(String(action.label ?? '').slice(0, 50))} → ${otherSiteShown(action.href)} (other site: request its origin)`;
+      return otherSiteBrief(action, action.sameOrigin ?? 0);
     default:
       return String(action.description ?? action.type);
   }
@@ -1418,6 +1441,7 @@ export function leanObserve(response, options = {}) {
     listed = all.filter(action => kept.has(action));
   }
   const instruction = options.instruction || options.answerQuestion || '';
+  const sites = otherSitesOf(all, listed, page);
   const results = withResultActions(recordResultsOf(page, instruction), listed);
   const rawDigest = Array.isArray(response?.digest) ? response.digest : buildDigest(page, instruction).digest;
   const digest = withoutProjectedRows(rawDigest, results).map(digestText).filter(Boolean);
@@ -1425,11 +1449,12 @@ export function leanObserve(response, options = {}) {
     revision: response?.revision ?? page.revision,
     page: { url: page.url, title: page.title, digest, ...(results ? { results } : {}),
       ...(results?.truncated ? { truncated: true } : {}) },
-    actions: listed.map(listedAction),
+    actions: sites.shown.map(listedAction),
   };
   // Links the page script's control cap left out count too: a focus naming one brings it into the listing.
   const left = all.length - listed.length + linksDroppedCount(page);
   if (left > 0) out.moreActions = left;
+  if (left > 0 && sites.more > 0) out.moreOtherSites = sites.more;
   if (permissions) out.permissions = permissions;
   // Machine codes from the page script and the runtime (password_field, login_wall, controls_capped:<n>,
   // cross_origin_frame), as in run results. A count the runtime has not added yet (an older daemon) is added here.

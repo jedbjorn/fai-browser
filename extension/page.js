@@ -444,6 +444,8 @@
   const MAX_TERMS = 30;
   // Off-screen controls whose labels are read to find term matches (selectControls).
   const TERM_SCAN_BUDGET = 1000;
+  // Off-screen links to other sites kept under the cap whatever their position (selectControls).
+  const OFFSITE_RESERVE = 5;
   // Visibility checks spent on counting the off-screen controls the cap left out (controlsDropped).
   const DROP_COUNT_BUDGET = 500;
 
@@ -961,33 +963,62 @@
   }
 
   // The text of an element as rendered across shadow boundaries (web-component links): text slotted into a shadow
-  // root's <a> from the host's light DOM, or held in a nested component's own shadow root. innerText and textContent
-  // see neither. aria-hidden and script/style subtrees are skipped; at most FLAT_TEXT_BUDGET nodes are read.
-  const FLAT_TEXT_BUDGET = 300;
+  // root's <a> from the host's light DOM, or held in a nested component's own shadow root, which innerText and
+  // textContent miss. It reads like innerText over the rendered (flat) tree, so a component can never name a control
+  // more leniently than the same visible content in the light DOM: text nodes join as they render ("Del<b>ete</b>"
+  // is "Delete"), a line break or a block-level box separates words, text that is not rendered (display: none,
+  // visibility: hidden) is left out, and aria-hidden text is kept (innerText keeps it). Script and style subtrees are
+  // skipped; at most FLAT_TEXT_BUDGET nodes are read. A control that is not rendered itself reads all its text.
+  const FLAT_TEXT_BUDGET = 400;
   function flatText(el) {
-    const parts = [];
+    let out = '';
     let budget = FLAT_TEXT_BUDGET;
+    const filter = el.checkVisibility ? el.checkVisibility({ visibilityProperty: true }) : true;
+    const shown = new Map();
+    const visibleText = parent => {
+      if (!filter || !parent) return true;
+      if (!shown.has(parent)) shown.set(parent, parent.checkVisibility ? parent.checkVisibility({ visibilityProperty: true }) : true);
+      return shown.get(parent);
+    };
     const walk = (node, depth) => {
       for (const child of flatChildren(node)) {
         if (--budget < 0) return;
         if (child.nodeType === Node.TEXT_NODE) {
-          parts.push(child.nodeValue);
+          if (visibleText(child.parentElement)) out += child.nodeValue;
           continue;
         }
-        if (child.nodeType !== Node.ELEMENT_NODE || SKIP_TEXT_TAGS.has(child.tagName.toUpperCase())
-          || child.getAttribute('aria-hidden') === 'true' || depth >= 12) continue;
+        if (child.nodeType !== Node.ELEMENT_NODE || SKIP_TEXT_TAGS.has(child.tagName.toUpperCase()) || depth >= 12) continue;
+        if (child.tagName === 'BR') {
+          out += ' ';
+          continue;
+        }
+        let display = 'inline';
+        if (filter && child.tagName !== 'SLOT') {
+          display = styleOf(child).display;
+          if (display === 'none') continue;
+        }
+        const block = !/^(?:inline|contents|ruby)/.test(display);
+        if (block) out += ' ';
         walk(child, depth + 1);
+        if (block) out += ' ';
       }
     };
     walk(el, 0);
-    return parts.join(' ');
+    return out.replace(/\s+/g, ' ').trim();
   }
 
-  // Whether a control inside a shadow root places the host's content with a <slot> (a component's own <a> or
-  // <button>): innerText sees only the component's own glyphs ("›"), never the slotted text that names it. A control
-  // whose innerText is empty reaches flatText anyway; one in the light DOM keeps innerText first.
+  // Whether a control renders content innerText does not see: inside a shadow root it places the host's content with
+  // a <slot> (a component's own <a> or <button>, whose innerText is only the component's glyphs), or it holds a
+  // component whose text lives in its own shadow root. Its label and its guard names then come from flatText.
+  const FLAT_PARTS_BUDGET = 60;
   function hasFlatParts(el) {
-    return el.getRootNode() !== el.ownerDocument && Boolean(el.querySelector('slot'));
+    if (el.getRootNode() !== el.ownerDocument && el.querySelector('slot')) return true;
+    const walker = el.ownerDocument.createTreeWalker(el, NodeFilter.SHOW_ELEMENT);
+    let seen = 0;
+    for (let node = walker.nextNode(); node && seen < FLAT_PARTS_BUDGET; node = walker.nextNode(), seen++) {
+      if (node.shadowRoot) return true;
+    }
+    return false;
   }
 
   // A name from content for an element without text: the aria-label, image alt, SVG <title> or title attribute of
@@ -1610,7 +1641,9 @@
     const names = [el.getAttribute('aria-label'), el.tagName === 'SELECT' ? label : el.labels?.[0]?.textContent,
       el.tagName === 'SELECT' ? '' : el.innerText, el.tagName === 'SELECT' ? '' : el.textContent,
       el.title, el.alt, el.tagName === 'INPUT' && ['button', 'reset', 'submit'].includes(el.type) ? el.value : '',
-      labelledByText(el), generatedText(el), label];
+      labelledByText(el), generatedText(el), label,
+      // A web component's rendered text, whole (the label is cut at 180 characters).
+      el.tagName === 'SELECT' || !hasFlatParts(el) ? '' : flatText(el)];
     if (names.some(name => forbidden(name))) return { cls: 'forbid' };
     // A script link (role=link without a real <a href>) acts like a button: it needs `controls`, as in the runtime,
     // and its label classes apply, so a forged command cannot click a "Buy now" script link at a lower level.
@@ -3252,6 +3285,34 @@
   // controls, each in document order. Selection priority: consent buttons, nag closers, floating choices, in-viewport
   // term matches, other in-viewport controls (leaving up to TERM_RESERVE slots for off-screen term matches), off-screen
   // term matches, off-screen controls.
+  // An <a> whose href is a web page (http or https), and one on another site than the approved one.
+  function webLink(el) {
+    if (el.tagName !== 'A' || !el.hasAttribute('href')) return false;
+    try {
+      return /^https?:$/.test(new URL(el.href).protocol);
+    } catch {
+      return false;
+    }
+  }
+  function offSiteLink(el) {
+    if (!webLink(el) || el.ownerDocument !== document) return false;
+    try {
+      return !onApprovedSite(new URL(el.href));
+    } catch {
+      return false;
+    }
+  }
+  // A link's host and path as words a term can match ("widget-company.example/contact"), else ''.
+  function linkWords(el) {
+    if (!webLink(el)) return '';
+    try {
+      const url = new URL(el.href);
+      return `${url.hostname}${decodeURIComponent(url.pathname)}`;
+    } catch {
+      return '';
+    }
+  }
+
   function selectControls(candidates, terms, consent) {
     const inView = [];
     const offView = [];
@@ -3292,10 +3353,11 @@
     };
     // How many terms a control's label holds: a nav rail where every item holds "section" still brings the one that
     // also holds a focus phrase "section 99" in first.
+    // A link's destination counts too (host and path): a focus naming a site finds its link whatever the label says.
     const hitsOf = item => {
       if (!terms.length) return 0;
-      const label = labelFor(item).toLowerCase();
-      return terms.reduce((count, term) => count + (label.includes(term) ? 1 : 0), 0);
+      const text = `${labelFor(item)} ${linkWords(item.el)}`.toLowerCase();
+      return terms.reduce((count, term) => count + (text.includes(term) ? 1 : 0), 0);
     };
     const matches = item => hitsOf(item) > 0;
     const chosen = new Set();
@@ -3332,8 +3394,16 @@
       const order = new Map(offView.map((item, index) => [item, index]));
       offMatches.sort((a, b) => order.get(a) - order.get(b));
     }
-    for (const item of inView) take(item, MAX_CONTROLS - offMatches.length);
+    // A few off-screen links to other sites keep a place whatever their position (a footer link to the owner's own
+    // site on a long page), so the host sees where the page leads without knowing the link's text.
+    const offSites = [];
+    for (const item of offView) {
+      if (offSites.length >= OFFSITE_RESERVE) break;
+      if (!offMatches.includes(item) && offSiteLink(item.el) && rendered(item.el, item.rect)) offSites.push(item);
+    }
+    for (const item of inView) take(item, MAX_CONTROLS - offMatches.length - offSites.length);
     for (const item of offMatches) take(item);
+    for (const item of offSites) take(item);
     let capped = false;
     let dropped = 0;
     let rest = 0;
@@ -3348,8 +3418,17 @@
     }
     // Of the controls left out, the real links (an <a> with a navigating href): offered at every level once a focus
     // brings them in, so the host's listing counts them as more actions (linksDropped).
+    // Never a mailto:, javascript: or other non-web link, nor one whose short label names an action the runtime never
+    // offers as a link (sign out, delete, buy: src/oversight.js destructiveLink, approximated by its label classes).
     let links = 0;
-    const realLink = el => el.tagName === 'A' && el.hasAttribute('href') && !/^\s*(?:#|javascript:)/i.test(el.getAttribute('href'));
+    let offSite = 0;
+    const countLink = el => {
+      if (!webLink(el)) return;
+      const text = cleanText(el.textContent).slice(0, 80);
+      if (text.split(' ').length <= 4 && (labelClass(text) || forbidden(text))) return;
+      links++;
+      if (offSiteLink(el)) offSite++;
+    };
     if (capped) {
       // How many rendered off-screen controls the cap left out (checked up to a budget, the remainder counted as is).
       let checked = 0;
@@ -3357,7 +3436,7 @@
         if (chosen.has(item)) continue;
         if (++checked > DROP_COUNT_BUDGET || rendered(item.el, item.rect)) {
           dropped++;
-          if (realLink(item.el)) links++;
+          countLink(item.el);
         }
       }
     }
@@ -3365,12 +3444,14 @@
     const leftInView = left.length;
     if (leftInView) capped = true;
     dropped += leftInView;
-    for (const item of left) if (realLink(item.el)) links++;
+    for (const item of left) countLink(item.el);
+    const reserved = new Set([...offMatches, ...offSites]);
     const ordered = [
       ...inView.filter(item => chosen.has(item) && inFloating(item.el)),
       ...inView.filter(item => chosen.has(item) && !inFloating(item.el)),
       ...offMatches.filter(item => chosen.has(item)),
-      ...offView.filter(item => chosen.has(item) && !offMatches.includes(item)),
+      ...offView.filter(item => chosen.has(item) && !reserved.has(item)),
+      ...offSites.filter(item => chosen.has(item)),
     ];
     for (const item of ordered) {
       item.label = labelFor(item);
@@ -3384,7 +3465,7 @@
     nameCalendarDays(ordered);
     // A control with no name is never sent with an empty label (describeUnnamed).
     describeUnnamed(ordered);
-    return { ordered, password, capped, dropped, linksDropped: links };
+    return { ordered, password, capped, dropped, linksDropped: links, offSiteDropped: offSite };
   }
 
   function loginWall(password) {
@@ -5131,7 +5212,7 @@
     const overlay = detectOverlay(roots, consent);
     detectFloating(roots, consent);
     const candidates = withFrames(queryAll(CONTROL_SELECTOR, roots), CONTROL_SELECTOR);
-    const { ordered, password, capped, dropped, linksDropped } = selectControls(candidates, currentTerms, consent);
+    const { ordered, password, capped, dropped, linksDropped, offSiteDropped } = selectControls(candidates, currentTerms, consent);
     targets = new Map();
     targetRisks = new Map();
     const controls = [];
@@ -5208,6 +5289,7 @@
       controls,
       ...(capped ? { controlsDropped: dropped } : {}),
       ...(linksDropped ? { linksDropped } : {}),
+      ...(offSiteDropped ? { offSiteDropped } : {}),
       consent: consentView,
       ...(overlayInfo ? { overlay: overlayInfo } : {}),
       warnings,
@@ -5321,7 +5403,9 @@
   // is never a control (hidden, file) or an option/menu item outside an open list.
   function controlAtPoint(x, y) {
     let el = elementAtPoint(x, y);
-    while (el && !(typeof el.matches === 'function' && el.matches(CONTROL_SELECTOR))) el = parentOf(el);
+    // Up the rendered tree: light-DOM content slotted into a component continues at its slot (a <span> inside a
+    // component link reaches the link's <a>), then across shadow boundaries.
+    while (el && !(typeof el.matches === 'function' && el.matches(CONTROL_SELECTOR))) el = el.assignedSlot ?? parentOf(el);
     if (!el) return null;
     if (el.type === 'hidden' || el.type === 'file') return null;
     const explicitRole = el.getAttribute('role');

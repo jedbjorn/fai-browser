@@ -24,6 +24,7 @@ import {
   labelSpellings, levelFor, levelRank, paymentField, purchaseControl, purchasePage, secretAction,
 } from './guardrails.js';
 import { scrubSecrets, secretIds } from './secrets.js';
+import { OTHER_SITE_TEXT, otherSiteLabel, otherSiteView } from './other-site.js';
 import { capActions, capOffer, relevanceHints } from './relevance.js';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -177,18 +178,8 @@ function clip(value, limit) {
 // Legal actions
 // ---------------------------------------------------------------------------------------------------------------
 
-// A link to another site: its destination (page data, redacted like the rest of the page) is shown up to this many
-// characters, its label up to OTHER_SITE_LABEL_CHARS, so the line stays inside the MCP's 200-character action line.
-const OTHER_SITE_URL_CHARS = 100;
-const OTHER_SITE_LABEL_CHARS = 50;
-
-/**
- * The trusted text of an act on a link to another site (an offered other_site action, or a point on such a link). The
- * destination is page data: it stays in the untrusted action line and is never repeated here.
- */
-export const OTHER_SITE_TEXT = 'This link leaves the approved site; nothing ran. Its destination is in the action line. '
-  + 'If the task needs that page, request the tab again with its origin added to origins and the link\'s address as '
-  + 'allowedUrls (fai_browser_open with the requestId); never guess another address.';
+// A link to another site (src/other-site.js): never clicked; the act on it is refused with OTHER_SITE_TEXT.
+export { OTHER_SITE_TEXT };
 
 /** An act on a link that leaves the approved site: refused as cross_origin, with how to follow it. */
 function otherSiteRefusal(session, why = 'link:other_site') {
@@ -200,22 +191,18 @@ function otherSiteRefusal(session, why = 'link:other_site') {
 
 /** Whether a link's href is an http(s) address (a page another site serves), not mailto:, javascript: and the like. */
 function offSiteHref(href) {
-  try {
-    return ['http:', 'https:'].includes(new URL(href).protocol);
-  } catch {
-    return false;
-  }
+  return otherSiteView(href) !== null;
 }
 
 /**
  * The offered entry for a link that leaves the approved site: never clicked (act on it is refused with how to follow
- * it); its line names the destination, so the host can request that origin and open the link's own address.
+ * it); its line names the destination (origin and path, src/other-site.js), so the host can request that origin and
+ * open the link's own address.
  */
 function otherSiteAction(base, href) {
-  const shown = href.length > OTHER_SITE_URL_CHARS ? `${href.slice(0, OTHER_SITE_URL_CHARS - 1)}…` : href;
-  const label = base.label.length > OTHER_SITE_LABEL_CHARS ? `${base.label.slice(0, OTHER_SITE_LABEL_CHARS - 1)}…` : base.label;
-  return { type: 'other_site', ...base, href, origin: new URL(href).origin,
-    description: `Link ${base.target}: ${label} → ${shown} (other site: request its origin)` };
+  const view = otherSiteView(href);
+  return { type: 'other_site', ...base, href, origin: view.origin,
+    description: `Link ${base.target} to ${view.shown} (other site${view.exact ? '' : ', address not shown'}): ${otherSiteLabel(base.label)}` };
 }
 
 function isTextEntry(control) {
@@ -963,8 +950,12 @@ export function redactorFor(suppliedText) {
  * listing counts them in moreActions, since a focus naming one brings it in. Empty otherwise.
  */
 function linksDroppedOf(observation) {
-  const count = observation?.linksDropped;
-  return Number.isInteger(count) && count > 0 ? { linksDropped: Math.min(count, 100_000) } : {};
+  const out = {};
+  for (const key of ['linksDropped', 'offSiteDropped']) {
+    const count = observation?.[key];
+    if (Number.isInteger(count) && count > 0) out[key] = Math.min(count, 100_000);
+  }
+  return out;
 }
 
 // At most this many terms reach the page script (extension/page.js MAX_TERMS).
@@ -2399,7 +2390,13 @@ export function pointAction(offer, found, config) {
   if (block) return { refusal: block, control };
   if (control.enabled === false || control.visible === false) return { refusal: { kind: 'unavailable', capability: null }, control };
   if (control.sensitive) return { refusal: { kind: 'risk', capability: null }, control };
-  if (control.role === 'link') return { refusal: { kind: 'cross_origin', capability: null }, control };
+  if (control.role === 'link') {
+    // A script link (role=link without an href) is a control, as its action id is: it needs reversible. A javascript:,
+    // data: or other non-http link only runs a script or opens no page: never run, whatever the level.
+    if (!control.href) return { refusal: guard.allows('controls') ? { kind: 'risk', capability: null } : { kind: 'level', capability: 'controls' }, control };
+    if (!offSiteHref(control.href)) return { refusal: { kind: 'risk', capability: null }, control };
+    return { refusal: { kind: 'cross_origin', capability: null }, control };
+  }
   if (!guard.allows('controls')) return { refusal: { kind: 'level', capability: 'controls' }, control };
   return { refusal: { kind: 'risk', capability: null }, control };
 }
