@@ -381,8 +381,12 @@ test('#36: an approval replaces the agent\'s older pending requests in the same 
   const session = await agentSession(ctx);
   const make = () => ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Read' }, { headers: session.headers })
     .then(response => response.body.requestId);
+  // Two connected browsers; the request waits in the one used last (b2), not pinned there by anyone.
+  const browsers = [{ id: 'b1', product: 'chrome', name: 'Chrome', usedAt: 1 }, { id: 'b2', product: 'firefox', name: 'Firefox', usedAt: 2 }];
+  ctx.hub.candidates = () => browsers;
   const elsewhere = await make();
-  await ctx.hub.emit({ type: 'move', requestId: elsewhere, browserId: 'b2' });
+  assert.deepEqual([ctx.daemon.request(elsewhere).browser?.id, ctx.daemon.request(elsewhere).browserPinned ?? false], ['b2', false]);
+  browsers[0].usedAt = 3;
   const here = await make();
   const approved = await make();
   const lease = await ctx.hub.emit({ type: 'lease', requestId: approved, tabId: 1, origin: ORIGIN, title: 'Home', level: 'read-only', browserId: 'b1' });

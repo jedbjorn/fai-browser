@@ -196,7 +196,10 @@ access pauses the request (`child_tab`). A closed child returns control to anoth
 child in front takes the commands; one the page opened behind the working tab joins the list but the
 commands stay where they are (switch with `tab`). A tab the browser names its opener for only after
 creating it (Chromium for some tabs) is still recognised as the page's child, and a page-opened tab that
-comes to the front before its creation event is reported is a child too, never a `tab_changed`. Firefox
+comes to the front, created during the session, is a child too, never a `tab_changed`; a tab that existed
+before the session (a tab the user opened from the task page earlier) is never adopted: bringing it forward is a
+tab switch (`tab_changed`), also with Multiple task tabs. The worker keeps the tabs created during the session in
+memory only; after a worker restart the session is gone anyway, so nothing is adopted from before. Firefox
 names no opener for a page's popup window: it is neither followed nor paused, and the request keeps
 working in its own tab. Another request's page that FAI opens by itself opens behind the tab a live
 request works on (its prompt window's Approve brings it forward), so it no longer pauses that request.
@@ -217,17 +220,24 @@ An agent that needs more than the user approved asks on the request it holds, ne
 request does not cover yet (the origin a `cross_origin`, `origin_changed` or `child_tab` result names).
 The request keeps its id, tab, page, lease and tab mode; nothing is granted until the user's click.
 
-- **Daemon.** `POST /v1/requests/:id/ask {mode?, origins?}` (client `ask(requestId, body)`). On a pending
-  request it raises `mode` and adds `origins` in place (`asked: false`). On an approved one (active or paused)
-  it records `ask {level, origins, at}` in the request view (asks add up until the user answers) and
-  answers `asked: true`; origins are validated as for a new request (at most 10 in all). `POST /v1/wait
+- **Daemon.** `POST /v1/requests/:id/ask {mode?, origins?}` (client `ask(requestId, body)`). A pending request
+  may be on the user's screen, so it never grows: asking more on one creates its successor with everything
+  (the answer's `requestId`, `replaced`: the old id), and the old one expires as `replaced`, so a click on its
+  card approves nothing. On an approved request (active or paused) it records `ask {id, level, origins,
+  access, at}` in the request view and answers `asked: true`: `origins` the request does not cover yet,
+  `access` exact origins it lists that the extension cannot follow yet (no host access; the browser's site
+  access is what is asked for). Origins are validated as for a new request (at most 10 in all); a domain root
+  is refused on an approved request (`422 ask_root`: ask for the exact origins, which a frame list or
+  `leftOrigin` names). A second ask while one waits replaces it, with both, under a new `id`. `POST /v1/wait
   {requestId, ask: true}` also waits while the ask is open. Without `requestId` the MCP server still opens a
   new request for origins the latest one does not cover.
 - **Approval.** The ask shows as an **AGENT ASKS FOR MORE** card (the approval window opens for it once; the
   badge counts it): "Same task and tab: add `<origin>` · allow `<level>`", a level selector capped at the asked
   level, **Approve on the FAI tab** (or **Approve this tab** when this browser holds no session for it) and
-  **Decline**. Approve asks the browser for site access to the added exact origins inside the click, then
-  sends the lease message with `ask: true`: the daemon adds the origins and raises the request's mode, then
+  **Decline**. Invited tabs show it too. Approve asks the browser for site access to the asked exact origins
+  inside the click, then sends the lease message with `ask: true` and the `askId` the card showed: the daemon
+  applies only that exact ask (a changed or missing id is refused with `ask_changed`, nothing granted, and the
+  card shows the current ask), adds the origins and raises the request's mode, then
   re-approves the active lease in place (same `leaseId`; level, origins and tab mode updated, the worker's
   session keeps its tabs and page) or, for a paused request, binds the approved tab as a resume. A lease
   message without `ask` never applies an ask. Decline (`deny {requestId, ask: true}`) clears it and keeps the
@@ -236,10 +246,12 @@ The request keeps its id, tab, page, lease and tab mode; nothing is granted unti
   access to them (the request modal's approval, or the ask card's, asks for it): the worker reports them as
   the observation's `reachable`, the runtime then offers links and `url` acts there (only to origins the lease
   lists; without the field nothing changes), page.js lets a link go there, and the session moves with the tab.
-  Without host access (a toolbar-only approval in Chromium) such a link is not offered.
+  Without host access (a toolbar-only approval in Chromium) such a link is not offered, and a `url` act there
+  says the site is approved but not accessible yet (an ask for it is a site-access ask). Approving a request
+  with several exact sites therefore lets the agent move between them in the tab: the request card says so.
 - **Results.** The open that asked returns the page once the user approved. If the user did not answer within
   the call it returns `needs_user` / `ask_pending` (relay; the ask stays open); after a Decline, once,
-  `needs_user` / `ask_declined` (continue at the granted level or tell the user what is left).
+  `needs_host` / `ask_declined` (`next.kind: "observe"`: continue at the granted level).
 
 CLI equivalents are `act --request ID --open-tab URL --revision R` and
 `act --request ID --tab t0 --revision R`; the SDK accepts `client.act({requestId, openTab, ...})`.
@@ -696,10 +708,14 @@ Stdout is exactly one JSON line (`--pretty` indents it). `act` prints the lean a
 for a request the user stopped (the extension's status `stopped` with reason `stopped`); a request ended any other
 way is `request_closed` (a replaced one says another approved request replaced it). A request the user denied is
 `stopped` / `denied` ("The user denied this tab request"; `next.kind: "stop"`: ask again only if the user asks), never a
-technical close. When the user approves a request, the older requests its agent still has pending (the same owner
-session, else the same client instance; never an invited tab, never a newer one) expire as `replaced` at once, so a
-click on one of them that arrives late (a request modal still waiting for the browser's site-access answer) approves
-nothing and cannot supersede the approved one (issue #36). Each pause names its cause in
+technical close. When the user approves a request, or an agent joins an invited tab, the older requests that agent
+still has pending in the same browser (the same owner session, else the same client instance; never an invited tab,
+never a newer one) expire as `replaced` at once, so a click on one of them that arrives late (a request modal still
+waiting for the browser's site-access answer) approves nothing and cannot supersede the approved one (issue #36). An
+approval the extension gives back (`not_approved`) lets them wait again. A closed request names its successor only
+when it is the same agent's own (`replacedBy`; `next.kind: "observe"` with that id); otherwise it says the user
+approved another task in this browser (`next.kind: "stop"`). `tab_not_ready` three times in a row pauses the request as
+`session_inactive` ("the browser extension no longer holds this tab"), so the user's Resume binds it again. Each pause names its cause in
 `needs.message`: `tab_changed` (another tab came to the front in the task tab's window, or the task tab closed),
 `origin_changed` (the tab left the approved sites; `leftOrigin`), `child_tab` (the page opened a tab or window the task
 cannot follow; `childOrigin`), `session_inactive` (the extension restarted), `disconnected`, `paused` (the user's
