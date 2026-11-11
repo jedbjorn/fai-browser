@@ -95,7 +95,7 @@ same act picks up a click given meanwhile). Uploads always ask. See [approvals.m
 **Typed text and forms.** A form of four fields and a submit is one call: `{"fills": [{"actionId": "a2", "text": "Ada"},
 {"actionId": "a3", "text": "ada@example.com"}, ...], "submit": true, "expectation": {"textIncludes": "Thanks"}}`. A search
 is one call too: `{"actionId": "a1", "text": "blue kettle", "submit": true}`. `suppliedText` still works for values the user
-gave: each value is offered in the field it fits (`fill textbox "Email" with supplied email`), and such a fill goes in a
+gave: each value is offered in the fields it fits (`fill textbox "Email" with supplied email`; choose by label when several fit), and such a fill goes in a
 `fills` batch without `text` (`{"actionId": "a4"}`). The values stay with the request through a level raise or an added
 origin; do not pass them again. At Read, `warning: controls_need_reversible:<n>` counts the buttons and fields that need
 Use: ask for it at once when the task needs one.
@@ -139,8 +139,8 @@ link is an ordinary click.
 
 Wait for a pending tab request (`requestId`) or a still-running act (`runId`). Returns within `maxMs` (0 to 45 000, default
 30 000). Use when `next.kind` is `wait`, and in place of ending the turn when you cannot be woken (a subagent: FAI's wake
-goes to the main session; a script). Still pending, it says so in one short `wait` line: call it again (that is waiting,
-not a repeated call).
+goes to the main session; a script). The first wait repeats the full relay; still pending after that, it says so in one
+short `wait` line: call it again (that is waiting, not a repeated call).
 
 ### `fai_browser_status`
 

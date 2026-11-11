@@ -41,6 +41,8 @@ export interface Control {
    * \"Departure\""), never empty.
    */
   unnamed?: boolean;
+  /** A form field the page marks as not meant for people (hidden from assistive technology and drawn invisible): reported for the page facts, never offered. */
+  trap?: boolean;
   /**
    * Set on controls inside a same-origin iframe: the 1-based index of that frame among the readable frames, in
    * document order. Ids are one sequence across the page, its open shadow roots and its frames ("1".."100"), so

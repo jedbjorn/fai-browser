@@ -13,6 +13,7 @@ import { bridgeError, directNext } from '../src/result.js';
 import { OTHER_SITE_TEXT, offeredActions, pointAction } from '../src/runtime.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
+import { newRequestNote, successorNote } from '../src/mcp.js';
 import { ORIGIN, link } from './runtime-fixtures.js';
 
 const PARTNER = 'https://partner.example.org';
@@ -726,4 +727,13 @@ test('MCP: two opens race on a pending request; the values of the first reach th
   await second;
   const observed = text(await ctx.mcp.callTool('fai_browser_observe', { requestId: successor.requestId }));
   assert.match(observed, /fill textbox "Name" with supplied name/);
+});
+
+test('the new-request note says why: ended, unknown, or live in another browser (where it stays)', () => {
+  assert.match(newRequestNote('req_a', 'req_b'), /^requestId req_b is a new request: req_a had ended, so nothing of it carries over/);
+  assert.match(newRequestNote('req_a', 'req_b', 'unknown'), /FAI Browser no longer knows req_a/);
+  const browser = newRequestNote('req_a', 'req_b', 'browser');
+  assert.match(browser, /req_a is in another browser than the one this call named \(it stays open there\)/);
+  assert.doesNotMatch(browser, /ended/);
+  assert.match(successorNote('req_a', 'req_b'), /^requestId req_b replaces req_a .*Use req_b from now on\.$/);
 });

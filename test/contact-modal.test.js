@@ -72,12 +72,14 @@ test('the dialog: each supplied value in its own field, no spam-trap field, a fi
 });
 
 test('the spam-trap field is reported (trap) for the page facts but never offered, at any level', async t => {
-  const { page, runtime } = await open(t, 'full');
+  const { page, bridge, runtime } = await open(t, 'full');
   await page.click('.contact-link');
-  const observed = await runtime.observe(config('full'));
-  const trap = observed.observation.controls.find(control => control.label === 'company');
+  // The page script's own observation (what the runtime's page facts read).
+  const raw = await bridge.observe(undefined, {});
+  const trap = raw.controls.find(control => control.label === 'company');
   assert.equal(trap?.trap, true, 'reported and marked');
-  assert.ok(!observed.observation.controls.some(control => control.trap && control.label !== 'company'), 'only the trap is marked');
+  assert.ok(!raw.controls.some(control => control.trap && control.label !== 'company'), 'only the trap is marked');
+  const observed = await runtime.observe(config('full'));
   assert.ok(!observed.actions.some(action => action.label === 'company'), 'no fill, typed or supplied, and no click');
   // A value that fits no visible field still never goes there.
   const loose = await runtime.observe({ ...config('full'), suppliedText: { note: 'x' } });
