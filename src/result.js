@@ -13,7 +13,7 @@ import { siteRoot } from './origins.js';
 import { LEVEL_NAMES } from './oversight.js';
 import { capOffer, relevanceHints } from './relevance.js';
 import { withResumeWait } from './resume.js';
-import { OTHER_SITE_NEXT, OTHER_SITE_TEXT, otherSiteBrief } from './other-site.js';
+import { NOT_WEB_LINK_TEXT, OTHER_SITE_NEXT, OTHER_SITE_TEXT, otherSiteBrief } from './other-site.js';
 
 export const RESULT_VERSION = 2;
 
@@ -978,6 +978,8 @@ const STATUS_NAMES = {
 // The trusted refusal texts a stop may carry (runtime-written needs.message); anything else falls back to the generic
 // one, so a stop text never repeats a message the runtime did not write.
 const REFUSAL_STOP_TEXTS = new Set([
+  // A point on a javascript:, data: or other non-web link (src/other-site.js).
+  NOT_WEB_LINK_TEXT,
   'FAI never purchases, deletes, sends or logs in. Tell the user what to do in the tab.',
   'FAI never purchases outside testing mode. Tell the user what to do in the tab.',
   'The user reserved this control for themselves. Tell the user what to do in the tab.',

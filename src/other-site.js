@@ -14,28 +14,39 @@ export const OTHER_SITE_NEXT = 'Nothing ran: the link leaves the approved site. 
   + 'fai_browser_open yourself with origins set to the link\'s origin from its action line (and allowedUrls set to its '
   + 'address when the line shows it whole), and tell the user a new FAI Browser approval is coming. Never guess an address.';
 
+/** The fixed trusted text of a point on a javascript:, data: or other non-web link: never run, at any level. */
+export const NOT_WEB_LINK_TEXT = 'This link does not lead to a web page (it runs a script or holds data); nothing ran, and '
+  + 'FAI Browser never follows such links. Use another offered action.';
+
 // At most this many characters of a destination's path are shown; a longer path is not shown at all.
 const PATH_CHARS = 80;
 // At most this many characters of the label.
 const LABEL_CHARS = 50;
 
+// A path segment that names what the next segment is: a one-time or private link's token follows it
+// (/reset/<token>, /invite/<code>, /s/<id>, /magic-link/<token>).
+const SECRET_LEAD = /^(?:reset|verify|verification|confirm|confirmation|invite|invitation|magic|activate|activation|token|tokens|session|sessions|sess|auth|oauth|sso|key|keys|apikey|api-key|share|shared|s|join|password|passwd|otp|code|unsubscribe|login|signin|callback|access|ticket|grant|recover|recovery|onetime|one-time)(?:[-_].*)?$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Whether a path may carry a secret, so the line shows only the origin: a redacted placeholder, a key-shaped, long
+// hex or UUID segment, a segment holding `=` (a token in the path), or any segment after a SECRET_LEAD word.
 function pathHidesSecret(path) {
   if (path.includes('[secret:')) return true;
-  return path.split('/').some(segment => {
-    let value = segment;
+  const segments = path.split('/').map(segment => {
     try {
-      value = decodeURIComponent(segment);
+      return decodeURIComponent(segment);
     } catch {
-      // Keep the raw segment.
+      return segment;
     }
-    return secretKeyShaped(value) || /^[0-9a-f]{24,}$/i.test(value);
   });
+  return segments.some((value, index) => secretKeyShaped(value) || /^[0-9a-f]{24,}$/i.test(value) || UUID.test(value)
+    || value.includes('=') || (index > 0 && value !== '' && SECRET_LEAD.test(segments[index - 1])));
 }
 
 /**
  * What a line shows of a link's destination: `{ origin, shown, exact }`. `shown` is the origin and path, never the
  * user info, query or fragment (they carry tokens); a path longer than PATH_CHARS, or one holding a redacted or
- * key-shaped segment (a reset link's token), is left out: `shown` is the origin and `exact` false (request the origin
+ * key-shaped, UUID or `=` segment, or a segment after a reset-, invite- or share-style word (a one-time link's token), is left out: `shown` is the origin and `exact` false (request the origin
  * only). Null for anything but an http(s) URL.
  */
 export function otherSiteView(href) {
@@ -54,11 +65,14 @@ export function otherSiteView(href) {
 }
 
 /**
- * A link's label for its line: page text that must not imitate the destination or the line's own words, so arrows,
- * quotes, brackets and line breaks are removed and it is clipped to LABEL_CHARS.
+ * A link's label for its line: page text that must not imitate the destination or the line's own words, so symbols,
+ * quotes, brackets, "://" and line breaks are removed and it is clipped to LABEL_CHARS.
  */
 export function otherSiteLabel(label) {
-  const text = String(label ?? '').replace(/[←-⇿⟰-⟿"'`“”‘’«»<>()[\]{}]/g, ' ').replace(/\s+/g, ' ').trim();
+  // Symbols (arrows, ➜), maths signs (<, >, =), opening, closing and quoting punctuation (brackets, ‹›, ［］, quotes of
+  // every width) and "://" go; what is left cannot read as a destination or close the line's own quote.
+  const text = String(label ?? '').replace(/:\/\//g, ' ')
+    .replace(/[\p{So}\p{Sm}\p{Ps}\p{Pe}\p{Pi}\p{Pf}"'`＂＇]/gu, ' ').replace(/\s+/g, ' ').trim();
   return text.length > LABEL_CHARS ? `${text.slice(0, LABEL_CHARS - 1)}…` : text;
 }
 

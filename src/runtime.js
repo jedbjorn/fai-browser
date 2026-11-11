@@ -24,7 +24,7 @@ import {
   labelSpellings, levelFor, levelRank, paymentField, purchaseControl, purchasePage, secretAction,
 } from './guardrails.js';
 import { scrubSecrets, secretIds } from './secrets.js';
-import { OTHER_SITE_TEXT, otherSiteLabel, otherSiteView } from './other-site.js';
+import { NOT_WEB_LINK_TEXT, OTHER_SITE_TEXT, otherSiteLabel, otherSiteView } from './other-site.js';
 import { capActions, capOffer, relevanceHints } from './relevance.js';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -179,7 +179,7 @@ function clip(value, limit) {
 // ---------------------------------------------------------------------------------------------------------------
 
 // A link to another site (src/other-site.js): never clicked; the act on it is refused with OTHER_SITE_TEXT.
-export { OTHER_SITE_TEXT };
+export { NOT_WEB_LINK_TEXT, OTHER_SITE_TEXT };
 
 /** An act on a link that leaves the approved site: refused as cross_origin, with how to follow it. */
 function otherSiteRefusal(session, why = 'link:other_site') {
@@ -2394,7 +2394,7 @@ export function pointAction(offer, found, config) {
     // A script link (role=link without an href) is a control, as its action id is: it needs reversible. A javascript:,
     // data: or other non-http link only runs a script or opens no page: never run, whatever the level.
     if (!control.href) return { refusal: guard.allows('controls') ? { kind: 'risk', capability: null } : { kind: 'level', capability: 'controls' }, control };
-    if (!offSiteHref(control.href)) return { refusal: { kind: 'risk', capability: null }, control };
+    if (!offSiteHref(control.href)) return { refusal: { kind: 'not_web', capability: null }, control };
     return { refusal: { kind: 'cross_origin', capability: null }, control };
   }
   if (!guard.allows('controls')) return { refusal: { kind: 'level', capability: 'controls' }, control };
@@ -3184,6 +3184,13 @@ export class BrowserRuntime {
     if (resolved.refusal) {
       const { kind, capability } = resolved.refusal;
       if (kind === 'unavailable') return refuse('target_unavailable', 'point:unavailable');
+      if (kind === 'not_web') {
+        // A javascript:, data: or other non-web link: refused with its own fixed text (no level lifts it).
+        setOutcome(result, 'refused_action');
+        result.needs.message = NOT_WEB_LINK_TEXT;
+        session.why('point:not_web');
+        return { result };
+      }
       if (kind === 'cross_origin') {
         // A real link to another site: the same answer as acting on its offered other_site entry.
         if (control.role === 'link' && offSiteHref(control.href)) return otherSiteRefusal(session, 'point:cross_origin');

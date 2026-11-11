@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BrowserRuntime, OTHER_SITE_TEXT, legalActions, offeredActions } from '../src/runtime.js';
-import { OTHER_SITE_NEXT } from '../src/other-site.js';
+import { NOT_WEB_LINK_TEXT, OTHER_SITE_NEXT } from '../src/other-site.js';
 import { capOffer, OTHER_SITE_LISTED, offerCap } from '../src/relevance.js';
 import { buildDigest } from '../src/digest.js';
 import { agentResult, leanObserve, listedAction, offerOf } from '../src/result.js';
@@ -62,6 +62,47 @@ test('a path that is cut, redacted or holds a key-shaped segment is not shown: t
   // Slugs and short ids stay.
   assert.equal(lineFor('https://other.example/blog/how-we-built-it-2024/', 'Reset link'),
     'link to https://other.example/blog/how-we-built-it-2024/ (other site): "Reset link"');
+});
+
+test('one-time and private link shapes show the origin only: UUIDs, `=` segments, the segment after a reset- or share-style word', () => {
+  const hidden = ['/s/Ab3dE9xQ', '/invite/k7Hq2mXz9PwR4tYv', '/reset/550e8400-e29b-41d4-a716-446655440000', '/sess=abcdef123456/x',
+    '/files/550e8400-e29b-41d4-a716-446655440000', '/verify/abc', '/confirm-email/x1', '/magic-link/qwerty', '/activate/12',
+    '/token/abc', '/session/xyz', '/auth/callback', '/api-key/k', '/share/doc-7', '/password-reset/u1'];
+  for (const path of hidden) {
+    assert.equal(lineFor(`https://other.example${path}`), 'link to https://other.example (other site, address not shown): "Site"', path);
+  }
+  for (const path of ['/jane/repo-1', '/in/jane', '/docs/reset-guide', '/blog/how-to-reset-a-router/', '/contact', '/site/']) {
+    assert.equal(lineFor(`https://other.example${path}`), `link to https://other.example${path} (other site): "Site"`, path);
+  }
+});
+
+test('a label loses Unicode symbols, brackets, quotes of every width and "://"', () => {
+  for (const [label, clean] of [['Go \u279c here', 'Go here'], ['\u2039Docs\u203a', 'Docs'], ['\uff3bSite\uff3d', 'Site'],
+    ['\uff02Quoted\uff02', 'Quoted'], ['See https://good.example now', 'See https good.example now'], ['\u300cBlog\u300d', 'Blog'],
+    ['A \u21d2 B \u2192 C = D', 'A B C D'], ['\u00abNews\u00bb', 'News']]) {
+    assert.equal(lineFor('https://other.example/docs', label), `link to https://other.example/docs (other site): "${clean}"`, label);
+  }
+});
+
+test('a point on a javascript:, data: or other non-web link is refused with its own text, at any level', async () => {
+  const box = { x: 10, y: 10, width: 100, height: 30 };
+  for (const href of ['javascript:void(0)', 'data:text/html,hi', 'mailto:a@example.com']) {
+    for (const mode of ['read-only', 'full']) {
+      const pages = { '/': { title: 'Home', text: 'x', controls: [link('1', 'Open panel', '/x', { href, bounds: box })] } };
+      const bridge = new FakeBridge({ pages });
+      const runtime = new BrowserRuntime({ bridge });
+      const { observation } = await runtime.observe({ mode, allowedOrigins: [ORIGIN] });
+      const result = await runtime.act({ point: { x: 20, y: 20 } }, { revision: observation.revision });
+      assert.equal(result.code, 'refused_action', `${href} ${mode}`);
+      assert.equal(result.needs.message, NOT_WEB_LINK_TEXT);
+      assert.equal(result.needs.level, undefined);
+      assert.ok(result.verdict.why.includes('point:not_web'));
+      assert.equal(bridge.executions.length, 0);
+      const lean = agentResult(result);
+      assert.equal(lean.next.kind, 'stop');
+      assert.match(lean.next.text, /does not lead to a web page/);
+    }
+  }
 });
 
 test('a label cannot imitate the destination: arrows, quotes, brackets and line breaks are removed', () => {
