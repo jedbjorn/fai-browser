@@ -46,6 +46,9 @@ export function bridgeError(code, message, recoverable = RECOVERABLE_CODES.has(c
   return error;
 }
 
+// A daemon request id, as a result may name one (replacedBy).
+const REQUEST_REF = /^req_[A-Za-z0-9_-]{4,64}$/;
+
 // What a host does after line_break_input (needs.message and the trusted next text).
 const LINE_BREAK_TEXT = "Newlines can't be typed into a single-line field. Fill without the line break, then use "
   + 'submit_field (or the submit option) to submit.';
@@ -157,13 +160,20 @@ const OUTCOMES = {
     status: 'stopped',
     who: 'none',
     reason: 'Stopped by user',
-    message: 'The user stopped the run. Do not retry without asking.',
+    message: 'The user pressed Stop. Do not retry without asking.',
   },
   cancelled: {
     status: 'stopped',
     who: 'none',
     reason: 'Cancelled by caller',
     message: '',
+  },
+  // The user denied the tab request (issue #36): their answer, not a technical end.
+  denied: {
+    status: 'stopped',
+    who: 'none',
+    reason: 'Denied by the user',
+    message: 'The user denied this tab request. Do not ask again unless the user asks you to.',
   },
   paused: {
     status: 'needs_user',
@@ -243,6 +253,28 @@ const OUTCOMES = {
     message: 'Ask the user to perform this action themselves.',
   },
   // Daemon tab-request outcomes (Phase 2).
+  // A command reached the browser while it was still switching to this request's tab (an approval finishing): nothing
+  // ran, the request is active.
+  tab_not_ready: {
+    status: 'needs_host',
+    who: 'host',
+    reason: 'The browser was still switching to this tab',
+    message: 'Nothing ran: the browser was still switching to this tab. Observe again with the same requestId.',
+  },
+  // The agent asked for more on an approved request (fai_browser_open with its requestId): a level or an origin.
+  ask_pending: {
+    status: 'needs_user',
+    who: 'user',
+    reason: 'The user has not approved the added level or site yet',
+    message: 'Ask the user to approve it on this task in the FAI Browser window (it is preselected). The task keeps '
+      + 'its tab and page.',
+  },
+  ask_declined: {
+    status: 'needs_host',
+    who: 'host',
+    reason: 'The user declined the added level or site',
+    message: 'The user declined it. Continue at the granted level, or tell the user what is left for them to do.',
+  },
   select_tab: {
     status: 'needs_user',
     who: 'user',
@@ -295,8 +327,8 @@ const OUTCOMES = {
   },
 };
 
-const LEASE_PAUSED_MESSAGE = 'The tab lease is paused. Ask the user to return to the tab and click Resume for this '
-  + 'request in the FAI Browser extension; next says how to continue once they do.';
+// Each pause says what paused it (issue #31): never "stopped" or "released", which only the user's Stop is.
+const RESUME_HINT = 'Ask the user to click Resume on this task in FAI Browser; next says how to continue.';
 
 /**
  * `needs.message` overrides the daemon applies to results of runs on a tab request (design section 2.3). These are
@@ -305,12 +337,12 @@ const LEASE_PAUSED_MESSAGE = 'The tab lease is paused. Ask the user to return to
 export const LEASE_MESSAGES = Object.freeze({
   paused: 'The user paused the tab. Ask them to click Resume in the FAI Browser extension when the task may continue; '
     + 'next says how to continue once they do.',
-  tab_changed: LEASE_PAUSED_MESSAGE,
-  origin_changed: LEASE_PAUSED_MESSAGE,
-  child_tab: LEASE_PAUSED_MESSAGE,
-  session_inactive: LEASE_PAUSED_MESSAGE,
-  disconnected: LEASE_PAUSED_MESSAGE,
-  stopped: 'The user stopped and released the tab. Do not retry without asking.',
+  tab_changed: `Paused: another tab came to the front in the task tab's window, or the task tab closed. ${RESUME_HINT}`,
+  origin_changed: `Paused: the tab left the approved sites. ${RESUME_HINT}`,
+  child_tab: `Paused: the page opened a tab or window this task cannot follow. ${RESUME_HINT}`,
+  session_inactive: `Paused: the browser extension no longer holds this tab (it restarted, or lost the task). ${RESUME_HINT}`,
+  disconnected: `Paused: the browser extension lost its connection. ${RESUME_HINT}`,
+  stopped: 'The user pressed Stop and released the tab. Do not retry without asking.',
   select_tab: OUTCOMES.select_tab.message,
   request_closed: OUTCOMES.request_closed.message,
 });
@@ -1005,7 +1037,7 @@ function refusalStopText(result) {
 function stopText(result) {
   switch (result.code) {
     case 'stopped':
-      return 'The user stopped the run. Report that and do not retry without asking the user.';
+      return 'The user pressed Stop. Report that and do not retry without asking the user.';
     case 'task_budget':
       return 'The call budget for this request is used up. Report the best partial answer from the last page.digest '
         + 'and trail, and say it is not verified. Do not call FAI Browser again for this task.';
@@ -1068,7 +1100,7 @@ function approvalPendingText(result, waitMs = null) {
     ? `fai_browser_act again with actionId ${pending.actionId} and revision "${pending.revision}"`
     : 'fai_browser_act again with the same actionId and revision';
   const level = typeof result.needs?.level === 'string'
-    ? ` Or ask for ${result.needs.level}: tell the user "approve the new FAI Browser request at ${LEVEL_NAMES[result.needs.level] ?? result.needs.level}; it is preselected", then fai_browser_open with mode "${result.needs.level}".` : '';
+    ? ` Or ask for ${result.needs.level}: tell the user "approve ${LEVEL_NAMES[result.needs.level] ?? result.needs.level} for this task in FAI Browser; it is preselected", then fai_browser_open with the requestId and mode "${result.needs.level}".` : '';
   const seconds = Number.isFinite(waitMs) && waitMs > 0 ? Math.round(waitMs / 1000) : null;
   const wait = seconds
     ? `; it returns at once if they already approved, else waits up to ${seconds} s (the approval stays open for 5 minutes: repeat the call if it returns pending again)`
@@ -1101,8 +1133,8 @@ function directNextStep(result, context = {}) {
     if (result.needs?.who === 'host') {
       return { kind: 'observe', text: `The grant already covers ${level}: call fai_browser_observe with mode "${level}", then choose.` };
     }
-    return { kind: 'relay', text: `Relay needs.message; tell the user "approve the new FAI Browser request at `
-      + `${LEVEL_NAMES[level] ?? level}; it is preselected". Then call fai_browser_open with requestId ${ref} and mode "${level}".` };
+    return { kind: 'relay', text: `Relay needs.message; tell the user "approve ${LEVEL_NAMES[level] ?? level} for this task `
+      + `in FAI Browser; it is preselected". Then call fai_browser_open with requestId ${ref} and mode "${level}" (same tab and page).` };
   }
   if (code === 'refused_action') return { kind: 'stop', text: `${refusalStopText(result)} Do not retry it.` };
   if (code === 'error_page') return { kind: 'stop', text: stopText(result).replace(/ and do not retry the same link\./, '; do not retry the same link.') };
@@ -1119,6 +1151,12 @@ function directNextStep(result, context = {}) {
     return offered
       ? { kind: 'choose', text: `The expectation did not pass on this page. ${directChooseText(offered.revision)}` }
       : { kind: 'observe', text: 'The expectation did not pass on this page. Observe, then choose.' };
+  }
+  if (code === 'request_closed' && typeof result.replacedBy === 'string' && REQUEST_REF.test(result.replacedBy)) {
+    return { kind: 'observe', text: `Your request ${result.replacedBy} replaced this one: continue with fai_browser_observe and requestId ${result.replacedBy}.` };
+  }
+  if (code === 'ask_declined') {
+    return { kind: 'observe', text: `The user declined what you asked for. Continue at the granted level: fai_browser_observe with requestId ${ref}, then choose.` };
   }
   if (DIRECT_OBSERVE_CODES.has(code) || (result.status === 'needs_host' && code !== 'request_closed')) {
     return { kind: 'observe', text: 'The page changed or the action could not land. Observe again (fai_browser_observe), then choose.' };
@@ -1140,7 +1178,8 @@ function directNextStep(result, context = {}) {
   if (code === 'request_closed') {
     return { kind: 'stop', text: 'This tab request has ended. Call fai_browser_open with origins and reason only if the user still wants this.' };
   }
-  if (code === 'stopped') return { kind: 'stop', text: 'The user stopped the tab. Report that and do not retry without asking.' };
+  if (code === 'stopped') return { kind: 'stop', text: 'The user pressed Stop. Report that and do not retry without asking.' };
+  if (code === 'denied') return { kind: 'stop', text: 'The user denied the request. Report that; ask again only if the user asks you to.' };
   return { kind: 'stop', text: 'Report the outcome to the user (needs.message explains it). Do not retry automatically.' };
 }
 
@@ -1190,6 +1229,7 @@ export function directResult(source) {
   }
   if (result.point) out.point = result.point;
   if (Array.isArray(result.did) && result.did.length) out.did = result.did;
+  if (typeof result.replacedBy === 'string' && REQUEST_REF.test(result.replacedBy)) out.replacedBy = result.replacedBy;
   // The lease's tabs when there is more than one (a popup or new tab the lease followed): ids for act {tab}.
   if (Array.isArray(result.tabs) && result.tabs.length > 1) out.tabs = result.tabs;
   // A JavaScript dialog the page opened (Test site): its kind and untrusted text.
@@ -1314,6 +1354,8 @@ export function agentResult(source) {
   if (Number.isFinite(result.approvalMs) && result.approvalMs > 0) out.approvalMs = Math.round(result.approvalMs);
   // A host act: one line per action that ran (runtime-written; labels are page text, a typed value only its length).
   if (Array.isArray(result.did) && result.did.length) out.did = result.did.filter(line => typeof line === 'string').slice(0, 25);
+  // Trusted (daemon-written): this agent's own request that replaced a closed one.
+  if (typeof result.replacedBy === 'string' && REQUEST_REF.test(result.replacedBy)) out.replacedBy = result.replacedBy;
   // The lease's tabs, a JavaScript dialog and Test-site logs on the page the act ended on (pageExtras; untrusted).
   Object.assign(out, pageExtras({ tabs: result.tabs, dialog: result.dialog, logs: result.logs, logsDropped: result.logsDropped,
     frames: result.frames, leftOrigin: result.leftOrigin, childOrigin: result.childOrigin }));

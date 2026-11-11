@@ -4,15 +4,21 @@
 // much of them a trusted-looking line may show.
 import { secretKeyShaped } from './secrets.js';
 
-/** The fixed trusted text of an act (or a point) on a link to another site. Never holds page data. */
-export const OTHER_SITE_TEXT = 'This link leaves the approved site; nothing ran. Its destination is in its action line. '
-  + 'If the task needs that page, request it with fai_browser_open: origins set to that origin and, when the line shows '
-  + 'the whole address, allowedUrls set to it; never guess another address.';
+/**
+ * The fixed trusted text of an act (or a point) on a link to another site. Never holds page data: the origin is named
+ * only in the action line (untrusted page data). The same request asks for it (issue #30): an origin it does not list,
+ * or one it lists whose site access the browser has not given yet.
+ */
+export const OTHER_SITE_TEXT = 'This link leaves the approved sites; nothing ran. Its destination is in its action line. '
+  + 'If the task needs that page, ask the user, then fai_browser_open with this requestId, that origin in origins and, '
+  + 'when the line shows the whole address, allowedUrls set to it: the same request and tab ask for it. Never guess '
+  + 'another address.';
 
-/** The trusted next step after such an act: the agent requests the origin itself; the user approves a new request. */
-export const OTHER_SITE_NEXT = 'Nothing ran: the link leaves the approved site. If the task needs that page, call '
-  + 'fai_browser_open yourself with origins set to the link\'s origin from its action line (and allowedUrls set to its '
-  + 'address when the line shows it whole), and tell the user a new FAI Browser approval is coming. Never guess an address.';
+/** The trusted next step after such an act: the agent asks on the same request; the user approves it there. */
+export const OTHER_SITE_NEXT = 'Nothing ran: the link leaves the approved sites. If the task needs that page, call '
+  + 'fai_browser_open yourself with this requestId, origins set to the link\'s origin from its action line (and '
+  + 'allowedUrls set to its address when the line shows it whole): the same request and tab ask for it, and the user '
+  + 'approves it there. Never guess an address.';
 
 /** The fixed trusted text of a point on a javascript:, data: or other non-web link: never run, at any level. */
 export const NOT_WEB_LINK_TEXT = 'This link does not lead to a web page (it runs a script or holds data); nothing ran, and '
