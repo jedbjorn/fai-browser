@@ -1678,6 +1678,7 @@ function approvalReason(error) {
 // Which approval surface an extension page is: the page request modal, the approval window or the toolbar popup.
 function approvalSurface(sender) {
   const url = typeof sender?.url === 'string' ? sender.url : '';
+  if (!url || typeof chrome.runtime.getURL !== 'function') return null;
   if (url.startsWith(chrome.runtime.getURL('arm.html'))) return 'page_modal';
   if (url.split('?')[0] !== chrome.runtime.getURL('popup.html')) return null;
   return url.includes('window=1') ? 'window' : 'popup';
@@ -4219,10 +4220,15 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     return note ? { ...popupState(), note } : popupState();
   })().then(respond, error => {
     // An approval attempt that was refused or threw: its reason goes to daemon.log (an Approve that did nothing).
-    if (['arm_prepare', 'arm_approve', 'arm_begin', 'start', 'open'].includes(message.type)) {
-      const requestId = typeof message.requestId === 'string' ? message.requestId : armed.get(message.tabId)?.requestId ?? null;
-      reportApproval({ requestId, surface: approvalSurface(sender) ?? 'popup', step: 'failed', reason: approvalReason(error),
-        origin: armed.get(message.tabId)?.origin ?? null });
+    // Logging never keeps the reply from the page.
+    try {
+      if (['arm_prepare', 'arm_approve', 'arm_begin', 'start', 'open'].includes(message.type)) {
+        const requestId = typeof message.requestId === 'string' ? message.requestId : armed.get(message.tabId)?.requestId ?? null;
+        reportApproval({ requestId, surface: approvalSurface(sender) ?? 'popup', step: 'failed', reason: approvalReason(error),
+          origin: armed.get(message.tabId)?.origin ?? null });
+      }
+    } catch {
+      // Nothing to log with.
     }
     respond({ error: error.message, ...(error.code === 'stale_approval' ? { code: error.code } : {}) });
   });
