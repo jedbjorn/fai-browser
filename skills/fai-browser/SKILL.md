@@ -6,10 +6,10 @@ description: Operate user-approved browser tabs for live tasks, never research o
 # FAI Browser
 
 Tool search: `mcp__fai-browser__fai_browser_open` or `mcp__fai_browser__fai_browser_open`.
-Flights or hotels: read `tasks/<name>/SKILL.md` beside this file first (`tasks/flights/SKILL.md`, `tasks/hotels/SKILL.md`).
+Flights or hotels: read `tasks/flights/SKILL.md` or `tasks/hotels/SKILL.md` beside this file first.
 
 ## A. Open the task
-`fai_browser_open` with `origins` (only those needed), `reason` (one line the user sees), `task` (ranks digest and actions) and the lowest `mode`. It waits for approval and returns the page.
+`fai_browser_open` with `origins` (only those needed), `reason` (one line the user sees), `task` (ranks digest and actions) and the lowest `mode`. It returns the page once approved.
 - **Invite** (`inv-…` from the user or a `[FAI Browser]` message): `fai_browser_open` with only `inviteId`.
 - Put a deep URL first in `allowedUrls`; approval opens it.
 - `browser` (`firefox`, `chrome`) picks a paired browser; default: last used.
@@ -19,12 +19,12 @@ Flights or hotels: read `tasks/<name>/SKILL.md` beside this file first (`tasks/f
 ## B. Read, then act
 Each result: `next`, status, `revision`, `page.digest` (`page.truncated`: more exists) and `actions` (`a3  click "About"`).
 - If the digest answers the task, reply from it. An observation is not a verified result.
-- Otherwise `fai_browser_act` with one `actions[].id` as `actionId`. `revision` (single-use) is optional for plain clicks, links, fills and navigation (matched on the current page); required for actions marked `needsApproval`, secrets and points.
+- Otherwise `fai_browser_act` with one `actions[].id` as `actionId`. `revision` (single-use) is optional (matched on the current page) except for `needsApproval` actions, secrets and points.
 - `fill "Search" (act with text)` takes `text`; `submit: true` then performs `press Enter in` that field. Several fields: `fills: [{actionId, text}]`. Never passwords or codes.
 - Other acts: `url` (granted origins), `nav` (`back`, `forward`, `reload`), `key` (Escape, Tab, Shift+Tab, arrows, Home, End, PageUp, PageDown, Space; Ctrl/Cmd+letter at `full`), `hover: true` with an `actionId` (menus).
-- **One task tab** is default; children pause control. **Multiple task tabs** requires fresh approval: `openTab: "https://approved.example/path"` opens, `tab: "t1"` switches. Only approved origins and returned tab IDs, at most eight; never personal tabs.
+- **One task tab** is default; children pause control. **Multiple task tabs** requires fresh approval: `openTab: "https://approved.example/path"` opens, `tab: "t1"` switches. Approved origins and returned tab IDs only, at most eight; never personal tabs.
 - Give the act that finishes the task an `expectation`: `{"urlIncludes": "/members"}` or text only that page has. Only `status: "completed"` with `verification.passed: true` is verified.
-- Loading? `fai_browser_observe` with `waitFor` (`{"textAbsent": "Loading"}`) and `maxMs`.
+- Loading? `fai_browser_observe` with `waitFor` (`{"textAbsent": "Loading"}`).
 - `moreActions` counts unlisted actions: observe with a sharper `task` or `focus`; `digestChars` reads more.
 - Screenshot (`returnImages: "final"`) only when a control is missing; then act with `point: {x, y}` in its pixels.
 
@@ -49,7 +49,7 @@ Never repeat refused actions or invent ids. Calls are budgeted (`callsLeft`). Do
 **Uploads** (`full`, `testing`): `upload a file to "Avatar" (act with path)` takes `path`, a file in your workspace; the user approves name, size and site.
 
 ## Consent, popups, login, other origins
-Cookie dialog: act on the offered reject button (from `reversible`; at read-only request it); accept only at `full`. Sign-in and password fills never below `testing`: the user signs in. A `popup (<kind>)` closes from `reversible`. A page outside `origins` returns `cross_origin`, a page-opened tab `child_tab` (`childOrigin` when known); a multi-subdomain task may request `"https://*.example.com"`; Google needs `["https://www.google.com", "https://consent.google.com"]`. Approved-origin children join (`tabs`) only in multiple-tab mode. `blocked` (captcha, paywall) and `js_dialog` (JavaScript dialog): the user clears it, then observe.
+Cookie dialog: act on the offered reject button (from `reversible`; at read-only request it); accept only at `full`. Sign-in and password fills never below `testing`: the user signs in. A `popup (<kind>)` closes from `reversible`. Other-site link (`→ <url>`): reopen with `requestId`, its origin and `allowedUrls: [url]`. A page outside `origins` returns `cross_origin`, a page-opened tab `child_tab` (`childOrigin` when known); a multi-subdomain task may request `"https://*.example.com"`; Google needs `["https://www.google.com", "https://consent.google.com"]`. Approved-origin children join (`tabs`) only in multiple-tab mode. `blocked` (captcha, paywall) and `js_dialog` (JavaScript dialog): the user clears it, then observe.
 
 **Test sites** (`testing`): observe with `logs: true` returns console errors and failed requests; JavaScript dialogs are dismissed at once unless `dialog: "accept"` (prompt: `text`) armed the next answer. These hooks are page-visible.
 
