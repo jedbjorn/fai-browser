@@ -63,10 +63,13 @@ test('codex: base target blank is blocked before a child tab opens', async t => 
 });
 
 test('codex: page excludes passwords and rejects javascript links with button-only risk', async t => {
-  const page = await fixture(t, '<input type="password" aria-label="Secret"><a href="javascript:document.title=\'Executed\'">Script</a><a href="/help">Delete help</a><button type="button">Savings</button><button type="button">Delete</button><label><input type="checkbox">Save receipts</label><label><input type="radio">Pay monthly</label>');
+  const page = await fixture(t, '<input type="password" aria-label="Secret"><a href="javascript:document.title=\'Executed\'">Script</a><a href="/help">Delete help</a><a href="/guide">How to delete a help topic</a><button type="button">Savings</button><button type="button">Delete</button><label><input type="checkbox">Save receipts</label><label><input type="radio">Pay monthly</label>');
   const observation = await page.evaluate(() => __faiPage.observe());
   assert.ok(!observation.controls.some(c => c.type === 'password'));
-  assert.equal(observation.controls.find(c => c.label === 'Delete help').risk, 'navigation');
+  // A link gets the link rule, not the button label classes: a short label leading with an action verb is that
+  // action (as the runtime's destructiveLink judges it), a longer descriptive one stays navigation.
+  assert.equal(observation.controls.find(c => c.label === 'Delete help').risk, 'delete');
+  assert.equal(observation.controls.find(c => c.label === 'How to delete a help topic').risk, 'navigation');
   assert.equal(observation.controls.find(c => c.label === 'Savings').risk, 'reversible');
   assert.equal(observation.controls.find(c => c.label === 'Delete').risk, 'delete');
   assert.equal(observation.controls.find(c => c.type === 'checkbox').role, 'checkbox');

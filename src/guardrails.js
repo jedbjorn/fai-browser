@@ -197,7 +197,7 @@ export const COMMIT_ACTION = new RegExp(`${PURCHASE.source}|${COMMIT_OTHER.sourc
  * Label heuristic for submissions and account changes, composed (compatibility): every SUBMIT_WORDS, DELETE_WORDS and
  * SIGN_IN_WORDS word plus purchase, buy and pay (which PURCHASE covers), with the same discount exception for "save".
  * Links go through destructiveLink in
- * src/oversight.js. The level checks use the split lists.
+ * src/oversight.js (and the page script's linkGuardClass, on every name of a link). The level checks use the split lists.
  */
 export const DANGEROUS = /\b(save(?!\s+(?:up\s+to\s+|over\s+|an\s+extra\s+|extra\s+)?(?:[$€£¥₹]\s?\d|\d[\d.,]*\s?(?:%|percent\b|[$€£¥₹]|(?:usd|eur|gbp)\b)))|submit|send|purchase|buy|pay|delete|remove|confirm|invite|publish|sign ?in|log ?in)\b/i;
 
