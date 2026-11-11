@@ -223,7 +223,7 @@ test('#30 an unapproved origin: refused up front, asked on the same request, app
   const requestId = await activeRequest(env, { tabMode: 'single' });
   const { leaseId, tabId } = (await env.client.getRequest(requestId)).lease;
   const before = await env.client.observe({ requestId });
-  assert.equal(actionFor(before, 'Partner page'), undefined, 'a link off the approved origins is not offered');
+  assert.equal(actionFor(before, 'Partner page')?.type, 'other_site', 'a link off the approved origins is listed, never clicked');
   const refused = (await env.client.act({ requestId, url: `${env.partner}/partner`, waitMs: 10_000 })).result;
   assert.equal(refused.code, 'cross_origin');
   assert.match(refused.needs.message, /fai_browser_open with this requestId and http:\/\/localhost:\d+ in origins/);
@@ -249,7 +249,7 @@ test('#30 an unapproved origin: refused up front, asked on the same request, app
   assert.ok(view.origins.includes(env.partner));
   const after = await env.client.observe({ requestId });
   const link = actionFor(after, 'Partner page');
-  assert.ok(link, `the partner link is offered now: ${JSON.stringify(after.actions.map(action => action.label))}`);
+  assert.equal(link?.type, 'click', `the partner link is a click now: ${JSON.stringify(after.actions.map(action => [action.label, action.type]))}`);
   const landed = await act(env, requestId, link.id);
   assert.notEqual(landed.status, 'needs_user', JSON.stringify({ code: landed.code, needs: landed.needs }));
   const there = await env.client.observe({ requestId });
