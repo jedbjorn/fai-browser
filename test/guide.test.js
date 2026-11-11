@@ -332,3 +332,14 @@ test('openTab to a guessed address says so too (Multiple task tabs)', async t =>
   assert.equal(guessed.next.kind, 'observe');
   assert.match(guessed.next.text, /not on any page of this task/);
 });
+
+test('an ask for a site no page showed is not refused, and ask_pending says so; a shown site asks plainly', async t => {
+  const ctx = await setup(t, LINKS);
+  const { requestId } = await openApproved(ctx);
+  const shown = mcpData(await ctx.mcp.callTool('fai_browser_open', { requestId, origins: ['https://blog.example.org'] }));
+  assert.equal(shown.code, 'ask_pending');
+  assert.doesNotMatch(shown.needs.message, /No page of this task showed/);
+  const guessed = mcpData(await ctx.mcp.callTool('fai_browser_open', { requestId, origins: ['https://guess.example.org'] }));
+  assert.equal(guessed.code, 'ask_pending');
+  assert.match(guessed.needs.message, /No page of this task showed that site/);
+});
