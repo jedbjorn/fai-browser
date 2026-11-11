@@ -4,7 +4,7 @@
 // as offered actions) and the runtime's act path on the fake bridge, with the refusal codes and the receipt's record.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BrowserRuntime, actionLabels, mapPoint, offerImage, offeredActions, pointAction } from '../src/runtime.js';
+import { BrowserRuntime, OTHER_SITE_TEXT, actionLabels, mapPoint, offerImage, offeredActions, pointAction } from '../src/runtime.js';
 import { agentResult } from '../src/result.js';
 import { FORBID_REFUSAL_TEXT, PURCHASE_REFUSAL_TEXT } from '../src/oversight.js';
 import { FakeBridge, ORIGIN, link } from './runtime-fixtures.js';
@@ -140,6 +140,17 @@ test('pointAction refuses unoffered controls exactly as the offer gate would', (
   // A read-only offer has no controls at all: a link is navigation, a button needs a level.
   const readOnly = offerFor('read-only');
   assert.equal(pointAction(readOnly.offer, found(PAGES['/'].unlisted[0]), readOnly.config).refusal?.kind, 'level');
+  // At read-only an unlisted same-site link is a link click by its point; a javascript: or off-site link never is.
+  const docs = pointAction(readOnly.offer, found(link('u9', 'Docs', '/docs')), readOnly.config);
+  assert.equal(docs.action?.type, 'click');
+  assert.equal(docs.action.href, `${ORIGIN}/docs`);
+  assert.deepEqual(docs.action.point, { x: 1, y: 1 });
+  const script = pointAction(readOnly.offer, found(link('u10', 'Open panel', '/x', { href: 'javascript:void(0)' })), readOnly.config);
+  assert.equal(script.action, undefined);
+  assert.equal(script.refusal.kind, 'cross_origin');
+  assert.equal(pointAction(readOnly.offer, found(partner), readOnly.config).refusal?.kind, 'cross_origin');
+  // A link labelled as an action stays refused as its offered id would be (none is offered).
+  assert.equal(pointAction(readOnly.offer, found(link('u11', 'Sign out', '/logout')), readOnly.config).refusal?.kind, 'sign_in');
 });
 
 // --- runtime act ------------------------------------------------------------------------------------------------
@@ -252,13 +263,50 @@ test('act with a point: off the image, nothing there, a frame from another origi
   assert.equal(framed.code, 'point_frame');
   assert.equal(framed.status, 'needs_host');
 
+  // Read-only: a point on a button is located, then refused as an action id for it would be (it needs reversible).
   ({ observation } = await runtime.observe({ mode: 'read-only' }));
-  const readOnly = await runtime.act({ point: { x: 15, y: 20 } }, { revision: observation.revision });
+  const readOnly = await runtime.act({ point: { x: 15, y: 60 } }, { revision: observation.revision });
   assert.equal(readOnly.code, 'refused_action');
   assert.equal(readOnly.needs.level, 'reversible');
   assert.ok(readOnly.verdict.why.includes('point:level'));
-  assert.equal(bridge.locates.length, 2, 'a read-only point never reaches the page');
-  assert.equal(bridge.executions.length, 0);
+  assert.equal(bridge.executions.length, 0, 'nothing ran');
+});
+
+test('act with a point at read-only follows a plain link like its action id, and refuses everything else as before', async () => {
+  const at = async point => {
+    const { bridge, runtime } = runtimeOn();
+    const { observation } = await runtime.observe({ mode: 'read-only' });
+    const result = await runtime.act({ point }, { revision: observation.revision });
+    return { bridge, result };
+  };
+  // The offered About link: the offered click, by its id.
+  const about = await at({ x: 15, y: 20 });
+  assert.equal(about.result.status, 'checkpoint', about.result.reason);
+  assert.deepEqual(about.bridge.executions[0].action, { type: 'click', target: '1' });
+  assert.equal(about.result.steps[0].action.toUrl, `${ORIGIN}/about`);
+  assert.ok(about.result.verdict.why.includes('act:point_offered'));
+  // A field, a safe unoffered button, Delete, Buy now, a password field and an off-site link: refused, nothing runs.
+  const cases = [
+    [{ x: 20, y: 100 }, 'refused_action', 'point:level'],
+    [{ x: 20, y: 210 }, 'refused_action', 'point:level'],
+    [{ x: 20, y: 250 }, 'refused_action', 'point:delete'],
+    [{ x: 20, y: 290 }, 'refused_action', 'point:purchase'],
+    [{ x: 20, y: 330 }, 'refused_action', 'point:sign_in'],
+    [{ x: 20, y: 370 }, 'cross_origin', 'point:cross_origin'],
+  ];
+  for (const [point, code, why] of cases) {
+    const { bridge, result } = await at(point);
+    assert.equal(result.code, code, JSON.stringify(point));
+    assert.ok(result.verdict.why.includes(why), `${JSON.stringify(point)}: ${result.verdict.why.join(',')}`);
+    assert.equal(bridge.executions.length, 0, `${JSON.stringify(point)} ran`);
+  }
+  const buy = await at({ x: 20, y: 290 });
+  assert.equal(buy.result.needs.message, PURCHASE_REFUSAL_TEXT);
+  const del = await at({ x: 20, y: 250 });
+  assert.equal(del.result.needs.level, 'full');
+  const partner = await at({ x: 20, y: 370 });
+  assert.equal(partner.result.needs.message, OTHER_SITE_TEXT, 'the off-site link says how to follow it');
+  assert.ok(!partner.result.needs.message.includes('other.example'), 'the page-made destination stays out of the trusted text');
 });
 
 test('act with a point on a stale revision is refused like a stale action id, with no re-resolve', async () => {

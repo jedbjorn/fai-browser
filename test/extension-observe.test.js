@@ -275,16 +275,21 @@ test('open shadow roots: several hosts between the same light-DOM controls keep 
 test('the shadow-root scan is bounded: many hosts stay cheap and capped', async t => {
   const page = await load(t, doc(`<div id="hosts"></div><script>
     const hosts = document.querySelector('#hosts');
-    for (let i = 0; i < 300; i++) {
+    for (let i = 0; i < 1200; i++) {
       const host = document.createElement('x-card');
       hosts.appendChild(host);
       host.attachShadow({ mode: 'open' }).innerHTML = '<a href="/c/' + i + '">Card ' + i + '</a>';
     }
   </script>`));
   const observation = await observe(page);
+  // The control cap (100) applies first; the roots past the 1000-root cap are never read (Card 1000 and on).
   const cards = observation.controls.filter(c => c.label.startsWith('Card '));
-  assert.equal(cards.length, 64, 'at most 64 shadow roots are read');
+  assert.equal(cards.length, 100);
   assert.equal(cards[0].label, 'Card 0');
+  const late = await page.evaluate(o => __faiPage.observe(o), { terms: ['card 999', 'card 1000'], forbid: [], allow: ['navigate'], expectText: [] });
+  const labels = late.controls.map(c => c.label);
+  assert.ok(labels.includes('Card 999'), 'root 1000 is read');
+  assert.ok(!labels.includes('Card 1000'), 'at most 1000 shadow roots are read');
 });
 
 // --- control ordering under the cap -------------------------------------------------------------------------------
