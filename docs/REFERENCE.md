@@ -700,7 +700,8 @@ background `wait --until active` command ([Waking the agent on Resume](#running-
 `fai_browser_wait`, else ask the user to say when they are done. `fai_browser_wait` on a request returns within its
 `maxMs` (at most 45 s); still pending or paused then, its `next` is `wait`, short and the same each time: "Still pending
 after 45 s: the user has not approved the request yet. ... call fai_browser_wait with requestId req_… again (that is
-waiting, not a repeated call)." It never repeats the approval steps the first relay gave. The MCP server cannot tell a
+waiting, not a repeated call)." It never repeats the approval steps the first relay gave (a paused task folded away in
+the popup still says where its Resume is); `maxMs: 0` reads the state and gets the full relay. The MCP server cannot tell a
 subagent's call from its main session's (they share one server), so the text names both.
 
 **Invite agent.** In the toolbar popup on any normal http(s) tab, the **Invite an agent to this tab** card lists the

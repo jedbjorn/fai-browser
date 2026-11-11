@@ -1073,8 +1073,10 @@ export function newRequestNote(from, to) {
  */
 export function waitAgain(state, view, requestId, waitedMs, resume = undefined) {
   const seconds = Number.isFinite(waitedMs) ? ` after ${Math.round(waitedMs / 1000)} s` : '';
+  // A stale paused task is folded away in the user's popup: say where its Resume is.
+  const stale = view?.stale ? ' It is folded under Older paused tasks in the FAI Browser popup.' : '';
   const what = state === 'paused'
-    ? `Still paused${view?.stateReason ? ` (${view.stateReason})` : ''}${seconds}: the user has not clicked Resume yet.`
+    ? `Still paused${view?.stateReason ? ` (${view.stateReason})` : ''}${seconds}: the user has not clicked Resume yet.${stale}`
     : `Still pending${seconds}: the user has not approved the request yet.`;
   const again = `call fai_browser_wait with requestId ${requestId} again (that is waiting, not a repeated call)`;
   const how = resume?.wake
@@ -2053,7 +2055,8 @@ class McpServer {
       this.noteOwner(view);
       // Still waiting when the wait ran out: a short "wait again" (the approval steps were in the result that asked
       // the user), never the long relay text once more.
-      const still = state === 'pending' || state === 'paused';
+      // maxMs 0 is a read of the state, not a wait: it gets the full relay (how to approve or resume).
+      const still = (state === 'pending' || state === 'paused') && maxMs > 0;
       return okResult(withoutUndefined({
         ...response,
         state,
