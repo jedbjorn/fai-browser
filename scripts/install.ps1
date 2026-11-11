@@ -116,7 +116,7 @@ function Confirm-Step([string]$Question) {
 function Update-SessionPath {
   $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
   $user = [Environment]::GetEnvironmentVariable('Path', 'User')
-  $env:Path = (@($machine, $user) | Where-Object { $_ }) -join ';'
+  $env:Path = (@($machine, $user, $env:Path) | Where-Object { $_ }) -join ';'
 }
 
 # ---------------------------------------------------------------------------------------------------------------
