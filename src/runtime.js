@@ -13,7 +13,7 @@ import { aggregateItems, answerScope, buildMemory, coverage, itemValue, lineText
 import {
   ANSWER_STATUSES, MAX_ANSWER_CANDIDATES, bridgeError, buildVerdict, compactPage, pageExtras,
   compactStepObservation, createResult, isKnownCode, nextFor, outcomeFor, redactSecrets, setOutcome,
-  DIALOG_LEVEL_TEXT, ONE_TAB_TEXT, URL_REFUSED_TEXT, URL_SCHEME_TEXT,
+  DIALOG_LEVEL_TEXT, HISTORY_OFF_SITE_TEXT, ONE_TAB_TEXT, URL_REFUSED_TEXT, URL_SCHEME_TEXT, URL_UNSEEN_CROSS_TEXT,
 } from './result.js';
 import {
   COMMIT_ACTION, DANGEROUS, FORBID_REFUSAL_TEXT, PURCHASE_REFUSAL_TEXT, REFUSAL_TEXT, commitIntent,
@@ -41,16 +41,44 @@ const OFFER_CACHE_SIZE = 4;
 // Addresses a runtime remembers as shown by its pages (#remember), for the url:unseen note.
 const SEEN_URLS = 2000;
 
-/** An address as the seen-URL set keys it: absolute http(s), without its fragment; null for anything else. */
+// Longest address the seen set keys (the MCP `url` parameter's own limit): a longer one is never compared.
+const SEEN_KEY_MAX = 2048;
+// Unreserved characters (RFC 3986) a page or an agent may write percent-encoded or not: compared decoded.
+const UNRESERVED_ESCAPE = /%(?:4[1-9A-F]|5[0-9A]|6[1-9A-F]|7[0-9A]|3[0-9]|2D|2E|5F|7E)/gi;
+// Plain-text addresses in page text or the request's task (a URL the page prints, one the user wrote).
+const TEXT_URL = /\bhttps?:\/\/[^\s"'<>()[\]{}`]+/gi;
+const TEXT_URLS_PER_PAGE = 200;
+
+/**
+ * An address as the seen-URL set keys it: absolute http(s), without its fragment, unreserved characters decoded, a
+ * trailing slash dropped from a path other than `/`; null for anything else or longer than SEEN_KEY_MAX.
+ */
 function seenKey(href) {
-  if (typeof href !== 'string' || !href) return null;
+  if (typeof href !== 'string' || !href || href.length > SEEN_KEY_MAX) return null;
   try {
     const url = new URL(href);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
     url.hash = '';
-    return url.href;
+    const path = url.pathname.replace(UNRESERVED_ESCAPE, escape => decodeURIComponent(escape));
+    url.pathname = path.length > 1 ? path.replace(/\/+$/, '') : path;
+    return url.href.length > SEEN_KEY_MAX ? null : url.href;
   } catch {
     return null;
+  }
+}
+
+/** The http(s) addresses written in a text, trailing punctuation left out. */
+function textUrls(text, limit = TEXT_URLS_PER_PAGE) {
+  if (typeof text !== 'string' || !text || limit <= 0) return [];
+  return (text.match(TEXT_URL) ?? []).slice(0, limit).map(url => url.replace(/[.,;:!?]+$/, ''));
+}
+
+/** The same address, fragment included (the offer's "this page" check: a hash-routed app's views differ by it). */
+function sameHref(a, b) {
+  try {
+    return new URL(a).href === new URL(b).href;
+  } catch {
+    return false;
   }
 }
 
@@ -740,11 +768,11 @@ export function offeredActions(observation, options = {}) {
     reserved.push({ type: 'copy_secret', handle: secret.handle, label: secret.label, source: secretSource(secret), needsApproval: 'secret',
       description: `Copy secret:${secret.handle} (${secretSource(secret)}) to the clipboard (asks the user)` });
   }
-  const here = seenKey(observation.url);
   for (const url of (options.allowedUrls ?? []).slice(0, MAX_ALLOWED_URLS)) {
     // The page the tab is on already is not offered again (`nav: "reload"` reloads it): an `open <this page>` line read
-    // as an invitation to type addresses (issue #33).
-    if (here && seenKey(url) === here) continue;
+    // as an invitation to type addresses (issue #33). Exact, fragment included: `#/settings` is another view of a
+    // hash-routed app than `#/home`.
+    if (sameHref(url, observation.url)) continue;
     // The extension only navigates within the selected origin, or its approved domain root.
     if (leaseOrigin && navigable(observation, observation.url, url, allowedOrigins)) {
       reserved.push({
@@ -2655,6 +2683,8 @@ export class BrowserRuntime {
   async observe(options = {}) {
     const config = configure(options);
     const instruction = typeof options.instruction === 'string' && options.instruction.trim() ? options.instruction : null;
+    // An address the host's task names (the user's words, usually) is not a guess.
+    this.noteSeenText(instruction);
     const session = this.#open(config, instruction);
     // Dev logs (console errors, failed requests) are read only on a Test site; elsewhere the observe says so.
     const logs = options.logs === true;
@@ -2923,6 +2953,10 @@ export class BrowserRuntime {
       await session.close();
       this.active = null;
     }
+    // A history move with no entry on the approved sites (the extension's probe): there is no origin to ask for.
+    if (spec.nav !== undefined && session.result.code === 'cross_origin') {
+      session.result.needs = { ...session.result.needs, message: HISTORY_OFF_SITE_TEXT };
+    }
     return session.result;
   }
 
@@ -2966,15 +3000,26 @@ export class BrowserRuntime {
         session.why('url:scheme');
         return { result };
       }
+      // An address no page of this request showed, the user did not list and the request's task or reason does not
+      // name: computed first, so a guessed address on another site says so too (issue #33's demo: an agent typed a
+      // guessed marketing-site address instead of the profile's link). Never a refusal: the user may have given it.
+      const key = seenKey(target.href);
+      const unseen = Boolean(key) && !(config.allowedUrls ?? []).some(url => seenKey(url) === key)
+        && !this.seenUrls?.has(key);
       if (!navigable(before, before.url, target.href, config.allowedOrigins)) {
         setOutcome(result, 'cross_origin');
         // Listed by the request but not reachable: the browser gives FAI Browser no access to that site yet.
         const listed = Array.isArray(config.allowedOrigins) && config.allowedOrigins.includes(target.origin);
-        result.needs.message = listed
-          ? `${target.origin} is approved for this task, but the browser has not given FAI Browser access to it. Ask the `
-            + `user, then fai_browser_open with this requestId and ${target.origin} in origins: they allow its site access.`
-          : `${target.origin} is not covered by this request. If the task needs it, ask the user, then `
-            + `fai_browser_open with this requestId and ${target.origin} in origins: the same request and tab ask for it.`;
+        if (unseen) {
+          result.needs.message = URL_UNSEEN_CROSS_TEXT;
+          session.why('url:unseen');
+        } else {
+          result.needs.message = listed
+            ? `${target.origin} is approved for this task, but the browser has not given FAI Browser access to it. Ask the `
+              + `user, then fai_browser_open with this requestId and ${target.origin} in origins: they allow its site access.`
+            : `${target.origin} is not covered by this request. If the task needs it, ask the user, then `
+              + `fai_browser_open with this requestId and ${target.origin} in origins: the same request and tab ask for it.`;
+        }
         session.why(`url:${target.origin}`);
         return { result };
       }
@@ -2984,11 +3029,7 @@ export class BrowserRuntime {
         session.why('url:refused');
         return { result };
       }
-      // An address no page of this tab showed and the user did not list: allowed (the user may have given it in
-      // chat), but the result says so once, since a constructed address is the usual cause of a wrong page.
-      const key = seenKey(target.href);
-      const listed = (config.allowedUrls ?? []).some(url => seenKey(url) === key);
-      if (spec.url !== undefined && key && !listed && !this.seenUrls?.has(key)) session.why('url:unseen');
+      if (unseen) session.why('url:unseen');
       return { plan: [{ action: { type: spec.openTab !== undefined ? 'open_tab' : 'navigate_allowed_url', url: target.href, label: target.href, composed: true } }] };
     }
     if (spec.nav !== undefined) return { plan: [{ action: { type: 'history', move: spec.nav, label: `go ${spec.nav}` } }] };
@@ -3306,17 +3347,34 @@ export class BrowserRuntime {
     };
   }
 
-  #remember(offer) {
-    // Every address a page of this tab showed (its URL and its controls' links), so a url act can tell a followed
-    // address from a constructed one (`why` url:unseen). Bounded; the oldest go first.
+  /** Mark an address as shown to this request (the url:unseen note). The set is the request's (daemon bindRecord). */
+  noteSeen(href) {
+    const key = seenKey(href);
+    if (!key) return;
     const seen = this.seenUrls ??= new Set();
-    for (const href of [offer.observation?.url, ...(offer.observation?.controls ?? []).map(control => control?.href)]) {
-      const key = seenKey(href);
-      if (!key) continue;
-      seen.delete(key);
-      seen.add(key);
-    }
+    seen.delete(key);
+    seen.add(key);
     while (seen.size > SEEN_URLS) seen.delete(seen.values().next().value);
+  }
+
+  /** Mark the addresses written in a text (the request's task or reason, an observe's task) as shown. */
+  noteSeenText(text) {
+    for (const url of textUrls(text)) this.noteSeen(url);
+  }
+
+  #remember(offer) {
+    // Every address a page of this request showed (its URL, its controls' links and addresses printed in its text),
+    // so a url act can tell a followed address from a constructed one (`why` url:unseen). Bounded; the oldest go first.
+    const observation = offer.observation ?? {};
+    for (const href of [observation.url, ...(observation.controls ?? []).map(control => control?.href)]) this.noteSeen(href);
+    const texts = [observation.text, ...(Array.isArray(observation.blocks) ? observation.blocks.map(block => block?.text) : [])];
+    let budget = TEXT_URLS_PER_PAGE;
+    for (const text of texts) {
+      if (budget <= 0) break;
+      const urls = textUrls(text, budget);
+      budget -= urls.length;
+      for (const url of urls) this.noteSeen(url);
+    }
     this.offers.delete(offer.revision);
     this.offers.set(offer.revision, offer);
     while (this.offers.size > OFFER_CACHE_SIZE) this.offers.delete(this.offers.keys().next().value);

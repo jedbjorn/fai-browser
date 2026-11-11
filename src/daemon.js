@@ -96,6 +96,9 @@ const WAIT_KEYS = new Set(['requestId', 'runId', 'maxMs', 'afterStep', 'while', 
 const ASK_KEYS = new Set(['mode', 'origins']);
 // Bridge codes that describe the lease rather than the page: an act or observe that fails with one while the request
 // is still active waits this long for the extension's status report, then reports what the request really is.
+// An ask (issue #30) for a site no page of the request showed: the agent may have guessed it (issue #33).
+const ASK_UNSEEN_TEXT = 'No page of this task showed that site: if you guessed its address, tell the user and find the '
+  + 'link on the page instead (fai_browser_observe with focus).';
 const LEASE_CODES = new Set(['stopped', 'paused', 'session_inactive', 'tab_changed', 'origin_changed', 'child_tab',
   'disconnected']);
 const LEASE_SETTLE_MS = 1500;
@@ -900,10 +903,20 @@ export function createDaemon(options = {}) {
     // Every ask has its own id: the user's Approve names the one its card showed, and only that one is applied. A second
     // ask while one waits replaces it (with both), under a new id, so a card showing the first approves nothing.
     record.ask = { id: randomBytes(6).toString('hex'), level, origins: askOrigins, access: askAccess, at: now() };
+    // Origins of the ask that no page of this request showed (issue #33): allowed, but the agent's result says so.
+    record.askUnseen = askOrigins.filter(origin => !seenOrigin(record, origin)).length;
     delete record.askDeclined;
     log('request_ask', { requestId, level, origins: askOrigins.length, access: askAccess.length });
     changed();
     return { requestId, state: record.state, asked: true, request: viewFor(record, caller) };
+  }
+
+  /** Whether a page of this request showed an address on `origin` (its seen set, src/runtime.js noteSeen). */
+  function seenOrigin(record, origin) {
+    for (const href of record.seenUrls ?? []) {
+      if (href.startsWith(`${origin}/`) || href === origin) return true;
+    }
+    return false;
   }
 
   /** The v1 result a run call returns when the lease is not active. */
@@ -1196,6 +1209,13 @@ export function createDaemon(options = {}) {
     // Password values filled at testing stay redacted in every later result, across leases (a re-approval at another
     // level is a new lease and a new runtime on the same tab, and the page may still echo the value).
     record.runtime.secrets = filledSecrets;
+    // The addresses this request's pages showed (the url:unseen note) belong to the request, not the lease: a Resume
+    // or an ask approved on a paused request binds a new runtime, and the pages before it still count. The request's
+    // own task and reason text count too (an address the user gave there).
+    record.seenUrls ??= new Set();
+    record.runtime.seenUrls = record.seenUrls;
+    record.runtime.noteSeenText?.(record.reason);
+    record.runtime.noteSeenText?.(record.instruction);
     record.bridge = hub.bridgeFor(leaseId);
     setState(record, 'active', null);
     // origins: what the lease covers. The extension follows a consent wall's redirect only to one of these
@@ -2429,8 +2449,10 @@ export function createDaemon(options = {}) {
     if (body.afterAsk === true && LEASED.has(record.state) && (record.ask || record.askDeclined)) {
       const code = record.ask ? 'ask_pending' : 'ask_declined';
       if (!record.ask) delete record.askDeclined;
-      return { state: 'done', requestId: record.requestId, result: outcomeResult(code, {
-        lease: { requestId: record.requestId, state: record.state }, permissions: permissionsOf(checkMode(body, record), record) }) };
+      const result = outcomeResult(code, {
+        lease: { requestId: record.requestId, state: record.state }, permissions: permissionsOf(checkMode(body, record), record) });
+      if (code === 'ask_pending' && record.askUnseen > 0) result.needs.message = `${result.needs.message} ${ASK_UNSEEN_TEXT}`;
+      return { state: 'done', requestId: record.requestId, result };
     }
     const spec = {
       mode: checkMode(body, record),

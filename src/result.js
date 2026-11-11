@@ -352,6 +352,17 @@ export const DIALOG_LEVEL_TEXT = 'JavaScript dialogs are answered by FAI Browser
 export const URL_UNSEEN_NOTE = ' Note: that address was not on any page of this task nor in allowedUrls. Unless the '
   + 'user gave it, do not guess addresses: follow the links the page offers (observe with focus).';
 
+// A url or openTab act to an address on another site that no page of this request showed (`why` url:unseen): the
+// usual guess. Nothing ran; the agent finds the link instead of asking the user to approve a guessed site.
+export const URL_UNSEEN_CROSS_TEXT = 'Nothing ran: that address is on a site this request does not cover, and no page of '
+  + 'this task showed it. Do not guess addresses: find and follow the link on the page (observe with focus: it matches '
+  + 'a link\'s label, host and path; a link to another site is listed with its address). Ask for that site on this '
+  + 'request only if the user gave you the address.';
+
+// A history move (nav back or forward) with no entry on the approved sites: there is no origin to ask for.
+export const HISTORY_OFF_SITE_TEXT = 'Nothing ran: there is no page to go to in that direction on the approved sites '
+  + '(the tab\'s history leads elsewhere, or nowhere). Observe and use the page\'s own links instead.';
+
 // Each pause says what paused it (issue #31): never "stopped" or "released", which only the user's Stop is.
 const RESUME_HINT = 'Ask the user to click Resume on this task in FAI Browser; next says how to continue.';
 
@@ -362,7 +373,7 @@ const RESUME_HINT = 'Ask the user to click Resume on this task in FAI Browser; n
 export const LEASE_MESSAGES = Object.freeze({
   paused: 'The user paused the tab. Ask them to click Resume in the FAI Browser extension when the task may continue; '
     + 'next says how to continue once they do.',
-  tab_changed: `Paused: another tab came to the front in the task tab's window, or the task tab closed. ${RESUME_HINT}`,
+  tab_changed: `Paused: another tab came to the front in the task tab's window, the task tab closed, or Tab access went back to One task tab. ${RESUME_HINT}`,
   origin_changed: `Paused: the tab left the approved sites. ${RESUME_HINT}`,
   child_tab: `Paused: the page opened a tab or window this task cannot follow. ${RESUME_HINT}`,
   session_inactive: `Paused: the browser extension no longer holds this tab (it restarted, or lost the task). ${RESUME_HINT}`,
@@ -1140,7 +1151,8 @@ export function directNext(result, context = {}) {
   const next = directNextStep(result, context);
   let note = ['choose', 'observe', 'answer'].includes(next.kind) ? framesNote(result) : '';
   // A url act to an address nothing in this request showed: one line, only on that result (never a refusal).
-  if (next.kind !== 'answer' && result.verdict?.why?.includes('url:unseen')) note += URL_UNSEEN_NOTE;
+  if (next.kind !== 'answer' && result.needs?.message !== URL_UNSEEN_CROSS_TEXT
+    && result.verdict?.why?.includes('url:unseen')) note += URL_UNSEEN_NOTE;
   return note ? { ...next, text: `${next.text}${note}` } : next;
 }
 
@@ -1161,10 +1173,22 @@ function directNextStep(result, context = {}) {
   // An act or a point on a link to another site (src/other-site.js): the agent requests that origin itself.
   if (code === 'cross_origin' && result.needs?.message === OTHER_SITE_TEXT) return { kind: 'relay', text: OTHER_SITE_NEXT };
   // Any other way off the approved sites (a url act, a click that led there): nothing ran there; the same request asks.
+  // A guessed address on another site, or a history move off the approved sites: nothing to ask for; look again.
+  if (code === 'cross_origin' && result.needs?.message === URL_UNSEEN_CROSS_TEXT) {
+    return { kind: 'observe', text: 'Nothing ran: that address was not on any page of this task. Find the link on the page '
+      + `instead: fai_browser_observe with requestId ${ref} and focus naming the site or page (it matches a link's host and `
+      + 'path), then choose. Ask for that site on this request only if the user gave you that address. Never guess an '
+      + 'address.' };
+  }
+  if (code === 'cross_origin' && result.needs?.message === HISTORY_OFF_SITE_TEXT) {
+    return { kind: 'observe', text: 'Nothing ran: the history move would leave the approved sites. Observe, then use the '
+      + 'page\'s own links.' };
+  }
   if (code === 'cross_origin') {
-    return { kind: 'relay', text: `Nothing ran on the other site. If the task needs it, check with the user, then call `
-      + `fai_browser_open with requestId ${ref} and that origin in origins (needs.message names it when known): the `
-      + 'same request and tab ask for it. Never guess another address.' };
+    return { kind: 'relay', text: `Nothing ran on the other site. If the task needs it and you know its origin (the user `
+      + `gave it, or an other-site line or needs.message names it), check with the user, then call fai_browser_open with `
+      + `requestId ${ref} and it in origins: the same request and tab ask for it. Otherwise observe and continue on the `
+      + 'approved sites. Never guess an address.' };
   }
   if (level && (code === 'refused_action' || code === 'login')) {
     if (result.needs?.who === 'host') {

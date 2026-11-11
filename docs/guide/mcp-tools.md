@@ -72,7 +72,7 @@ act an `expectation`.
 | `text` | string (<= 5000) | with a fill | For `fill "Search" (act with text)`: the text to type. Never passwords or codes (never offered for password, payment or secret fields) |
 | `submit` | boolean | no | After `text` or `fills`: press Enter in the (last) field, gated as its form's submit (search at Use, other forms at Act) |
 | `fills` | `[{actionId, text}]` (<= 20) | one of | Several fields in one call, in order |
-| `url` | string | one of | Open an address on the granted origins (any level) that the user gave or a result showed, never a guessed one; another origin is `cross_origin`. An address no page of the request showed and `allowedUrls` does not list still opens, and `next.text` says so once |
+| `url` | string | one of | Open an address on the granted origins (any level) that the user gave or a result showed, never a guessed one; another origin is `cross_origin`. An address no page of the request showed and `allowedUrls` does not list still opens on an approved origin, and `next.text` says so once; on another origin nothing runs and the result says to find the link instead |
 | `nav` | `back` / `forward` / `reload` | one of | The tab's own history |
 | `key` | string | one of | Escape, Tab, Shift+Tab, arrows, Home, End, PageUp, PageDown, Space (Use and up), in `actionId`'s control if given; Enter only as a filled field's submit; Ctrl/Cmd+letter at Act |
 | `hover` | boolean | no | With `actionId`: rest the pointer on that control (menus); Use and up |

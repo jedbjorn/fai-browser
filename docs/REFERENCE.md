@@ -157,8 +157,9 @@ the code has.
 
 The first page of a request this server opened or joined carries one trusted `notice:` line: with one task tab,
 "One task tab: a tab or window the page opens pauses this task (child_tab); fai_browser_guide topic tabs explains it."
-and, once per MCP server, when the MCP server, daemon and extension versions differ (plain `x.y.z` only), which ones
-and that the user updates (one status read; never an update by the agent). Pause results for `child_tab` and
+and, once per MCP server, when the MCP server, daemon and extension versions differ (plain `x.y.z` only; the extension
+of the browser serving the request), which ones and that the user updates (one status read; never an update by the
+agent). A request that never reaches a page is forgotten after 16 newer ones or its release. Pause results for `child_tab` and
 `tab_changed` end their `next.text` with "fai_browser_guide topic tabs explains this pause."
 
 ### Host-composed acts
@@ -183,12 +184,20 @@ an offered action, and the page script checks each again at dispatch.
   `fai_browser_open` with the `requestId` and the origin), a URL that names an action (sign-out, delete,
   payment) is refused, and the landing page's origin is checked again. `url` is for an address the user
   gave or a result showed, never a constructed one (issue #33: agents that typed guessed addresses missed
-  the site's real ones). The runtime remembers every address the request's pages showed (their URL and
-  their controls' links, up to 2000); a `url` act to one that none showed and `allowedUrls` does not list
-  still runs, adds `url:unseen` to `verdict.why` and one sentence to `next.text` ("that address was not on
-  any page of this task nor in allowedUrls. Unless the user gave it, do not guess addresses: follow the
-  links the page offers"). An `allowedUrls` entry for the page the tab is already on is not offered again
-  as `open <url>` (`nav: "reload"` reloads it). `nav: "back" | "forward" |
+  the site's real ones). The daemon keeps, per request (across Resumes and new leases), every address its
+  pages showed: their URL, their controls' links and http(s) addresses printed in their text, plus addresses
+  written in the request's reason and task and an observe's task (up to 2000; compared without the fragment,
+  with unreserved percent-escapes decoded and a trailing slash dropped; longer than 2048 characters never
+  matches). A `url` or `openTab` act to one that none showed and `allowedUrls` does not list adds `url:unseen`
+  to `verdict.why`. On an approved origin it still runs, with one sentence in `next.text` ("that address was
+  not on any page of this task nor in allowedUrls. Unless the user gave it, do not guess addresses: follow the
+  links the page offers"). On another origin nothing runs (`cross_origin`) and `needs.message` says the
+  address was not shown on any page: find and follow the link (focus matches a link's host and path), and ask
+  for the site only if the user gave the address (`next.kind: "observe"`). An ask for an origin no page of the
+  request showed is not refused; its `ask_pending` message adds that the agent should tell the user and find
+  the link if it guessed the address. An `allowedUrls` entry for exactly the page the tab is on (fragment
+  included) is not offered again as `open <url>` (`nav: "reload"` reloads it). A history move off the approved
+  sites is `cross_origin` with its own text (nothing to ask for: use the page's links). `nav: "back" | "forward" |
   "reload"` uses the tab's own history (`tabs.goBack`/`goForward`/`reload`, the same in Firefox);
   where the page can tell (the Navigation API lists same-origin entries) a move with no entry on the
   approved site is refused before it runs, and otherwise the landing page's origin check pauses the
@@ -578,7 +587,7 @@ Options: `--scope user` (Claude: prints `claude mcp remove --scope user fai-brow
 
 The Claude Code entry is `{"mcpServers":{"fai-browser":{"type":"stdio","command":"/abs/node","args":["/abs/src/mcp-main.js"]}}}`. Claude Code defers MCP tools behind tool search by default, which costs one extra model round trip the first time a session uses them. The server marks the tools of its loop with `_meta: {"anthropic/alwaysLoad": true}`, which Claude Code honours per tool (`fai_browser_open`, `fai_browser_act` and `fai_browser_observe`), so the loop is in the first request without any config and the rarely used tools stay behind tool search. `--always-load` adds `"alwaysLoad": true` to the entry: all eight schemas (about 2.8k tokens, cached, of which about 0.6k are the five rarely used tools) go into every request, and Claude Code waits for such a server at startup (up to about 5 s) instead of connecting it in the background. Use it only when choose/wait/observe paths are frequent enough that their tool-search turn matters. Both were checked against Claude Code 2.1.289: its stdio server schema accepts `alwaysLoad` ("all tools from this server are always included in the prompt and never deferred behind tool search"; `"alwaysLoad": false` defers all eight, overriding the `_meta`) and `claude mcp add-json` keeps it. In project scope a rerun with or without `--always-load` updates the entry, with a backup; in user scope the printed command removes and re-adds it. Codex (0.160) and OpenCode (1.18) have no per-server loading option, so their entries are unchanged and `--always-load` is refused for them; Codex's first-use schema load stays. The Codex block also sets `startup_timeout_sec = 20`, `tool_timeout_sec = 120` and `default_tools_approval_mode = "approve"`, which `codex exec` needs because it cannot answer approval prompts.
 
-`fai-browser-mcp` (`src/mcp-main.js`) is a stdio MCP server (spec 2025-11-25; also answers 2025-06-18 and 2025-03-26 clients) with eight tools: `fai_browser_open`, `fai_browser_act`, `fai_browser_observe`, `fai_browser_wait`, `fai_browser_status`, `fai_browser_release`, `fai_browser_evidence` and `fai_browser_guide`, described in [Agent direct](#agent-direct); its server instructions (about 1.95k chars, bounded by `test/agent-direct.test.js`) cover that loop, the navigation rule (follow the page's links, never a guessed address), asking for more on the same request and pauses, and point at the skill ([skills/fai-browser/SKILL.md](../skills/fai-browser/SKILL.md), the full guide) or `fai_browser_guide` for anything beyond a single read ([The guide tool](#the-guide-tool)).
+`fai-browser-mcp` (`src/mcp-main.js`) is a stdio MCP server (spec 2025-11-25; also answers 2025-06-18 and 2025-03-26 clients) with eight tools: `fai_browser_open`, `fai_browser_act`, `fai_browser_observe`, `fai_browser_wait`, `fai_browser_status`, `fai_browser_release`, `fai_browser_evidence` and `fai_browser_guide`, described in [Agent direct](#agent-direct); its server instructions (about 1.85k chars, bounded by `test/agent-direct.test.js`) cover that loop, the navigation rule (follow the page's links, never a guessed address), asking for more on the same request and pauses, and point at the skill ([skills/fai-browser/SKILL.md](../skills/fai-browser/SKILL.md), the full guide) or `fai_browser_guide` for anything beyond a single read ([The guide tool](#the-guide-tool)).
 
 **Task guides.** The skill is installed with the task sub-skills' guides, `tasks/<name>/SKILL.md` under the skill directory (today `tasks/flights/SKILL.md`: flight search, and `tasks/hotels/SKILL.md`: hotel search; in the repository `skills/fai-browser/tasks` links to [tasks/](../tasks/)), and its first lines point a host at them for such a task. A task's code, `tasks/<name>/index.js` (its question vocabulary), is reviewed code listed statically in `tasks/index.js`; it is never loaded from `FAI_HOME` or any user path.
 
@@ -767,7 +776,7 @@ approval the extension gives back (`not_approved`) lets them wait again. A close
 when it is the same agent's own (`replacedBy`; `next.kind: "observe"` with that id); otherwise it says the user
 approved another task in this browser (`next.kind: "stop"`). `tab_not_ready` three times in a row pauses the request as
 `session_inactive` ("the browser extension no longer holds this tab"), so the user's Resume binds it again. Each pause names its cause in
-`needs.message`: `tab_changed` (another tab came to the front in the task tab's window, or the task tab closed),
+`needs.message`: `tab_changed` (another tab came to the front in the task tab's window, the task tab closed, or the user switched Tab access back to One task tab during a multiple-tab task),
 `origin_changed` (the tab left the approved sites; `leftOrigin`), `child_tab` (the page opened a tab or window the task
 cannot follow; `childOrigin`), `session_inactive` (the extension restarted), `disconnected`, `paused` (the user's
 Pause); each is resumable and says to ask the user to click Resume (and, with an origin named, how to add it to the

@@ -112,7 +112,7 @@ export const ALWAYS_LOAD_META = 'anthropic/alwaysLoad';
 export const INSTRUCTIONS = [
   'FAI Browser drives one browser tab the user approves; you choose every action. Use it only when the user asks for '
     + 'work in their live browser tab, never for research or scraping. Beyond a single read, first load the '
-    + 'fai-browser skill or call fai_browser_guide (tabs, origins, levels, states; no browser call).',
+    + 'fai-browser skill or call fai_browser_guide.',
   '1. fai_browser_open: origins (exact, only those needed), reason (one line for the user), task, the lowest mode: '
     + 'read-only (links), reversible (buttons, fills), interactive (search, filter), full (save, send, submit, delete). '
     + 'Values the user gave go in suppliedText. A deep URL in allowedUrls opens on approval. It returns the page. '
@@ -120,9 +120,9 @@ export const INSTRUCTIONS = [
   '2. If page.digest answers the task, reply. Else fai_browser_act with one actions[].id (revision: single-use, '
     + 'required only for needsApproval, secrets, point); a fill takes text (submit: true presses Enter). Give the '
     + 'final act an expectation, e.g. {"urlIncludes":"/members"}; only verification.passed true is verified.',
-  '3. Follow the links the page offers; url only for an address the user gave or a result showed, never a guessed '
-    + 'one. Link not listed: fai_browser_observe with focus (label, host or path); moreActions counts unlisted ones, '
-    + 'digestChars reads more, waitFor waits. returnImages "final" only as a last resort, then act with point {x,y}.',
+  '3. Follow the links the page offers. Never a guessed address (url, allowedUrls or origins): only one the user gave '
+    + 'or a result showed. Link not listed: fai_browser_observe with focus (label, host or path); moreActions counts '
+    + 'unlisted ones, digestChars reads more, waitFor waits.',
   '4. Follow next {kind, text}. A higher level or another site: fai_browser_open with the same requestId and mode or '
     + 'origins; the user approves it on the same tab. A pause (child_tab, tab_changed) resumes when the user clicks '
     + 'Resume. Do not release at the end.',
@@ -409,6 +409,8 @@ export function instructionsFor(host = 'unknown') {
   return base;
 }
 
+// How many requests waiting for their first page (the notice) one server remembers.
+const INTRODUCE_KEEP = 16;
 // How many request -> OpenCode session owners one server remembers.
 const OPENCODE_OWNERS_KEEP = 256;
 
@@ -616,14 +618,19 @@ export const ONE_TAB_NOTICE = 'One task tab: a tab or window the page opens paus
  * The line for versions that differ (MCP server, daemon, extension; plain x.y.z only), else null. A daemon or extension
  * of another release may behave unlike these instructions (issue #33 "Related").
  */
-export function versionNote(status, server = VERSION) {
+export function versionNote(status, server = VERSION, requestId = null) {
   const plain = value => typeof value === 'string' && /^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(value);
-  const parts = [['MCP server', server], ['daemon', status?.daemon?.version], ['extension', status?.extension?.version]]
+  // The extension of the browser serving this request (several may be paired); else the one used last.
+  const view = (Array.isArray(status?.requests) ? status.requests : []).find(item => item?.requestId === requestId);
+  const browsers = Array.isArray(status?.extension?.browsers) ? status.extension.browsers : [];
+  const serving = view?.browser?.id ? browsers.find(browser => browser?.id === view.browser.id) : null;
+  const extension = serving?.version ?? status?.extension?.version;
+  const parts = [['MCP server', server], ['daemon', status?.daemon?.version], ['extension', extension]]
     .filter(([, version]) => plain(version));
   if (new Set(parts.map(([, version]) => version)).size < 2) return null;
   return `FAI Browser versions differ (${parts.map(([name, version]) => `${name} ${version}`).join(', ')}): results may `
-    + 'not match these instructions. Tell the user once: they update with Update in the FAI popup (or node src/cli.js '
-    + 'update), reload the extension and start a new agent session. Never update it yourself.';
+    + 'not match these instructions. Tell the user once: they update (Update in the FAI popup), reload the extension '
+    + 'and start a new agent session. Never update it yourself.';
 }
 
 /**
@@ -1772,7 +1779,7 @@ class McpServer {
     this.noteOpencodeOwner(call, requestId);
     this.ownedRequests.add(requestId);
     this.lastRequestId = requestId;
-    (this.introducing ??= new Set()).add(requestId);
+    this.introduceLater(requestId);
     return { requestId, state: response.state ?? 'pending', extensionConnected: response.extensionConnected,
       approval: response.request?.approval ?? null, browser: browserHint(response.request) };
   }
@@ -2047,7 +2054,7 @@ class McpServer {
     this.noteOpencodeOwner(call, requestId);
     this.ownedRequests.add(requestId);
     this.lastRequestId = requestId;
-    (this.introducing ??= new Set()).add(requestId);
+    this.introduceLater(requestId);
     const level = { 'read-only': 'Read', reversible: 'Use', interactive: 'Use', full: 'Act', testing: 'Test site' }[joined.level]
       ?? joined.level;
     const words = typeof joined.userText === 'string' && joined.userText ? oneLine(joined.userText, 500) : '';
@@ -2352,6 +2359,13 @@ class McpServer {
    * when the request has one task tab, and, once per server, the versions when the MCP server, daemon and extension
    * differ. Never a page call; the version check is one status read.
    */
+  /** Remember a request whose first page gets the notice; at most INTRODUCE_KEEP (requests that never got a page go). */
+  introduceLater(requestId) {
+    const pending = this.introducing ??= new Set();
+    pending.add(requestId);
+    while (pending.size > INTRODUCE_KEEP) pending.delete(pending.values().next().value);
+  }
+
   async introduce(client, call, direct) {
     if (!this.introducing?.has(direct.requestId)) return;
     this.introducing.delete(direct.requestId);
@@ -2359,7 +2373,7 @@ class McpServer {
     if (!this.versionsChecked) {
       this.versionsChecked = true;
       const status = await client.status(call.signal).catch(() => null);
-      const note = versionNote(status);
+      const note = versionNote(status, VERSION, direct.requestId);
       if (note) lines.push(note);
     }
     if (direct.granted?.level && direct.granted.tabMode !== 'multiple') lines.push(ONE_TAB_NOTICE);
@@ -2369,6 +2383,7 @@ class McpServer {
   async release(client, call, requestId) {
     const response = await client.release(requestId, call.signal);
     this.ownedRequests.delete(requestId);
+    this.introducing?.delete(requestId);
     this.directPages?.delete(requestId);
     if (this.lastRequestId === requestId) {
       this.lastRequestId = null;
