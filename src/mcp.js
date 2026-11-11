@@ -1061,9 +1061,15 @@ export function successorNote(from, to) {
     + `supplied values, policy and allowed URLs moved to it). Use ${to} from now on.`;
 }
 
-/** The trusted first line when the request the agent named had ended and a new one was made for its origins. */
-export function newRequestNote(from, to) {
-  return `requestId ${to} is a new request: ${from} had ended, so nothing of it carries over (suppliedText, policy and `
+/**
+ * The trusted first line when the request the agent named could not take more and a new one was made for its origins:
+ * `why` is `ended` (released, expired, denied), `unknown` (the daemon no longer knows it) or `browser` (it is live in
+ * another browser than the one this call named; it stays as it is there).
+ */
+export function newRequestNote(from, to, why = 'ended') {
+  const reason = why === 'browser' ? `${from} is in another browser than the one this call named (it stays open there)`
+    : why === 'unknown' ? `FAI Browser no longer knows ${from}` : `${from} had ended`;
+  return `requestId ${to} is a new request: ${reason}, so nothing of it carries over (suppliedText, policy and `
     + `allowedUrls are only what this call gave). Use ${to} from now on.`;
 }
 
@@ -1270,6 +1276,8 @@ class McpServer {
     // OpenCode: the session (tagged by FAI's plugin) whose call created or joined each request; Approve and Resume wake
     // exactly that one, and a request without an entry is never promised a wake.
     this.opencodeOwner = new Map();
+    // Requests this session has waited on (fai_browser_wait): the first wait gets the full relay, later ones a short one.
+    this.waitRelayed = new Set();
     this.connect = connect ?? defaultConnect;
     this.maxCallMs = positiveInteger(env.FAI_MCP_MAX_CALL_MS, DEFAULT_MAX_CALL_MS);
     // Unset, the allowance is never shorter than a call deadline someone raised to give the user longer to approve.
@@ -1857,8 +1865,10 @@ class McpServer {
   async resolveRequest(client, call, args) {
     const candidate = args.requestId ?? this.lastRequestId;
     const origins = args.origins;
+    let peekNamed = null;
     if (candidate) {
       const peek = await this.peekRequest(client, call, candidate);
+      if (args.requestId) peekNamed = peek;
       if (!origins) {
         if (!peek && args.requestId) {
           throw new ToolError('unknown_request', `No tab request ${candidate}; the daemon may have restarted. `
@@ -1899,8 +1909,11 @@ class McpServer {
         'reason is required when origins are given and no usable tab request exists (one line shown to the user).');
     }
     const created = await this.createRequest(client, call, args);
-    // The agent named a request that cannot take more (it ended): say plainly that this is a new one.
-    if (args.requestId && created.requestId !== args.requestId) call.requestNote = newRequestNote(args.requestId, created.requestId);
+    // The agent named a request that cannot take more: say plainly that this is a new one, and why.
+    if (args.requestId && created.requestId !== args.requestId) {
+      const live = peekNamed && ['active', 'pending', 'paused'].includes(peekNamed.state);
+      call.requestNote = newRequestNote(args.requestId, created.requestId, live ? 'browser' : peekNamed ? 'ended' : 'unknown');
+    }
     return { requestId: created.requestId, state: created.state, view: { origins }, created };
   }
 
@@ -2055,8 +2068,14 @@ class McpServer {
       this.noteOwner(view);
       // Still waiting when the wait ran out: a short "wait again" (the approval steps were in the result that asked
       // the user), never the long relay text once more.
-      // maxMs 0 is a read of the state, not a wait: it gets the full relay (how to approve or resume).
-      const still = (state === 'pending' || state === 'paused') && maxMs > 0;
+      // maxMs 0 is a read of the state, not a wait: it gets the full relay (how to approve or resume). So does this
+      // session's first wait on the request; later ones get the short "wait again".
+      const waiting = state === 'pending' || state === 'paused';
+      const still = waiting && maxMs > 0 && this.waitRelayed.has(requestId);
+      if (waiting && maxMs > 0) {
+        this.waitRelayed.add(requestId);
+        if (this.waitRelayed.size > 64) this.waitRelayed.delete(this.waitRelayed.values().next().value);
+      }
       return okResult(withoutUndefined({
         ...response,
         state,

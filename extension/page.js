@@ -868,12 +868,14 @@
     return style.visibility !== 'hidden' && style.display !== 'none';
   }
 
-  // A form field whose box lies wholly left of or above its document: no scroll position shows it.
-  function offPage(el) {
+  // A form field the page marks as not for people: hidden from assistive technology and the tab order on the field
+  // itself, and drawn so nobody sees it. It stays in the observation (page facts read it) and is marked `trap`; the
+  // runtime never offers it.
+  function trapField(el) {
     if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return false;
-    const view = el.ownerDocument?.defaultView ?? window;
+    if (el.getAttribute('aria-hidden') !== 'true' || el.getAttribute('tabindex') !== '-1') return false;
     const box = el.getBoundingClientRect();
-    return box.right + view.scrollX <= 0 || box.bottom + view.scrollY <= 0;
+    return Number(styleOf(el).opacity) === 0 || (box.width <= 2 && box.height <= 2);
   }
 
   function visible(el) {
@@ -3916,9 +3918,6 @@
       }) : null;
       const rect = pickerLabel ? boxOf(pickerLabel) : own;
       if (!(rect.width > 0 && rect.height > 0)) continue;
-      // A form field placed where no scrolling reaches it (left of or above the document, a spam trap's usual spot)
-      // is not one a person can see or fill.
-      if (!pickerLabel && offPage(el)) continue;
       if (intersectsViewport(rect)) {
         if (rendered(pickerLabel ?? el, rect)) inView.push({ el, rect, offscreen: false });
       } else {
@@ -5715,6 +5714,7 @@
     // Inside an open dialog (a date picker): a click there may re-render seconds later (the runtime's late change).
     else if (inDialog(el)) control.dialog = true;
     if (inFloating(el)) control.floating = true;
+    if (trapField(el)) control.trap = true;
     markOverlayControl(el, control);
     // The label is a descriptor this script wrote (describeUnnamed): the control has no name of its own.
     if (unnamed) control.unnamed = true;

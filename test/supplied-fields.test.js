@@ -24,16 +24,29 @@ test('a contact form named by placeholders: each supplied value goes into its ow
     'fill textbox "Message" with supplied message']);
 });
 
-test('fit: own name, id, autocomplete and type beat label words; noise tokens never match', () => {
-  assert.equal(suppliedFit(field('1', 'Your address', { name: 'email' }), 'email'), 3);
-  assert.equal(suppliedFit(field('1', 'Your address', { inputId: 'contact-email' }), 'contact_email'), 3);
-  assert.equal(suppliedFit(field('1', 'Your address', { autocomplete: 'section-a shipping email' }), 'email'), 3);
-  assert.equal(suppliedFit(field('1', 'Your address', { type: 'email' }), 'email'), 3);
-  assert.equal(suppliedFit(field('1', 'E-mail'), 'email'), 2);
-  assert.equal(suppliedFit(field('1', 'First name'), 'firstName'), 2);
+test('fit: a visible label or placeholder counts as much as a name, id, autocomplete token or type; noise never fits', () => {
+  assert.equal(suppliedFit(field('1', 'Your address', { name: 'email' }), 'email'), 1);
+  assert.equal(suppliedFit(field('1', 'Your address', { inputId: 'contact-email' }), 'contact_email'), 1);
+  assert.equal(suppliedFit(field('1', 'Your address', { autocomplete: 'section-a shipping email' }), 'email'), 1);
+  assert.equal(suppliedFit(field('1', 'Your address', { type: 'email' }), 'email'), 1);
+  assert.equal(suppliedFit(field('1', 'E-mail'), 'email'), 1);
+  assert.equal(suppliedFit(field('1', 'First name'), 'firstName'), 1);
   assert.equal(suppliedFit(field('1', 'Your first name please'), 'first_name'), 1);
+  assert.equal(suppliedFit(field('1', 'Your email address', { name: 'sender' }), 'email'), 1);
   assert.equal(suppliedFit(field('1', 'Anything', { autocomplete: 'off' }), 'off'), 0);
   assert.equal(suppliedFit(field('1', 'Anything'), 'text'), 0, 'the plain text type names nothing');
+});
+
+test('a hidden attribute never takes a value away from the field whose label asks for it: both are offered', () => {
+  // The decoy: the user's own field is labelled for the email; another field's hidden name attribute is "email".
+  const controls = [
+    field('1', 'Your email address', { name: 'sender' }),
+    field('2', "Friend's address", { name: 'email' }),
+    field('3', 'Note'),
+  ];
+  const actions = legalActions(page(controls), { mode: 'reversible', suppliedText: { email: 'a@x.example', note: 'hi' } });
+  assert.deepEqual(supplied(actions), ['fill textbox "Your email address" with supplied email',
+    'fill textbox "Friend\'s address" with supplied email', 'fill textbox "Note" with supplied note']);
 });
 
 test('targets: values that fit nothing go where no value goes; with every field claimed, everywhere', () => {
@@ -43,8 +56,8 @@ test('targets: values that fit nothing go where no value goes; with every field 
   assert.deepEqual([...targets.get('query')], ['1']);
   const claimed = suppliedTargets([field('1', 'Email', { type: 'email' })], ['email', 'note']);
   assert.deepEqual([...claimed.get('note')], ['1']);
-  // Two fields fit equally (both called "Name"): the value is offered in both.
-  const both = suppliedTargets([field('1', 'Name'), field('2', 'Name')], ['name']);
+  // A value that fits several fields is offered in each of them.
+  const both = suppliedTargets([field('1', 'Name'), field('2', 'Company name'), field('3', 'Phone')], ['name']);
   assert.deepEqual([...both.get('name')], ['1', '2']);
 });
 
@@ -77,13 +90,22 @@ test('read-only: withheld buttons and fields are counted (controls_need_reversib
     { id: '5', role: 'button', label: 'Delete account', enabled: true, visible: true },
     { id: '6', role: 'button', label: 'Newsletter', enabled: true, visible: true },
     { id: '7', role: 'button', label: 'Hidden', enabled: true, visible: false },
+    // Reversible would not offer these either: a credential action, a select whose every other option is refused,
+    // and a field the page marks as not for people.
+    { id: '8', role: 'button', label: 'Show token', enabled: true, visible: true, gate: 'secret' },
+    { id: '9', role: 'combobox', label: 'Bulk action', enabled: true, visible: true, selectedValue: 'none',
+      options: [{ value: 'none', label: 'Choose' }, { value: 'a', label: 'Delete all' }, { value: 'b', label: 'Delete selected' }] },
+    field('10', 'company', { trap: true }),
   ];
   const readOnly = offeredActions(page(controls), { mode: 'read-only', policy: { forbid: ['Newsletter'] } });
-  // Contact, get in touch and Search: the delete button needs more than reversible, Newsletter is forbidden, Hidden is hidden.
+  // Contact, get in touch and Search: the delete button needs more than reversible, Newsletter is forbidden, Hidden is
+  // hidden, and the credential button, the all-refused select and the trap field are not offered at reversible.
   assert.equal(readOnly.withheld, 3);
   assert.equal(withheldWarning(readOnly), 'controls_need_reversible:3');
   assert.ok(!readOnly.actions.some(action => /Contact|touch|Search/.test(action.label ?? '')), 'nothing new is offered');
-  assert.equal(offeredActions(page(controls), { mode: 'reversible' }).withheld, 0);
+  const reversible = offeredActions(page(controls), { mode: 'reversible' });
+  assert.equal(reversible.withheld, 0);
+  assert.ok(!reversible.actions.some(action => ['8', '9', '10'].includes(String(action.target))), 'none of them offered there');
   assert.equal(withheldWarning(offeredActions(page([link('1', 'Docs', '/docs')]), { mode: 'read-only' })), null);
   // Through an observe, as the host sees it: a trusted gloss naming the level and the call, and no label.
   const runtime = new BrowserRuntime({ bridge: new FakeBridge({ pages: { '/': { title: 'Home', text: 'Get in touch', controls } } }) });

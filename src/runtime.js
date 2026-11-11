@@ -262,26 +262,32 @@ function isTextEntry(control) {
 
 // Supplied values and the fields they belong to. A form with several fields and several supplied values used to offer
 // every value in every field ("fill "Name" with supplied email"), and a capped listing could show only the first
-// field's fills. A value whose name fits a field (its own name, id, autocomplete token or input type; else its label or
-// placeholder; else every word of the value's name in them) is offered in the fields it fits best; a value that fits
-// none is offered in the fields no value claims (in every field when all are claimed).
+// field's fills. A value whose name fits a field (its label or placeholder, every word of the value's name in them, or
+// the field's own name, id, autocomplete token or input type) is offered in every field it fits, and the agent picks
+// by the label it reads; the visible words count as much as the attributes, so a hidden attribute never takes a value
+// away from a field whose label asks for it. A value that fits no field is offered in the fields no value fits (in
+// every field when all are taken).
 const plainKey = value => String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const keyWords = value => String(value ?? '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 const AUTOCOMPLETE_NOISE = new Set(['on', 'off', 'section', 'shipping', 'billing', 'home', 'work', 'mobile']);
 
-/** How well the supplied value `name` fits a text field: 3 its own name, id, autocomplete or type; 2 its label or placeholder; 1 their words; 0. */
+/**
+ * Whether the supplied value `name` fits a text field: its label or placeholder is the name or holds every word of it
+ * (`firstName` fits "First name", `email` fits "Your email address"), or the field's own name, id, autocomplete token
+ * or input type is the name. 1 or 0: no source ranks above another.
+ */
 export function suppliedFit(control, name) {
   const key = plainKey(name);
   if (!key) return 0;
+  const shown = [control?.label, control?.placeholder];
+  if (shown.map(plainKey).includes(key)) return 1;
+  const words = new Set(shown.flatMap(keyWords));
+  const wanted = keyWords(name);
+  if (wanted.length && wanted.every(word => words.has(word))) return 1;
   const autocomplete = String(control?.autocomplete ?? '').split(/\s+/).filter(token => token && !AUTOCOMPLETE_NOISE.has(token.toLowerCase())
     && !/^section-/i.test(token));
   const own = [control?.name, control?.inputId, control?.type === 'text' ? '' : control?.type, ...autocomplete].map(plainKey).filter(Boolean);
-  if (own.includes(key)) return 3;
-  const shown = [control?.label, control?.placeholder];
-  if (shown.map(plainKey).includes(key)) return 2;
-  const words = new Set(shown.flatMap(keyWords));
-  const wanted = keyWords(name);
-  return wanted.length && wanted.every(word => words.has(word)) ? 1 : 0;
+  return own.includes(key) ? 1 : 0;
 }
 
 /**
@@ -289,19 +295,14 @@ export function suppliedFit(control, name) {
  * observation's text fields that could take a supplied value.
  */
 export function suppliedTargets(fields, names) {
-  const fits = new Map(names.map(name => [name, new Map(fields.map(field => [String(field.id), suppliedFit(field, name)]))]));
-  const best = new Map(names.map(name => [name, Math.max(0, ...fits.get(name).values())]));
-  const claimed = new Set();
-  for (const name of names) {
-    if (!best.get(name)) continue;
-    for (const [id, fit] of fits.get(name)) if (fit === best.get(name)) claimed.add(id);
-  }
   const ids = fields.map(field => String(field.id));
+  const fitting = new Map(names.map(name => [name, ids.filter((id, index) => suppliedFit(fields[index], name) > 0)]));
+  const claimed = new Set([...fitting.values()].flat());
   const unclaimed = ids.filter(id => !claimed.has(id));
   const out = new Map();
   for (const name of names) {
-    const top = best.get(name);
-    out.set(name, new Set(top ? ids.filter(id => fits.get(name).get(id) === top) : unclaimed.length ? unclaimed : ids));
+    const fits = fitting.get(name);
+    out.set(name, new Set(fits.length ? fits : unclaimed.length ? unclaimed : ids));
   }
   return out;
 }
@@ -660,7 +661,8 @@ export function offeredActions(observation, options = {}) {
   let secretFields = 0;
   // The text fields a supplied value could go into: which value goes where, and labels two fields share.
   const textFields = controls ? (observation.controls ?? []).slice(0, MAX_CONTROLS).filter(control => control.enabled !== false
-    && control.visible !== false && (control.type === 'password' || (!control.sensitive && isTextEntry(control)))) : [];
+    && control.visible !== false && control.trap !== true
+    && ((control.type === 'password' && guard.allows('sign_in')) || (!control.sensitive && isTextEntry(control)))) : [];
   const suppliedIn = suppliedText.length ? suppliedTargets(textFields, suppliedText.map(([name]) => name)) : new Map();
   const fieldLabels = distinctFieldLabels(textFields);
 
@@ -684,6 +686,9 @@ export function offeredActions(observation, options = {}) {
   let withheld = 0;
   for (const control of (observation.controls ?? []).slice(0, MAX_CONTROLS)) {
     if (control.enabled === false || control.visible === false) continue;
+    // A field the page marks as not for people (page.js trapField: hidden from assistive technology and the tab order,
+    // drawn invisible): never offered at any level. It stays in the observation for the page facts.
+    if (control.trap === true) continue;
     // A field that takes a secret (the page script's secretTarget): the newest handles, as fills the user approves.
     if (secrets.length && control.secretTarget === true && !control.sensitive && secretFields < SECRET_FILL_FIELDS
       && !guard.forbids(control.label) && !paymentField(control)) {
@@ -754,10 +759,7 @@ export function offeredActions(observation, options = {}) {
       }
       continue;
     }
-    if (!controls) {
-      if (control.type !== 'file' && !guard.forbids(control.label)) withheld++;
-      continue;
-    }
+    if (!controls) continue;
     // A file input: only an upload of a file from the host's workspace (Act and Test site), which the user approves
     // each time (the card names the file, its size and the site); never a fill.
     if (control.type === 'file') {
@@ -886,6 +888,16 @@ export function offeredActions(observation, options = {}) {
     const capped = capActions(offered, MAX_OFFERED, hints, options.pinned ?? null);
     offered = capped.actions;
     dropped += capped.dropped;
+  }
+  // Read-only: what reversible would offer here that this level does not (the same offer one level up, its controls
+  // that are not links), so the count never includes a control reversible would refuse as well.
+  if (!controls && !options.countingWithheld) {
+    const up = offeredActions(observation, { ...options, mode: 'reversible', approvals: false, agentText: true,
+      countingWithheld: true, guardrails: guardrailPolicy({ mode: 'reversible', merged: guard.additions }) });
+    const here = new Set(offered.filter(action => action.target !== undefined).map(action => String(action.target)));
+    const more = new Set(up.actions.filter(action => action.target !== undefined && action.type !== 'other_site'
+      && !here.has(String(action.target))).map(action => String(action.target)));
+    withheld = more.size;
   }
   return {
     actions: offered.map((action, index) => ({ id: `a${index}`, ...action })),
@@ -2753,6 +2765,14 @@ function didLine(action) {
   }
 }
 
+/** Whether a later read may verify `expectation`: a declarative one with only fields that wait for something to show. */
+const LATE_FIELDS = new Set(['textIncludes', 'titleIncludes', 'titleEquals', 'urlIncludes', 'urlEquals', 'urlMatches']);
+function lateCheckable(expectation) {
+  if (!expectation || typeof expectation !== 'object' || Array.isArray(expectation)) return false;
+  const keys = Object.keys(expectation).filter(key => expectation[key] !== undefined);
+  return keys.length > 0 && keys.every(key => LATE_FIELDS.has(key));
+}
+
 // After a host act whose declarative expectation does not hold on the settled page: the page is read again every
 // EXPECT_LATE_POLL_MS for at most EXPECT_LATE_MS, so a result line that shows shortly after the act (a form that says
 // "sending..." before "sent") still counts. Only what an observation actually showed passes.
@@ -3093,8 +3113,10 @@ export class BrowserRuntime {
             setOutcome(session.result, 'expectation_passed');
           } else setOutcome(session.result, 'step_complete');
         }
+        // A late read that found the tab on another origin: cross_origin with no offer, as for an act that lands there.
+        if (!allowedOrigin(after.url, config.allowedOrigins)) setOutcome(session.result, 'cross_origin');
         // What the host may do next from here, without another observe(); listed by the task its observe() named.
-        session.result.offer = this.#offerAfter(session, config, after, offer.hints, offer.question);
+        else session.result.offer = this.#offerAfter(session, config, after, offer.hints, offer.question);
       }
     } catch (error) {
       session.fail(error);
@@ -3120,19 +3142,20 @@ export class BrowserRuntime {
     const expectation = session.config.expectation;
     const started = Date.now();
     let last = observation;
-    if (!this.expectLateMs || !expectation || typeof expectation !== 'object') return { passed: false, observation: last };
+    // Only an expectation that waits for something to appear: a negative one (textAbsent) or changedSinceStart could
+    // pass on a later read for the wrong reason (an error toast that clears itself, an unrelated change).
+    if (!this.expectLateMs || !lateCheckable(expectation)) return { passed: false, observation: last };
     while (Date.now() - started < this.expectLateMs) {
-      try {
-        await sleep(Math.min(EXPECT_LATE_POLL_MS, this.expectLateMs - (Date.now() - started)), undefined, { signal: session.signal });
-      } catch {
-        break;
-      }
-      if (session.signal.aborted || session.interrupted) break;
+      // An interrupt or the act's time budget aborts the sleep: that error ends the act as what it is.
+      await sleep(Math.min(EXPECT_LATE_POLL_MS, this.expectLateMs - (Date.now() - started)), undefined, { signal: session.signal });
       let fresh;
       try {
         fresh = await session.observe();
-      } catch {
-        break;
+      } catch (error) {
+        // A page that changed under the read is read again; anything else (the tab left its origin, was switched,
+        // paused) surfaces as itself.
+        if (error?.code === 'stale') continue;
+        throw error;
       }
       session.visit(fresh);
       last = fresh;

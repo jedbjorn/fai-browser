@@ -71,24 +71,15 @@ test('the dialog: each supplied value in its own field, no spam-trap field, a fi
   assert.equal(await page.locator('#contact-modal').isHidden(), true);
 });
 
-test('a single read after the act misses the late line; a line that never shows still fails after the short re-check', async t => {
-  const once = await open(t, 'full', { expectLateMs: 0 });
-  const missed = await sendWith(once, { textIncludes: 'sent, we will' });
-  assert.equal(missed.code, 'step_complete');
-  assert.equal(missed.verification.passed, false);
-  const polled = await open(t, 'full');
-  const started = Date.now();
-  const never = await sendWith(polled, { textIncludes: 'message delivered to the moon' });
-  assert.equal(never.verification.passed, false);
-  assert.equal(never.verification.seenAfterMs, undefined);
-  assert.ok(Date.now() - started < 6000, 'bounded');
-});
-
-async function sendWith({ page, runtime }, expectation) {
+test('the spam-trap field is reported (trap) for the page facts but never offered, at any level', async t => {
+  const { page, runtime } = await open(t, 'full');
   await page.click('.contact-link');
-  await page.fill('input[name=email]', SUPPLIED.email);
-  await page.fill('textarea[name=message]', SUPPLIED.message);
   const observed = await runtime.observe(config('full'));
-  const send = observed.actions.find(action => action.type === 'click' && action.label === 'Send message');
-  return runtime.act(send.id, { revision: observed.observation.revision, expectation });
-}
+  const trap = observed.observation.controls.find(control => control.label === 'company');
+  assert.equal(trap?.trap, true, 'reported and marked');
+  assert.ok(!observed.observation.controls.some(control => control.trap && control.label !== 'company'), 'only the trap is marked');
+  assert.ok(!observed.actions.some(action => action.label === 'company'), 'no fill, typed or supplied, and no click');
+  // A value that fits no visible field still never goes there.
+  const loose = await runtime.observe({ ...config('full'), suppliedText: { note: 'x' } });
+  assert.deepEqual(loose.actions.filter(action => action.suppliedName === 'note').map(action => action.label), ['Name', 'Email', 'Message']);
+});

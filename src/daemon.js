@@ -930,6 +930,16 @@ export function createDaemon(options = {}) {
     if (from.seenUrls?.size) to.seenUrls = new Set([...from.seenUrls, ...(to.seenUrls ?? [])]);
   }
 
+  /** The live request that replaced `record` as its successor (an ask while it was pending), following the chain; else null. */
+  function successorOf(record) {
+    let current = record;
+    for (let hops = 0; hops < 16 && current?.replacedHow === 'successor' && current.replacedBy; hops++) {
+      current = requests.get(current.replacedBy) ?? null;
+      if (current && LIVE.has(current.state)) return current;
+    }
+    return null;
+  }
+
   /** Whether a page of this request showed an address on `origin` (its seen set, src/runtime.js noteSeen). */
   function seenOrigin(record, origin) {
     for (const href of record.seenUrls ?? []) {
@@ -2511,6 +2521,12 @@ export function createDaemon(options = {}) {
     // The standing terms are kept also when the request cannot be read yet (pending, paused): an open whose approval
     // wait ran out, or an observe during a pause, still attaches its supplied values, policy and URLs to the request.
     const terms = standingTerms(record, spec);
+    // A request a successor replaced while this call was under way (another open asked for more on it while it was
+    // pending): what this call attaches belongs to the live successor too, or it would be lost on the expired record.
+    const heir = successorOf(record);
+    if (heir) {
+      standingTerms(heir, { ...spec, allowedUrls: spec.allowedUrls.filter(url => urlCovered(url, coveredOrigins(heir))) });
+    }
     if (record.state !== 'active') return { state: 'done', requestId: record.requestId, result: blockedResult(record, undefined, spec.mode) };
     ensureIdle(record);
     const observeStart = now();
