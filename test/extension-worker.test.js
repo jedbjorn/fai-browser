@@ -1877,6 +1877,34 @@ test('a worker start removes tracked host permissions no session holds; never on
   assert.deepEqual(h.removed, [SITE_PATTERN]);
 });
 
+// Only access this extension added is ever removed: a pattern the browser already holds when an approval click
+// reports it (the user allowed the site by hand, an ask card or the popup in multiple-tab mode) is never tracked.
+test('track skips a pattern the browser already holds, so the end of the session never removes it', async () => {
+  const EXACT = 'https://shop.example.com/*';
+  const h = harness({ hostGrants: [EXACT] });
+  await h.waitFor(m => m.type === 'hello');
+  await sleep(10);
+  await h.send({ type: 'track', patterns: [EXACT, SITE_PATTERN] });
+  assert.deepEqual(clone(h.local.trackedSites), [SITE_PATTERN], 'only the pattern not held yet is tracked');
+  h.alarmFire();
+  await sleep(20);
+  assert.ok(!h.removed.includes(EXACT), 'the site the user allowed stays');
+});
+
+// A session with no domain patterns still cleans up at once when it ends: exact-origin access this extension added for
+// it goes on the stop, not at the next alarm pass.
+test('stopping a session without domain patterns removes the exact-origin access it added right away', async () => {
+  const EXACT = 'https://example.com/*';
+  const h = await started({ hostGrants: [] });
+  // Added and tracked by an approval click for this session (as compat.js or the popup in multiple-tab mode do).
+  h.grant(EXACT);
+  h.local.trackedSites = [EXACT];
+  await sleep(20);
+  assert.ok(!h.removed.includes(EXACT), 'kept while the session lives');
+  await h.send({ type: 'stop' });
+  await h.until(() => h.removed.includes(EXACT), 1000);
+});
+
 test('a permission granted just before start survives a reconcile in between', async () => {
   const h = harness({ hostGrants: [] });
   await h.waitFor(m => m.type === 'hello');
@@ -2043,6 +2071,18 @@ test('a declined ask is logged with its own reason', async () => {
   await h.send({ type: 'deny', requestId: 'req_1' }, { id: 'ext', url: 'chrome-extension://ext/popup.html' });
   const events = h.sent.filter(m => m.type === 'approval').map(m => `${m.surface}:${m.step}:${m.reason}`);
   assert.deepEqual(events, ['popup:denied:ask_declined', 'popup:denied:null']);
+});
+
+// Declining only the agent's ask (its card's Decline, `ask: true`) leaves the request's armed tab armed.
+test('an ask decline keeps the request\'s armed tab; a deny of the request disarms it', async () => {
+  const { h } = await armed();
+  const popup = { id: 'ext', url: 'chrome-extension://ext/popup.html' };
+  await h.send({ type: 'deny', requestId: 'req_1', ask: true }, popup);
+  await sleep(20);
+  assert.equal(h.session.armedTabs.length, 1, 'still armed');
+  assert.equal(h.tabBadges.get(9), '?');
+  await h.send({ type: 'deny', requestId: 'req_1' }, popup);
+  await h.until(() => h.session.armedTabs.length === 0);
 });
 
 test('the icon click on the armed tab leases it once at the armed level and restores the popup', async () => {
