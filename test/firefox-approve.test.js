@@ -69,7 +69,7 @@ const CHROME_HELPERS = `
   };
 `;
 
-async function setup(t) {
+async function setup(t, extraLocal = {}) {
   const scratch = await mkdtemp(join(tmpdir(), 'fai-ff-approve-'));
   const home = join(scratch, 'home');
   const faiHome = join(scratch, 'fai');
@@ -146,8 +146,8 @@ async function setup(t) {
   await marionette.setContext('content');
   await marionette.navigate(`moz-extension://${uuid}/offscreen.html`);
   await marionette.execute(`const done = arguments[arguments.length - 1];
-    chrome.storage.local.set({ siteAccessWaitMs: arguments[0] }).then(() => done(true), error => done(error.message));`,
-  [WAIT_MS], { async: true });
+    chrome.storage.local.set({ siteAccessWaitMs: arguments[0], ...arguments[1] }).then(() => done(true), error => done(error.message));`,
+  [WAIT_MS, extraLocal], { async: true });
   await marionette.navigate('about:blank');
 
   const chrome = async (body, args = []) => {
@@ -403,3 +403,32 @@ for (const surface of ['popup', 'toolbar']) {
     }
   });
 }
+
+// Only access FAI itself added is ever removed: a site the user allowed by hand (about:addons) stays when a
+// multiple-tab session approved by the toolbar icon (which asks for the task host inside the click) ends.
+test('Firefox: a site the user allowed by hand keeps its access after a multiple-tab session on it ends', { skip, timeout: 90_000 }, async t => {
+  const ctx = await setup(t, { tabMode: 'multiple' });
+  await ctx.marionette.setContext('chrome');
+  await ctx.marionette.execute(`const done = arguments[arguments.length - 1];
+    const { ExtensionPermissions } = ChromeUtils.importESModule('resource://gre/modules/ExtensionPermissions.sys.mjs');
+    const extension = WebExtensionPolicy.getByID(${JSON.stringify(GECKO_ID)}).extension;
+    ExtensionPermissions.add(${JSON.stringify(GECKO_ID)}, { permissions: [], origins: ['http://127.0.0.1/*'] }, extension)
+      .then(() => done(true), error => done(error.message));`, [], { async: true });
+  await ctx.marionette.setContext('content');
+  assert.ok((await heldOrigins(ctx)).includes('http://127.0.0.1/*'), 'allowed by hand');
+  const created = await ctx.client.requestTab({ origins: [ctx.origin], mode: 'interactive', reason: 'Check the portal',
+    url: `${ctx.origin}/start` });
+  assert.ok(await ctx.armWindow(), 'the request modal opened');
+  assert.ok(await until(() => ctx.chrome(`return browserWindows().some(w => w.gBrowser.tabs.some(t =>
+    t.linkedBrowser.currentURI.spec.includes('/start') && !t.hasAttribute('busy')));`), 10_000), 'the page loaded');
+  await clickIcon(ctx, '/start');
+  // Already held: Firefox shows no prompt; answer one if it does.
+  await sleep(1000);
+  await allowPrompt(ctx).catch(() => false);
+  const outcome = await ctx.client.wait({ requestId: created.requestId, maxMs: 15_000 });
+  assert.equal(outcome.state, 'active');
+  await ctx.client.release(created.requestId, 'done');
+  await until(async () => (await ctx.stateOf(created.requestId))?.state !== 'active', 5000);
+  await sleep(3000);
+  assert.ok((await heldOrigins(ctx)).includes('http://127.0.0.1/*'), `still allowed: ${JSON.stringify(await heldOrigins(ctx))}`);
+});

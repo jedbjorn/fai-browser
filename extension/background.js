@@ -1103,7 +1103,12 @@ async function hasSitePermission(patterns) {
 function releaseSites(ended) {
   if (!ended || ended.sitesReleased) return;
   ended.sitesReleased = true;
-  if (!ended.patterns?.length) return;
+  // Without domain patterns there is nothing to remember, but exact-origin access this extension added for the
+  // session goes now, not at the next alarm pass.
+  if (!ended.patterns?.length) {
+    ignore(reconcileSites());
+    return;
+  }
   ignore(rememberSites(ended).catch(() => {}).then(reconcileSites));
 }
 
@@ -1143,6 +1148,18 @@ async function trackSites(patterns) {
     if (!list.includes(pattern)) list.push(pattern);
   }
   await chrome.storage.local.set({ trackedSites: list.slice(-MAX_TRACKED_SITES) });
+}
+
+// Tracks only the patterns the browser does not hold yet, checked when an approval click is about to ask for them (the
+// contains checks are issued before that click's permission request, so they see the state before it): only access
+// this extension itself added is ever removed, as the request modal does with its own held check (arm.js heldBefore).
+async function trackNewSites(patterns) {
+  const list = Array.isArray(patterns) ? patterns.filter(item => typeof item === 'string').slice(0, 20) : [];
+  // An unknown answer counts as held: never tracked, so never removed.
+  const held = await Promise.all(list.map(pattern => Promise.resolve(chrome.permissions?.contains?.({ origins: [pattern] }))
+    .then(value => value !== false, () => true)));
+  const fresh = list.filter((pattern, index) => !held[index]);
+  if (fresh.length) await trackSites(fresh);
 }
 
 let reconciling = Promise.resolve();
@@ -4412,8 +4429,9 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       popupAttemptDone(message);
       await openRequest(message);
     } else if (message.type === 'track') {
-      // The popup is about to request these patterns in an Approve click (see trackSites).
-      await trackSites(message.patterns);
+      // The popup is about to request these patterns in an Approve click (see trackSites); one the browser already
+      // holds (the user allowed it by hand, or it was remembered) is never tracked, so never removed (trackNewSites).
+      await trackNewSites(message.patterns);
     } else if (message.type === 'approval_decision') {
       // Approve once or Deny, from the approval window or the popup card: an extension page only, never a web page.
       const extensionPage = typeof sender.url === 'string' && sender.url.startsWith(chrome.runtime.getURL(''));
@@ -4442,7 +4460,9 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       await send('move', { requestId: message.requestId });
     } else if (message.type === 'deny') {
       if (typeof message.requestId !== 'string') throw new Error('No request to deny');
-      for (const arm of [...armed.values()]) if (arm.requestId === message.requestId) await disarm(arm.tabId);
+      // Declining only the agent's ask leaves the request, and any tab armed for it (a paused task resumed in a new
+      // tab), as they were.
+      if (message.ask !== true) for (const arm of [...armed.values()]) if (arm.requestId === message.requestId) await disarm(arm.tabId);
       // Which surface's Deny (or Release) it was: a deny the user did not mean shows where the click came from. A
       // declined ask (the agent asked for more on an approved request) is not a deny of the request.
       reportApproval({ requestId: message.requestId, surface: approvalSurface(sender), step: 'denied',
@@ -4628,7 +4648,7 @@ chrome.action?.onClicked?.addListener(tab => {
   let access = globalThis.faiCompat?.approvalAccess?.(tab?.id) ?? null;
   if (arm?.tabMode === 'multiple' && tabMode === 'multiple' && originCovered(originOf(tab.url ?? ''), request?.origins ?? [])) {
     const pattern = taskOriginPattern(new URL(tab.url).origin);
-    ignore(trackSites([pattern]));
+    ignore(trackNewSites([pattern]));
     access ??= chrome.permissions?.request?.({ origins: [pattern] }).catch(() => false) ?? null;
   }
   ignore(approveArmed(tab, access ?? Promise.resolve()));
