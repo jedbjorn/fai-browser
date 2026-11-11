@@ -185,7 +185,8 @@ const OUTCOMES = {
     status: 'needs_user',
     who: 'user',
     reason: 'The page or action leads to an origin that is not approved',
-    message: 'Ask the user to handle the tab or approve the origin, then observe again with the same requestId.',
+    message: 'This leads to a site the request does not cover. If the task needs it, ask the user, then '
+      + 'fai_browser_open with this requestId and that origin in origins: the same request and tab ask for it.',
   },
   blocked: {
     status: 'needs_user',
@@ -327,6 +328,41 @@ const OUTCOMES = {
   },
 };
 
+/** Every outcome code a result may carry (the guide's states topic and its code lookup cover each one). */
+export const OUTCOME_CODES = Object.freeze(Object.keys(OUTCOMES));
+
+/** The outcome of a code as the guide explains it: `{status, who, reason, message}`, or null for an unknown code. */
+export function outcomeOf(code) {
+  return isKnownCode(code) ? { ...OUTCOMES[code] } : null;
+}
+
+// Fixed refusal texts of host-composed acts (src/runtime.js #compose): their stop names the remedy, never the generic
+// "FAI never purchases" line.
+export const ONE_TAB_TEXT = 'This request has one task tab, so it cannot open or switch tabs. If the task needs another '
+  + 'tab, ask the user to turn on Multiple task tabs (FAI popup, Advanced, Tab access), then Pause and Resume this task; '
+  + 'or open the address in this tab with url.';
+export const URL_SCHEME_TEXT = 'Only an http(s) URL on the approved origins can be opened.';
+export const URL_REFUSED_TEXT = 'This URL names an action (sign-out, delete, payment and the like) that FAI Browser does '
+  + 'not open directly. Use the page\'s own control, or tell the user.';
+export const DIALOG_LEVEL_TEXT = 'JavaScript dialogs are answered by FAI Browser only on a Test site; ask the user to '
+  + 'answer it in the tab, then observe.';
+
+// The trusted note after a `url` act to an address no page of this request showed and the user did not list
+// (`why` url:unseen): a guessed address is the usual cause of a wrong page or a 404.
+export const URL_UNSEEN_NOTE = ' Note: that address was not on any page of this task nor in allowedUrls. Unless the '
+  + 'user gave it, do not guess addresses: follow the links the page offers (observe with focus).';
+
+// A url or openTab act to an address on another site that no page of this request showed (`why` url:unseen): the
+// usual guess. Nothing ran; the agent finds the link instead of asking the user to approve a guessed site.
+export const URL_UNSEEN_CROSS_TEXT = 'Nothing ran: that address is on a site this request does not cover, and no page of '
+  + 'this task showed it. Do not guess addresses: find and follow the link on the page (observe with focus: it matches '
+  + 'a link\'s label, host and path; a link to another site is listed with its address). Ask for that site on this '
+  + 'request only if the user gave you the address.';
+
+// A history move (nav back or forward) with no entry on the approved sites: there is no origin to ask for.
+export const HISTORY_OFF_SITE_TEXT = 'Nothing ran: there is no page to go to in that direction on the approved sites '
+  + '(the tab\'s history leads elsewhere, or nowhere). Observe and use the page\'s own links instead.';
+
 // Each pause says what paused it (issue #31): never "stopped" or "released", which only the user's Stop is.
 const RESUME_HINT = 'Ask the user to click Resume on this task in FAI Browser; next says how to continue.';
 
@@ -337,7 +373,7 @@ const RESUME_HINT = 'Ask the user to click Resume on this task in FAI Browser; n
 export const LEASE_MESSAGES = Object.freeze({
   paused: 'The user paused the tab. Ask them to click Resume in the FAI Browser extension when the task may continue; '
     + 'next says how to continue once they do.',
-  tab_changed: `Paused: another tab came to the front in the task tab's window, or the task tab closed. ${RESUME_HINT}`,
+  tab_changed: `Paused: another tab came to the front in the task tab's window, the task tab closed, or Tab access went back to One task tab. ${RESUME_HINT}`,
   origin_changed: `Paused: the tab left the approved sites. ${RESUME_HINT}`,
   child_tab: `Paused: the page opened a tab or window this task cannot follow. ${RESUME_HINT}`,
   session_inactive: `Paused: the browser extension no longer holds this tab (it restarted, or lost the task). ${RESUME_HINT}`,
@@ -1026,6 +1062,7 @@ const REFUSAL_STOP_TEXTS = new Set([
   'FAI never purchases outside testing mode. Tell the user what to do in the tab.',
   'The user reserved this control for themselves. Tell the user what to do in the tab.',
   'The user denied this action in the FAI Browser window. Tell the user; do not retry it.',
+  ONE_TAB_TEXT, URL_SCHEME_TEXT, URL_REFUSED_TEXT, DIALOG_LEVEL_TEXT,
 ]);
 
 function refusalStopText(result) {
@@ -1112,9 +1149,15 @@ function approvalPendingText(result, waitMs = null) {
 /** The trusted next step `{kind, text}` of a host-driven (Agent direct) result: choose, observe, answer, relay, approve, stop. */
 export function directNext(result, context = {}) {
   const next = directNextStep(result, context);
-  const note = ['choose', 'observe', 'answer'].includes(next.kind) ? framesNote(result) : '';
+  let note = ['choose', 'observe', 'answer'].includes(next.kind) ? framesNote(result) : '';
+  // A url act to an address nothing in this request showed: one line, only on that result (never a refusal).
+  if (next.kind !== 'answer' && result.needs?.message !== URL_UNSEEN_CROSS_TEXT
+    && result.verdict?.why?.includes('url:unseen')) note += URL_UNSEEN_NOTE;
   return note ? { ...next, text: `${next.text}${note}` } : next;
 }
+
+// Pauses whose cause is a tab: the guide's tabs topic explains them and what the user can change.
+const TAB_PAUSES = new Set(['tab_changed', 'child_tab']);
 
 function directNextStep(result, context = {}) {
   const ref = context.requestId ?? result.requestId ?? result.lease?.requestId ?? 'from this result';
@@ -1129,6 +1172,24 @@ function directNextStep(result, context = {}) {
   if (code === 'approval_pending') return { kind: 'approve', text: approvalPendingText(result, context.gateWaitMs) };
   // An act or a point on a link to another site (src/other-site.js): the agent requests that origin itself.
   if (code === 'cross_origin' && result.needs?.message === OTHER_SITE_TEXT) return { kind: 'relay', text: OTHER_SITE_NEXT };
+  // Any other way off the approved sites (a url act, a click that led there): nothing ran there; the same request asks.
+  // A guessed address on another site, or a history move off the approved sites: nothing to ask for; look again.
+  if (code === 'cross_origin' && result.needs?.message === URL_UNSEEN_CROSS_TEXT) {
+    return { kind: 'observe', text: 'Nothing ran: that address was not on any page of this task. Find the link on the page '
+      + `instead: fai_browser_observe with requestId ${ref} and focus naming the site or page (it matches a link's host and `
+      + 'path), then choose. Ask for that site on this request only if the user gave you that address. Never guess an '
+      + 'address.' };
+  }
+  if (code === 'cross_origin' && result.needs?.message === HISTORY_OFF_SITE_TEXT) {
+    return { kind: 'observe', text: 'Nothing ran: the history move would leave the approved sites. Observe, then use the '
+      + 'page\'s own links.' };
+  }
+  if (code === 'cross_origin') {
+    return { kind: 'relay', text: `Nothing ran on the other site. If the task needs it and you know its origin (the user `
+      + `gave it, or an other-site line or needs.message names it), check with the user, then call fai_browser_open with `
+      + `requestId ${ref} and it in origins: the same request and tab ask for it. Otherwise observe and continue on the `
+      + 'approved sites. Never guess an address.' };
+  }
   if (level && (code === 'refused_action' || code === 'login')) {
     if (result.needs?.who === 'host') {
       return { kind: 'observe', text: `The grant already covers ${level}: call fai_browser_observe with mode "${level}", then choose.` };
@@ -1163,8 +1224,9 @@ function directNextStep(result, context = {}) {
   }
   if (RESUME_CODES.has(code)) {
     // The lease is paused: the user's Resume in the extension makes it active again (wait --until active wakes a host).
+    const guide = TAB_PAUSES.has(code) ? ' fai_browser_guide topic tabs explains this pause.' : '';
     return { kind: 'relay', text: withResumeWait('Relay needs.message to the user (they click Resume in the FAI '
-      + `Browser extension); once the tab is active again, call fai_browser_observe with requestId ${ref}.`, ref,
+      + `Browser extension); once the tab is active again, call fai_browser_observe with requestId ${ref}.${guide}`, ref,
     resumeOf(context)) };
   }
   if (RELAY_CODES.has(code) || result.status === 'needs_user') {

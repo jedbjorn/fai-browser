@@ -62,7 +62,7 @@ function tomlString(value) {
  * model round trip on a session's first browser task. By default the entry has no `alwaysLoad`: the server marks the
  * tools of its loop with `_meta["anthropic/alwaysLoad"]` (fai_browser_open, act and observe), so the loop is in the
  * first request and the
- * rarely used schemas (wait, status, release, evidence) stay behind tool search. `alwaysLoad` (`--always-load`) puts all seven in
+ * rarely used schemas (wait, status, release, evidence, guide) stay behind tool search. `alwaysLoad` (`--always-load`) puts all eight in
  * every request, and Claude Code waits for such a server at startup (up to about 5 s). Verified against Claude Code
  * 2.1.289: the stdio server schema accepts `alwaysLoad` ("all tools from this server are always included in the prompt
  * and never deferred behind tool search") and `claude mcp add-json` keeps it.
