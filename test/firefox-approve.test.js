@@ -354,3 +354,52 @@ test('Firefox: the popup\'s Approve whose site-access prompt is not answered is 
   await sleep(2000);
   assert.equal((await ctx.stateOf(created.requestId)).state, 'pending', 'a late answer approves nothing');
 });
+
+// The add-on's host permissions as Firefox holds them now.
+const heldOrigins = ctx => ctx.chrome('return [...extension.allowedOrigins.patterns].map(pattern => pattern.pattern);');
+
+// Issue #36 review: a request with an exact origin and domain roots, approved from the popup's "Approve this tab"
+// (Firefox asks for the roots and the exact origin in one prompt) or the toolbar icon (the exact origins): the session
+// keeps the exact origin's host access. A request modal that prepared the same request had tracked it first, and the
+// reconcile after the approval removed it, so the lease lost its page at the next navigation.
+for (const surface of ['popup', 'toolbar']) {
+  test(`Firefox: a ${surface} approval of a request with an exact origin and domain roots keeps the exact origin's access`, { skip, timeout: 90_000 }, async t => {
+    const ctx = await setup(t);
+    const [first] = await ctx.handles();
+    await ctx.marionette.send('WebDriver:SwitchToWindow', { handle: first, focus: false });
+    if (surface === 'popup') await ctx.marionette.navigate(`${ctx.origin}/mine`);
+    const created = await ctx.client.requestTab({ origins: [ctx.origin, 'https://*.example.net', 'https://*.blade.example.net'],
+      mode: 'interactive', reason: 'Check the portal', url: `${ctx.origin}/start` });
+    const arm = await ctx.armWindow();
+    assert.ok(arm, 'the request modal opened');
+    // The modal prepares its approval (and tracks the exact origin) before anyone clicks.
+    assert.ok(await until(async () => !(await modal(ctx, arm)).disabled), 'the modal is ready');
+    assert.ok(await until(() => ctx.chrome(`return browserWindows().some(w => w.gBrowser.tabs.some(t =>
+      t.linkedBrowser.currentURI.spec.includes('/start') && !t.hasAttribute('busy')));`), 10_000), 'the task page loaded');
+    if (surface === 'popup') {
+      await clickIcon(ctx, '/mine');
+      assert.ok(await until(() => popupScript(ctx, 'const b = content.document.querySelector(".approve-request:not(:disabled)"); '
+        + 'if (b) { const h = content.windowUtils.setHandlingUserInput(true); try { b.click(); } finally { h.destruct(); } }')
+        .then(async ok => ok && await promptOpen(ctx)), 15_000), 'Approve this tab asked for site access');
+    } else {
+      await clickIcon(ctx, '/start');
+      assert.ok(await until(() => promptOpen(ctx), 5000), 'the icon asked for site access');
+    }
+    assert.ok(await allowPrompt(ctx), 'allowed');
+    const outcome = await ctx.client.wait({ requestId: created.requestId, maxMs: 15_000 });
+    assert.equal(outcome.state, 'active');
+    await sleep(2000);
+    const held = await heldOrigins(ctx);
+    assert.ok(held.includes('http://127.0.0.1/*'), `the exact origin's access is kept: ${JSON.stringify(held)}`);
+    // And the lease follows a same-origin navigation.
+    const page = await ctx.client.observe({ requestId: created.requestId, allowedUrls: [`${ctx.origin}/next`] });
+    const go = (page.result?.actions ?? page.actions ?? []).find(action => String(action.label ?? '').includes('/next')
+      || action.type === 'navigate_allowed_url');
+    assert.ok(go, `a navigate action to /next among ${JSON.stringify((page.result?.actions ?? page.actions ?? []).map(action => action.label)).slice(0, 300)}`);
+    {
+      const moved = await ctx.client.act({ requestId: created.requestId, revision: page.result?.revision ?? page.revision, actionId: go.id, waitMs: 15_000 });
+      assert.notEqual(moved.result?.code ?? moved.code, 'origin_changed', JSON.stringify(moved).slice(0, 300));
+      assert.equal((await ctx.stateOf(created.requestId)).state, 'active', 'still active after the navigation');
+    }
+  });
+}
