@@ -41,6 +41,8 @@ export interface Control {
    * \"Departure\""), never empty.
    */
   unnamed?: boolean;
+  /** A form field the page marks as not meant for people (hidden from assistive technology and drawn invisible): reported for the page facts, never offered. */
+  trap?: boolean;
   /**
    * Set on controls inside a same-origin iframe: the 1-based index of that frame among the readable frames, in
    * document order. Ids are one sequence across the page, its open shadow roots and its frames ("1".."100"), so
@@ -516,7 +518,8 @@ export interface PointChoice {
  * A host-composed act (docs/REFERENCE.md "Host-composed acts"): one of an offered `actionId`, a `point`, a `url` on
  * the granted origins, a history move (`nav`), a `key`, another tab of the lease (`tab`), a JavaScript dialog's
  * answer (`dialog`, Test site) or a batch of `fills`. `text` goes with a "fill ... (act with text)" action (never a
- * password, payment or secret field), `submit` presses Enter after it, `hover` rests the pointer on `actionId`'s
+ * password, payment or secret field); a "with supplied <name>" fill takes none (or exactly that value), in `fills` too;
+ * `submit` presses Enter after it, `hover` rests the pointer on `actionId`'s
  * control, `file` goes with an upload action (the daemon's `{ name, size, type, data }`; over HTTP and MCP a `path`).
  */
 export interface ActChoice {
@@ -526,7 +529,7 @@ export interface ActChoice {
   point?: { x: number; y: number };
   text?: string;
   submit?: boolean;
-  fills?: Array<{ actionId: string; text: string }>;
+  fills?: Array<{ actionId: string; text?: string }>;
   hover?: boolean;
   /** Escape, Tab, Shift+Tab, arrows, Home, End, PageUp, PageDown, Space, Enter (a filled field's submit); Ctrl/Cmd+letter at full. */
   key?: string;
@@ -825,6 +828,11 @@ export interface RunResult {
      * characters, control characters stripped), so the host can correct its wording. Also appended to next.text.
      */
     hint?: string;
+    /**
+     * A host act whose expectation did not hold on the settled page passed on a later read of it (up to 2.5 s after,
+     * every 300 ms): the milliseconds after the act settled when it was seen. `verdict.why` has `expect:late`.
+     */
+    seenAfterMs?: number;
   };
   page: PageSummary | null;
   answer: Answer;
@@ -1415,7 +1423,7 @@ export interface ActBody {
   point?: { x: number; y: number };
   text?: string;
   submit?: boolean;
-  fills?: Array<{ actionId: string; text: string }>;
+  fills?: Array<{ actionId: string; text?: string }>;
   hover?: boolean;
   key?: string;
   url?: string;

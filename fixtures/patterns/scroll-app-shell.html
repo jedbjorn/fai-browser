@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>App shell</title>
+<style>html, body { margin: 0; height: 100%; overflow: hidden; } main { position: fixed; inset: 0; overflow-y: auto; }</style>
+</head>
+<body>
+<!-- The body never scrolls; the main pane does, and it starts scrolled down past its first fields. -->
+<main id="pane">
+  <label>Field 1 <input name="f1"></label><br>
+  <label>Field 2 <input name="f2"></label><br>
+  <label>Field 3 <input name="f3"></label><br>
+  <label>Field 4 <input name="f4"></label><br>
+  <div style="height: 3000px"></div>
+  <label>Bottom <input name="bottom"></label>
+</main>
+<script>document.getElementById('pane').scrollTop = 2900;</script>
+</body>
+</html>

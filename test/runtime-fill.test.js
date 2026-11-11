@@ -54,7 +54,8 @@ class FormBridge extends FakeBridge {
 test('act: a host-driven fill the field did not keep is fill_not_kept with the next offer, not a checkpoint', async () => {
   const bridge = new FormBridge({ pages: pages(), path: '/search' });
   const runtime = new BrowserRuntime({ bridge });
-  const { actions } = await runtime.observe({ mode: 'reversible', suppliedText: { departure: '2027-01-12' } });
+  const supplied = { departure: '2027-01-12', name: 'Ada Example' };
+  const { actions } = await runtime.observe({ mode: 'reversible', suppliedText: supplied });
   const fill = actions.find(action => action.type === 'fill_supplied_text' && action.label === 'Departure');
   const result = await runtime.act(fill.id, { expectation: { changedSinceStart: true } });
   assert.equal(result.status, 'needs_host', result.reason);
@@ -64,7 +65,7 @@ test('act: a host-driven fill the field did not keep is fill_not_kept with the n
   assert.ok(result.verdict.why.includes('fill:not_kept'));
   assert.equal(agentResult(result).steps[0].fill, 'not_kept');
   // The Name box keeps its value: a checkpoint as before.
-  const again = await runtime.observe({ mode: 'reversible', suppliedText: { departure: '2027-01-12' } });
+  const again = await runtime.observe({ mode: 'reversible', suppliedText: supplied });
   const name = again.actions.find(action => action.type === 'fill_supplied_text' && action.label === 'Name');
   const ok = await runtime.act(name.id);
   assert.equal(ok.status, 'checkpoint', ok.code);

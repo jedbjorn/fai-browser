@@ -869,6 +869,9 @@ export function createDaemon(options = {}) {
           successor.browser = record.browser ? { ...record.browser } : null;
           successor.browserPinned = true;
         }
+        // Everything the agent attached to the request follows it: its standing terms (supplied values, policy,
+        // allowed URLs), its last named task and the addresses its pages showed.
+        carryTerms(record, successor);
         record.replacedBy = successor.requestId;
         record.replacedHow = 'successor';
         // The successor names it, so the extension can close this request's own task tab instead of keeping two.
@@ -909,6 +912,32 @@ export function createDaemon(options = {}) {
     log('request_ask', { requestId, level, origins: askOrigins.length, access: askAccess.length });
     changed();
     return { requestId, state: record.state, asked: true, request: viewFor(record, caller) };
+  }
+
+  /**
+   * A pending request's successor (an ask on it) takes over what the agent attached to the old one: the standing terms
+   * (supplied values, forbidden labels and note, allowed URLs), the last named task and the seen addresses. Copies, so
+   * the expired request never shares state with the live one.
+   */
+  function carryTerms(from, to) {
+    const held = from.hostTerms;
+    if (held) {
+      to.hostTerms = { forbid: [...held.forbid], note: held.note, suppliedText: { ...held.suppliedText },
+        allowedUrls: [...held.allowedUrls] };
+    }
+    if (from.askedUrls?.length) to.askedUrls = [...from.askedUrls];
+    if (from.lastTask) to.lastTask = { ...from.lastTask };
+    if (from.seenUrls?.size) to.seenUrls = new Set([...from.seenUrls, ...(to.seenUrls ?? [])]);
+  }
+
+  /** The live request that replaced `record` as its successor (an ask while it was pending), following the chain; else null. */
+  function successorOf(record) {
+    let current = record;
+    for (let hops = 0; hops < 16 && current?.replacedHow === 'successor' && current.replacedBy; hops++) {
+      current = requests.get(current.replacedBy) ?? null;
+      if (current && LIVE.has(current.state)) return current;
+    }
+    return null;
   }
 
   /** Whether a page of this request showed an address on `origin` (its seen set, src/runtime.js noteSeen). */
@@ -2426,13 +2455,16 @@ export function createDaemon(options = {}) {
    */
   function standingTerms(record, spec) {
     const held = record.hostTerms ?? { forbid: [], note: undefined, suppliedText: {}, allowedUrls: [] };
+    // Allowed URLs an open gave while its ask waited join once the request covers their origin.
+    const ready = (record.askedUrls ?? []).filter(url => urlCovered(url, coveredOrigins(record)));
+    if (ready.length) record.askedUrls = record.askedUrls.filter(url => !ready.includes(url));
     const forbid = [...held.forbid];
     for (const label of spec.policy?.forbid ?? []) if (!forbid.includes(label)) forbid.push(label);
     const terms = {
       forbid,
       note: held.note ?? spec.policy?.note,
       suppliedText: { ...held.suppliedText, ...spec.suppliedText },
-      allowedUrls: [...new Set([...held.allowedUrls, ...spec.allowedUrls])].slice(0, 10),
+      allowedUrls: [...new Set([...held.allowedUrls, ...ready, ...spec.allowedUrls])].slice(0, 10),
     };
     record.hostTerms = terms;
     return terms;
@@ -2447,6 +2479,11 @@ export function createDaemon(options = {}) {
     // allowed URLs are checked, which may name the origin that was asked for.
     if (body.afterAsk !== undefined && typeof body.afterAsk !== 'boolean') throw badOptions('afterAsk must be a boolean');
     if (body.afterAsk === true && LEASED.has(record.state) && (record.ask || record.askDeclined)) {
+      // The values and policy of the open that asked stay with the request even though no page is read yet (its
+      // allowed URLs may name the origin still asked for: they are checked, and kept, once it is granted).
+      const urls = Array.isArray(body.allowedUrls) ? body.allowedUrls.filter(url => typeof url === 'string' && url.length <= 2048) : [];
+      record.askedUrls = [...new Set([...(record.askedUrls ?? []), ...urls])].slice(0, 10);
+      standingTerms(record, { suppliedText: checkSuppliedText(body), policy: checkPolicy(body), allowedUrls: [] });
       const code = record.ask ? 'ask_pending' : 'ask_declined';
       if (!record.ask) delete record.askDeclined;
       const result = outcomeResult(code, {
@@ -2481,10 +2518,18 @@ export function createDaemon(options = {}) {
     // The screenshot is taken (and written to disk) only when the host asks for an image.
     if (body.capture !== undefined && typeof body.capture !== 'boolean') throw badOptions('capture must be a boolean');
     const capture = body.capture ?? false;
+    // The standing terms are kept also when the request cannot be read yet (pending, paused): an open whose approval
+    // wait ran out, or an observe during a pause, still attaches its supplied values, policy and URLs to the request.
+    const terms = standingTerms(record, spec);
+    // A request a successor replaced while this call was under way (another open asked for more on it while it was
+    // pending): what this call attaches belongs to the live successor too, or it would be lost on the expired record.
+    const heir = successorOf(record);
+    if (heir) {
+      standingTerms(heir, { ...spec, allowedUrls: spec.allowedUrls.filter(url => urlCovered(url, coveredOrigins(heir))) });
+    }
     if (record.state !== 'active') return { state: 'done', requestId: record.requestId, result: blockedResult(record, undefined, spec.mode) };
     ensureIdle(record);
     const observeStart = now();
-    const terms = standingTerms(record, spec);
     spec.allowedUrls = terms.allowedUrls;
     spec.suppliedText = terms.suppliedText;
     let observed;

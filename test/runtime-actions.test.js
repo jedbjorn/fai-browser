@@ -88,9 +88,17 @@ test('supplied text is referenced by name; values never appear in actions; passw
     { id: '3', role: 'combobox', label: 'City', type: 'text' },
   ]), { mode: 'reversible', suppliedText: { name: 'Alex-Secret' } });
   const fills = actions.filter(action => action.type === 'fill_supplied_text');
-  assert.deepEqual(fills.map(action => [action.target, action.suppliedName]), [['1', 'name'], ['3', 'name']]);
+  // The value fits the "Name" field, so it is offered there only (suppliedTargets).
+  assert.deepEqual(fills.map(action => [action.target, action.suppliedName]), [['1', 'name']]);
   assert.ok(!JSON.stringify(actions).includes('Alex-Secret'));
   assert.match(fills[0].description, /supplied value name$/);
+  // A value that fits no field is offered in every text field (none is claimed); the password field still never.
+  const loose = legalActions(page([
+    { id: '1', role: 'textbox', label: 'Name', type: 'text' },
+    { id: '2', role: 'textbox', label: 'Password', type: 'password' },
+    { id: '3', role: 'combobox', label: 'City', type: 'text' },
+  ]), { mode: 'reversible', suppliedText: { query: 'Alex-Secret' } }).filter(action => action.type === 'fill_supplied_text');
+  assert.deepEqual(loose.map(action => [action.target, action.suppliedName]), [['1', 'query'], ['3', 'query']]);
 });
 
 test('select options are offered in reversible mode, skipping the current value', () => {

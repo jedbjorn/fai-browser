@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Contact modal</title>
+<style>
+  body { font-family: sans-serif; margin: 0; }
+  main { padding: 2rem; min-height: 1400px; }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; }
+  .modal[hidden] { display: none; }
+  .card { background: #fff; padding: 1.5rem; width: 420px; border-radius: 8px; }
+  form { display: flex; flex-direction: column; gap: .6rem; }
+  form input, form textarea { width: 100%; padding: .5rem; box-sizing: border-box; }
+  form .hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+</style>
+</head>
+<body>
+<header><nav><a href="/patterns.html">Home</a> <button class="contact-link" type="button" data-open="contact">Contact</button></nav></header>
+<main>
+  <h1>A small open source tool</h1>
+  <p>Questions or ideas? Get in touch below.</p>
+  <button class="btn" type="button" data-open="contact">get in touch</button>
+  <p>More text further down.</p>
+</main>
+<!-- A dialog whose fields have no <label>, only placeholders and names, inside a form named by none. -->
+<div class="modal" id="contact-modal" role="dialog" aria-modal="true" aria-labelledby="contact-title" hidden>
+  <div class="card">
+    <button class="modal-close" type="button" aria-label="close">&times;</button>
+    <h3 id="contact-title">Have something else in mind?</h3>
+    <form id="contact-form" novalidate>
+      <input type="text" name="name" placeholder="Name" autocomplete="name">
+      <input type="email" name="email" placeholder="Email" required autocomplete="email">
+      <textarea name="message" rows="5" placeholder="Message" required></textarea>
+      <input type="text" name="company" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <button type="submit" class="send">Send message</button>
+      <p id="contact-status" role="status" aria-live="polite"></p>
+    </form>
+  </div>
+</div>
+<script>
+  const modal = document.getElementById('contact-modal');
+  const form = document.getElementById('contact-form');
+  const status = document.getElementById('contact-status');
+  document.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => {
+    modal.hidden = false;
+    form.querySelector('input').focus();
+  }));
+  modal.querySelector('.modal-close').addEventListener('click', () => { modal.hidden = true; });
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    status.textContent = 'sending…';
+    // Success shows briefly, then the dialog closes (the trait a bounded expectation poll has to catch).
+    setTimeout(() => {
+      status.textContent = 'sent, we will be in touch.';
+      form.reset();
+      setTimeout(() => { modal.hidden = true; status.textContent = ''; }, 1600);
+    }, 300);
+  });
+</script>
+</body>
+</html>

@@ -868,6 +868,16 @@
     return style.visibility !== 'hidden' && style.display !== 'none';
   }
 
+  // A form field the page marks as not for people: hidden from assistive technology and the tab order on the field
+  // itself, and drawn so nobody sees it. It stays in the observation (page facts read it) and is marked `trap`; the
+  // runtime never offers it.
+  function trapField(el) {
+    if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return false;
+    if (el.getAttribute('aria-hidden') !== 'true' || el.getAttribute('tabindex') !== '-1') return false;
+    const box = el.getBoundingClientRect();
+    return Number(styleOf(el).opacity) === 0 || (box.width <= 2 && box.height <= 2);
+  }
+
   function visible(el) {
     const rect = boxOf(el);
     return intersectsViewport(rect) && rendered(el, rect);
@@ -5704,6 +5714,7 @@
     // Inside an open dialog (a date picker): a click there may re-render seconds later (the runtime's late change).
     else if (inDialog(el)) control.dialog = true;
     if (inFloating(el)) control.floating = true;
+    if (trapField(el)) control.trap = true;
     markOverlayControl(el, control);
     // The label is a descriptor this script wrote (describeUnnamed): the control has no name of its own.
     if (unnamed) control.unnamed = true;

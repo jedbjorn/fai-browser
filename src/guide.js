@@ -21,11 +21,11 @@ const NEXT_LINES = {
   observe: 'the page changed or the act could not land: fai_browser_observe, then choose.',
   answer: 'verified (verification.passed true): report it; no call needed.',
   relay: 'the user must act: tell them needs.message, then do what next.text says (end your turn when it says FAI wakes '
-    + 'you).',
+    + 'you; a subagent: fai_browser_wait).',
   approve: 'an action waits for the user\'s Approve once in the FAI Browser window: relay next.text, then repeat the '
     + 'same act unchanged.',
   stop: 'report next.text to the user; do not retry.',
-  wait: 'fai_browser_wait with the runId or requestId it names.',
+  wait: 'fai_browser_wait with the runId or requestId it names; again while pending (not a repeat).',
 };
 
 // The statuses a direct result shows: the receipt statuses (result.js STATUSES) plus `observed` and `acted`.
@@ -218,7 +218,7 @@ const TOPICS = {
       + 'with the same requestId. If the task needs that site: fai_browser_open with the requestId and it in origins.',
     '- tab_changed: another tab came to the front in the task tab\'s window, the task tab closed, or the user switched '
       + 'Tab access back to One task tab. The user returns and clicks Resume.',
-    '- When FAI can wake your session, a pause says to end your turn: the user\'s Resume wakes you.',
+    '- When FAI can wake your session, a pause says to end your turn: Resume wakes you (a subagent: fai_browser_wait).',
     'Multiple task tabs:',
     '- The user turns it on in the FAI popup (Advanced, Tab access). It applies when they next approve or Resume a '
       + 'request (Pause, then Resume, for a running one) and needs browser site access to the approved sites. An ask '
@@ -256,6 +256,7 @@ const TOPICS = {
     'Raise it on the same request: a result with needs.level means relay needs.message, tell the user "approve '
       + '<level> for this task in FAI Browser; it is preselected", then fai_browser_open with the requestId and mode = '
       + 'needs.level. Same tab and page. When the grant already covers it (next.kind observe), observe with that mode.',
+    'controls_need_reversible:<n> (read-only): n buttons or fields need reversible; ask at once if the task needs one.',
     'Asks the user (Approve once, next.kind approve): from reversible, a submit or delete above the granted level may be '
       + 'offered as "asks the user" instead of refused; a purchase from full; secrets and uploads each time. If the user '
       + 'declines, tell them to do it.',
@@ -273,7 +274,8 @@ const TOPICS = {
       + 'states with the reason (paused (child_tab), stale), invites for you, an available update. Use it when a result '
       + 'is unclear or the user says something changed.',
     '- fai_browser_wait: waits for a pending or paused request (requestId) or an act still running (runId, when '
-      + 'next.kind is wait), up to 45 s a call. Not needed when FAI wakes your session.',
+      + 'next.kind is wait), up to 45 s a call; call it again while it says pending. Not needed when FAI wakes your '
+      + 'session and you can end your turn; a subagent or script cannot, so it waits with this.',
     '- fai_browser_evidence: an act\'s screenshot (image) or trace (JSON) by runId: to show the user what happened, '
       + 'or for a bug report.',
     '- fai_browser_release: ends FAI\'s access to a request. Only when the user asks, or for your own requests '

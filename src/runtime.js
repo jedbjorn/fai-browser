@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { URL_HOP_REFUSED, namedUrls, sameSite, siteRoots, urlCovered } from './origins.js';
 
 export { namedUrls };
@@ -257,6 +258,78 @@ function isTextEntry(control) {
   // reports as not editable (a div role=combobox that opens a list, "Round trip") is clicked instead.
   if (control.role === 'combobox' && control.editable === false) return false;
   return control.role === 'combobox' && !control.options?.length && (!control.type || TEXT_TYPES.has(control.type));
+}
+
+// Supplied values and the fields they belong to. A form with several fields and several supplied values used to offer
+// every value in every field ("fill "Name" with supplied email"), and a capped listing could show only the first
+// field's fills. A value whose name fits a field (its label or placeholder, every word of the value's name in them, or
+// the field's own name, id, autocomplete token or input type) is offered in every field it fits, and the agent picks
+// by the label it reads; the visible words count as much as the attributes, so a hidden attribute never takes a value
+// away from a field whose label asks for it. A value that fits no field is offered in the fields no value fits (in
+// every field when all are taken).
+const plainKey = value => String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const keyWords = value => String(value ?? '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+const AUTOCOMPLETE_NOISE = new Set(['on', 'off', 'section', 'shipping', 'billing', 'home', 'work', 'mobile']);
+
+/**
+ * Whether the supplied value `name` fits a text field: its label or placeholder is the name or holds every word of it
+ * (`firstName` fits "First name", `email` fits "Your email address"), or the field's own name, id, autocomplete token
+ * or input type is the name. 1 or 0: no source ranks above another.
+ */
+export function suppliedFit(control, name) {
+  const key = plainKey(name);
+  if (!key) return 0;
+  const shown = [control?.label, control?.placeholder];
+  if (shown.map(plainKey).includes(key)) return 1;
+  const words = new Set(shown.flatMap(keyWords));
+  const wanted = keyWords(name);
+  if (wanted.length && wanted.every(word => words.has(word))) return 1;
+  const autocomplete = String(control?.autocomplete ?? '').split(/\s+/).filter(token => token && !AUTOCOMPLETE_NOISE.has(token.toLowerCase())
+    && !/^section-/i.test(token));
+  const own = [control?.name, control?.inputId, control?.type === 'text' ? '' : control?.type, ...autocomplete].map(plainKey).filter(Boolean);
+  return own.includes(key) ? 1 : 0;
+}
+
+/**
+ * For each supplied name, the text fields (by control id) it is offered in: `Map<name, Set<id>>`. `fields` are the
+ * observation's text fields that could take a supplied value.
+ */
+export function suppliedTargets(fields, names) {
+  const ids = fields.map(field => String(field.id));
+  const fitting = new Map(names.map(name => [name, ids.filter((id, index) => suppliedFit(fields[index], name) > 0)]));
+  const claimed = new Set([...fitting.values()].flat());
+  const unclaimed = ids.filter(id => !claimed.has(id));
+  const out = new Map();
+  for (const name of names) {
+    const fits = fitting.get(name);
+    out.set(name, new Set(fits.length ? fits : unclaimed.length ? unclaimed : ids));
+  }
+  return out;
+}
+
+/**
+ * Text fields that share a label get a short hint after it from their own placeholder, name, id or type (page data
+ * like the label), so two fields called "Name" can be told apart: `Map<id, label>` for those only.
+ */
+function distinctFieldLabels(fields) {
+  const byLabel = new Map();
+  for (const field of fields) {
+    const key = String(field.label ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!key) continue;
+    byLabel.set(key, [...(byLabel.get(key) ?? []), field]);
+  }
+  const out = new Map();
+  for (const group of byLabel.values()) {
+    if (group.length < 2) continue;
+    for (const field of group) {
+      const label = String(field.label).replace(/\s+/g, ' ').trim();
+      const hint = [field.placeholder, field.name, field.inputId, field.type && field.type !== 'text' ? `${field.type} field` : '']
+        .map(value => String(value ?? '').replace(/\s+/g, ' ').trim())
+        .find(value => value && value.toLowerCase() !== label.toLowerCase());
+      if (hint) out.set(String(field.id), `${label} (${hint.slice(0, 60)})`);
+    }
+  }
+  return out;
 }
 
 // A date- or time-ish field name or placeholder: a field whose click usually opens a picker.
@@ -586,6 +659,12 @@ export function offeredActions(observation, options = {}) {
   const asks = options.approvals ? (typeof options.approvals === 'object' ? cleanAsks(options.approvals) : APPROVAL_ASKS) : null;
   const secrets = asks && controls ? vaultSecrets(observation) : [];
   let secretFields = 0;
+  // The text fields a supplied value could go into: which value goes where, and labels two fields share.
+  const textFields = controls ? (observation.controls ?? []).slice(0, MAX_CONTROLS).filter(control => control.enabled !== false
+    && control.visible !== false && control.trap !== true
+    && ((control.type === 'password' && guard.allows('sign_in')) || (!control.sensitive && isTextEntry(control)))) : [];
+  const suppliedIn = suppliedText.length ? suppliedTargets(textFields, suppliedText.map(([name]) => name)) : new Map();
+  const fieldLabels = distinctFieldLabels(textFields);
 
   // Links are offered only on the approved site: to the current page's origin, or (with a domain root the user
   // approved) to another https subdomain of the same root. The extension refuses any other link click.
@@ -602,8 +681,14 @@ export function offeredActions(observation, options = {}) {
   };
 
   const controlActions = [];
+  // Buttons, fields and selects this level does not offer but reversible would (read-only only): counted, never
+  // listed, so a host whose task needs one asks for the level at once (`controls_need_reversible:<n>`).
+  let withheld = 0;
   for (const control of (observation.controls ?? []).slice(0, MAX_CONTROLS)) {
     if (control.enabled === false || control.visible === false) continue;
+    // A field the page marks as not for people (page.js trapField: hidden from assistive technology and the tab order,
+    // drawn invisible): never offered at any level. It stays in the observation for the page facts.
+    if (control.trap === true) continue;
     // A field that takes a secret (the page script's secretTarget): the newest handles, as fills the user approves.
     if (secrets.length && control.secretTarget === true && !control.sensitive && secretFields < SECRET_FILL_FIELDS
       && !guard.forbids(control.label) && !paymentField(control)) {
@@ -625,7 +710,7 @@ export function offeredActions(observation, options = {}) {
     const role = control.role || 'control';
     // A control is never offered with an empty label: the page script names unnamed controls itself ("unlabelled
     // button 1 of 2 next to ..."); an observation without one (an older page script, an SDK bridge) gets its role and ref.
-    const label = clip(control.label, 180) || `unlabelled ${role} ${ref}`;
+    let label = clip(control.label, 180) || `unlabelled ${role} ${ref}`;
     const block = controlBlock(gatedControl(control, facts), guard, facts);
     // The Approve gate (host-driven offers only): a control the user may approve once is offered, marked.
     const gate = asks ? approvalGate(gatedControl(control, facts), block, guard, asks) : null;
@@ -686,7 +771,14 @@ export function offeredActions(observation, options = {}) {
     }
 
     if (password || isTextEntry(control)) {
+      const own = fieldLabels.get(ref);
+      if (own) {
+        base.label = own;
+        label = own;
+      }
       for (const [name] of suppliedText) {
+        // A value goes into the fields it fits (suppliedTargets), not into every field of the form.
+        if (!suppliedIn.get(name)?.has(ref)) continue;
         const secret = secretNames.has(name);
         // When the host named a secret value, a password field takes only secret values (never the username).
         if (password && secretNames.size && !secret) continue;
@@ -797,10 +889,29 @@ export function offeredActions(observation, options = {}) {
     offered = capped.actions;
     dropped += capped.dropped;
   }
+  // Read-only: what reversible would offer here that this level does not (the same offer one level up, its controls
+  // that are not links), so the count never includes a control reversible would refuse as well.
+  if (!controls && !options.countingWithheld) {
+    const up = offeredActions(observation, { ...options, mode: 'reversible', approvals: false, agentText: true,
+      countingWithheld: true, guardrails: guardrailPolicy({ mode: 'reversible', merged: guard.additions }) });
+    const here = new Set(offered.filter(action => action.target !== undefined).map(action => String(action.target)));
+    const more = new Set(up.actions.filter(action => action.target !== undefined && action.type !== 'other_site'
+      && !here.has(String(action.target))).map(action => String(action.target)));
+    withheld = more.size;
+  }
   return {
     actions: offered.map((action, index) => ({ id: `a${index}`, ...action })),
     dropped,
+    withheld,
   };
+}
+
+/**
+ * `controls_need_reversible:<n>` for an offer that left out `n` controls only for the level (read-only), else null: a
+ * count, never their labels.
+ */
+export function withheldWarning(offer) {
+  return Number.isInteger(offer?.withheld) && offer.withheld > 0 ? `controls_need_reversible:${Math.min(offer.withheld, 999999)}` : null;
 }
 
 /**
@@ -2541,6 +2652,21 @@ export function pressKey(name) {
   return null;
 }
 
+/**
+ * Why `text` given with the supplied fill `action` cannot run, or null: a supplied fill types the user's value only.
+ * Text equal to that value is accepted (and ignored); other text is refused with what to do instead. A sensitive
+ * value (a password at testing) is never compared: such a fill takes no text.
+ */
+function suppliedTextProblem(offer, action, text) {
+  if (text === undefined) return null;
+  const value = offer?.config?.suppliedText?.[action.suppliedName];
+  if (!action.sensitive && typeof value === 'string' && text === value) return null;
+  const field = offer?.actions?.find(candidate => candidate.type === 'fill' && candidate.target === action.target);
+  return `${action.id} fills the supplied value ${action.suppliedName}: give it without text`
+    + `${action.sensitive ? '' : ' (or with that same value)'}.`
+    + (field ? ` To type other text there, use ${field.id} ("fill ... (act with text)") with your text.` : '');
+}
+
 function actChoice(choice) {
   if (typeof choice === 'string') return { actionId: choice };
   if (choice && typeof choice === 'object') return choice;
@@ -2579,15 +2705,32 @@ export function checkActChoice(offer, choice, { revisionless = false } = {}) {
     for (const fill of spec.fills) {
       const offered = fill && typeof fill.actionId === 'string' ? find(fill.actionId) : null;
       if (!offered) return `fills: action ${String(fill?.actionId).slice(0, 20)} was not offered for revision ${offer.revision}.`;
-      if (offered.type !== 'fill') return `fills: ${fill.actionId} is not a fill the host types (a "fill ... with text" action).`;
-      if (typeof fill.text !== 'string' || fill.text.length > MAX_TYPED_CHARS) return `fills: each text is a string of at most ${MAX_TYPED_CHARS} characters.`;
+      if (fill.text !== undefined && (typeof fill.text !== 'string' || fill.text.length > MAX_TYPED_CHARS)) {
+        return `fills: each text is a string of at most ${MAX_TYPED_CHARS} characters.`;
+      }
+      if (offered.type === 'fill_supplied_text') {
+        // A "with supplied <name>" fill types the value the user gave, never other text: give it without text (or with
+        // exactly that value, which changes nothing).
+        const problem = suppliedTextProblem(offer, offered, fill.text);
+        if (problem) return `fills: ${problem}`;
+      } else if (offered.type === 'fill') {
+        if (fill.text === undefined) return `fills: ${fill.actionId} is a fill: give the text to type.`;
+      } else {
+        return `fills: ${fill.actionId} is not a fill: list "fill ... (act with text)" actions with their text and "fill ... with `
+          + 'supplied <name>" actions without text.';
+      }
       if (seen.has(fill.actionId)) return `fills: ${fill.actionId} appears twice.`;
       seen.add(fill.actionId);
     }
   }
   if (spec.text !== undefined && kind !== 'dialog') {
     if (typeof spec.text !== 'string' || spec.text.length > MAX_TYPED_CHARS) return `text is a string of at most ${MAX_TYPED_CHARS} characters.`;
-    if (action?.type !== 'fill') return 'text goes with a fill action ("fill ... with text"); passwords and secrets never (use fill_secret).';
+    if (action?.type === 'fill_supplied_text') {
+      const problem = suppliedTextProblem(offer, action, spec.text);
+      if (problem) return problem;
+    } else if (action?.type !== 'fill') {
+      return 'text goes with a fill action ("fill ... with text"); passwords and secrets never (use fill_secret).';
+    }
   }
   if (action?.type === 'fill' && spec.text === undefined && !spec.hover && kind !== 'key') return `${action.id} is a fill: give the text to type.`;
   if (spec.submit !== undefined && spec.submit !== false
@@ -2622,10 +2765,25 @@ function didLine(action) {
   }
 }
 
+/** Whether a later read may verify `expectation`: a declarative one with only fields that wait for something to show. */
+const LATE_FIELDS = new Set(['textIncludes', 'titleIncludes', 'titleEquals', 'urlIncludes', 'urlEquals', 'urlMatches']);
+function lateCheckable(expectation) {
+  if (!expectation || typeof expectation !== 'object' || Array.isArray(expectation)) return false;
+  const keys = Object.keys(expectation).filter(key => expectation[key] !== undefined);
+  return keys.length > 0 && keys.every(key => LATE_FIELDS.has(key));
+}
+
+// After a host act whose declarative expectation does not hold on the settled page: the page is read again every
+// EXPECT_LATE_POLL_MS for at most EXPECT_LATE_MS, so a result line that shows shortly after the act (a form that says
+// "sending..." before "sent") still counts. Only what an observation actually showed passes.
+export const EXPECT_LATE_MS = 2500;
+const EXPECT_LATE_POLL_MS = 300;
+
 export class BrowserRuntime {
-  constructor({ bridge, asks } = {}) {
+  constructor({ bridge, asks, expectLateMs = EXPECT_LATE_MS } = {}) {
     if (!bridge) throw new TypeError('A browser bridge is required');
     this.bridge = bridge;
+    this.expectLateMs = Number.isFinite(expectLateMs) && expectLateMs >= 0 ? expectLateMs : EXPECT_LATE_MS;
     // The Approve gate's asks the extension reported (a function: the daemon's latest), so offers say "(asks the
     // user)" only for what the extension will ask about.
     this.asks = typeof asks === 'function' ? asks : () => APPROVAL_ASKS;
@@ -2712,9 +2870,11 @@ export class BrowserRuntime {
         fullBlocks: maxChars > DIGEST_MAX_CHARS ? 'all' : focus ? 'matched' : null,
       });
       const capped = cappedWarning(observation, offer.dropped + listing.dropped);
+      const withheld = withheldWarning(offer);
       const warnings = [...(Array.isArray(observation.warnings) ? observation.warnings : [])
         .filter(code => typeof code === 'string' && code !== 'controls_capped')
-        .flatMap(code => (code === 'unreadable_region' ? unreadableWarnings(observation) : [code])), ...(capped ? [capped] : [])];
+        .flatMap(code => (code === 'unreadable_region' ? unreadableWarnings(observation) : [code])), ...(capped ? [capped] : []),
+      ...(withheld ? [withheld] : [])];
       if (logs && !session.wantLogs) warnings.push('logs_need_testing');
       return redactSecrets({
         observation: { ...compactForDecision(observation), warnings, consent: observation.consent ?? null,
@@ -2766,7 +2926,7 @@ export class BrowserRuntime {
     let action = actionId !== null && !spec.fills ? offer.actions.find(candidate => candidate.id === actionId) : null;
     if (point && typeof this.bridge.locate !== 'function') throw new Error('This bridge cannot locate a point');
     // The host's text rides on its own copy of the offered fill (the offer itself never holds it), as an upload's file.
-    if (action && typeof spec.text === 'string') action = { ...action, text: spec.text };
+    if (action?.type === 'fill' && typeof spec.text === 'string') action = { ...action, text: spec.text };
     if (action?.type === 'upload' && spec.file) action = { ...action, file: spec.file };
 
     const config = configure({
@@ -2930,7 +3090,7 @@ export class BrowserRuntime {
         page = executed.observation;
         if (!allowedOrigin(page.url, config.allowedOrigins) || executed.step.fill?.kept === false) break;
       }
-      const after = executed.observation;
+      let after = executed.observation;
       if (!allowedOrigin(after.url, config.allowedOrigins)) setOutcome(session.result, 'cross_origin');
       else {
         if (executed.step.fill?.kept === false) {
@@ -2943,9 +3103,20 @@ export class BrowserRuntime {
           // can still reload or open another approved URL once the site is back.
           await session.errorPage(after, false);
         } else if (await session.checkExpectation(after)) setOutcome(session.result, 'expectation_passed');
-        else setOutcome(session.result, 'step_complete');
+        else {
+          // Not on the settled page: read it again for a short while (a result line that shows a moment later).
+          const late = await this.#expectLater(session, config, executed.observation);
+          after = late.observation;
+          if (late.passed) {
+            session.result.verification.seenAfterMs = late.ms;
+            session.why('expect:late');
+            setOutcome(session.result, 'expectation_passed');
+          } else setOutcome(session.result, 'step_complete');
+        }
+        // A late read that found the tab on another origin: cross_origin with no offer, as for an act that lands there.
+        if (!allowedOrigin(after.url, config.allowedOrigins)) setOutcome(session.result, 'cross_origin');
         // What the host may do next from here, without another observe(); listed by the task its observe() named.
-        session.result.offer = this.#offerAfter(session, config, after, offer.hints, offer.question);
+        else session.result.offer = this.#offerAfter(session, config, after, offer.hints, offer.question);
       }
     } catch (error) {
       session.fail(error);
@@ -2958,6 +3129,40 @@ export class BrowserRuntime {
       session.result.needs = { ...session.result.needs, message: HISTORY_OFF_SITE_TEXT };
     }
     return session.result;
+  }
+
+  /**
+   * The act's declarative expectation did not hold on the settled page: read the page again every EXPECT_LATE_POLL_MS,
+   * at most expectLateMs after the act settled, and stop at the first observation it holds on. Returns `{ passed,
+   * observation, ms }`: the observation it passed on (or the last one read) and when it was seen. Only observations
+   * count, so a line that showed and went between two reads is not seen. A function expectation, a page off the
+   * approved origins or an interrupted act ends it at once.
+   */
+  async #expectLater(session, config, observation) {
+    const expectation = session.config.expectation;
+    const started = Date.now();
+    let last = observation;
+    // Only an expectation that waits for something to appear: a negative one (textAbsent) or changedSinceStart could
+    // pass on a later read for the wrong reason (an error toast that clears itself, an unrelated change).
+    if (!this.expectLateMs || !lateCheckable(expectation)) return { passed: false, observation: last };
+    while (Date.now() - started < this.expectLateMs) {
+      // An interrupt or the act's time budget aborts the sleep: that error ends the act as what it is.
+      await sleep(Math.min(EXPECT_LATE_POLL_MS, this.expectLateMs - (Date.now() - started)), undefined, { signal: session.signal });
+      let fresh;
+      try {
+        fresh = await session.observe();
+      } catch (error) {
+        // A page that changed under the read is read again; anything else (the tab left its origin, was switched,
+        // paused) surfaces as itself.
+        if (error?.code === 'stale') continue;
+        throw error;
+      }
+      session.visit(fresh);
+      last = fresh;
+      if (!allowedOrigin(fresh.url, config.allowedOrigins)) break;
+      if (await session.checkExpectation(fresh)) return { passed: true, observation: fresh, ms: Date.now() - started };
+    }
+    return { passed: false, observation: last };
   }
 
   /**
@@ -2978,7 +3183,11 @@ export class BrowserRuntime {
     const controls = config.capabilities.has('controls');
     if (spec.fills) {
       if (!controls) return need('reversible');
-      const plan = spec.fills.map(fill => ({ action: { ...offer.actions.find(candidate => candidate.id === fill.actionId), text: fill.text } }));
+      // A supplied fill carries no text of the host's (toCommand types the supplied value); a host fill carries its text.
+      const plan = spec.fills.map(fill => {
+        const offered = offer.actions.find(candidate => candidate.id === fill.actionId);
+        return { action: offered.type === 'fill' ? { ...offered, text: fill.text } : { ...offered } };
+      });
       if (spec.submit) plan.push({ submitFor: plan.at(-1).action });
       return { plan };
     }
@@ -3338,6 +3547,8 @@ export class BrowserRuntime {
   #offerAfter(session, config, observation, hints, question) {
     const { offer, actions, listing } = this.#offerOn(observation, config, hints ?? session.hints, question);
     session.noteCapped(observation, offer.dropped + listing.dropped);
+    const withheld = withheldWarning(offer);
+    if (withheld) session.warn(withheld);
     return {
       revision: observation.revision,
       actions: actions.map(action => ({ ...action })),

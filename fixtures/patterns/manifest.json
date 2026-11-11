@@ -165,6 +165,39 @@
         { "id": "grid-named", "level": "reversible", "steps": [{ "click": "Date" }], "expect": { "controls": ["14 October 2026"], "overlay": null, "marked": [] } },
         { "id": "day-click", "level": "reversible", "steps": [{ "click": "Date" }, { "click": "14 October 2026" }], "expect": { "text": ["Chosen: 14 October 2026"] } }
       ]
+    },
+    {
+      "id": "contact-modal",
+      "file": "contact-modal.html",
+      "exercises": "a contact form in a role=dialog modal that a button opens: fields named only by placeholder and name, a spam-trap field placed off the page, and a status line that says sending, then sent, then the modal closes",
+      "checks": [
+        { "id": "buttons-reported", "expect": { "controls": ["Contact", "get in touch"] } },
+        { "id": "fields-own-names", "level": "reversible", "steps": [{ "click": "Contact" }], "expect": { "controls": ["Name", "Email", "Message", "Send message"] } }
+      ]
+    },
+    {
+      "id": "scroll-app-shell",
+      "file": "scroll-app-shell.html",
+      "exercises": "an app shell whose body never scrolls: a fixed pane holds the form and starts scrolled down past its first fields, which a person reaches by scrolling the pane up",
+      "checks": [
+        { "id": "fields-above-kept", "level": "reversible", "expect": { "controls": ["Field 1", "Field 2", "Field 3", "Field 4", "Bottom"] } }
+      ]
+    },
+    {
+      "id": "scroll-rtl-wide",
+      "file": "scroll-rtl-wide.html",
+      "exercises": "a right-to-left page wider than the viewport: a field on the far left is reached by scrolling left",
+      "checks": [
+        { "id": "far-field-kept", "level": "reversible", "expect": { "controls": ["Near field", "Far field"] } }
+      ]
+    },
+    {
+      "id": "scroll-carousel",
+      "file": "scroll-carousel.html",
+      "exercises": "a horizontal carousel shown at its second slide: the first slide's field is reached by scrolling the carousel back",
+      "checks": [
+        { "id": "first-slide-field-kept", "level": "reversible", "expect": { "controls": ["Slide one", "Slide two"] } }
+      ]
     }
   ]
 }
