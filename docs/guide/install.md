@@ -10,7 +10,7 @@ browsers:
 | Chromium, from source | `extension/` loaded unpacked in Chrome, Brave, Edge, Vivaldi | Developers |
 
 All three need the local part (the FAI service and the MCP server) from this repository, Node 22 or newer, and Linux or
-macOS (Windows is unsupported).
+macOS. On Windows, [one command](#windows) installs path 1 with everything it needs.
 
 ```sh
 git clone https://github.com/jedbjorn/fai-browser
@@ -116,12 +116,11 @@ The add-on file comes from, in order: `--xpi <file>`, the copy a previous launch
 | `--desktop` / `--no-desktop` | Write / skip the Linux menu entry without asking |
 | `--no-welcome`, `--no-wait` | No welcome page; do not wait for the pairing |
 
-### Shortcuts on macOS and Windows
+### Shortcuts on macOS
 
-The launcher writes a menu entry on Linux only. On **macOS**, open Script Editor, paste
-`do shell script "'/usr/local/bin/node' '/path/to/fai-browser/src/cli.js' launch --from-desktop"` (your `which node`
-and checkout path), and save it as an Application named "FAI Browser". On **Windows** (untested), create a shortcut to
-`"C:\Program Files\nodejs\node.exe" "C:\path\to\fai-browser\src\cli.js" launch --from-desktop`.
+The launcher writes a menu entry on Linux; the [Windows installer](#windows) adds a Start menu entry. On **macOS**, open
+Script Editor, paste `do shell script "'/usr/local/bin/node' '/path/to/fai-browser/src/cli.js' launch --from-desktop"`
+(your `which node` and checkout path), and save it as an Application named "FAI Browser".
 
 ### Remove it
 
@@ -132,6 +131,45 @@ node src/cli.js uninstall-launcher   # lists what it removes and asks; --yes to 
 It removes the launcher data directory (the FAI profile with its sign-ins and history, FAI's Firefox copy, the add-on
 file) and the menu entry. Your everyday Firefox, the FAI settings and the pairing helper stay;
 `node src/cli.js uninstall-native` removes the helper.
+
+## Windows
+
+On Windows FAI Browser supports Firefox only, and path 1 comes as one command. In PowerShell (no administrator rights):
+
+```powershell
+irm https://raw.githubusercontent.com/jedbjorn/fai-browser/main/scripts/install.ps1 | iex
+```
+
+[`scripts/install.ps1`](../../scripts/install.ps1) runs these steps; each one is per user:
+
+1. **Node.js.** The current LTS build from nodejs.org, checked against its `SHASUMS256.txt`, into
+   `%LOCALAPPDATA%\fai-browser\node\<version>`. FAI Browser alone uses it; a Node.js you already have is neither used
+   nor changed.
+2. **FAI Browser.** The latest GitHub release's source (over HTTPS, as a `git clone` would fetch it) into
+   `%LOCALAPPDATA%\fai-browser\app\<version>-<time>`, a new folder each run, so an update never replaces files that
+   a running FAI service, pairing helper or agent still uses. An older folder is removed once no process runs from it.
+3. **The `fai-browser` command** (`%LOCALAPPDATA%\fai-browser\bin`, added to your user `PATH`) and a **FAI Browser**
+   Start menu entry that runs `fai-browser launch`.
+4. **Setup** (`scripts/setup.mjs --yes --download-firefox`): the pairing secret in `%APPDATA%\fai-browser`, Firefox's
+   pairing helper (`HKCU\Software\Mozilla\NativeMessagingHosts\fai_browser`), the FAI service, registration with
+   each coding agent it finds (Claude Code, Codex, OpenCode; an npm-installed `claude.cmd` works too), and the launch
+   above: your official Firefox, or Mozilla's downloaded into `%LOCALAPPDATA%\fai-browser\browser\firefox` when none
+   is installed, with the FAI profile and the signed add-on, paired.
+
+Then restart your coding agent. Opening **FAI Browser** from the Start menu later starts the FAI service by itself
+(Firefox's pairing helper starts it outside Firefox's process job, so it keeps running); a second click while it is
+open says so instead of starting another copy.
+
+- **Update:** run the same command again. It works while FAI Browser is open; agents pick up the new version when you
+  restart them.
+- **Remove:** `powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\fai-browser\uninstall.ps1"` asks, then
+  closes FAI Browser (your everyday Firefox stays open), undoes the agent registrations (`fai-browser uninstall --host
+  all`), and removes the pairing helper, the FAI profile with its sign-ins and history, FAI's Firefox copy, the private
+  Node.js, the Start menu entry, the command and the settings.
+- **Overrides** (environment variables, mostly for testing): `FAI_INSTALL_REF` (a release tag from `v0.9.0` on, or a
+  branch), `FAI_INSTALL_ZIP` (a local source zip), `FAI_INSTALL_NO_SETUP=1` (files only), `FAI_INSTALL_ROOT`.
+
+From a checkout instead (`git clone`, then `node scripts/setup.mjs`), setup on Windows also sets up Firefox only.
 
 ## 2. Add to your Firefox
 

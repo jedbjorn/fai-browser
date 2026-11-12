@@ -12,7 +12,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { agentResult, applyLeaseMessage, approvalSteps, createResult, isKnownCode, outcomeResult, setOutcome } from './result.js';
 import { hostInfo, imageSize, toAgentResult, writeRun } from './trace.js';
 import { prune, retentionConfig } from './retention.js';
-import { PACKAGE_ROOT } from './paths.js';
+import { INSTALLER_UPDATE_HINT, PACKAGE_ROOT, installedByInstaller } from './paths.js';
 import {
   acquireLock, configuredPort, createLogger, ensureClientToken, ensureDir, homePaths, loadConfig, readDaemonInfo,
   releaseLock, removeDaemonInfo, writeDaemonInfo,
@@ -468,6 +468,7 @@ export function createDaemon(options = {}) {
   const gitSource = options.updateGitSource
     ?? (installable && !underTest(env) ? gitReleaseSource({ root: PACKAGE_ROOT, env: launchEnv }) : null);
   const updates = createUpdateChecker({ paths, currentVersion: version, fetch: options.updateFetch, log, gitSource, installable,
+    installer: options.updateInstaller ?? installedByInstaller(),
     enabled: () => automaticCheck({ env, config, override: options.updateCheck }).enabled,
     ...(options.updateStartupDelayMs !== undefined ? { startupDelayMs: options.updateStartupDelayMs } : {}) });
 
@@ -1703,7 +1704,10 @@ export function createDaemon(options = {}) {
     const view = updates.view();
     const refuse = (code, message) => replyTo(event, { error: { code, message } });
     if (!view.available || !view.tag) return refuse('no_update', 'FAI Browser is up to date.');
-    if (!view.installable) return refuse('not_git', 'This FAI Browser is not a git clone; update it the way you installed it.');
+    if (!view.installable) {
+      return refuse('not_git', view.installer ? INSTALLER_UPDATE_HINT
+        : 'This FAI Browser is not a git clone; update it the way you installed it.');
+    }
     if (runningUpdate(paths)) return refuse('update_running', 'An update is already running.');
     if ([...requests.values()].some(record => LEASED.has(record.state))) {
       return refuse('lease_active', 'An agent holds a browser tab. Let the task finish or press Stop, then update.');

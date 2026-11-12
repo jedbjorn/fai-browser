@@ -134,8 +134,8 @@ extension acts only in the approved tab. See [ARCHITECTURE.md](ARCHITECTURE.md).
 ## Quickstart
 
 Requires Node 22+ and a Chromium-family browser 116+ (Chrome, Chromium, Brave, Edge, Vivaldi) or Firefox 140+, on
-Linux or macOS. **Windows is not supported:** setup is untested there and known not to work out of the box; try it at
-your own risk. See [Browsers](#browsers).
+Linux or macOS. On **Windows**, one command sets up everything, Firefox only: see [Windows](#windows). See
+[Browsers](#browsers).
 
 **Try it without a key or browser:**
 
@@ -163,7 +163,7 @@ less install-fai.sh && sh install-fai.sh
 ```
 
 `<tag>` is the newest release on the [Releases page](https://github.com/jedbjorn/fai-browser/releases) that has
-`scripts/install.sh` (the first release after 0.8.0). `--check` only reports what is there and what it would do. On
+`scripts/install.sh` (v0.9.0 or newer). `--check` only reports what is there and what it would do. On
 Linux it installs no git or Node (it prints the package command); with both present it clones and runs setup there too.
 Those git and Node install steps (the Command Line Tools dialog, `brew install node`, the `.pkg`) have not been
 exercised in CI yet: the CI runners already have both.
@@ -185,6 +185,29 @@ exercised in CI yet: the CI runners already have both.
 4. Restart your coding agent.
 
 To register an agent later: `node src/cli.js install --host claude|codex|opencode`.
+
+### Windows
+
+Firefox only (Chrome, Edge and the other Chromium browsers are not supported on Windows). In PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/jedbjorn/fai-browser/main/scripts/install.ps1 | iex
+```
+
+That is the whole setup. Per user, without administrator rights or Developer mode, it installs a private Node.js
+(checked against nodejs.org's checksums; a Node you already have is left alone) and the latest FAI Browser release under
+`%LOCALAPPDATA%\fai-browser`, then runs setup: the pairing secret, Firefox's pairing helper, the FAI service,
+registration with Claude Code, Codex and OpenCode when they are installed, and FAI Browser itself: your official
+Firefox, or Mozilla's downloaded into FAI's folder when you have none, with a separate FAI profile and the signed add-on,
+already paired. It adds a **FAI Browser** Start menu entry and the `fai-browser` command.
+
+1. When it says **FAI Browser is installed**, a Firefox window titled *FAI Browser is ready* is open.
+2. Restart your coding agent, then ask it to work in your browser. Its requests open in that window; you approve each.
+3. Later: open FAI Browser from the Start menu (it starts the FAI service by itself).
+
+Run the same command again to update. Remove everything with
+`powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\fai-browser\uninstall.ps1"`. Coding agents can follow
+these steps for you: the command needs no input. Details: [install guide](docs/guide/install.md#windows).
 
 **Updating.** About once a day FAI checks GitHub for a newer tagged release and the popup then shows **Update
 available vX.Y.Z**. One click on **Update** (or `node src/cli.js update`) moves this clone to the release tag, refreshes
@@ -322,7 +345,7 @@ permissions take no port: approving `http://127.0.0.1:8080` grants `http://127.0
 
 ## Status and roadmap
 
-FAI Browser is an **early release (v0.8.0)**: the daemon, MCP server, skill, guardrails and benchmark
+FAI Browser is an **early release (v0.9.0)**: the daemon, MCP server, skill, guardrails and benchmark
 harness work and are tested, and interfaces may still change. Open items:
 
 - **Extension UX:** a side panel with a pending-request badge, live run view and real pause and

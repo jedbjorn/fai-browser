@@ -780,6 +780,7 @@ function cleanUpdate(value) {
   } : null;
   return { current: value.current, latest, available: value.available === true && Boolean(latest),
     installable: value.installable !== false,
+    installer: value.installer === true,
     notesUrl: latest && value.notesUrl === `${RELEASE_NOTES}${latest}` ? value.notesUrl : null, install };
 }
 

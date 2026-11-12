@@ -18,7 +18,7 @@
 //     policy keeps the add-on installed and enabled even if it is removed by mistake. The launcher never writes a
 //     policy into a system Firefox (it would need admin rights and would apply to every profile).
 import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { readlinkSync } from 'node:fs';
+import { closeSync, openSync, readlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { GECKO_ID } from '../native.js';
@@ -158,9 +158,19 @@ export async function writePolicies(binary, xpiPath, platform = process.platform
 
 /**
  * True when a Firefox is running this profile. Linux: the `lock` symlink names "<host>:+<pid>" and that process is
- * alive. Elsewhere this is not checked (Firefox shows its own "already running" message).
+ * alive. Windows: Firefox holds `parent.lock` open without sharing, so opening it fails while it runs (the file stays
+ * behind after Firefox exits). macOS is not checked (Firefox shows its own "already running" message).
  */
-export function profileInUse(profile, { platform = process.platform, readLink = readlinkSync, alive = isAlive } = {}) {
+export function profileInUse(profile, { platform = process.platform, readLink = readlinkSync, alive = isAlive,
+  tryOpen = path => closeSync(openSync(path, 'r+')) } = {}) {
+  if (platform === 'win32') {
+    try {
+      tryOpen(join(profile, 'parent.lock'));
+      return false;
+    } catch (error) {
+      return error?.code === 'EBUSY' || error?.code === 'EPERM' || error?.code === 'EACCES';
+    }
+  }
   if (platform !== 'linux') return false;
   let target;
   try {

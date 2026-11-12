@@ -1572,11 +1572,16 @@ export interface EnsureDaemonOptions {
   env?: Record<string, string | undefined>;
   port?: number;
   autoStart?: boolean;
-  /** Default FAI_DAEMON_START_TIMEOUT_MS or 5000. */
+  /** Default FAI_DAEMON_START_TIMEOUT_MS, else 5000 (15000 on Windows). */
   startTimeoutMs?: number;
   /** argv to spawn instead of [node, src/daemon-main.js]. */
   command?: string[];
   version?: string;
+  /**
+   * Windows: start the daemon through WMI, outside the caller's job object and without its handles (default true).
+   * false spawns it directly. Ignored elsewhere.
+   */
+  breakaway?: boolean;
 }
 
 export function ensureDaemon(options?: EnsureDaemonOptions): Promise<{

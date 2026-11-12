@@ -1,6 +1,6 @@
 {
   "name": "fai-browser",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "license": "MIT",
   "author": "jedbjorn <267177294+jedbjorn@users.noreply.github.com>",
   "repository": {
@@ -40,6 +40,8 @@
     "skills/",
     "tasks/",
     "scripts/setup.mjs",
+    "scripts/install.ps1",
+    "scripts/uninstall.ps1",
     "scripts/build-firefox.mjs",
     "examples/",
     "README.md",

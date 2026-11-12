@@ -1,7 +1,8 @@
-// The bootstrap installers (scripts/install.sh for macOS and Linux, scripts/install.ps1 for Windows), run for real in
-// their safe modes: check-only, reusing a checkout, refusing a directory that is not one, bad options. No test here
-// clones from the network, installs a package or runs setup (setup refuses without a terminal, and the installers
-// say so). The Windows and macOS CI jobs run this file on those systems; each script is tested on its own platform.
+// The installers: scripts/install.sh (macOS and Linux) run for real in its safe modes (check-only, reusing a checkout,
+// refusing a directory that is not one, bad options), and scripts/install.ps1 (Windows) checked statically and for its
+// refusal of an elevated window. No test here clones or downloads from the network, installs a package or runs setup.
+// The Windows and macOS CI jobs run this file on those systems; the Windows job also runs install.ps1 end to end
+// (.github/workflows/ci.yml, "Installer (windows-latest)").
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -50,10 +51,9 @@ function sh(args, { env = cleanEnv(), input = '' } = {}) {
 }
 
 const POWERSHELL = WINDOWS ? (findOnPath('powershell') ?? 'powershell.exe') : null;
-// GitHub's Windows runners run as an administrator; the installer refuses that unless -AllowAdministrator.
-function ps(args, { env = cleanEnv(), admin = true } = {}) {
-  const result = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', PS1,
-    ...(admin ? ['-AllowAdministrator'] : []), ...args], { env, encoding: 'utf8', timeout: 120_000 });
+function ps(args, { env = cleanEnv() } = {}) {
+  const result = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...args],
+    { env, encoding: 'utf8', timeout: 120_000 });
   return { status: result.status, out: `${result.stdout}${result.stderr}` };
 }
 
@@ -257,97 +257,40 @@ test('install.sh is plain POSIX sh: no bashisms that macOS /bin/sh or dash would
 
 // --- scripts/install.ps1 (Windows) -----------------------------------------------------------------------------------
 
-test('install.ps1 is ASCII, quotes its paths and never runs downloaded text', () => {
-  // Windows PowerShell 5.1 reads a script without a byte order mark in the ANSI code page: ASCII only.
+const UNINSTALL_PS1 = join(ROOT, 'scripts', 'uninstall.ps1');
+
+test('install.ps1 and uninstall.ps1 are ASCII, https only, never elevate and check the Node.js download', () => {
+  for (const file of [PS1, UNINSTALL_PS1]) {
+    // Windows PowerShell 5.1 reads a script without a byte order mark in the ANSI code page: ASCII only.
+    const source = readFileSync(file, 'utf8');
+    assert.doesNotMatch(source, /[^\x00-\x7f]/, file);
+    assert.doesNotMatch(source, /http:\/\//, `${file}: https only`);
+    assert.doesNotMatch(source, /-Verb\s+RunAs/i, `${file}: no elevation of its own`);
+    // `irm ... | iex` is how a user runs install.ps1; the script itself never runs downloaded text.
+    const code = source.split('\n').filter(line => !line.trimStart().startsWith('#'));
+    assert.equal(code.filter(line => /Invoke-Expression|\biex\b/i.test(line)).length, 0, file);
+  }
   const source = readFileSync(PS1, 'utf8');
-  assert.doesNotMatch(source, /[^\x00-\x7f]/);
-  assert.doesNotMatch(source, /Invoke-Expression|\biex\b/i);
-  assert.doesNotMatch(source, /http:\/\//, 'https only');
-  assert.doesNotMatch(source, /-Verb\s+RunAs/i, 'no elevation of its own');
-  // Windows is unsupported: the script says so in its header and before anything else it prints.
-  assert.match(source, /^<#\nEXPERIMENTAL AND UNSUPPORTED\./);
-  for (const text of [readFileSync(SH, 'utf8'), source]) {
-    // Both installers pin the same repository and the same default directory name.
-    assert.ok(text.includes('https://github.com/jedbjorn/fai-browser.git'));
-    assert.ok(text.includes('fai-browser'));
-  }
+  assert.match(source, /SHASUMS256\.txt/);
+  assert.match(source, /Get-FileHash \$zip -Algorithm SHA256/);
+  assert.match(source, /IsInRole\(\[Security\.Principal\.WindowsBuiltInRole\]::Administrator\)/);
+  assert.match(source, /--yes --download-firefox/);
+  for (const text of [readFileSync(SH, 'utf8'), source]) assert.ok(text.includes('jedbjorn/fai-browser'));
 });
 
-test('install.ps1 -Check reports git and Node and changes nothing; an elevated window is refused', { skip: PS_SKIP }, t => {
-  const dir = join(scratch(t), 'fai-browser');
-  const run = ps(['-Check', '-Dir', dir]);
-  assert.equal(run.status, 0, run.out);
-  assert.match(run.out, /^EXPERIMENTAL: Windows is unsupported by FAI Browser\./);
-  assert.match(run.out, /git: +git version/);
-  assert.match(run.out, new RegExp(`Node\\.js: v${process.versions.node.replaceAll('.', '\\.')}`));
-  assert.match(run.out, /Clone FAI Browser at its latest release tag into/);
-  assert.match(run.out, /Check only \(-Check\): nothing was changed\./);
-  assert.equal(existsSync(dir), false);
-  const elevated = ps(['-Check', '-Dir', dir], { admin: false });
-  if (/runs as administrator/.test(elevated.out)) {
-    assert.equal(elevated.status, 1, elevated.out);
-    assert.match(elevated.out, /Open a normal PowerShell window/);
-  } else {
-    assert.equal(elevated.status, 0, elevated.out);
-  }
-});
+function elevated() {
+  const run = ps(['-Command', '([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)']);
+  return run.out.trim() === 'True';
+}
 
-test('install.ps1 refuses bad options; -Help prints the usage', { skip: PS_SKIP }, () => {
-  const bad = ps(['-Tag', 'main']);
-  assert.equal(bad.status, 1, bad.out);
-  assert.match(bad.out, /FAI Browser install stopped: -Tag must be a release tag such as v0\.8\.0, not 'main'/);
-  // Case-sensitive and anchored with \A...\z: a capital V or an empty value is no release tag.
-  for (const tag of ['V0.8.0', '']) {
-    const run = ps(['-Check', '-Tag', tag]);
-    assert.equal(run.status, 1, `${JSON.stringify(tag)}: ${run.out}`);
-    assert.match(run.out, /-Tag must be a release tag/);
-  }
-  const help = ps(['-Help']);
-  assert.equal(help.status, 0, help.out);
-  assert.match(help.out, /-Check +check only/);
-});
-
-test('install.ps1 reuses a FAI Browser checkout twice; stops at any other directory', { skip: PS_SKIP }, t => {
-  const base = scratch(t);
-  const dir = fakeCheckout(join(base, 'checkout'));
-  for (let round = 0; round < 2; round++) {
-    // The second round names it with a trailing backslash, which the installer drops before it quotes the path.
-    const run = ps(['-Yes', '-Dir', round ? `${dir}\\` : dir]);
-    assert.equal(run.status, 0, run.out);
-    assert.match(run.out, /a checkout already at .* \(reused\)/);
-    assert.match(run.out, /Using the existing checkout at /);
-    assert.match(run.out, /Setup must run in a console window/);
-    assert.doesNotMatch(run.out, /Cloning/);
-  }
-  const other = join(base, 'other');
-  mkdirSync(other);
-  writeFileSync(join(other, 'notes.txt'), 'mine\n');
-  const refused = ps(['-Yes', '-Dir', other]);
-  assert.equal(refused.status, 1, refused.out);
-  assert.match(refused.out, /exists and is not a FAI Browser checkout/);
-  assert.equal(readFileSync(join(other, 'notes.txt'), 'utf8'), 'mine\n');
-});
-
-test('install.ps1 without git, winget or a new Node: says what is missing and where to get it', { skip: PS_SKIP }, t => {
-  const base = scratch(t);
-  const bin = join(base, 'bin');
-  mkdirSync(bin);
-  writeFileSync(join(bin, 'node.cmd'), '@echo 20.11.1\r\n');
-  const env = cleanEnv({ PATH: bin, Path: bin });
-  delete env.PATH;
-  env.Path = bin;
-  const dir = join(base, 'fai-browser');
-  const check = ps(['-Check', '-Dir', dir], { env });
-  assert.equal(check.status, 0, check.out);
-  assert.match(check.out, /git: +not found/);
-  assert.match(check.out, /Node\.js: v20\.11\.1 is too old/);
-  assert.match(check.out, /winget: +not found/);
-  assert.match(check.out, /Stop: git and Node\.js missing and winget is not installed/);
-  const run = ps(['-Yes', '-Dir', dir], { env });
-  assert.equal(run.status, 1, run.out);
-  assert.match(run.out, /https:\/\/git-scm\.com\/download\/win/);
-  assert.match(run.out, /https:\/\/nodejs\.org\/en\/download/);
-  assert.equal(existsSync(dir), false);
+test('install.ps1 refuses an elevated window before it changes anything', { skip: PS_SKIP }, t => {
+  // GitHub's Windows runners run elevated; on a normal window the installer would go on to download Node.js.
+  if (!elevated()) return t.skip('this PowerShell is not elevated');
+  const root = join(scratch(t), 'fai-browser');
+  const run = ps(['-File', PS1], { env: cleanEnv({ FAI_INSTALL_ROOT: root }) });
+  assert.match(run.out, /FAI Browser install failed: this PowerShell window runs as administrator\./);
+  assert.match(run.out, /Open a normal PowerShell window/);
+  assert.equal(existsSync(root), false);
 });
 
 test('the PATH helper used above finds programs by PATHEXT on Windows', { skip: PS_SKIP }, () => {
