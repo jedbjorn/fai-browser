@@ -10,13 +10,16 @@ browsers:
 | Chromium, from source | `extension/` loaded unpacked in Chrome, Brave, Edge, Vivaldi | Developers |
 
 All three need the local part (the FAI service and the MCP server) from this repository, Node 22 or newer, and Linux or
-macOS (Windows is untested).
+macOS (Windows is unsupported).
 
 ```sh
 git clone https://github.com/jedbjorn/fai-browser
 cd fai-browser
-npm ci
 ```
+
+No git or Node yet on macOS: `scripts/install.sh` checks for both, installs what is missing after you say yes, clones
+the latest release and runs setup
+([getting started](getting-started.md#1-install), [REFERENCE](../REFERENCE.md#bootstrap-installers)).
 
 ## 1. Download FAI Browser
 

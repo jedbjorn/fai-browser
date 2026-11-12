@@ -79,7 +79,8 @@ test('every task ships a short SKILL.md guide the main skill points at, installe
   // and through .claude/skills and .agents/skills.
   const link = join(ROOT, 'skills', 'fai-browser', 'tasks');
   assert.ok(lstatSync(link).isSymbolicLink());
-  assert.equal(readlinkSync(link), '../../tasks');
+  // Windows reports the link target with its own separators.
+  assert.equal(readlinkSync(link).replaceAll('\\', '/'), '../../tasks');
   assert.equal(realpathSync(link), realpathSync(join(ROOT, 'tasks')));
   for (const dir of ['.claude', '.agents']) {
     for (const name of ['flights', 'hotels']) {

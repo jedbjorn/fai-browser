@@ -80,8 +80,9 @@ export function browserTargets({ platform = process.platform, home, env = proces
     list.push({ id: 'firefox', name: 'Firefox', kind: 'firefox', profile: join(support, 'Firefox'),
       dir: join(support, 'Mozilla', 'NativeMessagingHosts') });
   } else if (platform === 'win32') {
-    const local = join(home, 'AppData', 'Local');
-    const roaming = join(home, 'AppData', 'Roaming');
+    // %LOCALAPPDATA% and %APPDATA% when set (a redirected or roaming profile moves them), else their default places.
+    const local = env.LOCALAPPDATA || join(home, 'AppData', 'Local');
+    const roaming = env.APPDATA || join(home, 'AppData', 'Roaming');
     const key = path => `HKCU\\Software\\${path}\\NativeMessagingHosts\\${NATIVE_HOST_NAME}`;
     list.push(
       { id: 'chrome', name: 'Google Chrome', kind: 'chromium', profile: join(local, 'Google', 'Chrome'), registry: key('Google\\Chrome') },
@@ -112,17 +113,21 @@ function shQuote(value) {
  * The launcher a manifest points at: browsers start native hosts with a minimal environment, so it names node by its
  * absolute path (and FAI_HOME when one is set). A shell script on Linux and macOS, a .bat file on Windows.
  */
-export function launcherFile({ platform = process.platform, dir, execPath = process.execPath, env = process.env } = {}) {
+export function launcherFile({ platform = process.platform, dir, execPath = process.execPath, env = process.env,
+  entry = NATIVE_HOST_ENTRY } = {}) {
   const home = env.FAI_HOME ? faiHome(env) : null;
   if (platform === 'win32') {
+    // Inside double quotes cmd.exe takes every character literally except `%` (variable expansion), written `%%`.
+    // Windows paths cannot hold `"`.
+    const bat = value => String(value).replaceAll('%', '%%');
     const lines = ['@echo off', `rem ${MARKER}`];
-    if (home) lines.push(`set "FAI_HOME=${home}"`);
-    lines.push(`"${execPath}" "${NATIVE_HOST_ENTRY}" %*`);
+    if (home) lines.push(`set "FAI_HOME=${bat(home)}"`);
+    lines.push(`"${bat(execPath)}" "${bat(entry)}" %*`);
     return { path: join(dir, 'native-host.bat'), content: `${lines.join('\r\n')}\r\n`, mode: 0o600 };
   }
   const prefix = home ? `FAI_HOME=${shQuote(home)} ` : '';
   const content = `#!/bin/sh\n# ${MARKER} (written by fai-browser install-native).\n`
-    + `${prefix}exec ${shQuote(execPath)} ${shQuote(NATIVE_HOST_ENTRY)} "$@"\n`;
+    + `${prefix}exec ${shQuote(execPath)} ${shQuote(entry)} "$@"\n`;
   return { path: join(dir, 'native-host'), content, mode: 0o700 };
 }
 

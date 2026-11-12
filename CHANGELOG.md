@@ -5,6 +5,20 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## Unreleased
+
+### Added
+
+- **An installer for a Mac without git or Node (#47).** `scripts/install.sh` (macOS on Apple silicon and Intel; POSIX `sh`) says what is present and missing, installs a missing git or Node 22+ only after a yes (Apple's Command Line Tools for git; Homebrew when it is already there, else the nodejs.org `.pkg` checked against its `SHASUMS256.txt` and Apple's signature check for the Node.js Foundation's Developer ID Installer), clones the latest release tag into `~/fai-browser` (or reuses a clone there) and runs setup. `--check` changes nothing, `--yes` is unattended; it refuses root, never installs Homebrew, never pipes a download into a shell and never reads the pairing secret. Running it again reuses the checkout. On Linux it installs no git or Node (it prints the package command); with both present it clones and runs setup there too. The git and Node install steps themselves have not been exercised in CI yet (the runners already have both). See docs/REFERENCE.md "Bootstrap installers".
+- **CI on macOS.** The browserless suite runs on GitHub's `macos-latest` runner, and so does the installer, for real: check-only, a fresh clone of the latest release, a rerun, and the full setup of the checkout through the installer against a private `FAI_HOME`. `npm run test:browserless` passes node's `--test-*` options through.
+- **Windows stays unsupported (try at your own risk).** Experimental pieces exist: `scripts/install.ps1` (winget for git and Node, a clone, setup; labelled experimental and unsupported, not part of the documented install), and CI jobs on `windows-latest` (the browserless suite, with stated skips in `test/helpers/platform.js` for wakes, tests that plan for Linux or macOS from POSIX path strings, POSIX process groups and `#!/bin/sh` fakes; the installer's check-only, clone and rerun). Neither has worked end to end on a real Windows machine.
+
+### Fixed
+
+- **macOS: tests that compared temporary paths** now resolve them (macOS's temporary directory is a symlink, `/var` to `/private/var`), and the launcher saves its settings for the platform it plans for (`homePaths` takes the platform).
+- **LF in every checkout** (`.gitattributes`): Git for Windows checks out CRLF by default, which put the installed skill's version marker above its frontmatter; the marker is also placed after a CRLF frontmatter now.
+- **Windows code paths (unsupported, covered by browserless tests on the Windows runner):** the auto-started service gets no console window (`windowsHide`); the updater runs `npm ci` through npm's `npm-cli.js` (Node refuses `npm.cmd` without a shell since CVE-2024-27980) and recognises its checkout under a short 8.3 path; registering with an npm-installed `claude.cmd` goes through cmd.exe with quoted plain `claude mcp add` arguments, and the printed command for a Windows terminal is plain `claude mcp add` lines; `native-host.bat` keeps a `%` in a path; browser profiles honour `%LOCALAPPDATA%` and `%APPDATA%`.
+
 ## 0.8.0 (2026-11-11)
 
 ### Fixed

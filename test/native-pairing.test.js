@@ -16,8 +16,11 @@ import { GECKO_ID, GECKO_IDS, NATIVE_HOST_ENTRY, NATIVE_HOST_NAME, applyNativeIn
   uninstallNative } from '../src/native.js';
 import { callerAllowed, decodeMessages, encodeMessage, handleMessage, serve } from '../src/native-host.js';
 import { PINNED_EXTENSION_ID } from '../src/bridge.js';
+import { POSIX_PATHS } from './helpers/platform.js';
 
 const CHROME_ORIGIN = `chrome-extension://${PINNED_EXTENSION_ID}/`;
+// File modes are POSIX: on Windows a file's access comes from the user profile's ACL and stat reports 0o666.
+const POSIX_MODES = process.platform !== 'win32';
 
 async function scratch(t, prefix = 'fai-native-') {
   const dir = await mkdtemp(join(tmpdir(), prefix));
@@ -25,7 +28,7 @@ async function scratch(t, prefix = 'fai-native-') {
   return dir;
 }
 
-test('default directories per platform; FAI_HOME keeps everything in one place', () => {
+test('default directories per platform; FAI_HOME keeps everything in one place', { skip: POSIX_PATHS }, () => {
   assert.deepEqual(defaultDirs({ HOME: '/h' }, 'linux'),
     { config: '/h/.config/fai-browser', state: '/h/.local/state/fai-browser' });
   assert.deepEqual(defaultDirs({ HOME: '/h', XDG_CONFIG_HOME: '/x/c', XDG_STATE_HOME: '/x/s' }, 'linux'),
@@ -42,18 +45,22 @@ test('default directories per platform; FAI_HOME keeps everything in one place',
   assert.ok(faiHome(process.env).startsWith(process.env.FAI_HOME ?? tmpdir()));
 });
 
-test('homePaths: default home splits settings and state; FAI_HOME is one directory', { skip: process.platform !== 'linux' }, () => {
-  const paths = homePaths({ env: { HOME: '/h' } });
+test('homePaths: default home splits settings and state; FAI_HOME is one directory', {
+  skip: process.platform === 'win32' ? 'POSIX paths (path.join writes backslashes on Windows)' : false }, () => {
+  const paths = homePaths({ env: { HOME: '/h' }, platform: 'linux' });
   assert.equal(paths.custom, false);
   assert.equal(paths.envFile, '/h/.config/fai-browser/.env.local');
   assert.equal(paths.config, '/h/.config/fai-browser/config.json');
   assert.equal(paths.clientToken, '/h/.local/state/fai-browser/client-token');
   assert.equal(paths.logFile, '/h/.local/state/fai-browser/logs/daemon.log');
   assert.equal(paths.artifacts, '/h/.local/state/fai-browser/artifacts');
-  const custom = homePaths({ env: { HOME: '/h', FAI_HOME: '/c' } });
+  const custom = homePaths({ env: { HOME: '/h', FAI_HOME: '/c' }, platform: 'linux' });
   assert.equal(custom.custom, true);
   for (const key of ['envFile', 'clientToken', 'logFile', 'artifacts']) assert.ok(custom[key].startsWith('/c/'), key);
-  assert.equal(homePaths({ env: { HOME: '/h', FAI_HOME: '/c', FAI_DAEMON_DIR: '/d' } }).clientToken, '/d/client-token');
+  assert.equal(homePaths({ env: { HOME: '/h', FAI_HOME: '/c', FAI_DAEMON_DIR: '/d' }, platform: 'linux' }).clientToken, '/d/client-token');
+  const mac = homePaths({ env: { HOME: '/Users/u' }, platform: 'darwin' });
+  assert.equal(mac.envFile, '/Users/u/Library/Application Support/fai-browser/.env.local');
+  assert.equal(mac.clientToken, '/Users/u/Library/Application Support/fai-browser/client-token');
 });
 
 test('migration moves settings out of a checkout, stops nothing that is not running and never overwrites', async t => {
@@ -71,7 +78,7 @@ test('migration moves settings out of a checkout, stops nothing that is not runn
   assert.equal(result.stopped, false);
   assert.deepEqual(result.left, [join(legacy, 'logs')]);
   assert.equal(await readFile(paths.envFile, 'utf8'), 'FAI_BRIDGE_SECRET="x"\n');
-  assert.equal((await stat(paths.envFile)).mode & 0o777, 0o600);
+  if (POSIX_MODES) assert.equal((await stat(paths.envFile)).mode & 0o777, 0o600);
   assert.equal(existsSync(join(legacy, '.env.local')), false);
   assert.equal(existsSync(join(legacy, 'client-token')), false);
   // A second checkout file never replaces the moved one.
@@ -108,7 +115,7 @@ test('install-native writes only for detected browsers in a temporary HOME; unin
   const launcher = await readFile(written.launcher, 'utf8');
   assert.match(launcher, /^#!\/bin\/sh\n/);
   assert.ok(launcher.includes(`exec '/opt/node/bin/node' '${NATIVE_HOST_ENTRY}' "$@"`));
-  assert.equal((await stat(written.launcher)).mode & 0o111, 0o100);
+  if (POSIX_MODES) assert.equal((await stat(written.launcher)).mode & 0o111, 0o100);
   const chrome = JSON.parse(await readFile(join(home, '.config', 'google-chrome', 'NativeMessagingHosts', 'fai_browser.json'), 'utf8'));
   assert.deepEqual(chrome, nativeManifest('chromium', { path: written.launcher }));
   const firefox = JSON.parse(await readFile(join(home, '.mozilla', 'native-messaging-hosts', 'fai_browser.json'), 'utf8'));

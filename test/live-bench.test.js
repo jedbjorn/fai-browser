@@ -13,8 +13,9 @@ import {
   graderFor, gradesFile, loadLiveTasks, loadPrivateTasks, privatePrompt, receiptsFrom, renderChecklist, renderSummary,
   runCallStats, callShape, runKey, sanitizeHome, signalsIn, summarizeTrace, validateLiveTask,
 } from '../bench/live/lib.mjs';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const FIXTURE = join(ROOT, 'bench', 'lib', 'fixtures', 'claude-live-real-pricing.jsonl');
 const asLines = text => text.split('\n').filter(Boolean).map((line, i) => ({ at: i * 1000, text: line }));
 const NOW = new Date(2026, 9, 6, 9, 30); // Tuesday 6 October 2026, local

@@ -235,14 +235,16 @@ export function taskGuides() {
   }
   return entries.filter(entry => entry.isDirectory() && !entry.name.startsWith('_') && !entry.name.startsWith('.')
     && existsSync(join(TASKS_SOURCE, entry.name, 'SKILL.md')))
-    .map(entry => join('tasks', entry.name, 'SKILL.md'))
+    // A relative name with `/` on every platform (join() turns it into the platform's separators where it is used).
+    .map(entry => `tasks/${entry.name}/SKILL.md`)
     .sort();
 }
 
 /** SKILL.md with the version marker as the first line after the frontmatter. */
 export function stampedSkill(text) {
   const marker = `<!-- fai-browser ${VERSION}: re-run "fai-browser install" to update -->`;
-  const match = text.match(/^---\n[\s\S]*?\n---\n/);
+  // \r?: a Windows clone made before .gitattributes pinned LF has CRLF files; the marker still goes after the frontmatter.
+  const match = text.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n/);
   if (!match) {
     return `${marker}\n${text}`;
   }
@@ -349,7 +351,7 @@ export function opencodePluginPath({ scope = 'project', cwd, home = homedir() })
 
 /** Plan every write for a host without touching the filesystem. */
 export function planInstall({ host, scope = 'project', link = false, force = false, commandName = false, cwd,
-  alwaysLoad = false, env = process.env, home = homedir(), execPath = process.execPath }) {
+  alwaysLoad = false, env = process.env, home = homedir(), execPath = process.execPath, platform = process.platform }) {
   if (!HOSTS.includes(host)) {
     throw new InstallError(`--host must be one of ${HOSTS.join(', ')}`);
   }
@@ -372,8 +374,10 @@ export function planInstall({ host, scope = 'project', link = false, force = fal
       }));
       skillTarget = join(cwd, '.claude', 'skills', 'fai-browser');
     } else {
-      plan.command = claudeAddCommand(server, loading);
-      plan.notes.push(`Register the MCP server for every project with: ${plan.command}`);
+      // Windows terminals (PowerShell 5.1 drops the quotes inside a JSON argument): plain `claude mcp add` lines.
+      plan.command = platform === 'win32' && !alwaysLoad ? claudeAddCommandWindows(server).trimEnd()
+        : claudeAddCommand(server, loading);
+      plan.notes.push(`Register the MCP server for every project with${platform === 'win32' && !alwaysLoad ? ' (in PowerShell)' : ''}: ${plan.command}`);
       skillTarget = join(home, '.claude', 'skills', 'fai-browser');
     }
   } else if (host === 'codex') {
@@ -543,10 +547,13 @@ export function detectHosts(options = {}) {
  * InstallError (with the snippet or command to run by hand) when it cannot.
  */
 export async function registerHost(host, { env = process.env, home = homedir(), cwd = process.cwd(), claudePath = 'claude',
-  run = (file, args) => execFileSync(file, args, { stdio: 'ignore', env }) } = {}) {
-  const plan = planInstall({ host, scope: 'user', cwd, env, home });
+  platform = process.platform, run = commandRunner({ env, platform }) } = {}) {
+  const plan = planInstall({ host, scope: 'user', cwd, env, home, platform });
   const writes = await applyPlan(plan);
   if (host === 'claude') {
+    // A Windows batch shim (npm's claude.cmd) runs through cmd.exe, which cannot pass the JSON of add-json intact:
+    // the same entry goes through `claude mcp add` with plain arguments instead.
+    const batch = isBatchFile(claudePath, platform);
     const entry = hostEntry('claude', plan.server);
     try {
       run(claudePath, ['mcp', 'remove', '--scope', 'user', SERVER_NAME]);
@@ -554,12 +561,60 @@ export async function registerHost(host, { env = process.env, home = homedir(), 
       // Not registered yet.
     }
     try {
-      run(claudePath, ['mcp', 'add-json', '--scope', 'user', SERVER_NAME, JSON.stringify(entry)]);
+      run(claudePath, batch ? claudeAddArgs(plan.server)
+        : ['mcp', 'add-json', '--scope', 'user', SERVER_NAME, JSON.stringify(entry)]);
     } catch {
-      throw new InstallError('claude mcp add-json failed; run it by hand', { snippet: plan.command });
+      throw new InstallError(`claude mcp ${batch ? 'add' : 'add-json'} failed; run it by hand`, {
+        snippet: `${plan.command}\n` });
     }
   }
   return { host, writes };
+}
+
+/** True for a Windows batch file (`.cmd`, `.bat`), which Node starts only through cmd.exe. */
+export function isBatchFile(file, platform = process.platform) {
+  return platform === 'win32' && /\.(?:cmd|bat)$/i.test(String(file));
+}
+
+/** `claude mcp add` arguments for the user-scope entry: plain argv, no JSON (`-e` for the environment). */
+export function claudeAddArgs({ command, args, env }) {
+  const pairs = Object.entries(env ?? {}).flatMap(([key, value]) => ['-e', `${key}=${value}`]);
+  return ['mcp', 'add', '--scope', 'user', SERVER_NAME, ...pairs, '--', command, ...args];
+}
+
+/**
+ * The two commands to run by hand in PowerShell (Windows is unsupported). Values are single-quoted, so a pasted line
+ * expands no `$` or backtick (`'` doubled inside).
+ */
+export function claudeAddCommandWindows(server) {
+  const quote = value => (/^[\w@+=:,./\\-]+$/.test(value) ? value : `'${String(value).replaceAll("'", "''")}'`);
+  return `claude mcp remove --scope user ${SERVER_NAME}\nclaude ${claudeAddArgs(server).map(quote).join(' ')}\n`;
+}
+
+/**
+ * The argv for a batch file run through cmd.exe: every part in double quotes. cmd.exe expands `%NAME%` even inside
+ * quotes and a `"` would end the quoting, so a part holding either (or a line break) is refused, never escaped.
+ */
+export function batchCommandLine(file, args) {
+  const parts = [file, ...args].map(String);
+  const unsafe = parts.find(part => /["%\r\n]/.test(part));
+  if (unsafe !== undefined) {
+    throw new InstallError(`Cannot pass ${JSON.stringify(unsafe)} through cmd.exe safely; run the command by hand`);
+  }
+  return parts.map(part => `"${part}"`).join(' ');
+}
+
+/**
+ * Runs a host's command synchronously, without a shell; a Windows batch file through cmd.exe with every argument
+ * quoted by batchCommandLine (Node refuses to start a .cmd or .bat without a shell).
+ */
+export function commandRunner({ env = process.env, platform = process.platform, exec = execFileSync } = {}) {
+  return (file, args) => {
+    if (isBatchFile(file, platform)) {
+      return exec(batchCommandLine(file, args), [], { stdio: 'ignore', env, shell: true, windowsHide: true });
+    }
+    return exec(file, args, { stdio: 'ignore', env, windowsHide: true });
+  };
 }
 
 /**

@@ -149,7 +149,7 @@ export async function planLaunch(options = {}, deps = defaultDeps()) {
     throw new LaunchError(`${options.firefox} cannot be used: ${named?.reason ?? (named?.version ? `Firefox ${named.version.version} is older than ${MIN_FIREFOX_MAJOR}` : 'not a Firefox')}`,
       { code: 'unusable_firefox' });
   }
-  const settings = homePaths({ env });
+  const settings = homePaths({ env, platform });
   let secret = false;
   try {
     secret = Boolean(readEnvFile(settings.envFile).FAI_BRIDGE_SECRET);
@@ -210,8 +210,8 @@ export function planLines(plan) {
   return lines;
 }
 
-async function ensureSecret(env) {
-  const settings = homePaths({ env });
+async function ensureSecret(env, platform) {
+  const settings = homePaths({ env, platform });
   let saved = {};
   try {
     saved = readEnvFile(settings.envFile);
@@ -270,7 +270,7 @@ export async function launch(options = {}, deps = defaultDeps()) {
   out(`Using ${describeFirefox(firefox)}.`);
 
   // 2. Pairing: secret, native host, service.
-  if (await ensureSecret(env)) out('Created the pairing secret (settings directory, mode 0600).');
+  if (await ensureSecret(env, platform)) out('Created the pairing secret (settings directory, mode 0600).');
   const nativePlan = planNativeInstall({ env, platform, home, only: ['firefox'] });
   await applyNativeInstall(nativePlan);
   out(`Pairing helper registered for Firefox (${nativePlan.browsers[0]?.registry ?? nativePlan.browsers[0]?.path}).`);

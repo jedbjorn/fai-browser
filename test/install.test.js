@@ -5,14 +5,16 @@ import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, realpat
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { MCP_ENTRY, OPENCODE_PLUGIN_SOURCE, SKILL_SOURCE, TASKS_SOURCE, refreshUserSkills, taskGuides } from '../src/install.js';
+import { MCP_ENTRY, OPENCODE_PLUGIN_SOURCE, SKILL_SOURCE, TASKS_SOURCE, claudeAddCommandWindows, refreshUserSkills,
+  taskGuides } from '../src/install.js';
 import { ALWAYS_LOAD_META, TOOLS } from '../src/mcp.js';
 
 const CLI = resolve(import.meta.dirname, '..', 'src', 'cli.js');
 const NODE = process.execPath;
 
 async function sandbox(t) {
-  const root = await mkdtemp(join(tmpdir(), 'fai-install-'));
+  // realpath: macOS's tmpdir is a symlink (/var -> /private/var), and the CLI reports real paths.
+  const root = realpathSync(await mkdtemp(join(tmpdir(), 'fai-install-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const home = join(root, 'home');
   const project = join(root, 'project');
@@ -22,7 +24,9 @@ async function sandbox(t) {
     const child = spawnSync(NODE, [CLI, 'install', ...args], {
       cwd: project,
       encoding: 'utf8',
-      env: { PATH: process.env.PATH, HOME: home, ...env },
+      // USERPROFILE: Node's homedir() on Windows (HOME elsewhere); SystemRoot: what node itself needs there.
+      env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home,
+        ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), ...env },
     });
     const lines = child.stdout.split('\n').filter(Boolean);
     assert.equal(lines.length, 1, `one JSON line expected: ${child.stdout}${child.stderr}`);
@@ -60,15 +64,16 @@ test('claude project install writes .mcp.json and copies the stamped skill; a re
 });
 
 test('claude install merges an existing .mcp.json, backs it up and adds FAI_HOME', async t => {
-  const { project, install } = await sandbox(t);
+  const { root, project, install } = await sandbox(t);
   const path = join(project, '.mcp.json');
   await writeFile(path, JSON.stringify({ mcpServers: { other: { command: 'x' } }, extra: true }));
-  const result = install(['--host', 'claude'], { FAI_HOME: '/data/fai' });
+  const fai = join(root, 'fai home');
+  const result = install(['--host', 'claude'], { FAI_HOME: fai });
   assert.equal(result.code, 0, result.stderr);
   const config = JSON.parse(read(path));
   assert.deepEqual(config.mcpServers.other, { command: 'x' });
   assert.equal(config.extra, true);
-  assert.deepEqual(config.mcpServers['fai-browser'].env, { FAI_HOME: '/data/fai' });
+  assert.deepEqual(config.mcpServers['fai-browser'].env, { FAI_HOME: fai });
   const [backup] = backups(project);
   assert.match(backup, /^\.mcp\.json\.bak-\d{8}T\d{6}Z$/);
   assert.deepEqual(JSON.parse(read(join(project, backup))).mcpServers, { other: { command: 'x' } });
@@ -92,9 +97,14 @@ test('claude user scope prints remove then add-json and installs the skill in ~/
   const result = install(['--host', 'claude', '--scope', 'user']);
   assert.equal(result.code, 0, result.stderr);
   const entry = JSON.stringify({ type: 'stdio', command: NODE, args: [MCP_ENTRY] });
-  assert.equal(result.json.command, 'claude mcp remove --scope user fai-browser 2>/dev/null; '
-    + `claude mcp add-json --scope user fai-browser '${entry}'`);
-  assert.match(result.stderr, /claude mcp remove --scope user fai-browser 2>\/dev\/null; claude mcp add-json/);
+  if (process.platform === 'win32') {
+    // A Windows terminal gets plain `claude mcp add` lines (PowerShell 5.1 drops the quotes inside a JSON argument).
+    assert.equal(result.json.command, claudeAddCommandWindows({ command: NODE, args: [MCP_ENTRY] }).trimEnd());
+  } else {
+    assert.equal(result.json.command, 'claude mcp remove --scope user fai-browser 2>/dev/null; '
+      + `claude mcp add-json --scope user fai-browser '${entry}'`);
+    assert.match(result.stderr, /claude mcp remove --scope user fai-browser 2>\/dev\/null; claude mcp add-json/);
+  }
   assert.ok(read(join(home, '.claude', 'skills', 'fai-browser', 'SKILL.md')).includes('name: fai-browser'));
   assert.deepEqual(readdirSync(project), []);
 });

@@ -9,7 +9,8 @@ By contributing you agree that your work is released under the [MIT license](LIC
 ## Dev setup
 
 Requirements: Node 22 or newer, a Chromium-family browser for the browser-backed tests, Linux or macOS. Firefox 140+ is
-only needed for `npm run smoke:firefox`.
+only needed for `npm run smoke:firefox`. Windows is unsupported; CI also runs the browserless suite
+(`npm run test:browserless`) on `windows-latest` and `macos-latest`, the browser-backed tests on Linux only.
 
 ```sh
 git clone https://github.com/jedbjorn/fai-browser && cd fai-browser

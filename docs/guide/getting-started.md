@@ -9,7 +9,8 @@ manual is [REFERENCE.md](../REFERENCE.md#one-time-setup).
 - Firefox 140+ (ESR or newer; the launcher can download it from Mozilla), or a Chromium-family browser 116+ (Chrome,
   Chromium, Brave, Edge, Vivaldi) from source.
 - Linux or macOS. Windows is not supported: setup is untested there and known not to work out of the box; try it at
-  your own risk.
+  your own risk. An experimental, unsupported installer script exists ([REFERENCE](../REFERENCE.md#bootstrap-installers)).
+- git, to get the code (on macOS the installer below installs git and Node for you).
 - A coding agent that speaks MCP: Claude Code, Codex or OpenCode (any MCP client works through the stdio server).
 
 No account and no API key: by default **your agent drives** and FAI makes no provider calls.
@@ -22,9 +23,24 @@ profile, the signed add-on preinstalled and paired), **Add to your Firefox**, an
 ```sh
 git clone https://github.com/jedbjorn/fai-browser
 cd fai-browser
-npm ci
 npm run setup
 ```
+
+**macOS without git or Node yet?** Use the installer instead: it checks for both, installs what is missing only after
+you say yes, clones the latest release into `~/fai-browser` and runs `npm run setup` for you. Download it from a
+release tag, read it, then run it:
+
+```sh
+curl -fsSLo install-fai.sh https://raw.githubusercontent.com/jedbjorn/fai-browser/<tag>/scripts/install.sh
+less install-fai.sh && sh install-fai.sh
+```
+
+`<tag>` is the newest release on the [Releases page](https://github.com/jedbjorn/fai-browser/releases) (the installer
+ships from the first release after 0.8.0). Add `--check` to see what it would do without changing anything. On Linux it
+installs no git or Node (it prints the package command); with both present it clones and runs setup there too. Where
+each tool comes from: [REFERENCE: Bootstrap installers](../REFERENCE.md#bootstrap-installers).
+Those git and Node install steps (the Command Line Tools dialog, `brew install node`, the `.pkg`) have not been
+exercised in CI yet: the CI runners already have both.
 
 `npm run setup` is run by you, once:
 

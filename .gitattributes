@@ -1,0 +1,9 @@
+# LF in every checkout, whatever core.autocrlf says (Git for Windows defaults it to true). The skill's frontmatter,
+# the byte-identical rule copies the drift tests compare, and the release package expect LF.
+* text=auto eol=lf
+*.png binary
+*.gif binary
+*.mp4 binary
+*.pdf binary
+*.xpi binary
+*.zip binary

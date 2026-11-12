@@ -11,6 +11,7 @@ import {
 } from '../src/secrets.js';
 import { INSTRUCTIONS, TOOLS } from '../src/mcp.js';
 import { leaks, loadFakes } from './helpers/secret-fakes.js';
+import { fileURLToPath } from 'node:url';
 
 const F = loadFakes();
 const numbered = () => {
@@ -237,7 +238,7 @@ test('the secret rule block is identical in src/secrets.js, extension/background
 // False-positive sweep: the text of every other fixture page, as the generic rules see it.
 // ---------------------------------------------------------------------------------------------------------------
 
-const FIXTURES = new URL('../fixtures/', import.meta.url).pathname;
+const FIXTURES = fileURLToPath(new URL('../fixtures/', import.meta.url));
 function htmlFiles(dir) {
   const out = [];
   for (const name of readdirSync(dir)) {

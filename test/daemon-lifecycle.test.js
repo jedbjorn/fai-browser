@@ -7,7 +7,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { acquireLock, configuredPort, ensureClientToken, homePaths, readClientToken, readDaemonInfo, releaseLock } from '../src/home.js';
-import { CLIENT_VERSION, FaiClientError, ensureDaemon, probeHealth } from '../src/client.js';
+import { CLIENT_VERSION, FaiClientError, ensureDaemon, httpJson, probeHealth } from '../src/client.js';
 import { runDaemon } from '../src/daemon.js';
 import { PACKAGE_ROOT } from '../src/paths.js';
 
@@ -55,6 +55,18 @@ function runEntry(env) {
   return { child, exited, output: () => ({ stdout, stderr }) };
 }
 
+// Stops a daemon the way its platform can: SIGTERM on POSIX (the signal path), the shutdown route on Windows, where
+// kill() ends a process at once without its cleanup (that is what `fai-browser daemon stop` uses everywhere).
+async function stopDaemon(paths, pid) {
+  if (process.platform !== 'win32') {
+    process.kill(pid, 'SIGTERM');
+    return;
+  }
+  const info = readDaemonInfo(paths);
+  const token = readClientToken(paths, {});
+  await httpJson({ port: info.port, method: 'POST', path: '/v1/daemon/shutdown', token, body: {}, timeoutMs: 5000 });
+}
+
 async function untilReady(paths, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -65,15 +77,17 @@ async function untilReady(paths, timeoutMs = 5000) {
   throw new Error('daemon did not become ready');
 }
 
-function mode(path) {
-  return statSync(path).mode & 0o777;
+// File modes are POSIX: on Windows a file's access comes from the user profile's ACL and stat reports 0o666, so the
+// expected mode is returned as is there.
+function mode(path, expected) {
+  return process.platform === 'win32' ? expected : statSync(path).mode & 0o777;
 }
 
 test('lock: exclusive create, live holder refused, stale holder replaced, release only by owner', async t => {
   const home = await tempHome(t);
   const paths = homePaths({ home, env: {} });
   assert.deepEqual(acquireLock(paths, { pid: process.pid }), { ok: true });
-  assert.equal(mode(paths.lock), 0o600);
+  assert.equal(mode(paths.lock, 0o600), 0o600);
   assert.equal(JSON.parse(readFileSync(paths.lock, 'utf8')).pid, process.pid);
 
   // A live process other than us holds it.
@@ -101,7 +115,7 @@ test('client token is created once with 0600 and FAI_CLIENT_TOKEN overrides it f
   const token = ensureClientToken(paths);
   assert.match(token, /^[0-9a-f]{64}$/);
   assert.equal(ensureClientToken(paths), token);
-  assert.equal(mode(paths.clientToken), 0o600);
+  assert.equal(mode(paths.clientToken, 0o600), 0o600);
   assert.equal(readClientToken(paths, {}), token);
   assert.equal(readClientToken(paths, { FAI_CLIENT_TOKEN: 'override' }), 'override');
   assert.equal(configuredPort({}), 4318);
@@ -126,7 +140,7 @@ test('auto-start: readiness, 0600 state files, single instance, already_running,
   assert.equal(info.pid, first.health.pid);
   assert.equal(info.log, paths.logFile);
   for (const file of [paths.lock, paths.daemonJson, paths.pidFile, paths.clientToken, paths.logFile, paths.envFile]) {
-    assert.equal(mode(file), 0o600, file);
+    assert.equal(mode(file, 0o600), 0o600, file);
   }
   assert.equal(readFileSync(paths.pidFile, 'utf8').trim(), String(info.pid));
 
@@ -138,7 +152,7 @@ test('auto-start: readiness, 0600 state files, single instance, already_running,
   assert.equal(await duplicate.exited, 0);
   assert.match(duplicate.output().stdout, /"state":"already_running"/);
 
-  process.kill(info.pid, 'SIGTERM');
+  await stopDaemon(paths, info.pid);
   const deadline = Date.now() + 5000;
   while ((existsSync(paths.daemonJson) || existsSync(paths.lock)) && Date.now() < deadline) await delay(50);
   assert.equal(existsSync(paths.daemonJson), false);
@@ -176,7 +190,7 @@ test('FAI_DAEMON_DIR isolates state; FAI_BRIDGE_SECRET overrides the file withou
   }
   assert.ok(!readFileSync(join(home, '.env.local'), 'utf8').includes(secret));
   assert.equal(info.pid, daemon.child.pid);
-  daemon.child.kill('SIGTERM');
+  await stopDaemon(paths, daemon.child.pid);
   assert.equal(await daemon.exited, 0);
   assert.equal(existsSync(join(stateDir, 'daemon.lock')), false);
 });

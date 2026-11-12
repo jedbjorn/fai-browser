@@ -30,3 +30,159 @@ jobs:
         run: echo "CHROMIUM_PATH=$(node -e "console.log(require('playwright-core').chromium.executablePath())")" >> "$GITHUB_ENV"
       # One browser-backed file at a time: parallel browsers distort the observe-speed regression checks.
       - run: npm test
+
+  # Windows and macOS: the browserless suite (no Chromium on these runners). Real evidence for the platform branches in
+  # src/ (paths, the daemon, the lock, native messaging registration, agent registration, the updater).
+  platforms:
+    name: Browserless tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # A per-test timeout: a test that hangs on one platform fails by name instead of running into the job timeout. It
+      # also bounds each file, and typing-rhythm.test.js needs over two minutes on the Windows runner.
+      - run: npm run test:browserless -- --test-timeout=300000
+
+  # The bootstrap installers on a throwaway runner, for real: check-only, a fresh clone of the latest release, a rerun
+  # that reuses it, and (macOS, under a pseudo-terminal, since setup refuses to run without one) the full setup of this
+  # checkout against a private FAI_HOME and port. No npm ci: the installers need none. No browser.
+  installer-macos:
+    name: Installer (macos-latest)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Private FAI_HOME and port
+        run: |
+          echo "FAI_HOME=$RUNNER_TEMP/fai home" >> "$GITHUB_ENV"
+          echo "FAI_DAEMON_PORT=47318" >> "$GITHUB_ENV"
+      - name: Check only
+        run: sh scripts/install.sh --check
+      # The .pkg path's checks against the real package, without installing it: the SHA-256 from SHASUMS256.txt and
+      # Apple's signature check with the expected signer (pkgutil prints the chain).
+      - name: Node.js .pkg checksum and signature (no install)
+        run: |
+          set -eu
+          dist=https://nodejs.org/dist/latest-v24.x
+          work="$RUNNER_TEMP/node-pkg"
+          mkdir -p "$work"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$work/SHASUMS256.txt" "$dist/SHASUMS256.txt"
+          line="$(grep -E '^[0-9a-f]{64}  node-v24\.[0-9]+\.[0-9]+\.pkg$' "$work/SHASUMS256.txt" | head -n 1)"
+          name="${line##* }"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$work/$name" "$dist/$name"
+          test "$(shasum -a 256 "$work/$name" | cut -d ' ' -f 1)" = "${line%% *}"
+          sh scripts/install.sh --verify-node-pkg "$work/$name"
+          # An unsigned package is refused.
+          pkgbuild --nopayload --identifier org.example.unsigned --version 1 "$work/unsigned.pkg"
+          if sh scripts/install.sh --verify-node-pkg "$work/unsigned.pkg"; then echo 'an unsigned package passed'; exit 1; fi
+      - name: Fresh clone of the latest release (setup waits for a terminal)
+        run: |
+          set -eu
+          dir="$RUNNER_TEMP/fai browser"
+          sh scripts/install.sh --yes --dir "$dir" | tee "$RUNNER_TEMP/first.txt"
+          grep -q 'Setup must run in a terminal' "$RUNNER_TEMP/first.txt"
+          tag="$(git -C "$dir" describe --tags --exact-match)"
+          echo "checked out $tag"
+          echo "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
+          test -z "$(git -C "$dir" status --porcelain)"
+          node "$dir/src/cli.js" update --check | tee "$RUNNER_TEMP/update.json"
+          grep -q '"installable":true' "$RUNNER_TEMP/update.json"
+          sh scripts/install.sh --yes --dir "$dir" | tee "$RUNNER_TEMP/second.txt"
+          grep -q 'Using the existing checkout' "$RUNNER_TEMP/second.txt"
+      - name: Setup of this checkout through the installer, twice (pseudo-terminal)
+        run: |
+          set -eu
+          for round in 1 2; do
+            script -q "$RUNNER_TEMP/setup-$round.txt" sh scripts/install.sh --yes --dir "$GITHUB_WORKSPACE" -- --no-firefox < /dev/null
+            grep -q 'FAI Browser is installed in' "$RUNNER_TEMP/setup-$round.txt"
+          done
+          grep -q 'FAI service running (reloaded the settings)' "$RUNNER_TEMP/setup-2.txt"
+          test "$(stat -f %Lp "$FAI_HOME/.env.local")" = 600
+          node src/cli.js daemon status > "$RUNNER_TEMP/status.json"
+          grep -q '"running":true' "$RUNNER_TEMP/status.json"
+          node src/cli.js install-native --dry-run
+      - name: Clean up
+        if: always()
+        run: |
+          node src/cli.js daemon stop || true
+          node src/cli.js uninstall-native || true
+
+  installer-windows:
+    name: Installer (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Private FAI_HOME and port
+        run: |
+          "FAI_HOME=$env:RUNNER_TEMP\fai home" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "FAI_DAEMON_PORT=47318" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      # Windows PowerShell 5.1 (powershell.exe), as on a stock Windows 10 or 11.
+      - name: Check only (an elevated window is refused; the runner is an administrator)
+        run: |
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Check 2>&1 | Out-String
+          Write-Output $out
+          if ($LASTEXITCODE -ne 1 -or $out -notmatch 'runs as administrator') { throw 'expected the administrator refusal' }
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Check -AllowAdministrator
+          if ($LASTEXITCODE -ne 0) { throw "check failed: $LASTEXITCODE" }
+      - name: Fresh clone of the latest release (setup waits for a console)
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'fai browser'
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Yes -AllowAdministrator -Dir $dir 2>&1 | Out-String
+          Write-Output $out
+          if ($LASTEXITCODE -ne 0 -or $out -notmatch 'Setup must run in a console window') { throw "install failed: $LASTEXITCODE" }
+          $tag = git -C $dir describe --tags --exact-match
+          Write-Output "checked out $tag"
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') { throw 'not at a release tag' }
+          if (git -C $dir status --porcelain) { throw 'the checkout has changes (line endings?)' }
+          if ((git -C $dir config core.autocrlf) -ne 'false') { throw 'core.autocrlf is not false in the checkout' }
+          $update = node (Join-Path $dir 'src\cli.js') update --check
+          Write-Output $update
+          if ($update -notmatch '"installable":true') { throw 'the updater does not accept the checkout' }
+          $again = powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Yes -AllowAdministrator -Dir $dir 2>&1 | Out-String
+          Write-Output $again
+          if ($LASTEXITCODE -ne 0 -or $again -notmatch 'Using the existing checkout') { throw 'the rerun did not reuse the checkout' }
+      # Setup itself needs a console, which a runner step does not have: its steps run one by one through the CLI.
+      - name: Setup steps of this checkout (pairing in HKCU, the service)
+        run: |
+          node src/cli.js install-native --all
+          if ($LASTEXITCODE -ne 0) { throw 'install-native failed' }
+          reg query 'HKCU\Software\Google\Chrome\NativeMessagingHosts\fai_browser' /ve
+          if ($LASTEXITCODE -ne 0) { throw 'no Chrome registry value' }
+          reg query 'HKCU\Software\Mozilla\NativeMessagingHosts\fai_browser' /ve
+          if ($LASTEXITCODE -ne 0) { throw 'no Firefox registry value' }
+          node src/cli.js daemon start
+          if ($LASTEXITCODE -ne 0) { throw 'daemon start failed' }
+          $status = node src/cli.js daemon status
+          if ($status -notmatch '"running":true') { throw 'the daemon is not running' }
+          node src/cli.js install --host claude --scope user --dry-run
+          node src/cli.js daemon stop
+          if ($LASTEXITCODE -ne 0) { throw 'daemon stop failed' }
+          node src/cli.js uninstall-native
+          reg query 'HKCU\Software\Google\Chrome\NativeMessagingHosts\fai_browser' /ve 2>$null
+          if ($LASTEXITCODE -eq 0) { throw 'the Chrome registry value is still there' }
+          exit 0

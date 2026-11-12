@@ -15,6 +15,7 @@ import { RELEASES_API, UPDATE_REPO, checkDue, createUpdateChecker, readInstallSt
 import { LeaseHeld, UpdateRefused, defaultSteps, gitRunner, installUpdate } from '../src/update-install.js';
 import { gitReleaseSource, lsRemoteLatest } from '../src/update-git.js';
 import { finishInstall, updateCommand } from '../src/update-cli.js';
+import { SH_SHIMS } from './helpers/platform.js';
 
 const HOUR = 60 * 60_000;
 const DAY = 24 * HOUR;
@@ -149,7 +150,7 @@ async function dumpedEnv(path) {
     .map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
 }
 
-test('M1: no FAI secret reaches git, npm, update --finish or the restarted daemon', async t => {
+test('M1: no FAI secret reaches git, npm, update --finish or the restarted daemon', { skip: SH_SHIMS }, async t => {
   const r = await repos(t);
   const bin = join(r.dir, 'bin');
   await mkdir(bin);

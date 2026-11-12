@@ -27,11 +27,11 @@ export const DAEMON_DEFAULT_PORT = 4318;
 const TOKEN = /^[0-9a-f]{64}$/;
 const LOG_MAX_BYTES = 5 * 1024 * 1024;
 
-/** Resolve every daemon path for a home directory and environment. */
-export function homePaths({ home, env = process.env } = {}) {
-  const root = home ? resolve(home) : faiHome(env);
-  const custom = customHome(root, env);
-  const data = dataDir(root, env);
+/** Resolve every daemon path for a home directory and environment (`platform`: the platform's default directories). */
+export function homePaths({ home, env = process.env, platform = process.platform } = {}) {
+  const root = home ? resolve(home) : faiHome(env, platform);
+  const custom = customHome(root, env, platform);
+  const data = dataDir(root, env, platform);
   const stateDir = env.FAI_DAEMON_DIR ? resolve(env.FAI_DAEMON_DIR) : data;
   const logDir = join(stateDir, 'logs');
   return {

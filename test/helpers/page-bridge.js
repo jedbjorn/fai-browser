@@ -3,8 +3,9 @@
 // navigation, wait for the load and settleAndObserve). No extension, no capture, no lease. For fixture-level tests of
 // runtime rules on the real fixture pages (fixtures/long, fixtures/qa).
 import { bridgeError } from '../../src/result.js';
+import { fileURLToPath } from 'node:url';
 
-const PAGE_SCRIPT = new URL('../../extension/page.js', import.meta.url).pathname;
+const PAGE_SCRIPT = fileURLToPath(new URL('../../extension/page.js', import.meta.url));
 // extension/background.js CAPABILITIES (what page.js may dispatch at each level).
 const CAPABILITIES = {
   'read-only': ['navigate'],
