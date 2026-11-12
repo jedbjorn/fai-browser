@@ -26,6 +26,7 @@ export const CLIENT_VERSION = readVersion();
 const HEALTH_TIMEOUT_MS = 500;
 const POLL_MS = 100;
 const DEFAULT_START_TIMEOUT_MS = 5000;
+const WINDOWS_START_TIMEOUT_MS = 15_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const LONG_POLL_SLACK_MS = 5000;
 const MAX_WAIT_MS = 45_000;
@@ -123,6 +124,25 @@ function withoutHostWakeEnv(env) {
   return out;
 }
 
+/**
+ * Windows: start the daemon through WMI (src/breakaway.js), outside the caller's job object and with none of its
+ * handles, so a daemon the pairing helper starts outlives it (Firefox kills the helper's job) and one started under a
+ * pipe (the MCP server's stdio, an agent running setup) does not hold that pipe open. False when that is not possible;
+ * the caller then spawns normally.
+ */
+async function spawnDaemonOutsideJob(paths, env, command, spawnOutside) {
+  ensureDir(paths.logDir);
+  const [file, ...args] = command ?? [process.execPath, DAEMON_ENTRY];
+  try {
+    const start = spawnOutside ?? (await import('./breakaway.js')).spawnOutsideJob;
+    await start({ file, args, outputFile: join(paths.logDir, 'daemon-start.log'), cwd: paths.home,
+      env: withoutHostWakeEnv(paths.custom ? { ...env, FAI_HOME: paths.home } : env) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function spawnDaemon(paths, env, command) {
   ensureDir(paths.logDir);
   const logFd = openSync(paths.logFile, 'a', 0o600);
@@ -192,7 +212,10 @@ export async function ensureDaemon(options = {}) {
   const env = options.env ?? process.env;
   const paths = homePaths({ home: options.home, env });
   const version = options.version ?? CLIENT_VERSION;
-  const startTimeoutMs = options.startTimeoutMs ?? (Number(env.FAI_DAEMON_START_TIMEOUT_MS) || DEFAULT_START_TIMEOUT_MS);
+  const platform = options.platform ?? process.platform;
+  // Windows starts the daemon through PowerShell and WMI, which takes a few seconds more.
+  const startTimeoutMs = options.startTimeoutMs ?? (Number(env.FAI_DAEMON_START_TIMEOUT_MS)
+    || (platform === 'win32' ? WINDOWS_START_TIMEOUT_MS : DEFAULT_START_TIMEOUT_MS));
   const warnings = [];
   let started = false;
 
@@ -223,9 +246,19 @@ export async function ensureDaemon(options = {}) {
       throw new FaiClientError(0, 'daemon_unreachable', `No FAI Browser daemon is answering ${where}`,
         { retryable: true });
     }
-    const child = spawnDaemon(paths, env, options.command);
+    const outside = platform === 'win32' && options.breakaway !== false
+      && await spawnDaemonOutsideJob(paths, env, options.command, options.spawnOutsideJob);
+    const child = outside ? null : spawnDaemon(paths, env, options.command);
     started = true;
-    ({ port, health } = await waitForHealth(paths, { port: options.port, env }, Date.now() + startTimeoutMs, child));
+    try {
+      ({ port, health } = await waitForHealth(paths, { port: options.port, env }, Date.now() + startTimeoutMs, child));
+    } catch (error) {
+      // A daemon started through WMI writes its startup failure (a port in use, say) to daemon-start.log.
+      if (outside && error instanceof FaiClientError) {
+        error.message += ` (startup output: ${join(paths.logDir, 'daemon-start.log')})`;
+      }
+      throw error;
+    }
   }
 
   const token = readClientToken(paths, env);

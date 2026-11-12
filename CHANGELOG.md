@@ -5,6 +5,21 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## 0.9.0 (2026-11-12)
+
+### Added
+
+- **Windows, one command, Firefox only.** `irm https://raw.githubusercontent.com/jedbjorn/fai-browser/main/scripts/install.ps1 | iex` installs, per user and without administrator rights or Developer mode, a private Node.js (nodejs.org LTS, checksum checked), the latest release, a **FAI Browser** Start menu entry and the `fai-browser` command, then runs setup with `--yes --download-firefox`: pairing, the service, the coding agents it finds, and official Firefox (Mozilla's, downloaded, when none is installed) with the FAI profile and the signed add-on, paired. Running it again updates, also while FAI Browser is open (each release goes into its own folder; an older one is removed once nothing runs from it). `%LOCALAPPDATA%\fai-browser\uninstall.ps1` removes it all. Chromium-family browsers are not supported on Windows; setup there sets up Firefox only.
+- **`fai-browser uninstall --host claude|codex|opencode|all`** undoes a user-scope registration: Claude Code's entry (`claude mcp remove`), FAI's managed Codex block, the OpenCode entry and plugin, and the skill copies carrying FAI's marker. Entries FAI did not write are left alone and listed.
+- **Setup flags:** `--download-firefox` (with no usable Firefox, the profile offer downloads Mozilla's), and `--yes` now also runs without a terminal.
+
+### Fixed
+
+- **Windows: the FAI service the pairing helper starts keeps running.** Firefox runs a native messaging host in a job object that it kills when the host exits; a service the host had started died with it, so the add-on paired only while something else had started the service. On Windows the service is now started through WMI (`Win32_Process.Create`), outside the caller's job and without its handles, so it also no longer holds an agent's or the MCP server's pipes open (a command that started it could hang until the service exited). The start timeout there is 15 s.
+- **Windows: a second launch no longer starts a second Firefox on the FAI profile.** The launcher checks the profile's `parent.lock` and, from the Start menu, says FAI Browser is already open. A launch failure from the Start menu shows a message box.
+- **Windows: registration with an npm-installed Claude Code (`claude.cmd`)** runs it through `cmd.exe` (Node refuses to start a `.cmd` directly), instead of failing with "claude mcp add-json failed".
+- **Codex: FAI's own managed block is updated without `--force`** when the node or checkout path changed (it used to refuse as if someone else had written it).
+
 ## 0.8.0 (2026-11-11)
 
 ### Fixed

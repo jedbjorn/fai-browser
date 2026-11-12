@@ -29,7 +29,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { PACKAGE_ROOT } from './paths.js';
+import { INSTALLER_UPDATE_HINT, PACKAGE_ROOT, installedByInstaller } from './paths.js';
 import { scrubSecrets } from './secrets.js';
 import { UPDATE_REPO, claimUpdateLock, isCommitSha, parseTag, parseVersion, releaseUpdateLock, updatePaths, writeInstallState } from './update.js';
 import { findVerifiedRemote, gitRunner, remoteMatches, scrubbedEnv, toolEnv } from './update-git.js';
@@ -98,7 +98,8 @@ export async function preflight({ root, git, remoteOk = url => remoteMatches(url
   const top = await gitOrNull(git, ['rev-parse', '--show-toplevel']);
   if (!top || !samePath(top, root)) {
     throw new UpdateRefused('not_git', `${root} is not a git clone, so it cannot update itself.`,
-      'Update the way you installed it (npm install -g fai-browser@latest, or a fresh git clone).');
+      installedByInstaller(root) ? INSTALLER_UPDATE_HINT
+        : 'Update the way you installed it (npm install -g fai-browser@latest, or a fresh git clone).');
   }
   const branch = await gitOrNull(git, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
   const remote = await findVerifiedRemote({ git, branch, remoteOk });

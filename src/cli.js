@@ -39,6 +39,8 @@ const USAGE = `Usage (your agent chooses each action):
   fai-browser update [--check]    install the latest GitHub release into this checkout (--check: only look)
   fai-browser install --host claude|codex|opencode [--scope project|user] [--link] [--dry-run] [--force]
                       [--command-name] [--always-load]
+  fai-browser uninstall --host claude|codex|opencode|all
+                      undo the user-scope registration (MCP entry, skill, OpenCode plugin) that setup made
   fai-browser install-native [--browser chrome,brave,...] [--all] [--dry-run]
                       native messaging host for every detected browser (the extension pairs by itself)
   fai-browser uninstall-native    remove the native messaging host from every browser
@@ -61,8 +63,8 @@ Stdout is one JSON line. Exit codes for act: 0 completed|unverified|checkpoint,
 2 needs_user|needs_host|budget_exhausted|stopped, 1 failed. wait --until active: 0 active, 3 the request ended
 (released, expired, denied, cancelled or unknown), 2 timeout (still pending or paused), 130 interrupted, 1 error.
 Other commands: 0 success, 1 error.
-First run: npm run setup. Every command except install, install-native, guide and wait --until starts the daemon if it is
-not running.`;
+First run: npm run setup. Every command except install, uninstall, install-native, guide and wait --until starts the
+daemon if it is not running.`;
 
 class ConfigError extends Error {
   constructor(message, { code = 'config', who = 'host', hint, extra } = {}) {
@@ -950,6 +952,17 @@ async function main() {
     }
     if (command === 'install-native' || command === 'uninstall-native') {
       await emitLine(await commandNative(command, flags), pretty);
+      return 0;
+    }
+    if (command === 'uninstall') {
+      const { HOSTS, unregisterHost } = await import('./install.js');
+      const hosts = flags.host === 'all' ? HOSTS : [flags.host];
+      if (!flags.host || hosts.some(host => !HOSTS.includes(host))) {
+        throw new ConfigError(`uninstall needs --host ${[...HOSTS, 'all'].join('|')}`);
+      }
+      const results = [];
+      for (const host of hosts) results.push(await unregisterHost(host));
+      await emitLine({ uninstalled: results }, pretty);
       return 0;
     }
     applyDaemonPortFlag(flags);

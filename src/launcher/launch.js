@@ -102,7 +102,18 @@ export function defaultDeps(overrides = {}) {
         prompt.close();
       }
     },
-    spawnBrowser([program, ...args], { env: childEnv }) {
+    async spawnBrowser([program, ...args], { env: childEnv }) {
+      // Windows, output not a terminal (an agent or a pipe ran this): a plain spawn would hand Firefox every inheritable
+      // handle, the caller's pipe included, and the caller's command would not end until Firefox does. WMI starts it
+      // with none (src/breakaway.js). From a terminal or the Start menu the plain spawn keeps the window in front.
+      if (process.platform === 'win32' && !process.stdout.isTTY) {
+        try {
+          const { spawnOutsideJob } = await import('../breakaway.js');
+          return await spawnOutsideJob({ file: program, args, env: childEnv });
+        } catch {
+          // WMI refused: the plain spawn below.
+        }
+      }
       const child = spawn(program, args, { env: childEnv, detached: true, stdio: 'ignore' });
       child.on('error', () => {});
       child.unref();
@@ -286,6 +297,10 @@ export async function launch(options = {}, deps = defaultDeps()) {
   // A running FAI profile is left alone: no user.js or add-on file changes under a running Firefox, no second copy.
   if (profileInUse(paths.profile, { platform })) {
     out('FAI Browser is already open (the FAI profile is running); switch to its window.');
+    if (options.fromDesktop && platform === 'win32') {
+      await (deps.notify ?? notify)({ message: 'FAI Browser is already open: switch to its window (Firefox with the FAI profile).' },
+        { title: 'FAI Browser' });
+    }
     return { status: 'running', plan, firefox };
   }
 
@@ -312,7 +327,7 @@ export async function launch(options = {}, deps = defaultDeps()) {
 
   // 6. Start Firefox.
   const command = firefoxCommand({ binary: firefox.binary, profile: paths.profile, url });
-  const child = deps.spawnBrowser(command, { env });
+  const child = await deps.spawnBrowser(command, { env });
   out(`Started FAI Browser (Firefox, pid ${child.pid ?? '?'}).`);
 
   // 7. Pairing confirmation.
@@ -417,16 +432,29 @@ export async function main(command, argv, deps = defaultDeps()) {
     const known = error instanceof LaunchError || error instanceof AddonError || error instanceof DownloadError;
     process.stderr.write(`fai-browser ${command}: ${known ? error.message : error.stack ?? error}\n`);
     if (error.hint) process.stderr.write(`  ${error.hint}\n`);
-    if (options.fromDesktop) notify(error);
+    if (options.fromDesktop) await notify(error);
     return 1;
   }
 }
 
-// A desktop launch has no terminal: show the failure as a notification when notify-send exists.
-function notify(error) {
+// A desktop launch has no terminal: show the failure as a notification when notify-send exists. Windows: a message
+// box from PowerShell, started through WMI (src/breakaway.js): a detached PowerShell has no console and exits before
+// showing anything, and a child that is not detached dies with this process. The text goes in through the
+// environment, never the command line; a TopMost owner keeps the box above other windows.
+async function notify(error, { title = 'FAI Browser could not start' } = {}) {
+  const text = `${error.message}${error.hint ? `\n${error.hint}` : ''}`;
+  if (process.platform === 'win32') {
+    const powershell = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    await import('../breakaway.js').then(({ spawnOutsideJob }) => spawnOutsideJob({
+      file: powershell, outputFile: 'NUL', env: { ...process.env, FAI_NOTIFY_TEXT: text, FAI_NOTIFY_TITLE: title },
+      args: ['-NoProfile', '-NonInteractive', '-Command', 'Add-Type -AssemblyName System.Windows.Forms; '
+        + '$owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }; '
+        + "[void][System.Windows.Forms.MessageBox]::Show($owner, $env:FAI_NOTIFY_TEXT, $env:FAI_NOTIFY_TITLE, 'OK', 'Information')"],
+    })).catch(() => {});
+    return;
+  }
   try {
-    const child = spawn('notify-send', ['FAI Browser could not start', `${error.message}${error.hint ? `\n${error.hint}` : ''}`],
-      { stdio: 'ignore', detached: true });
+    const child = spawn('notify-send', [title, text], { stdio: 'ignore', detached: true });
     child.on('error', () => {});
     child.unref();
   } catch {

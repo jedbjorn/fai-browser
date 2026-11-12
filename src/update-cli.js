@@ -8,7 +8,7 @@
 // owns it.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PACKAGE_ROOT } from './paths.js';
+import { PACKAGE_ROOT, installedByInstaller } from './paths.js';
 import { homePaths, loadConfig } from './home.js';
 import { automaticCheck, isReleaseTag, readCheckState, readInstallState, runCheck, runningUpdate, underTest, updatePaths,
   updateView, writeInstallState } from './update.js';
@@ -92,7 +92,7 @@ export async function updateCommand(flags, { home, env: rawEnv = process.env, ..
   const fetchImpl = options.fetch ?? (test ? async () => { throw new Error('offline under test'); } : undefined);
   const gitSource = options.gitSource ?? (test || !installable ? null : gitReleaseSource({ root, env, remoteOk: options.remoteOk }));
   await runCheck({ paths, currentVersion: current, fetch: fetchImpl, force: true, gitSource });
-  const view = updateView({ paths, currentVersion: current, enabled, installable });
+  const view = updateView({ paths, currentVersion: current, enabled, installable, installer: installedByInstaller(root) });
   if (flags.check) return { value: { update: view }, exitCode: view.status === 'error' ? 1 : 0 };
 
   const running = runningUpdate(paths);

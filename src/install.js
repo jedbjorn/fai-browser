@@ -14,6 +14,7 @@ import { copyFile, mkdir, rename, rm, symlink, writeFile } from 'node:fs/promise
 import { homedir } from 'node:os';
 import { delimiter, dirname, join, relative, resolve } from 'node:path';
 import { PACKAGE_ROOT } from './paths.js';
+import { shellSafeInvocation } from './windows.js';
 
 export const HOSTS = ['claude', 'codex', 'opencode'];
 /** Display names, and the command each host installs on PATH. */
@@ -204,7 +205,9 @@ function planCodexConfig(path, block, force) {
   if (`${existing.join('\n')}\n` === block) {
     return { path, action: 'unchanged', content: text };
   }
-  if (!force) {
+  // FAI's own managed block (its marker line above the table) is replaced, so a new node or checkout path re-registers;
+  // a table someone wrote by hand needs --force.
+  if (!force && !table.managed) {
     throw new InstallError(`${path} already has [mcp_servers.${SERVER_NAME}]; rerun with --force to replace it`, {
       exitCode: 2,
       snippet: block,
@@ -543,7 +546,11 @@ export function detectHosts(options = {}) {
  * InstallError (with the snippet or command to run by hand) when it cannot.
  */
 export async function registerHost(host, { env = process.env, home = homedir(), cwd = process.cwd(), claudePath = 'claude',
-  run = (file, args) => execFileSync(file, args, { stdio: 'ignore', env }) } = {}) {
+  run = (file, args) => {
+    // An npm-installed Claude Code on Windows is claude.cmd, which needs cmd.exe (src/windows.js).
+    const call = shellSafeInvocation(file, args, { env });
+    return execFileSync(call.file, call.args, { stdio: 'ignore', env, windowsHide: true, ...call.options });
+  } } = {}) {
   const plan = planInstall({ host, scope: 'user', cwd, env, home });
   const writes = await applyPlan(plan);
   if (host === 'claude') {
@@ -587,4 +594,83 @@ export async function refreshUserSkills({ home = homedir() } = {}) {
     refreshed.push({ host: 'opencode', path: plugin, writes: writes.filter(write => write.action !== 'unchanged').length });
   }
   return refreshed;
+}
+
+/**
+ * Undo a user-scope registration (`fai-browser uninstall --host`): Claude Code's entry through `claude mcp remove`,
+ * the managed Codex block, the OpenCode entry and FAI's plugin, and each skill copy carrying FAI's version marker.
+ * A table or file FAI did not write is left alone and named in `kept`. Codex and OpenCode share ~/.agents/skills, so
+ * that copy goes with either. Resolves `{ host, removed, kept }`.
+ */
+export async function unregisterHost(host, { env = process.env, home = homedir(), claudePath = findOnPath('claude', { env }),
+  run = (file, args) => {
+    const call = shellSafeInvocation(file, args, { env });
+    return execFileSync(call.file, call.args, { stdio: 'ignore', env, windowsHide: true, ...call.options });
+  } } = {}) {
+  if (!HOSTS.includes(host)) throw new InstallError(`--host must be one of ${HOSTS.join(', ')}`);
+  const removed = [];
+  const kept = [];
+  const stamp = timestamp();
+  const dropSkill = async target => {
+    const info = lstatOrNull(target);
+    if (!info) return;
+    if (info.isDirectory() && SKILL_MARKER.test(readText(join(target, 'SKILL.md')) ?? '')) {
+      await rm(target, { recursive: true, force: true });
+      removed.push(target);
+    } else {
+      kept.push(target);
+    }
+  };
+  if (host === 'claude') {
+    if (claudePath) {
+      try {
+        run(claudePath, ['mcp', 'remove', '--scope', 'user', SERVER_NAME]);
+        removed.push(`claude mcp ${SERVER_NAME} (user scope)`);
+      } catch {
+        // Not registered.
+      }
+    } else if ((readText(join(home, '.claude.json')) ?? '').includes(`"${SERVER_NAME}"`)) {
+      kept.push(`claude mcp ${SERVER_NAME}: Claude Code not on PATH; run claude mcp remove --scope user ${SERVER_NAME}`);
+    }
+    await dropSkill(join(home, '.claude', 'skills', 'fai-browser'));
+  } else if (host === 'codex') {
+    const path = join(env.CODEX_HOME ? resolve(env.CODEX_HOME) : join(home, '.codex'), 'config.toml');
+    const text = readText(path);
+    const table = text === null ? null : findCodexTable(text);
+    if (table?.managed) {
+      const lines = [...table.lines.slice(0, table.start), ...table.lines.slice(table.end)];
+      while (lines.length > 1 && !lines.at(-1).trim() && !lines.at(-2).trim()) lines.pop();
+      await copyFile(path, `${path}.bak-${stamp}`);
+      await atomicWrite(path, lines.join('\n'));
+      removed.push(`${path} [mcp_servers.${SERVER_NAME}]`);
+    } else if (table) {
+      kept.push(`${path} [mcp_servers.${SERVER_NAME}] (not written by FAI)`);
+    }
+    await dropSkill(join(home, '.agents', 'skills', 'fai-browser'));
+  } else {
+    const path = join(home, '.config', 'opencode', 'opencode.json');
+    const text = readText(path);
+    let config = null;
+    try {
+      config = text === null ? null : JSON.parse(text);
+    } catch {
+      kept.push(`${path} (not plain JSON; remove mcp.${SERVER_NAME} by hand)`);
+    }
+    if (config?.mcp && Object.hasOwn(config.mcp, SERVER_NAME)) {
+      const { [SERVER_NAME]: _gone, ...rest } = config.mcp;
+      await copyFile(path, `${path}.bak-${stamp}`);
+      await atomicWrite(path, stableJson({ ...config, mcp: rest }));
+      removed.push(`${path} mcp.${SERVER_NAME}`);
+    }
+    const plugin = opencodePluginPath({ scope: 'user', home });
+    const info = lstatOrNull(plugin);
+    if (info?.isSymbolicLink() || (info?.isFile() && PLUGIN_MARKER.test(readText(plugin) ?? ''))) {
+      await rm(plugin, { force: true });
+      removed.push(plugin);
+    } else if (info) {
+      kept.push(plugin);
+    }
+    await dropSkill(join(home, '.agents', 'skills', 'fai-browser'));
+  }
+  return { host, removed, kept };
 }

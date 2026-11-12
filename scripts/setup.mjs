@@ -10,6 +10,8 @@
 //   npm run setup -- --yes                          register every detected coding agent without asking
 //   npm run setup -- --no-register                  skip coding-agent registration
 //   npm run setup -- --no-firefox                   skip the offer to set up the FAI Browser profile for Firefox
+//   npm run setup -- --download-firefox             with no usable Firefox, download Mozilla's without asking
+// On Windows only Firefox is set up (pairing, profile and add-on); the Chromium family is not supported there.
 //   npm run setup -- --extension-id <32 a-p chars> override the pinned ID (only for a re-keyed manifest)
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
@@ -17,7 +19,7 @@ import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { PINNED_EXTENSION_ID } from '../src/bridge.js';
 import { FaiBrowserClient } from '../src/client.js';
-import { PACKAGE_ROOT } from '../src/paths.js';
+import { PACKAGE_ROOT, installedByInstaller } from '../src/paths.js';
 import { homePaths, loadConfig } from '../src/home.js';
 import { readEnvFile, saveSettings } from '../src/settings.js';
 import { migrateLegacyHome } from '../src/migrate.js';
@@ -54,7 +56,7 @@ async function refreshService(paths) {
 }
 
 function nativeHost() {
-  const plan = planNativeInstall();
+  const plan = planNativeInstall(process.platform === 'win32' ? { only: ['firefox'] } : {});
   if (!plan.browsers.length) return { plan, written: null };
   return applyNativeInstall(plan).then(written => ({ plan, written }));
 }
@@ -66,6 +68,7 @@ async function main() {
       yes: { type: 'boolean', short: 'y' },
       'no-register': { type: 'boolean' },
       'no-firefox': { type: 'boolean' },
+      'download-firefox': { type: 'boolean' },
       // Removed with the Jev autopilot; kept only to explain that.
       driver: { type: 'string' },
     },
@@ -82,9 +85,12 @@ async function main() {
   if (!/^[a-p]{32}$/.test(extensionId)) {
     throw new Error('--extension-id must be the 32 character extension ID');
   }
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    throw new Error('Run setup in an interactive terminal');
+  if (!flags.yes && (!process.stdin.isTTY || !process.stdout.isTTY)) {
+    throw new Error('Run setup in an interactive terminal, or pass --yes');
   }
+  const windows = process.platform === 'win32';
+  // The Windows installer (scripts/install.ps1) puts a fai-browser command on PATH and marks its copy.
+  const cli = installedByInstaller() ? 'fai-browser' : 'node src/cli.js';
 
   const paths = homePaths();
   const migrated = await migrateLegacyHome(paths);
@@ -113,9 +119,9 @@ async function main() {
   } else {
     console.log(native.error
       ? `Could not install browser pairing (${native.error.message}).`
-      : 'No supported browser found for automatic pairing (Chrome, Chromium, Brave, Edge, Vivaldi, Firefox).');
-    console.log('  Install it for one by name: node src/cli.js install-native --browser chrome');
-    console.log('  Or pair by hand: node src/cli.js pair prints the secret for the extension\'s Advanced section.');
+      : `No supported browser found for automatic pairing (${windows ? 'Firefox' : 'Chrome, Chromium, Brave, Edge, Vivaldi, Firefox'}).`);
+    console.log(`  Install it for one by name: ${cli} install-native --browser ${windows ? 'firefox' : 'chrome'}`);
+    console.log(`  Or pair by hand: ${cli} pair prints the secret for the extension's Advanced section.`);
   }
   console.log((await refreshService(paths)).text);
 
@@ -138,16 +144,18 @@ async function main() {
   let launched = false;
   if (!flags['no-firefox']) {
     console.log('');
-    launched = await offerFirefoxProfile({ ask: question => ask(question, { yes: true }) }) === 'launched';
+    launched = await offerFirefoxProfile({ ask: question => (flags.yes ? true : ask(question, { yes: true })),
+      download: flags['download-firefox'] }) === 'launched';
   }
   const firefox = !launched && native.written?.browsers?.some(browser => browser.id === 'firefox');
   const steps = [
-    ...(launched ? ['FAI Browser (Firefox with the FAI profile) is open; start it again any time with node src/cli.js launch or from your applications menu.'] : []),
-    `${launched ? 'Chromium-family browsers (optional): ' : ''}Load the extension: open chrome://extensions (or brave://, edge://), turn on Developer mode, click Load unpacked and pick ${join(PACKAGE_ROOT, 'extension')}`,
-    ...(firefox ? [`Firefox instead: run npm run build:firefox, open about:debugging#/runtime/this-firefox, click Load Temporary Add-on and pick ${join(PACKAGE_ROOT, 'dist', 'firefox', 'manifest.json')} (gone at the next Firefox restart; README "Browsers" has the permanent options)`] : []),
+    ...(launched ? [`FAI Browser (Firefox with the FAI profile) is open; start it again any time with ${cli} launch or from your ${windows ? 'Start menu' : 'applications menu'}.`] : []),
+    ...(windows && !launched ? [`Set up FAI Browser (Firefox with the FAI profile): ${cli} launch --download`] : []),
+    ...(windows ? [] : [`${launched ? 'Chromium-family browsers (optional): ' : ''}Load the extension: open chrome://extensions (or brave://, edge://), turn on Developer mode, click Load unpacked and pick ${join(PACKAGE_ROOT, 'extension')}`]),
+    ...(firefox && !windows ? [`Firefox instead: run npm run build:firefox, open about:debugging#/runtime/this-firefox, click Load Temporary Add-on and pick ${join(PACKAGE_ROOT, 'dist', 'firefox', 'manifest.json')} (gone at the next Firefox restart; README "Browsers" has the permanent options)`] : []),
     'Pin FAI Browser: puzzle-piece menu, then the pin. You approve every agent request by clicking it.',
     agents.length ? `Restart ${agents.join(', ')} so it loads FAI Browser.`
-      : 'Connect your coding agent: node src/cli.js install --host claude|codex|opencode, then restart it.',
+      : `Connect your coding agent: ${cli} install --host claude --scope user (or codex, opencode), then restart it.`,
   ];
   console.log('\nNext:');
   steps.forEach((step, index) => console.log(`  ${index + 1}. ${step}`));

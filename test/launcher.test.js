@@ -197,12 +197,18 @@ test('policies.json for the private copy: force_installed from the file on disk'
     '/d/firefox/Firefox.app/Contents/Resources/distribution/policies.json');
 });
 
-test('profileInUse: the Linux lock symlink and a live pid', () => {
+test('profileInUse: the Linux lock symlink and a live pid, the Windows parent.lock held open', () => {
   const alive = pid => pid === 4242;
   assert.equal(profileInUse('/p', { platform: 'linux', readLink: () => '127.0.1.1:+4242', alive }), true);
   assert.equal(profileInUse('/p', { platform: 'linux', readLink: () => '127.0.1.1:+99', alive }), false);
   assert.equal(profileInUse('/p', { platform: 'linux', readLink: () => { throw new Error('ENOENT'); }, alive }), false);
   assert.equal(profileInUse('/p', { platform: 'darwin', readLink: () => '127.0.1.1:+4242', alive }), false);
+  const fail = code => () => { throw Object.assign(new Error(code), { code }); };
+  const opened = [];
+  assert.equal(profileInUse('C:\\p', { platform: 'win32', tryOpen: path => opened.push(path) }), false);
+  assert.deepEqual(opened, [join('C:\\p', 'parent.lock')]);
+  assert.equal(profileInUse('C:\\p', { platform: 'win32', tryOpen: fail('EBUSY') }), true);
+  assert.equal(profileInUse('C:\\p', { platform: 'win32', tryOpen: fail('ENOENT') }), false);
 });
 
 // --- Mozilla download ------------------------------------------------------------------------------------------------
@@ -602,4 +608,25 @@ test('setup\'s Firefox offer: asks when Firefox is there, else prints the launch
   const setup = await readFile(join(ROOT, 'scripts', 'setup.mjs'), 'utf8');
   assert.match(setup, /offerFirefoxProfile\(/);
   assert.match(setup, /'no-firefox'/);
+});
+
+test('setup\'s Firefox offer with download: no Firefox asks, then launches with download agreed', async () => {
+  const { OFFER_QUESTION, offerFirefoxProfile } = await import('../src/launcher/offer.js');
+  const calls = [];
+  const asked = [];
+  const lines = [];
+  const result = await offerFirefoxProfile({ find: () => ({ chosen: null, sandboxed: [] }), download: true,
+    log: line => lines.push(line), start: async options => { calls.push(options); },
+    ask: async question => { asked.push(question); return true; } });
+  assert.equal(result, 'launched');
+  assert.deepEqual(asked, [OFFER_QUESTION]);
+  assert.deepEqual(calls, [{ download: true }]);
+  assert.match(lines[0], /downloads official Firefox from Mozilla/);
+  const found = [];
+  await offerFirefoxProfile({ find: () => ({ chosen: { binary: 'C:\\Firefox\\firefox.exe' }, sandboxed: [] }), download: true,
+    log: () => {}, start: async options => { found.push(options); }, ask: async () => true });
+  assert.deepEqual(found, [{}]);
+  const setup = await readFile(join(ROOT, 'scripts', 'setup.mjs'), 'utf8');
+  assert.match(setup, /'download-firefox'/);
+  assert.match(setup, /process\.platform === 'win32' \? \{ only: \['firefox'\] \}/);
 });

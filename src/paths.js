@@ -9,6 +9,7 @@
 //   Windows:              settings in %APPDATA%\fai-browser, state in %LOCALAPPDATA%\fai-browser.
 // FAI_HOME puts everything in that one directory instead (tests, benchmarks, a second install). Under `node --test`
 // with no FAI_HOME, a per-user temporary directory stands in, so a test can never touch the real settings.
+import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -70,3 +71,13 @@ export function customHome(home, env = process.env, platform = process.platform)
 export function envFilePath(env = process.env) {
   return resolve(faiHome(env), '.env.local');
 }
+
+/**
+ * True when the Windows installer (scripts/install.ps1) put this copy in place: it writes this marker file. Such a copy
+ * updates by running the installer again, and hints name the `fai-browser` command it puts on PATH.
+ */
+export const INSTALLER_MARKER = '.fai-install';
+export function installedByInstaller(root = PACKAGE_ROOT) {
+  return existsSync(join(root, INSTALLER_MARKER));
+}
+export const INSTALLER_UPDATE_HINT = 'Run the FAI Browser install command again (README, Windows) to update.';

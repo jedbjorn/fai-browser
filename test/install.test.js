@@ -187,6 +187,15 @@ test('codex install appends one managed block, is idempotent and refuses a forei
   assert.match(text, /\[profiles\.x\]\na = 1/);
   assert.equal(text.match(/\[mcp_servers\.fai-browser\]/g).length, 1);
   assert.ok(read(join(home, '.agents', 'skills', 'fai-browser', 'SKILL.md')).length > 100);
+
+  // FAI's own managed block from an earlier node or checkout path is replaced without --force.
+  await writeFile(config, read(config).replace(`command = ${JSON.stringify(NODE)}`, 'command = "C:\\\\old\\\\node.exe"'));
+  assert.match(read(config), /old/);
+  const moved = install(['--host', 'codex']);
+  assert.equal(moved.code, 0, moved.stderr);
+  assert.doesNotMatch(read(config), /old\\\\node/);
+  assert.equal(read(config).match(/\[mcp_servers\.fai-browser\]/g).length, 1);
+  assert.equal(read(config).match(/# fai-browser \(managed/g).length, 1);
 });
 
 test('codex honours CODEX_HOME', async t => {
@@ -293,4 +302,38 @@ test('--dry-run lists writes without touching disk; --link symlinks the skill', 
   assert.ok(again.json.writes.every(write => write.action === 'unchanged'), 'a link to the source is left alone');
   const bad = install(['--host', 'cursor']);
   assert.equal(bad.code, 1);
+});
+
+test('uninstall --host undoes the user-scope registrations and leaves foreign entries alone', async t => {
+  const { home, install } = await sandbox(t);
+  await mkdir(join(home, '.codex'));
+  await writeFile(join(home, '.codex', 'config.toml'), 'model = "gpt-5"\n');
+  await mkdir(join(home, '.config', 'opencode'), { recursive: true });
+  await writeFile(join(home, '.config', 'opencode', 'opencode.json'), '{"theme":"dark"}\n');
+  assert.equal(install(['--host', 'codex', '--scope', 'user']).code, 0);
+  assert.equal(install(['--host', 'opencode', '--scope', 'user']).code, 0);
+  const { unregisterHost } = await import('../src/install.js');
+  const calls = [];
+  const run = (file, args) => calls.push([file, ...args]);
+  await mkdir(join(home, '.claude', 'skills', 'fai-browser'), { recursive: true });
+  await writeFile(join(home, '.claude', 'skills', 'fai-browser', 'SKILL.md'), 'mine, no marker\n');
+  const claude = await unregisterHost('claude', { home, env: {}, claudePath: '/bin/claude', run });
+  assert.deepEqual(calls, [['/bin/claude', 'mcp', 'remove', '--scope', 'user', 'fai-browser']]);
+  assert.deepEqual(claude.kept, [join(home, '.claude', 'skills', 'fai-browser')]);
+  const codex = await unregisterHost('codex', { home, env: {}, run });
+  assert.equal(read(join(home, '.codex', 'config.toml')), 'model = "gpt-5"\n');
+  assert.equal(codex.removed.length, 2);
+  assert.ok(!existsSync(join(home, '.agents', 'skills', 'fai-browser')));
+  assert.ok(backups(join(home, '.codex')).length >= 1);
+  const opencode = await unregisterHost('opencode', { home, env: {}, run });
+  assert.deepEqual(JSON.parse(read(join(home, '.config', 'opencode', 'opencode.json'))).mcp, {});
+  assert.ok(!existsSync(join(home, '.config', 'opencode', 'plugins', 'fai-browser.js')));
+  assert.equal(opencode.removed.length, 2);
+  // A hand-written Codex table is not FAI's to remove.
+  await writeFile(join(home, '.codex', 'config.toml'), '[mcp_servers.fai-browser]\ncommand = "mine"\n');
+  const foreign = await unregisterHost('codex', { home, env: {}, run });
+  assert.match(foreign.kept[0], /not written by FAI/);
+  assert.match(read(join(home, '.codex', 'config.toml')), /mine/);
+  // Nothing registered and no Claude Code on PATH: nothing to say.
+  assert.deepEqual(await unregisterHost('claude', { home, env: {}, claudePath: null, run }), { host: 'claude', removed: [], kept: [join(home, '.claude', 'skills', 'fai-browser')] });
 });

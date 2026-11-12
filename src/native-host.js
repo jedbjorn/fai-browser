@@ -15,7 +15,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { PACKAGE_ROOT } from './paths.js';
+import { PACKAGE_ROOT, installedByInstaller } from './paths.js';
 import { homePaths } from './home.js';
 import { PINNED_EXTENSION_ID } from './bridge.js';
 import { readEnvFile } from './settings.js';
@@ -61,6 +61,12 @@ export function decodeMessages(buffer) {
   return { messages, rest: buffer.subarray(offset) };
 }
 
+/** How to (re)run setup for this copy: the Windows installer's, or a checkout's. */
+function setupHint() {
+  return installedByInstaller() ? 'Run the FAI Browser install command again (README, Windows)'
+    : 'Run npm run setup in the fai-browser folder';
+}
+
 /**
  * Answer one request. `ensure` starts or finds the FAI service (src/client.js ensureDaemon); injected by tests.
  */
@@ -72,10 +78,11 @@ export async function handleMessage(message, { env = process.env, ensure } = {})
   let port;
   try {
     const ensureDaemon = ensure ?? (await import('./client.js')).ensureDaemon;
+    // On Windows ensureDaemon starts the service outside this helper's job, which Firefox kills when the helper exits.
     ({ port } = await ensureDaemon({ env, autoStart: true }));
   } catch (error) {
     return { ok: false, error: error?.code === 'port_in_use' ? 'port_in_use' : 'service_unavailable',
-      message: `The FAI service could not start. Run npm run setup in the fai-browser folder (log: ${paths.logFile}).` };
+      message: `The FAI service could not start. ${setupHint()} (log: ${paths.logFile}).` };
   }
   let secret;
   try {
@@ -85,7 +92,7 @@ export async function handleMessage(message, { env = process.env, ensure } = {})
     secret = null;
   }
   if (!secret) {
-    return { ok: false, error: 'not_set_up', message: 'No pairing secret yet. Run npm run setup in the fai-browser folder.' };
+    return { ok: false, error: 'not_set_up', message: `No pairing secret yet. ${setupHint()}.` };
   }
   return { ok: true, endpoint: `http://127.0.0.1:${port}`, secret, version: version() };
 }

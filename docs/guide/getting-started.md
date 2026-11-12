@@ -8,8 +8,8 @@ manual is [REFERENCE.md](../REFERENCE.md#one-time-setup).
 - Node 22 or newer.
 - Firefox 140+ (ESR or newer; the launcher can download it from Mozilla), or a Chromium-family browser 116+ (Chrome,
   Chromium, Brave, Edge, Vivaldi) from source.
-- Linux or macOS. Windows is not supported: setup is untested there and known not to work out of the box; try it at
-  your own risk.
+- Linux or macOS. On Windows (Firefox only), one PowerShell command installs everything, Node.js included: see
+  [install.md](install.md#windows).
 - A coding agent that speaks MCP: Claude Code, Codex or OpenCode (any MCP client works through the stdio server).
 
 No account and no API key: by default **your agent drives** and FAI makes no provider calls.

@@ -445,7 +445,7 @@ export async function runCheck({ paths, currentVersion, fetch: fetchImpl, now = 
  * error, install }`. `status`: never (no check yet), ok, not_found, error, rate_limited. `install`: the last
  * install's record, or null.
  */
-export function updateView({ paths, currentVersion, enabled = true, installable = true }) {
+export function updateView({ paths, currentVersion, enabled = true, installable = true, installer = false }) {
   const state = readCheckState(paths);
   const latest = state.latest;
   const available = Boolean(latest && isNewer(latest.version, currentVersion));
@@ -453,6 +453,8 @@ export function updateView({ paths, currentVersion, enabled = true, installable 
     enabled,
     // False when this package is not a git clone: the popup then says how to update by hand instead of a button.
     installable,
+    // True for a copy the Windows installer put in place: it updates by running the installer again.
+    installer,
     source: state.source,
     current: currentVersion,
     latest: latest?.version ?? null,
@@ -472,7 +474,7 @@ export function updateView({ paths, currentVersion, enabled = true, installable 
  */
 export function createUpdateChecker({ paths, currentVersion, enabled = () => true, fetch: fetchImpl, now = Date.now,
   log = () => {}, startupDelayMs = STARTUP_DELAY_MS, pollMs = POLL_MS, intervalMs = CHECK_INTERVAL_MS, gitSource = null,
-  installable = true } = {}) {
+  installable = true, installer = false } = {}) {
   let startTimer = null;
   let pollTimer = null;
   let pending = null;
@@ -521,7 +523,7 @@ export function createUpdateChecker({ paths, currentVersion, enabled = () => tru
       controller = new AbortController();
     },
     check,
-    view: () => updateView({ paths, currentVersion, enabled: enabled(), installable }),
+    view: () => updateView({ paths, currentVersion, enabled: enabled(), installable, installer }),
     get pending() {
       return pending;
     },

@@ -2487,7 +2487,8 @@ const UPDATE = { enabled: true, current: '0.3.0', latest: '0.9.0', tag: 'v0.9.0'
 test('update: the hello and the popup connect carry a cleaned update view; Update from the popup asks the service', async () => {
   const h = harness({ daemonUpdate: { ...UPDATE, notesUrl: 'https://evil.example/', extra: 'x' } });
   await h.until(() => h.session.connection?.update);
-  assert.deepEqual(h.session.connection.update, { current: '0.3.0', latest: '0.9.0', available: true, installable: true, notesUrl: null, install: null },
+  assert.deepEqual(h.session.connection.update, { current: '0.3.0', latest: '0.9.0', available: true, installable: true, installer: false,
+    notesUrl: null, install: null },
     'only versions, a notes link of the release itself, and the install');
   const page = await h.send({ type: 'update_install' }, { id: 'ext', url: ORIGIN });
   assert.match(page.error, /popup/);
