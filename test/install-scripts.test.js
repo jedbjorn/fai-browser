@@ -182,6 +182,8 @@ test('install.ps1 is ASCII, quotes its paths and never runs downloaded text', ()
   assert.doesNotMatch(source, /Invoke-Expression|\biex\b/i);
   assert.doesNotMatch(source, /http:\/\//, 'https only');
   assert.doesNotMatch(source, /-Verb\s+RunAs/i, 'no elevation of its own');
+  // Windows is unsupported: the script says so in its header and before anything else it prints.
+  assert.match(source, /^<#\nEXPERIMENTAL AND UNSUPPORTED\./);
   for (const text of [readFileSync(SH, 'utf8'), source]) {
     // Both installers pin the same repository and the same default directory name.
     assert.ok(text.includes('https://github.com/jedbjorn/fai-browser.git'));
@@ -193,6 +195,7 @@ test('install.ps1 -Check reports git and Node and changes nothing; an elevated w
   const dir = join(scratch(t), 'fai-browser');
   const run = ps(['-Check', '-Dir', dir]);
   assert.equal(run.status, 0, run.out);
+  assert.match(run.out, /^EXPERIMENTAL: Windows is unsupported by FAI Browser\./);
   assert.match(run.out, /git: +git version/);
   assert.match(run.out, new RegExp(`Node\\.js: v${process.versions.node.replaceAll('.', '\\.')}`));
   assert.match(run.out, /Clone FAI Browser at its latest release tag into/);

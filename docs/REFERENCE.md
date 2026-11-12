@@ -64,45 +64,40 @@ node examples/fake-demo.js   # in-memory bridge; observe, then act; prints a res
 
 ### Bootstrap installers
 
-For a machine without git or Node 22+: `scripts/install.sh` (macOS on Apple silicon and Intel, and Linux; POSIX `sh`, so
-macOS's bash 3.2 `/bin/sh` and dash run it) and `scripts/install.ps1` (Windows 10 and 11; Windows PowerShell 5.1 or
-PowerShell 7). Each one says what is present, what is missing and what it will do, then:
+For a Mac without git or Node 22+: `scripts/install.sh` (Apple silicon and Intel; POSIX `sh`, so macOS's bash 3.2
+`/bin/sh` runs it, and dash too). It says what is present, what is missing and what it will do, then:
 
-1. Installs a missing tool only after you say yes, from the platform's own source, over https, never by piping a
-   script into a shell:
-   - **macOS git:** Apple's Command Line Tools (`xcode-select --install` opens Apple's dialog; you click Install and the
-     installer waits until `xcode-select -p` answers, or press Enter when it has finished).
-   - **macOS Node:** `brew install node` when Homebrew is already installed; otherwise the universal `.pkg` of the
-     newest Node 24 release from `https://nodejs.org/dist/latest-v24.x/` (`FAI_NODE_LINE` picks another line), checked
-     against that directory's `SHASUMS256.txt` before `sudo installer` runs it (the one step that asks for your
-     password; it says so first). Homebrew itself is never installed for you. The checksum file comes from the same
-     server as the package, so it catches a broken download, not a compromised server.
-   - **Windows:** `winget install --id Git.Git` and `--id OpenJS.NodeJS.LTS` (`--exact --source winget`); their installers
-     may show Windows' permission prompt. Without winget it names the download pages and stops.
-   - **Linux:** nothing is installed for you (the package manager needs root); it prints the `apt-get`, `dnf`, `pacman` or
-     `zypper` command and stops.
+1. Installs a missing tool only after you say yes, from the platform's own source, over https, never by piping a script
+   into a shell:
+   - **git:** Apple's Command Line Tools (`xcode-select --install` opens Apple's dialog; you click Install and the
+     installer waits until `xcode-select -p` answers, or press Enter when it has finished). `/usr/bin/git` without the
+     Command Line Tools counts as missing: running it would only open that dialog.
+   - **Node:** `brew install node` when Homebrew is already installed; otherwise the universal `.pkg` of the newest Node
+     24 release from `https://nodejs.org/dist/latest-v24.x/` (`FAI_NODE_LINE` picks another line), checked against
+     that directory's `SHASUMS256.txt` before `sudo installer` runs it (the one step that asks for your password; it
+     says so first). Homebrew itself is never installed for you. The checksum file comes from the same server as the
+     package, so it catches a broken download, not a compromised server.
+   - **Linux:** nothing is installed for you (the package manager needs root); it prints the `apt-get`, `dnf`, `pacman`
+     or `zypper` command and stops.
 2. Clones `https://github.com/jedbjorn/fai-browser.git` at the latest release tag (GitHub's releases API, else the
-   highest `vX.Y.Z` from `git ls-remote`) into `~/fai-browser` (`%USERPROFILE%\fai-browser`), as a detached checkout of
-   the tag: the [updater](#updates) moves it to later releases. On Windows the clone keeps LF line endings
-   (`core.autocrlf false`). A directory that is already a clone of that repository is reused as it is; any other
-   non-empty directory stops the installer.
+   highest `vX.Y.Z` from `git ls-remote`) into `~/fai-browser`, as a detached checkout of the tag: the
+   [updater](#updates) moves it to later releases. A directory that is already a clone of that repository is reused as
+   it is; any other non-empty directory stops the installer.
 3. Runs setup (`node scripts/setup.mjs`, what `npm run setup` runs; with `--yes`, `setup --yes`). There is no `npm ci`:
    the runtime has no npm dependencies. Setup needs a terminal, so without one (a pipe, CI) the installer stops after
    the checkout and prints the command.
 
 Running it again is safe: it reuses the checkout and setup reloads the running service. It refuses to run as root
-(`sudo`) or from an administrator PowerShell window (FAI's local service would run with those rights). It never reads or
-prints the pairing secret.
+(`sudo`): FAI's local service would run with those rights. It never reads or prints the pairing secret.
 
-| `install.sh` | `install.ps1` | |
-|---|---|---|
-| `--yes` | `-Yes` | Answer yes to every question (and register every detected coding agent) |
-| `--check` | `-Check` | Report and plan only; change nothing |
-| `--dir DIR` | `-Dir DIR` | Install directory (default `$FAI_INSTALL_DIR`, else `~/fai-browser`) |
-| `--tag vX.Y.Z` | `-Tag vX.Y.Z` | That release instead of the latest (a new clone only) |
-| `--no-setup` | `-NoSetup` | Stop after the checkout |
-| `-- ARGS` | `-SetupArgs ARGS` | Arguments for setup, such as `--no-firefox` |
-| | `-AllowAdministrator` | Run from an elevated window (throwaway machines and CI only) |
+| Option | |
+|---|---|
+| `--yes` | Answer yes to every question (and register every detected coding agent) |
+| `--check` | Report and plan only; change nothing |
+| `--dir DIR` | Install directory (default `$FAI_INSTALL_DIR`, else `~/fai-browser`) |
+| `--tag vX.Y.Z` | That release instead of the latest (a new clone only) |
+| `--no-setup` | Stop after the checkout |
+| `-- ARGS` | Arguments for setup, such as `--no-firefox` |
 
 Get the script without git from a release tag, read it, then run it:
 
@@ -111,21 +106,16 @@ curl -fsSLo install-fai.sh https://raw.githubusercontent.com/jedbjorn/fai-browse
 less install-fai.sh && sh install-fai.sh
 ```
 
-```powershell
-Invoke-WebRequest -UseBasicParsing -OutFile install-fai.ps1 https://raw.githubusercontent.com/jedbjorn/fai-browser/<tag>/scripts/install.ps1
-notepad install-fai.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install-fai.ps1
-```
+CI runs it on GitHub's `macos-latest` runner (`.github/workflows/ci.yml`, job "Installer (macos-latest)"): check-only,
+a fresh clone of the latest release, a rerun that reuses it, and the full setup of the checkout through the installer,
+twice, under a pseudo-terminal against a private `FAI_HOME` and port. Installing git and Node themselves (the Command
+Line Tools dialog, the `.pkg`, `brew install`) has not run in CI.
 
-`-ExecutionPolicy Bypass` applies to that one PowerShell process (Windows' default policy refuses unsigned scripts); it
-changes no setting. CI runs both installers on GitHub's `macos-latest` and `windows-latest` runners
-(`.github/workflows/ci.yml`): check-only, a fresh clone of the latest release and a rerun, and on macOS the full setup
-of the checkout under a pseudo-terminal; on Windows, setup's steps through the CLI and, in the browserless suite,
-`test/platform-install.test.js` (the native host `.bat` started through cmd.exe as Chrome starts it, pairing over its
-stdio and starting the service; the HKCU registry values; registering through an npm `claude.cmd`). The installation
-of git and Node themselves (winget, the Command Line Tools, the `.pkg`) has not run in CI, and neither has a real
-browser on Windows. Not covered on Windows: [wakes](#invites-and-wakes), and whether Firefox, which runs a native host
-in a job object, lets a service the host started outlive it (setup and the MCP server start the service anyway).
+**Windows is unsupported; try at your own risk.** `scripts/install.ps1` is an experimental, unsupported counterpart
+(winget for `Git.Git` and `OpenJS.NodeJS.LTS`, a clone with LF line endings, setup; `-Check`, `-Yes`, `-Dir`, `-Tag`,
+`-NoSetup`, `-SetupArgs`; it refuses an administrator window unless `-AllowAdministrator`). CI runs it in Windows
+PowerShell 5.1 on `windows-latest` (check-only, a fresh clone, a rerun) and the browserless suite there with stated
+skips, but it has not worked end to end on a real Windows machine.
 
 ### Native messaging pairing
 
@@ -698,9 +688,8 @@ Loop stoppers: each `requestId` has a call budget (`maxCalls` act/observe calls 
 
 The user can bring a connected coding agent to a tab they already have open, and FAI wakes an idle agent when the user
 approves or resumes its tab. Claude Code, Codex and OpenCode (1.19 to 1.x, through FAI's plugin) can be woken; any
-other host gets the copy-text fallback. Wakes are not supported on Windows yet: they use Unix domain sockets (Claude
-Code's messaging socket, FAI's OpenCode plugin) and look for a `codex` program without an extension, and their tests
-are skipped on the Windows CI runner; an agent there keeps the wait command and the copy line.
+other host gets the copy-text fallback. (Windows is unsupported; wakes there would need more than Unix domain
+sockets and an extensionless `codex`, and their tests are skipped on the Windows CI runner.)
 
 **Agent sessions.** Every `fai-browser-mcp` process registers with the daemon right after `initialize` (it never starts
 the daemon: while none answers it retries every 2 to 30 s, and it registers again when a restarted daemon no longer

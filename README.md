@@ -134,8 +134,7 @@ extension acts only in the approved tab. See [ARCHITECTURE.md](ARCHITECTURE.md).
 ## Quickstart
 
 Requires Node 22+ and a Chromium-family browser 116+ (Chrome, Chromium, Brave, Edge, Vivaldi) or Firefox 140+, on
-Linux or macOS. Windows 10 and 11: the installer, the service and browser pairing are tested on GitHub's Windows
-runners, not yet with a real browser on a Windows desktop. See [Browsers](#browsers).
+Linux or macOS. See [Browsers](#browsers).
 
 **Try it without a key or browser:**
 
@@ -152,26 +151,19 @@ cd fai-browser
 npm run setup
 ```
 
-**No git or Node yet?** The installers check for git and Node 22+, install a missing one only after you say yes (macOS:
-Apple's Command Line Tools, Homebrew if you have it, else the official nodejs.org package checked against its
-SHA-256; Windows: winget), clone the latest release into `~/fai-browser` and run setup. Download one from a release
-tag, read it, then run it ([details](docs/REFERENCE.md#bootstrap-installers)):
+**macOS without git or Node yet?** The installer checks for git and Node 22+, installs a missing one only after you say
+yes (Apple's Command Line Tools for git; Homebrew if you have it, else the official nodejs.org package checked against
+its SHA-256), clones the latest release into `~/fai-browser` and runs setup. Download it from a release tag, read it,
+then run it ([details](docs/REFERENCE.md#bootstrap-installers)):
 
 ```sh
-# macOS (Linux too: it says what is missing; it installs nothing there)
 curl -fsSLo install-fai.sh https://raw.githubusercontent.com/jedbjorn/fai-browser/<tag>/scripts/install.sh
 less install-fai.sh && sh install-fai.sh
 ```
 
-```powershell
-# Windows 10/11, in a normal (not administrator) PowerShell window
-Invoke-WebRequest -UseBasicParsing -OutFile install-fai.ps1 https://raw.githubusercontent.com/jedbjorn/fai-browser/<tag>/scripts/install.ps1
-notepad install-fai.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File .\install-fai.ps1
-```
-
 `<tag>` is the newest release on the [Releases page](https://github.com/jedbjorn/fai-browser/releases) that has
-`scripts/install.sh` (the first release after 0.8.0). `--check` (`-Check`) only reports what is there and what it
-would do.
+`scripts/install.sh` (the first release after 0.8.0). `--check` only reports what is there and what it would do. On
+Linux it says what is missing and installs nothing.
 
 1. `npm run setup` saves its settings in `~/.config/fai-browser` (macOS: `~/Library/Application
    Support/fai-browser`), installs browser pairing for every browser it finds, starts the FAI service and asks

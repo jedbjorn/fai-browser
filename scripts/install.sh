@@ -97,7 +97,7 @@ ARCH="$(uname -m)"
 case "$OS" in
   Darwin) PLATFORM=macos ;;
   Linux) PLATFORM=linux ;;
-  *) die "this installer is for macOS and Linux; on Windows use scripts/install.ps1 (found $OS)" ;;
+  *) die "this installer is for macOS and Linux (found $OS; Windows is unsupported)" ;;
 esac
 
 # Ask a yes/no question; --yes answers yes, --check never gets here. Default yes on Enter.

@@ -1,4 +1,7 @@
 <#
+EXPERIMENTAL AND UNSUPPORTED. Windows is not a supported platform for FAI Browser: try at your own risk. This script
+has passed only on GitHub's Windows CI runner, never end to end on a real Windows machine.
+
 FAI Browser bootstrap installer for Windows 10 and 11 (Windows PowerShell 5.1 or PowerShell 7).
 
 It checks for git and Node.js 22 or newer, says what is present and what is missing, installs a missing one only
@@ -50,6 +53,8 @@ $NodeMin = 22
 $TagPattern = '^v(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$'
 
 function Say([string]$Text) { Write-Host $Text }
+
+Write-Host 'EXPERIMENTAL: Windows is unsupported by FAI Browser. This installer is untested on real Windows machines; use it at your own risk.' -ForegroundColor Yellow
 
 # Native commands run with ErrorActionPreference Continue: Windows PowerShell 5.1 turns a native program's stderr
 # into error records when its output is redirected, which 'Stop' would make fatal. Their exit code decides.

@@ -8,9 +8,8 @@ manual is [REFERENCE.md](../REFERENCE.md#one-time-setup).
 - Node 22 or newer.
 - Firefox 140+ (ESR or newer; the launcher can download it from Mozilla), or a Chromium-family browser 116+ (Chrome,
   Chromium, Brave, Edge, Vivaldi) from source.
-- Linux or macOS. Windows 10 and 11: the installer, the service and browser pairing are tested on GitHub's Windows
-  runners, not yet with a real browser on a Windows desktop.
-- git, to get the code (or the installer below, which installs git and Node for you).
+- Linux or macOS.
+- git, to get the code (on macOS the installer below installs git and Node for you).
 - A coding agent that speaks MCP: Claude Code, Codex or OpenCode (any MCP client works through the stdio server).
 
 No account and no API key: by default **your agent drives** and FAI makes no provider calls.
@@ -26,26 +25,19 @@ cd fai-browser
 npm run setup
 ```
 
-**No git or Node yet?** Use the installer for your system instead: it checks for both, installs what is missing only
-after you say yes, clones the latest release into `~/fai-browser` and runs `npm run setup` for you. Download it from a
+**macOS without git or Node yet?** Use the installer instead: it checks for both, installs what is missing only after
+you say yes, clones the latest release into `~/fai-browser` and runs `npm run setup` for you. Download it from a
 release tag, read it, then run it:
 
 ```sh
-# macOS (on Linux it says what is missing and installs nothing)
 curl -fsSLo install-fai.sh https://raw.githubusercontent.com/jedbjorn/fai-browser/<tag>/scripts/install.sh
 less install-fai.sh && sh install-fai.sh
 ```
 
-```powershell
-# Windows 10/11: a normal (not administrator) PowerShell window
-Invoke-WebRequest -UseBasicParsing -OutFile install-fai.ps1 https://raw.githubusercontent.com/jedbjorn/fai-browser/<tag>/scripts/install.ps1
-notepad install-fai.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install-fai.ps1
-```
-
-`<tag>` is the newest release on the [Releases page](https://github.com/jedbjorn/fai-browser/releases) (the installers
-ship from the first release after 0.8.0). Add `--check` (`-Check`) to see what it would do without changing anything.
-Where each tool comes from: [REFERENCE: Bootstrap installers](../REFERENCE.md#bootstrap-installers).
+`<tag>` is the newest release on the [Releases page](https://github.com/jedbjorn/fai-browser/releases) (the installer
+ships from the first release after 0.8.0). Add `--check` to see what it would do without changing anything. On Linux it
+says what is missing and installs nothing. Where each tool comes from:
+[REFERENCE: Bootstrap installers](../REFERENCE.md#bootstrap-installers).
 
 `npm run setup` is run by you, once:
 
