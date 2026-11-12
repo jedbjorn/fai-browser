@@ -130,8 +130,6 @@ jobs:
     defaults:
       run:
         shell: pwsh
-    env:
-      FAI_INSTALL_ROOT: ${{ runner.temp }}\fai install
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -140,6 +138,7 @@ jobs:
         run: |
           "FAI_HOME=$env:RUNNER_TEMP\fai home" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "FAI_DAEMON_PORT=47318" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "FAI_INSTALL_ROOT=$env:RUNNER_TEMP\fai install" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           git archive --format=zip -o "$env:RUNNER_TEMP\source.zip" HEAD
           if ($LASTEXITCODE -ne 0) { throw 'git archive failed' }
           "FAI_INSTALL_ZIP=$env:RUNNER_TEMP\source.zip" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
