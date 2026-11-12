@@ -74,6 +74,23 @@ jobs:
           echo "FAI_DAEMON_PORT=47318" >> "$GITHUB_ENV"
       - name: Check only
         run: sh scripts/install.sh --check
+      # The .pkg path's checks against the real package, without installing it: the SHA-256 from SHASUMS256.txt and
+      # Apple's signature check with the expected signer (pkgutil prints the chain).
+      - name: Node.js .pkg checksum and signature (no install)
+        run: |
+          set -eu
+          dist=https://nodejs.org/dist/latest-v24.x
+          work="$RUNNER_TEMP/node-pkg"
+          mkdir -p "$work"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$work/SHASUMS256.txt" "$dist/SHASUMS256.txt"
+          line="$(grep -E '^[0-9a-f]{64}  node-v24\.[0-9]+\.[0-9]+\.pkg$' "$work/SHASUMS256.txt" | head -n 1)"
+          name="${line##* }"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$work/$name" "$dist/$name"
+          test "$(shasum -a 256 "$work/$name" | cut -d ' ' -f 1)" = "${line%% *}"
+          sh scripts/install.sh --verify-node-pkg "$work/$name"
+          # An unsigned package is refused.
+          pkgbuild --nopayload --identifier org.example.unsigned --version 1 "$work/unsigned.pkg"
+          if sh scripts/install.sh --verify-node-pkg "$work/unsigned.pkg"; then echo 'an unsigned package passed'; exit 1; fi
       - name: Fresh clone of the latest release (setup waits for a terminal)
         run: |
           set -eu

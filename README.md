@@ -164,7 +164,9 @@ less install-fai.sh && sh install-fai.sh
 
 `<tag>` is the newest release on the [Releases page](https://github.com/jedbjorn/fai-browser/releases) that has
 `scripts/install.sh` (the first release after 0.8.0). `--check` only reports what is there and what it would do. On
-Linux it says what is missing and installs nothing.
+Linux it installs no git or Node (it prints the package command); with both present it clones and runs setup there too.
+Those git and Node install steps (the Command Line Tools dialog, `brew install node`, the `.pkg`) have not been
+exercised in CI yet: the CI runners already have both.
 
 1. `npm run setup` saves its settings in `~/.config/fai-browser` (macOS: `~/Library/Application
    Support/fai-browser`), installs browser pairing for every browser it finds, starts the FAI service and asks

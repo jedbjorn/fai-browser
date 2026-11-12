@@ -65,7 +65,9 @@ test('claude registration: add-json for a program, plain `mcp add` arguments for
     { file: 'C:\\bin\\claude.exe', args: ['mcp', 'list'], shell: false }]);
   // The command printed for a Windows user is plain `claude mcp add` lines, quoted for PowerShell and cmd alike.
   const printed = claudeAddCommandWindows(server);
-  assert.match(printed, /^claude mcp remove --scope user fai-browser\nclaude mcp add --scope user fai-browser -e "FAI_HOME=C:\\Users\\Ada Lovelace\\fai home" -- "C:\\Program Files\\nodejs\\node\.exe" "C:\\fai browser\\src\\mcp-main\.js"\n$/);
+  assert.match(printed, /^claude mcp remove --scope user fai-browser\nclaude mcp add --scope user fai-browser -e 'FAI_HOME=C:\\Users\\Ada Lovelace\\fai home' -- 'C:\\Program Files\\nodejs\\node\.exe' 'C:\\fai browser\\src\\mcp-main\.js'\n$/);
+  // PowerShell single quotes: nothing in them expands; a ' is doubled.
+  assert.match(claudeAddCommandWindows({ command: 'C:\\it\'s $HOME `x`\\node.exe', args: [] }), / -- 'C:\\it''s \$HOME `x`\\node\.exe'\n$/);
   const home = scratch(t);
   const windowsPlan = planInstall({ host: 'claude', scope: 'user', cwd: home, home, env, platform: 'win32' });
   assert.equal(windowsPlan.command, claudeAddCommandWindows(windowsPlan.server).trimEnd());

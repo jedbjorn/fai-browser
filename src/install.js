@@ -377,7 +377,7 @@ export function planInstall({ host, scope = 'project', link = false, force = fal
       // Windows terminals (PowerShell 5.1 drops the quotes inside a JSON argument): plain `claude mcp add` lines.
       plan.command = platform === 'win32' && !alwaysLoad ? claudeAddCommandWindows(server).trimEnd()
         : claudeAddCommand(server, loading);
-      plan.notes.push(`Register the MCP server for every project with: ${plan.command}`);
+      plan.notes.push(`Register the MCP server for every project with${platform === 'win32' && !alwaysLoad ? ' (in PowerShell)' : ''}: ${plan.command}`);
       skillTarget = join(home, '.claude', 'skills', 'fai-browser');
     }
   } else if (host === 'codex') {
@@ -582,9 +582,12 @@ export function claudeAddArgs({ command, args, env }) {
   return ['mcp', 'add', '--scope', 'user', SERVER_NAME, ...pairs, '--', command, ...args];
 }
 
-/** The two commands to run by hand in a Windows terminal (PowerShell or cmd). */
+/**
+ * The two commands to run by hand in PowerShell (Windows is unsupported). Values are single-quoted, so a pasted line
+ * expands no `$` or backtick (`'` doubled inside).
+ */
 export function claudeAddCommandWindows(server) {
-  const quote = value => (/^[\w@+=:,./\\-]+$/.test(value) ? value : `"${value}"`);
+  const quote = value => (/^[\w@+=:,./\\-]+$/.test(value) ? value : `'${String(value).replaceAll("'", "''")}'`);
   return `claude mcp remove --scope user ${SERVER_NAME}\nclaude ${claudeAddArgs(server).map(quote).join(' ')}\n`;
 }
 

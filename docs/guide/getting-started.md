@@ -37,8 +37,10 @@ less install-fai.sh && sh install-fai.sh
 
 `<tag>` is the newest release on the [Releases page](https://github.com/jedbjorn/fai-browser/releases) (the installer
 ships from the first release after 0.8.0). Add `--check` to see what it would do without changing anything. On Linux it
-says what is missing and installs nothing. Where each tool comes from:
-[REFERENCE: Bootstrap installers](../REFERENCE.md#bootstrap-installers).
+installs no git or Node (it prints the package command); with both present it clones and runs setup there too. Where
+each tool comes from: [REFERENCE: Bootstrap installers](../REFERENCE.md#bootstrap-installers).
+Those git and Node install steps (the Command Line Tools dialog, `brew install node`, the `.pkg`) have not been
+exercised in CI yet: the CI runners already have both.
 
 `npm run setup` is run by you, once:
 

@@ -82,6 +82,10 @@ test('install.sh refuses bad options with a readable message', { skip: POSIX_SKI
     assert.match(run.out, /FAI Browser install stopped: /);
     assert.match(run.out, said);
   }
+  // The Node.js .pkg signature check fails closed (no pkgutil on Linux; no such file on macOS).
+  const verify = sh(['--verify-node-pkg', '/nonexistent/node.pkg']);
+  assert.equal(verify.status, 1, verify.out);
+  assert.match(verify.out, /the signature check of \/nonexistent\/node\.pkg failed/);
   const help = sh(['--help']);
   assert.equal(help.status, 0);
   assert.match(help.out, /--check +check only/);
@@ -96,7 +100,8 @@ test('install.sh reuses a FAI Browser checkout twice without cloning; setup wait
     assert.match(run.out, /a checkout already at .* \(reused\)/);
     assert.match(run.out, /Using the existing checkout at /);
     assert.match(run.out, /Setup must run in a terminal/);
-    assert.ok(run.out.includes(`cd "${dir}" && npm run setup`), run.out);
+    // Exit 0 (the checkout is done), and the last line says plainly that setup did not run.
+    assert.equal(run.out.trim().split('\n').at(-1), `SETUP NOT RUN (no terminal). Run it yourself in a terminal: cd '${dir}' && npm run setup`);
     assert.doesNotMatch(run.out, /Cloning/);
   }
   const noSetup = sh(['--yes', '--no-setup', '--dir', dir]);
@@ -120,11 +125,88 @@ test('install.sh stops at a directory that is not a FAI Browser clone and leaves
   assert.match(forked.out, /exists and is not a FAI Browser checkout/);
 });
 
+// Review round 1 (PR #48): each of these failed on fc32596.
+
+test('install.sh accepts a tag of one line only: a second line is refused, not matched line by line', { skip: POSIX_SKIP }, t => {
+  const dir = join(scratch(t), 'fai-browser');
+  for (const tag of ['v0.8.0\nevil', 'v0.8.0\n', '\nv0.8.0', 'v0.8.0 ', 'V0.8.0', 'v0.8.0\r']) {
+    const run = sh(['--check', '--dir', dir, '--tag', tag]);
+    assert.equal(run.status, 1, `${JSON.stringify(tag)}: ${run.out}`);
+    assert.match(run.out, /--tag must be a release tag such as v0\.8\.0/);
+    assert.doesNotMatch(run.out, /Plan:/);
+  }
+  assert.equal(existsSync(dir), false);
+  // The checkout names the tag's commit, detached, with -- after it.
+  assert.match(readFileSync(SH, 'utf8'), /checkout --quiet --detach "refs\/tags\/\$TAG\^\{commit\}" --/);
+});
+
+test('install.sh reuses a checkout only when its origin is one line naming this repository', { skip: POSIX_SKIP }, t => {
+  const dir = fakeCheckout(join(scratch(t), 'two-line'));
+  git(dir, 'config', 'remote.origin.url', 'https://example.com/evil.git\nhttps://github.com/jedbjorn/fai-browser.git');
+  const url = spawnSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], { encoding: 'utf8' }).stdout;
+  assert.equal(url.trim().split('\n').length, 2, 'the fixture really has a two-line URL');
+  const run = sh(['--yes', '--dir', dir]);
+  assert.equal(run.status, 1, run.out);
+  assert.match(run.out, /exists and is not a FAI Browser checkout/);
+  assert.doesNotMatch(run.out, /reused|Using the existing checkout|SETUP/);
+});
+
+test('install.sh: FAI_NODE_LINE must be a Node major of 22 or newer', { skip: POSIX_SKIP }, t => {
+  const dir = join(scratch(t), 'fai-browser');
+  for (const line of ['abc', '20', '24; rm -rf x', '2.4', '-1']) {
+    const run = sh(['--check', '--dir', dir], { env: cleanEnv({ FAI_NODE_LINE: line }) });
+    assert.equal(run.status, 1, `${line}: ${run.out}`);
+    assert.match(run.out, /FAI_NODE_LINE must be/);
+  }
+  const ok = sh(['--check', '--dir', dir], { env: cleanEnv({ FAI_NODE_LINE: '26' }) });
+  assert.equal(ok.status, 0, ok.out);
+});
+
+test('install.sh: empty --tag= or --dir= is refused; without --yes it asks before it changes anything', { skip: POSIX_SKIP }, t => {
+  const base = scratch(t);
+  for (const [args, said] of [[['--check', '--tag=', '--dir', join(base, 'x')], /--tag must be a release tag/],
+    [['--check', '--tag', '', '--dir', join(base, 'x')], /--tag must be a release tag/],
+    [['--check', '--dir='], /--dir needs a directory, not an empty value/],
+    [['--check', '--dir', ''], /--dir needs a directory, not an empty value/]]) {
+    const run = sh(args);
+    assert.equal(run.status, 1, `${JSON.stringify(args)}: ${run.out}`);
+    assert.match(run.out, said);
+  }
+  assert.equal(existsSync(join(base, 'x')), false);
+  // A plain run (no --yes) with no terminal to ask in stops after the plan, before reusing or cloning anything.
+  const dir = fakeCheckout(join(base, 'checkout'));
+  const plain = sh(['--dir', dir]);
+  assert.equal(plain.status, 1, plain.out);
+  assert.match(plain.out, /Plan:/);
+  assert.match(plain.out, /Go ahead with this plan\? needs an answer, but there is no terminal to ask in/);
+  assert.doesNotMatch(plain.out, /Using the existing checkout|Cloning/);
+  const fresh = join(base, 'fresh');
+  const none = sh(['--dir', fresh]);
+  assert.equal(none.status, 1, none.out);
+  assert.equal(existsSync(fresh), false, 'nothing written without a yes');
+});
+
+test('install.sh prints cd hints single-quoted: a pasted line expands no $, backtick or quote', { skip: POSIX_SKIP }, t => {
+  const dir = fakeCheckout(join(scratch(t), "it's $HOME `id` dir"));
+  const run = sh(['--yes', '--dir', dir]);
+  assert.equal(run.status, 0, run.out);
+  const line = run.out.trim().split('\n').at(-1);
+  const quoted = /cd ('.*') && npm run setup$/.exec(line)?.[1];
+  assert.ok(quoted, line);
+  assert.equal(quoted, `'${dir.replaceAll("'", "'\\''")}'`);
+  // The shell reads it back as the exact directory.
+  const echoed = spawnSync('/bin/sh', ['-c', `printf %s ${quoted}`], { encoding: 'utf8' }).stdout;
+  assert.equal(echoed, dir);
+  const noSetup = sh(['--yes', '--no-setup', '--dir', dir]);
+  assert.ok(noSetup.out.includes(`Next: cd ${quoted} && npm run setup`), noSetup.out);
+});
+
 // A PATH with only the tools the script needs, a fake `node` and no git: what a fresh machine reports.
 function barePath(base, nodeVersion) {
   const bin = join(base, 'bin');
   mkdirSync(bin);
-  for (const tool of ['uname', 'id', 'sed', 'grep', 'ls', 'dirname', 'head', 'cut', 'sort', 'tail', 'mkdir', 'rm', 'mktemp', 'cat']) {
+  for (const tool of ['uname', 'id', 'sed', 'grep', 'ls', 'dirname', 'head', 'cut', 'sort', 'tail', 'mkdir', 'rm', 'mktemp', 'cat',
+    'date']) {
     const real = findOnPath(tool);
     if (real) symlinkSync(real, join(bin, tool));
   }
@@ -214,6 +296,12 @@ test('install.ps1 refuses bad options; -Help prints the usage', { skip: PS_SKIP 
   const bad = ps(['-Tag', 'main']);
   assert.equal(bad.status, 1, bad.out);
   assert.match(bad.out, /FAI Browser install stopped: -Tag must be a release tag such as v0\.8\.0, not 'main'/);
+  // Case-sensitive and anchored with \A...\z: a capital V or an empty value is no release tag.
+  for (const tag of ['V0.8.0', '']) {
+    const run = ps(['-Check', '-Tag', tag]);
+    assert.equal(run.status, 1, `${JSON.stringify(tag)}: ${run.out}`);
+    assert.match(run.out, /-Tag must be a release tag/);
+  }
   const help = ps(['-Help']);
   assert.equal(help.status, 0, help.out);
   assert.match(help.out, /-Check +check only/);

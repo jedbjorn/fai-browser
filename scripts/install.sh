@@ -13,11 +13,14 @@
 # Where missing tools come from (never a script piped into a shell, https only):
 #   macOS git:   the Xcode Command Line Tools (`xcode-select --install`: Apple's own dialog; you click Install).
 #   macOS Node:  Homebrew (`brew install node`) when Homebrew is already installed; otherwise the official installer
-#                package from nodejs.org, checked against nodejs.org's SHASUMS256.txt before it runs. The package
-#                installer needs administrator rights: `sudo` asks for your password and says why first.
+#                package from nodejs.org, checked against nodejs.org's SHASUMS256.txt and Apple's signature check
+#                (pkgutil: Developer ID Installer of the Node.js Foundation) before it runs. The package installer
+#                needs administrator rights: `sudo` asks for your password and says why first.
 #                Homebrew itself is never installed for you.
-#   Linux:       nothing is installed for you (your distribution's package manager needs root); the installer prints
-#                the command to run.
+#   Linux:       no git or Node is installed for you (your distribution's package manager needs root); the installer
+#                prints the command to run. With both present it clones and runs setup as on macOS.
+# These install steps (the Command Line Tools dialog, brew, the .pkg) have not been exercised in CI yet: the CI runners
+# already have git and Node.
 #
 # Options:
 #   --yes          answer yes to every question (unattended); also passed to setup (registers every coding agent found)
@@ -25,8 +28,12 @@
 #   --dir DIR      where the checkout goes (default: $FAI_INSTALL_DIR, else ~/fai-browser)
 #   --tag vX.Y.Z   install this release instead of the latest
 #   --no-setup     stop after the checkout; run `npm run setup` yourself later
+#   --verify-node-pkg FILE
+#                  check FILE's Apple signature the way the installer checks the Node.js .pkg, then exit
+#                  (installs nothing; for CI and for checking a download by hand)
 #   --help         this text
 #   -- ARGS        everything after -- goes to setup (for example: -- --no-firefox)
+# Without --yes it asks once, after printing the plan, before it changes anything.
 # The installer never reads or prints the pairing secret; setup writes it to your settings directory itself.
 
 set -eu
@@ -36,13 +43,19 @@ API_LATEST='https://api.github.com/repos/jedbjorn/fai-browser/releases/latest'
 NODE_MIN=22
 # The Node.js release line installed from nodejs.org when Node is missing (an LTS line CI tests on).
 NODE_LINE="${FAI_NODE_LINE:-24}"
-NODE_DIST="https://nodejs.org/dist/latest-v${NODE_LINE}.x"
+# The signer of the official macOS .pkg (pkgutil --check-signature, the first certificate of the chain).
+NODE_PKG_SIGNER='Developer ID Installer: Node.js Foundation (HX7739G8FX)'
 
 YES=0
 CHECK=0
 SETUP=1
 TAG=''
+TAG_SET=0
 DIR="${FAI_INSTALL_DIR:-}"
+DIR_SET=0
+VERIFY_PKG=''
+NL='
+'
 
 say() { printf '%s\n' "$*"; }
 warn() { printf '%s\n' "$*" >&2; }
@@ -56,15 +69,21 @@ usage() {
   sed -n '2,/^# The installer never/p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
 }
 
+# A value single-quoted for a POSIX shell, so a pasted line expands nothing ($, backticks, quotes).
+shq() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes|-y) YES=1 ;;
     --check|--dry-run) CHECK=1 ;;
     --no-setup) SETUP=0 ;;
-    --dir) [ $# -ge 2 ] || die '--dir needs a directory'; DIR="$2"; shift ;;
-    --dir=*) DIR="${1#--dir=}" ;;
-    --tag) [ $# -ge 2 ] || die '--tag needs a release tag such as v0.8.0'; TAG="$2"; shift ;;
-    --tag=*) TAG="${1#--tag=}" ;;
+    --dir) [ $# -ge 2 ] || die '--dir needs a directory'; DIR="$2"; DIR_SET=1; shift ;;
+    --dir=*) DIR="${1#--dir=}"; DIR_SET=1 ;;
+    --tag) [ $# -ge 2 ] || die '--tag needs a release tag such as v0.8.0'; TAG="$2"; TAG_SET=1; shift ;;
+    --tag=*) TAG="${1#--tag=}"; TAG_SET=1 ;;
+    --verify-node-pkg) [ $# -ge 2 ] || die '--verify-node-pkg needs a file'; VERIFY_PKG="$2"; shift ;;
     --help|-h) usage; exit 0 ;;
     --) shift; break ;;
     *) die "unknown option $1 (see --help)" ;;
@@ -72,12 +91,42 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# One line of v, digits and dots only (the case rejects a newline or anything else before grep, which matches by line).
 valid_tag() {
-  printf '%s' "$1" | grep -Eq '^v(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$'
+  case "$1" in
+    ''|*[!v0-9.]*) return 1 ;;
+  esac
+  printf '%s\n' "$1" | grep -Eq '^v(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$'
 }
 
-if [ -n "$TAG" ] && ! valid_tag "$TAG"; then
-  die "--tag must be a release tag such as v0.8.0, not '$TAG'"
+if [ "$TAG_SET" = 1 ] && ! valid_tag "$TAG"; then
+  die "--tag must be a release tag such as v0.8.0, not $(shq "$TAG")"
+fi
+if [ "$DIR_SET" = 1 ] && [ -z "$DIR" ]; then
+  die '--dir needs a directory, not an empty value'
+fi
+case "$NODE_LINE" in
+  ''|*[!0-9]*) die "FAI_NODE_LINE must be a Node.js major version such as 24, not $(shq "$NODE_LINE")" ;;
+esac
+[ "$NODE_LINE" -ge "$NODE_MIN" ] || die "FAI_NODE_LINE must be $NODE_MIN or newer (FAI Browser needs Node.js $NODE_MIN), not $NODE_LINE"
+NODE_DIST="https://nodejs.org/dist/latest-v${NODE_LINE}.x"
+
+# Apple's signature check of a Node.js .pkg: signed for distribution by Apple's Developer ID chain, the first
+# certificate the Node.js Foundation's installer certificate. Fails closed.
+verify_node_pkg() {
+  command -v pkgutil >/dev/null 2>&1 || { warn 'pkgutil is missing (it ships with macOS).'; return 1; }
+  sig="$(pkgutil --check-signature "$1" 2>&1)" || { warn "$sig"; warn "pkgutil found no valid signature on $1."; return 1; }
+  printf '%s\n' "$sig"
+  printf '%s\n' "$sig" | grep -Eq '^[[:space:]]*Status: signed by a (developer certificate issued by Apple for distribution|certificate trusted by)' \
+    || { warn "$1 is not signed for distribution by a certificate Apple issued."; return 1; }
+  first="$(printf '%s\n' "$sig" | sed -n 's/^[[:space:]]*1\. //p' | head -n 1)"
+  [ "$first" = "$NODE_PKG_SIGNER" ] || { warn "$1 is signed by '$first', not '$NODE_PKG_SIGNER'."; return 1; }
+}
+
+if [ -n "$VERIFY_PKG" ]; then
+  verify_node_pkg "$VERIFY_PKG" || die "the signature check of $VERIFY_PKG failed."
+  say "Signature OK: $NODE_PKG_SIGNER."
+  exit 0
 fi
 
 if [ "$(id -u)" = 0 ]; then
@@ -100,10 +149,16 @@ case "$OS" in
   *) die "this installer is for macOS and Linux (found $OS; Windows is unsupported)" ;;
 esac
 
-# Ask a yes/no question; --yes answers yes, --check never gets here. Default yes on Enter.
+# Ask a yes/no question; --yes answers yes, --check never gets here. Default yes on Enter. The answer to the plan
+# (AGREED) covers the steps it listed.
+AGREED=0
 confirm() {
   if [ "$YES" = 1 ]; then
     say "$1 [Y/n] yes (--yes)"
+    return 0
+  fi
+  if [ "$AGREED" = 1 ]; then
+    say "$1 yes (the plan above)"
     return 0
   fi
   if [ ! -t 0 ]; then
@@ -189,10 +244,16 @@ detect_checkout() {
     # Without git yet, the remote is checked once git is installed (this runs again before the clone).
     [ "$GIT_OK" = 1 ] || { CHECKOUT=ours; return 0; }
     url="$(git -C "$DIR" remote get-url origin 2>/dev/null || true)"
-    if printf '%s' "$url" | grep -Eiq '^(https://github\.com/|git@github\.com:|ssh://git@github\.com/)jedbjorn/fai-browser(\.git)?/?$'; then
-      CHECKOUT=ours
-      return 0
-    fi
+    # One line, matched exactly (grep matches line by line: a URL with a second line must not pass on that line).
+    case "$url" in
+      *"$NL"*|'') ;;
+      *)
+        if printf '%s\n' "$url" | grep -Eiq '^(https://github\.com/|git@github\.com:|ssh://git@github\.com/)jedbjorn/fai-browser(\.git)?/?$'; then
+          CHECKOUT=ours
+          return 0
+        fi
+        ;;
+    esac
   fi
   CHECKOUT=other
 }
@@ -235,7 +296,7 @@ if [ "$NODE_OK" = 0 ]; then
   if [ "$PLATFORM" = macos ] && [ -n "$BREW" ]; then
     plan "Install Node.js with Homebrew (brew install node)."
   elif [ "$PLATFORM" = macos ]; then
-    plan "Install Node.js $NODE_LINE LTS from the official nodejs.org package, checked against its SHASUMS256.txt (sudo installer asks for your password)."
+    plan "Install Node.js $NODE_LINE LTS from the official nodejs.org package, checked against its SHASUMS256.txt and Apple's signature check (sudo installer asks for your password)."
   else
     plan "Install Node.js $NODE_MIN or newer yourself (printed below)."
   fi
@@ -259,6 +320,10 @@ fi
 
 [ "$CHECKOUT" = other ] && die "$DIR exists and is not a FAI Browser checkout. Choose another directory with --dir."
 
+# One answer for the whole plan: nothing is written before it.
+confirm 'Go ahead with this plan?' || die 'nothing was changed.'
+AGREED=1
+
 # ---------------------------------------------------------------------------------------------------------------
 # Installing what is missing
 # ---------------------------------------------------------------------------------------------------------------
@@ -278,12 +343,13 @@ install_git_macos() {
   xcode-select --install >/dev/null 2>&1 || true
   say 'Apple'"'"'s dialog asks to install the Command Line Tools: click Install and accept the licence there.'
   say 'It downloads from Apple and can take several minutes. This installer waits for it.'
-  waited=0
+  started="$(date +%s)"
   while ! xcode-select -p >/dev/null 2>&1; do
+    if [ $(( $(date +%s) - started )) -ge 3600 ]; then
+      die 'the Command Line Tools did not finish within an hour. When Apple'"'"'s installer is done, run this installer again: it picks up where it stopped.'
+    fi
     if [ "$YES" = 1 ] || [ ! -t 0 ]; then
-      [ "$waited" -lt 3600 ] || die 'the Command Line Tools did not finish within an hour. Run this again when they have.'
       sleep 10
-      waited=$((waited + 10))
     else
       printf 'Press Enter when the Command Line Tools installation has finished (Ctrl-C to stop): '
       read -r _ || die 'stopped'
@@ -306,6 +372,7 @@ install_node_pkg() {
   command -v shasum >/dev/null 2>&1 || die 'shasum is missing (it ships with macOS).'
   work="$(mktemp -d "${TMPDIR:-/tmp}/fai-node.XXXXXX")" || die 'could not create a temporary directory'
   trap 'rm -rf "$work"' EXIT
+  trap 'rm -rf "$work"; exit 130' INT TERM
   say "Downloading $NODE_DIST/SHASUMS256.txt"
   curl --proto '=https' --tlsv1.2 -fsSL -o "$work/SHASUMS256.txt" "$NODE_DIST/SHASUMS256.txt" \
     || die "could not download $NODE_DIST/SHASUMS256.txt"
@@ -319,10 +386,16 @@ install_node_pkg() {
   got_sum="$(shasum -a 256 "$work/$pkg_name" | cut -d ' ' -f 1)"
   [ "$got_sum" = "$pkg_sum" ] || die "$pkg_name does not match its SHA-256 in SHASUMS256.txt (got $got_sum); nothing was installed."
   say "Checksum OK ($pkg_sum)."
+  verify_node_pkg "$work/$pkg_name" || die "$pkg_name failed Apple's signature check; nothing was installed."
+  say "Signature OK: $NODE_PKG_SIGNER."
   say 'The Node.js installer writes to /usr/local, so it needs administrator rights: sudo asks for your password now.'
-  sudo /usr/sbin/installer -pkg "$work/$pkg_name" -target / || die 'the Node.js installer failed (see its output above).'
+  installed=0
+  sudo /usr/sbin/installer -pkg "$work/$pkg_name" -target / && installed=1
+  # Forget the cached sudo credentials at once, whatever the installer did.
+  sudo -k
+  [ "$installed" = 1 ] || die 'the Node.js installer failed (see its output above).'
   rm -rf "$work"
-  trap - EXIT
+  trap - EXIT INT TERM
 }
 
 if [ "$GIT_OK" = 0 ]; then
@@ -383,7 +456,7 @@ if [ "$CHECKOUT" = none ]; then
   # A detached checkout of the release tag: the built-in updater (node src/cli.js update) moves it to later releases.
   git clone --quiet --no-checkout "$REPO_URL" "$DIR" \
     || die "git clone failed (see above). Nothing else was changed; run this again."
-  git -C "$DIR" -c advice.detachedHead=false checkout --quiet "refs/tags/$TAG" \
+  git -C "$DIR" -c advice.detachedHead=false checkout --quiet --detach "refs/tags/$TAG^{commit}" -- \
     || die "release $TAG is not in the repository (see above). Remove $DIR and run this again."
 else
   say "Using the existing checkout at $DIR ($(git -C "$DIR" describe --tags --always 2>/dev/null || echo unknown))."
@@ -399,14 +472,15 @@ cd "$DIR"
 
 if [ "$SETUP" = 0 ]; then
   say ''
-  say "Done (--no-setup). Next: cd \"$DIR\" && npm run setup"
+  say "Done (--no-setup). Next: cd $(shq "$DIR") && npm run setup"
   exit 0
 fi
 
 if [ ! -t 0 ] || [ ! -t 1 ]; then
+  # Exit 0 (the checkout is done), but the last line says plainly that setup did not run.
   say ''
-  say 'The checkout is ready. Setup must run in a terminal (it asks before it registers your coding agents):'
-  say "  cd \"$DIR\" && npm run setup"
+  say 'The checkout is ready. Setup must run in a terminal (it asks before it registers your coding agents).'
+  say "SETUP NOT RUN (no terminal). Run it yourself in a terminal: cd $(shq "$DIR") && npm run setup"
   exit 0
 fi
 
@@ -416,11 +490,11 @@ say ''
 # The arguments after -- go to setup as they are (argv, no shell). ${1+"$@"}: bash 3.2 (macOS /bin/sh) calls an empty
 # "$@" unbound under set -u.
 if [ "$YES" = 1 ]; then set -- --yes ${1+"$@"}; fi
-node scripts/setup.mjs ${1+"$@"} || die "setup failed (see above). Fix the cause and run: cd \"$DIR\" && npm run setup"
+node scripts/setup.mjs ${1+"$@"} || die "setup failed (see above). Fix the cause and run: cd $(shq "$DIR") && npm run setup"
 
 
 say ''
 say "FAI Browser is installed in $DIR."
 say '  Load the extension, pin its icon and restart your coding agent as listed above.'
-say "  Update later: cd \"$DIR\" && node src/cli.js update (or the Update button in the extension popup)."
+say "  Update later: cd $(shq "$DIR") && node src/cli.js update (or the Update button in the extension popup)."
 say '  Install again or repair: run this installer again; it reuses the checkout.'

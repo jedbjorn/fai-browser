@@ -74,21 +74,31 @@ For a Mac without git or Node 22+: `scripts/install.sh` (Apple silicon and Intel
      Command Line Tools counts as missing: running it would only open that dialog.
    - **Node:** `brew install node` when Homebrew is already installed; otherwise the universal `.pkg` of the newest Node
      24 release from `https://nodejs.org/dist/latest-v24.x/` (`FAI_NODE_LINE` picks another line), checked against
-     that directory's `SHASUMS256.txt` before `sudo installer` runs it (the one step that asks for your password; it
-     says so first). Homebrew itself is never installed for you. The checksum file comes from the same server as the
-     package, so it catches a broken download, not a compromised server.
-   - **Linux:** nothing is installed for you (the package manager needs root); it prints the `apt-get`, `dnf`, `pacman`
-     or `zypper` command and stops.
+     that directory's `SHASUMS256.txt` and by `pkgutil --check-signature` (signed for distribution by Apple's
+     Developer ID chain, the first certificate `Developer ID Installer: Node.js Foundation (HX7739G8FX)`; anything else
+     stops it) before `sudo installer` runs it (the one step that asks for your password; it says so first, and runs
+     `sudo -k` right after). Homebrew itself is never installed for you. `FAI_NODE_LINE` must be a major version of 22
+     or newer. `--verify-node-pkg FILE` runs only the signature check on a downloaded package.
+   - **Linux:** no git or Node is installed for you (the package manager needs root); it prints the `apt-get`, `dnf`,
+     `pacman` or `zypper` command and stops. With both present it clones and runs setup as on macOS.
+
+   These install steps (the dialog, `brew install node`, the `.pkg`) have not been exercised in CI yet: the runners
+   already have git and Node. CI runs the signature check on the real `.pkg` (`--verify-node-pkg`).
 2. Clones `https://github.com/jedbjorn/fai-browser.git` at the latest release tag (GitHub's releases API, else the
    highest `vX.Y.Z` from `git ls-remote`) into `~/fai-browser`, as a detached checkout of the tag: the
    [updater](#updates) moves it to later releases. A directory that is already a clone of that repository is reused as
    it is; any other non-empty directory stops the installer.
 3. Runs setup (`node scripts/setup.mjs`, what `npm run setup` runs; with `--yes`, `setup --yes`). There is no `npm ci`:
    the runtime has no npm dependencies. Setup needs a terminal, so without one (a pipe, CI) the installer stops after
-   the checkout and prints the command.
+   the checkout and exits 0, and its last line is `SETUP NOT RUN (no terminal). Run it yourself in a terminal: cd
+   '<dir>' && npm run setup`.
 
+Without `--yes` it asks once, after printing the plan, before it changes anything (no terminal to ask in: it stops).
 Running it again is safe: it reuses the checkout and setup reloads the running service. It refuses to run as root
-(`sudo`): FAI's local service would run with those rights. It never reads or prints the pairing secret.
+(`sudo`): FAI's local service would run with those rights. It never reads or prints the pairing secret. `--tag` must be
+one line of the form `vX.Y.Z` and `--dir` must not be empty. A reused checkout's `origin` must be one line naming this
+repository. Printed `cd` lines single-quote the directory, so pasting one expands nothing. The Command Line Tools wait
+ends after an hour with how to rerun.
 
 | Option | |
 |---|---|
@@ -98,6 +108,7 @@ Running it again is safe: it reuses the checkout and setup reloads the running s
 | `--tag vX.Y.Z` | That release instead of the latest (a new clone only) |
 | `--no-setup` | Stop after the checkout |
 | `-- ARGS` | Arguments for setup, such as `--no-firefox` |
+| `--verify-node-pkg FILE` | Only check FILE's Apple signature as the `.pkg` path does, then exit |
 
 Get the script without git from a release tag, read it, then run it:
 

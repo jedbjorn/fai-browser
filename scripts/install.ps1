@@ -50,7 +50,8 @@ $ErrorActionPreference = 'Stop'
 $RepoUrl = 'https://github.com/jedbjorn/fai-browser.git'
 $ApiLatest = 'https://api.github.com/repos/jedbjorn/fai-browser/releases/latest'
 $NodeMin = 22
-$TagPattern = '^v(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$'
+# \A and \z (not ^ and $, which allow a trailing newline), matched case-sensitively with -cmatch.
+$TagPattern = '\Av(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\z'
 
 function Say([string]$Text) { Write-Host $Text }
 
@@ -85,7 +86,7 @@ if ($Help) {
   exit 0
 }
 
-if ($Tag -and $Tag -notmatch $TagPattern) { Stop-Install "-Tag must be a release tag such as v0.8.0, not '$Tag'" }
+if ($PSBoundParameters.ContainsKey('Tag') -and $Tag -cnotmatch $TagPattern) { Stop-Install "-Tag must be a release tag such as v0.8.0, not '$Tag'" }
 
 # Windows PowerShell 5.1 may still default to TLS 1.0; GitHub and nodejs.org need 1.2.
 try {
@@ -274,20 +275,20 @@ function Get-LatestTag {
     $release = Invoke-RestMethod -Uri $ApiLatest -Headers @{ Accept = 'application/vnd.github+json' } -TimeoutSec 30 -ErrorAction Stop
     $found = [string]$release.tag_name
   } catch { }
-  if ($found -notmatch $TagPattern) {
+  if ($found -cnotmatch $TagPattern) {
     # No API answer (rate limit, proxy): the highest vX.Y.Z tag on the repository.
     $found = ''
     $refs = (Invoke-Native $git.Path @('ls-remote', '--tags', '--refs', $RepoUrl, 'v*') -Capture).Out
     $best = $null
     foreach ($line in $refs) {
-      if ([string]$line -match 'refs/tags/(v(\d+)\.(\d+)\.(\d+))$') {
+      if ([string]$line -cmatch 'refs/tags/(v(\d+)\.(\d+)\.(\d+))\z') {
         $version = [version]::new([int]$Matches[2], [int]$Matches[3], [int]$Matches[4])
         if (-not $best -or $version -gt $best.Version) { $best = @{ Tag = $Matches[1]; Version = $version } }
       }
     }
     if ($best) { $found = $best.Tag }
   }
-  if ($found -notmatch $TagPattern) {
+  if ($found -cnotmatch $TagPattern) {
     Stop-Install 'could not find the latest release of FAI Browser (network?). Pass -Tag vX.Y.Z to choose one.'
   }
   return $found
