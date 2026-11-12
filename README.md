@@ -134,7 +134,8 @@ extension acts only in the approved tab. See [ARCHITECTURE.md](ARCHITECTURE.md).
 ## Quickstart
 
 Requires Node 22+ and a Chromium-family browser 116+ (Chrome, Chromium, Brave, Edge, Vivaldi) or Firefox 140+, on
-Linux or macOS. See [Browsers](#browsers).
+Linux or macOS. **Windows is not supported:** setup is untested there and known not to work out of the box; try it at
+your own risk. See [Browsers](#browsers).
 
 **Try it without a key or browser:**
 
