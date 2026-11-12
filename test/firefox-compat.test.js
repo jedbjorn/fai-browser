@@ -275,7 +275,9 @@ test('native pairing finds an XDG-layout Firefox and still writes ~/.mozilla/nat
   await rm(join(home, '.config'), { recursive: true });
   await mkdir(join(custom, 'mozilla', 'firefox'), { recursive: true });
   const moved = planNativeInstall({ env: { ...env, XDG_CONFIG_HOME: custom }, platform: 'linux', home, execPath: '/n' });
-  assert.ok(moved.browsers.some(item => item.id === 'firefox'));
+  // XDG_CONFIG_HOME counts only as a POSIX absolute path; the temporary directory of a Windows run is C:\..., so the
+  // Linux plan made there ignores it (as Linux would).
+  if (process.platform !== 'win32') assert.ok(moved.browsers.some(item => item.id === 'firefox'));
   // Firefox starts the host with [manifest path, add-on ID].
   assert.equal(callerAllowed([firefox.path, GECKO_ID]), true);
   assert.equal(callerAllowed([firefox.path, GECKO_DEV_ID]), true, 'dev builds with the old ID still pair');

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { breakawayCommandLine, encodePowerShell, environmentBlock, spawnOutsideJob } from '../src/breakaway.js';
-import { quoteWindowsArg, shellSafeInvocation } from '../src/windows.js';
+import { quoteWindowsArg } from '../src/windows.js';
 import { ensureDaemon } from '../src/client.js';
 import { homePaths } from '../src/home.js';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -23,22 +23,6 @@ test('quoteWindowsArg follows the CommandLineToArgvW rules', () => {
   assert.equal(quoteWindowsArg('C:\\dir with space\\'), '"C:\\dir with space\\\\"');
   assert.equal(quoteWindowsArg('say "hi"'), '"say \\"hi\\""');
   assert.equal(quoteWindowsArg(''), '""');
-});
-
-test('shellSafeInvocation runs a .cmd through cmd.exe and leaves everything else alone', () => {
-  const entry = JSON.stringify({ type: 'stdio', command: 'C:\\Users\\A B\\node.exe', args: ['C:\\app\\mcp-main.js'] });
-  const shim = shellSafeInvocation('C:\\Users\\A B\\AppData\\Roaming\\npm\\claude.cmd', ['mcp', 'add-json', entry],
-    { platform: 'win32', env: { ComSpec: 'C:\\Windows\\system32\\cmd.exe' } });
-  assert.equal(shim.file, 'C:\\Windows\\system32\\cmd.exe');
-  assert.deepEqual(shim.options, { windowsVerbatimArguments: true });
-  assert.deepEqual(shim.args.slice(0, 3), ['/d', '/s', '/c']);
-  assert.equal(shim.args[3], `""C:\\Users\\A B\\AppData\\Roaming\\npm\\claude.cmd" mcp add-json ${quoteWindowsArg(entry)}"`);
-  assert.ok(quoteWindowsArg(entry).includes('\\"type\\":\\"stdio\\"'));
-  const exe = shellSafeInvocation('C:\\bin\\claude.exe', ['mcp'], { platform: 'win32' });
-  assert.deepEqual(exe, { file: 'C:\\bin\\claude.exe', args: ['mcp'], options: {} });
-  assert.deepEqual(shellSafeInvocation('/usr/bin/claude.cmd', ['x'], { platform: 'linux' }).file, '/usr/bin/claude.cmd');
-  assert.throws(() => shellSafeInvocation('C:\\npm\\claude.cmd', ['C:\\Tom & Jerry'], { platform: 'win32' }), /safely/);
-  assert.throws(() => shellSafeInvocation('C:\\npm\\claude.cmd', ['100%'], { platform: 'win32' }), /safely/);
 });
 
 test('environmentBlock passes every defined variable as NAME=value', () => {

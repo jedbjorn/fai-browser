@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { validateTask, recoveryDecision, recoveryPrompt, segmentEvidence, aggregateSegments, pilotArgs } from '../bench/lib/pilot-recovery.mjs';
 import { runPilotProcess } from '../bench/lib/pilot-process.mjs';
+import { POSIX_GROUPS } from './helpers/platform.js';
 const task = { model: 'gpt-6-astra', provider: 'openai', prompt: 'Inspect only. At most 40 FAI calls.', maxCalls: 40,
   open: { origins: ['https://example.com'], allowedUrls: ['https://example.com/search'], mode: 'interactive', reason: 'Compare', task: 'Compare, never purchase' } };
 const receipt = text => ({ type: 'item.completed', item: { id: 't1', type: 'mcp_tool_call', tool: 'fai_browser_act', result: { content: [{ type: 'text', text }] } } });
@@ -60,8 +63,8 @@ test('separate host usage sums only complete counters, optional zeros remain exp
   assert.equal(aggregateSegments([segment, { ...segment, cancelled: true }]).inputTokens, null);
 });
 
-test('Ctrl-C cancellation saves completed event evidence without repeating the fake operation', async () => {
-  const dir = await mkdtemp('/tmp/fai-recovery-test-');
+test('Ctrl-C cancellation saves completed event evidence without repeating the fake operation', { skip: POSIX_GROUPS }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'fai-recovery-test-'));
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 350);
@@ -74,12 +77,12 @@ test('Ctrl-C cancellation saves completed event evidence without repeating the f
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-test('pre-cancelled execution never spawns and timeout cannot be resumed', async () => {
+test('pre-cancelled execution never spawns and timeout cannot be resumed', { skip: POSIX_GROUPS }, async () => {
   const controller = new AbortController(); controller.abort();
   const pre = await runPilotProcess({ command: '/does-not-exist', args: [], prompt: '', dir: '/does-not-exist', timeoutMs: 10, signal: controller.signal });
   assert.equal(pre.wallMs, 0);
   assert.equal(pre.spawnError, null);
-  const dir = await mkdtemp('/tmp/fai-recovery-timeout-');
+  const dir = await mkdtemp(join(tmpdir(), 'fai-recovery-timeout-'));
   try {
     const timed = await runPilotProcess({ command: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], prompt: '', dir, timeoutMs: 100 });
     assert.equal(timed.timedOut, true);

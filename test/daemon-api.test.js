@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDaemon } from '../src/daemon.js';
@@ -10,10 +10,13 @@ import { ORIGIN } from './runtime-fixtures.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 
 const KEY = 'leftover-key-must-not-be-logged-9137';
+// File modes are POSIX: on Windows a file's access comes from the user profile's ACL and stat reports 0o666.
+const POSIX_MODES = process.platform !== 'win32';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function setup(t, options = {}) {
-  const home = await mkdtemp(join(tmpdir(), 'fai-daemon-api-'));
+  // realpath: macOS's tmpdir is a symlink (/var -> /private/var), and evidence paths are real paths.
+  const home = await realpath(await mkdtemp(join(tmpdir(), 'fai-daemon-api-')));
   if (options.config) await writeFile(join(home, 'config.json'), JSON.stringify(options.config));
   const hub = createFakeHub({ bridgeOptions: options.bridgeOptions });
   const env = { ...options.env };
@@ -511,7 +514,7 @@ test('the log carries routes and states but never the key, secret, token or supp
   for (const forbidden of [KEY, secret, ctx.daemon.token, 'supplied-secret-value-4411', 'Profile form', 'wrong-token']) {
     assert.ok(!log.includes(forbidden), `log contains ${forbidden.slice(0, 6)}...`);
   }
-  assert.equal((await stat(ctx.logFile)).mode & 0o777, 0o600);
+  if (POSIX_MODES) assert.equal((await stat(ctx.logFile)).mode & 0o777, 0o600);
 });
 
 test('reload re-reads settings and config; shutdown is requested over the API', async t => {

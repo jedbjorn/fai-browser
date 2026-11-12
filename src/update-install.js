@@ -27,7 +27,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { appendFile, mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, posix, win32 } from 'node:path';
 import { promisify } from 'node:util';
 import { INSTALLER_UPDATE_HINT, PACKAGE_ROOT, installedByInstaller } from './paths.js';
 import { scrubSecrets } from './secrets.js';
@@ -82,9 +82,10 @@ async function gitOrNull(git, args) {
   }
 }
 
+// realpathSync.native also expands Windows 8.3 short names (C:\Users\RUNNER~1), which git never prints.
 function samePath(a, b) {
   try {
-    return realpathSync(a) === realpathSync(b);
+    return realpathSync.native(a) === realpathSync.native(b);
   } catch {
     return false;
   }
@@ -188,10 +189,19 @@ export function firstLine(error) {
   return scrubSecrets(text.replace(/\/\/[^/@\s]+@/g, '//[redacted]@')).slice(0, 200);
 }
 
-/** `npm` next to the running node, else on PATH. */
-export function npmCommand(execPath = process.execPath) {
-  const sibling = join(dirname(execPath), process.platform === 'win32' ? 'npm.cmd' : 'npm');
-  return existsSync(sibling) ? sibling : 'npm';
+/**
+ * How to run npm: `{ file, args, shell }` (args go before npm's own). POSIX: `npm` next to the running node, else on
+ * PATH. Windows: npm is a batch file there, which Node refuses to start without a shell (CVE-2024-27980), so it runs
+ * npm's own `npm-cli.js` with this node (the Node.js installer puts it in node_modules\npm next to node.exe); only
+ * without one does it fall back to `npm` through cmd.exe (`shell`), with constant arguments.
+ */
+export function npmCommand(execPath = process.execPath, { platform = process.platform, exists = existsSync } = {}) {
+  if (platform === 'win32') {
+    const cli = win32.join(win32.dirname(execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    return exists(cli) ? { file: execPath, args: [cli], shell: false } : { file: 'npm', args: [], shell: true };
+  }
+  const sibling = posix.join(posix.dirname(execPath), 'npm');
+  return { file: exists(sibling) ? sibling : 'npm', args: [], shell: false };
 }
 
 /**
@@ -204,8 +214,9 @@ export function defaultSteps({ root = PACKAGE_ROOT, env = process.env, home, exe
   return {
     env: { child, tool },
     async npmCi() {
-      await execFileAsync(npmCommand(execPath), ['ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'],
-        { cwd: root, env: tool, timeout: NPM_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+      const npm = npmCommand(execPath);
+      await execFileAsync(npm.file, [...npm.args, 'ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'],
+        { cwd: root, env: tool, timeout: NPM_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, windowsHide: true, shell: npm.shell });
     },
     // The refresh steps of the version now on disk, in a fresh process, so the new code does them.
     async finish() {

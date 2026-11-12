@@ -17,8 +17,12 @@
 # Run it again to update. Remove everything with:
 #   powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\fai-browser\uninstall.ps1"
 #
-# Overrides (environment variables): FAI_INSTALL_REF (a release tag such as v0.8.0, or a branch), FAI_INSTALL_ZIP (a
-# local source zip instead of a download), FAI_INSTALL_NO_SETUP=1 (install files only), FAI_INSTALL_ROOT.
+# Run it in a normal PowerShell window: an elevated one ("Run as administrator") is refused, since FAI's local service
+# would then run with administrator rights.
+#
+# Overrides (environment variables): FAI_INSTALL_REF (a release tag from v0.9.0 on, or a branch), FAI_INSTALL_ZIP (a
+# local source zip instead of a download), FAI_INSTALL_NO_SETUP=1 (install files only), FAI_INSTALL_ROOT,
+# FAI_INSTALL_ALLOW_ADMIN=1 (run elevated anyway; for throwaway machines and CI only).
 & {
   $ErrorActionPreference = 'Stop'
   $ProgressPreference = 'SilentlyContinue'
@@ -131,6 +135,11 @@
   try {
     if ([Environment]::OSVersion.Platform -ne 'Win32NT') { throw 'This installer is for Windows. On Linux and macOS see the README.' }
     if (-not [Environment]::Is64BitOperatingSystem) { throw 'FAI Browser needs 64-bit Windows.' }
+    $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+    if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -and $env:FAI_INSTALL_ALLOW_ADMIN -ne '1') {
+      throw ("this PowerShell window runs as administrator. Open a normal PowerShell window (not 'Run as administrator') " +
+        'and run the command there: FAI Browser installs for your user, and its local service must not run with administrator rights.')
+    }
     $root = if ($env:FAI_INSTALL_ROOT) { $env:FAI_INSTALL_ROOT } else { Join-Path $env:LOCALAPPDATA 'fai-browser' }
     New-Item -ItemType Directory -Force $root | Out-Null
 

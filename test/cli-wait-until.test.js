@@ -242,7 +242,9 @@ test('a daemon that never answers is retried until the timeout, then exits 2', a
   assert.ok(run.ms < 6000, `exited after ${run.ms} ms`);
 });
 
-test('SIGTERM ends the wait with one line, state interrupted and exit 130', async t => {
+test('SIGTERM ends the wait with one line, state interrupted and exit 130', {
+  skip: process.platform === 'win32' ? 'Windows has no SIGTERM: kill() ends the process at once, so no handler runs' : false,
+}, async t => {
   const { stub, cli } = await stubbed(t);
   const requestId = addRequest(stub, 'paused', 'paused');
   let child;
@@ -337,14 +339,16 @@ test('against the real daemon: a paused lease, then Resume (a new lease for the 
 // The next texts that name the command.
 
 test('resumeWaitCommand: absolute node and CLI paths, daemon location variables carried, never the client token', () => {
+  // The command is for a POSIX shell (Claude Code's Bash, also Git Bash on Windows): a Windows path is single-quoted.
+  const cli = /^[\w@%+=:,./-]+$/.test(CLI_PATH) ? CLI_PATH : `'${CLI_PATH}'`;
   const plain = resumeWaitCommand('req_abc', { env: {}, execPath: '/usr/bin/node' });
-  assert.equal(plain, `/usr/bin/node ${CLI_PATH} wait req_abc --until active --timeout 30m`);
+  assert.equal(plain, `/usr/bin/node ${cli} wait req_abc --until active --timeout 30m`);
   assert.ok(CLI_PATH.endsWith(join('src', 'cli.js')) && resolve(CLI_PATH) === CLI_PATH);
   const carried = resumeWaitCommand('req_abc', {
     env: { FAI_HOME: '/tmp/my home', FAI_DAEMON_PORT: '4400', FAI_CLIENT_TOKEN: 'never-in-a-command', OTHER: 'x' },
     execPath: '/opt/node 24/bin/node',
   });
-  assert.equal(carried, `FAI_HOME='/tmp/my home' FAI_DAEMON_PORT=4400 '/opt/node 24/bin/node' ${CLI_PATH} wait `
+  assert.equal(carried, `FAI_HOME='/tmp/my home' FAI_DAEMON_PORT=4400 '/opt/node 24/bin/node' ${cli} wait `
     + 'req_abc --until active --timeout 30m');
   assert.doesNotMatch(carried, /never-in-a-command|CLIENT_TOKEN|OTHER/);
   // Only a daemon-issued id goes into a command.

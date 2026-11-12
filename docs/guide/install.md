@@ -15,8 +15,11 @@ macOS. On Windows, [one command](#windows) installs path 1 with everything it ne
 ```sh
 git clone https://github.com/jedbjorn/fai-browser
 cd fai-browser
-npm ci
 ```
+
+No git or Node yet on macOS: `scripts/install.sh` checks for both, installs what is missing after you say yes, clones
+the latest release and runs setup
+([getting started](getting-started.md#1-install), [REFERENCE](../REFERENCE.md#bootstrap-installers)).
 
 ## 1. Download FAI Browser
 
