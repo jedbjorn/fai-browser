@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
 import { headlessEnv } from '../scripts/headless-env.mjs';
-import { agentLabel, joinLine, wakeLine } from '../extension/invite-card.js';
+import { agentLabel, joinLine, wakeLine, WAKE_REASON_TEXT } from '../extension/invite-card.js';
+import { WAKE_REASONS } from '../src/wake.js';
 
 const EXTENSION = new URL('../extension/', import.meta.url);
 const CLAUDE = { sessionId: 'ses_1', host: 'claude', repo: 'fai-browser', lastActiveAt: new Date().toISOString(), wake: 'claude-socket', ready: true };
@@ -104,6 +105,22 @@ test('popup: one live session is one tap; Use explicitly grants read-only and th
   assert.match(await page.textContent('#invite .invite-line'), /^Sent to Claude Code · fai-browser\. It should start in a moment\.$/);
   assert.match(await page.textContent('#invite .invite-copy-text'), /^If it does not start, tell it: join FAI invite inv-abcd2345$/,
     'sent is not received: the copy line stays, softly');
+});
+
+test('popup: every wake reason uses its fixed sentence, even before the first FAI call', async t => {
+  assert.deepEqual(Object.keys(WAKE_REASON_TEXT), WAKE_REASONS);
+  const sessions = WAKE_REASONS.map((wakeReason, index) => ({ ...CODEX, sessionId: `ses_${index}`, wakeReason }));
+  const page = await popup(t, { sessions });
+  await page.waitForSelector('#invite .invite-agent');
+  const rows = await page.locator('#invite .invite-row').allTextContents();
+  WAKE_REASONS.forEach((reason, index) => assert.ok(rows[index].includes(WAKE_REASON_TEXT[reason]), reason));
+});
+
+test('popup: an unknown wake reason never becomes displayed host text', async t => {
+  const page = await popup(t, { sessions: [{ ...CLAUDE, wake: 'none', wakeReason: '<private-token>secret</private-token>' }] });
+  await page.waitForSelector('#invite .invite-agent');
+  assert.match(await page.textContent('#invite .invite-row'), /you paste a line/);
+  assert.ok(!(await page.textContent('#invite')).includes('private-token'));
 });
 
 test('popup: several sessions are a one-tap list; Act approves directly; a failed wake shows the copy line', async t => {

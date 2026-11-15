@@ -21,6 +21,9 @@ import { accessSync, constants as fsConstants } from 'node:fs';
 import { basename, delimiter, isAbsolute, join } from 'node:path';
 
 export const WAKE_CAPABILITIES = Object.freeze(['claude-socket', 'codex-queue', 'opencode-plugin', 'none']);
+export const WAKE_REASONS = Object.freeze(['ok', 'wakes_off', 'claude_no_messaging', 'claude_channel_unbound',
+  'codex_not_found', 'codex_no_thread', 'codex_no_queue', 'opencode_no_plugin', 'opencode_version',
+  'opencode_channel_unbound', 'unknown_host']);
 export const HOSTS = Object.freeze(['claude', 'codex', 'opencode', 'unknown']);
 export const SOCKET_TIMEOUT_MS = 3_000;
 export const CODEX_TIMEOUT_MS = 15_000;
@@ -398,6 +401,31 @@ export function wakeCapability({ host, env = process.env, threadId = null, codex
     return 'opencode-plugin';
   }
   return 'none';
+}
+
+/** A fixed explanation of the capability, never environment values, paths or host-supplied text. */
+export function wakeReason(options) {
+  const { host, env = process.env, threadId = null, ppid = process.ppid, opencodeVersion = false } = options;
+  if (env.FAI_WAKE === '0') return 'wakes_off';
+  if (wakeCapability(options) !== 'none') return 'ok';
+  if (host === 'claude') {
+    if (!env.CLAUDE_CODE_MESSAGING_SOCKET || !(env.CLAUDE_CODE_MESSAGING_TOKEN ?? env.CLAUDE_CODE_MESSAGING_SOCKET_TOKEN)) {
+      return 'claude_no_messaging';
+    }
+    return 'claude_channel_unbound';
+  }
+  if (host === 'codex') {
+    if (!codexBinary(env)) return 'codex_not_found';
+    return threadId ? 'codex_no_queue' : 'codex_no_thread';
+  }
+  if (host === 'opencode') {
+    if (!env.FAI_OPENCODE_WAKE_SOCKET || !env.FAI_OPENCODE_WAKE_TOKEN) return 'opencode_no_plugin';
+    if (!opencodeVersion) return 'opencode_version';
+    if (!opencodeChannel(env, { ppid })) return 'opencode_channel_unbound';
+    // The plugin tags the first FAI call before this MCP server knows which session to wake.
+    return 'opencode_no_plugin';
+  }
+  return 'unknown_host';
 }
 
 /** Deliver one wake through `capability`; resolves {ok} or {ok: false, code, message}, never throws. */

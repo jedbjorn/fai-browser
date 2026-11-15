@@ -14,7 +14,8 @@ import {
   deliverOpencodePlugin, deliverWake, opencodeChannel, opencodeVersionOk, wakeCapability, wakeText, WAKE_CAPABILITIES,
 } from '../src/wake.js';
 import { AgentSession } from '../src/mcp-session.js';
-import { NO_WAKES } from './helpers/platform.js';
+import { NO_OPENCODE_WAKES } from './helpers/platform.js';
+import { pipeOrSocket } from './helpers/pipe-or-socket.js';
 
 const STATE = Symbol.for('fai-browser.opencode-wake.v1');
 const SES_A = 'ses_1a2b3c4d5e6f7g8h9i0j';
@@ -135,7 +136,7 @@ test('plugin: FAI_WAKE=0 or a client without promptAsync turns it off (no socket
   assert.throws(() => lstatSync(join(dir, 'fai-browser')), /ENOENT/);
 });
 
-test('plugin: a private 0700 directory, a 0600 socket named after the pid, and both variables for the MCP child', { skip: NO_WAKES }, async t => {
+test('plugin: a private 0700 directory, a 0600 socket named after the pid, and both variables for the MCP child', { skip: NO_OPENCODE_WAKES }, async t => {
   const { dir } = await loadPlugin(t);
   const path = join(dir, 'fai-browser', `oc-${process.pid}.sock`);
   assert.equal(process.env.FAI_OPENCODE_WAKE_SOCKET, path);
@@ -145,7 +146,7 @@ test('plugin: a private 0700 directory, a 0600 socket named after the pid, and b
   assert.equal(lstatSync(path).mode & 0o777, 0o600);
 });
 
-test('plugin: a stale socket is replaced; a symlinked directory or a file in the socket\'s place turns it off', { skip: NO_WAKES }, async t => {
+test('plugin: a stale socket is replaced; a symlinked directory or a file in the socket\'s place turns it off', { skip: NO_OPENCODE_WAKES }, async t => {
   const base = await mkdtemp(join(tmpdir(), 'fai-oc-'));
   t.after(() => rm(base, { recursive: true, force: true }));
   // A stale socket from an earlier OpenCode with this pid.
@@ -193,7 +194,7 @@ test('plugin: a stale socket is replaced; a symlinked directory or a file in the
   assert.ok(errors.every(line => !line.includes(base)), 'no path in the setup error');
 });
 
-test('plugin: tool.execute.before tags FAI tools only (any server key) and records the calling session', { skip: NO_WAKES }, async t => {
+test('plugin: tool.execute.before tags FAI tools only (any server key) and records the calling session', { skip: NO_OPENCODE_WAKES }, async t => {
   const { hooks } = await loadPlugin(t);
   assert.deepEqual(await tag(hooks, SES_A), { origins: ['https://example.com'], _faiHostSession: SES_A });
   assert.equal((await tag(hooks, SES_A, 'my_browser_fai_browser_act', {}))._faiHostSession, SES_A, 'a custom server key');
@@ -209,7 +210,7 @@ test('plugin: tool.execute.before tags FAI tools only (any server key) and recor
   await hooks['tool.execute.before']({ tool: 'fai-browser_fai_browser_open', sessionID: SES_B }, { args: null });
 });
 
-test('plugin: wakes only a session that used FAI, with a FAI text, after the token; text parts only; real ack', { skip: NO_WAKES }, async t => {
+test('plugin: wakes only a session that used FAI, with a FAI text, after the token; text parts only; real ack', { skip: NO_OPENCODE_WAKES }, async t => {
   let status = 204;
   const client = fakeClient({ answer: () => (status === 204 ? { response: { status } }
     : { error: { name: status === 404 ? 'NotFoundError' : 'UnknownError', data: { message: 'x' } }, response: { status } }) });
@@ -261,7 +262,7 @@ test('plugin: wakes only a session that used FAI, with a FAI text, after the tok
   assert.equal((await talk(path, [auth, `{"type":"wake","text":"${'x'.repeat(9000)}"}`])).code, 'bad_text');
 });
 
-test('plugin: the wake keeps the session\'s agent and model; without an earlier user turn it is refused', { skip: NO_WAKES }, async t => {
+test('plugin: the wake keeps the session\'s agent and model; without an earlier user turn it is refused', { skip: NO_OPENCODE_WAKES }, async t => {
   const build = { info: { role: 'user', agent: 'build', model: { providerID: 'p', modelID: 'x' } } };
   const client = fakeClient({ turns: { [SES_A]: [build, PLAN_TURN], [SES_B]: [{ info: { role: 'assistant' } }] } });
   const { hooks } = await loadPlugin(t, client);
@@ -287,7 +288,7 @@ test('plugin: the wake keeps the session\'s agent and model; without an earlier 
   assert.equal(client.calls.length, 1);
 });
 
-test('plugin: a subagent\'s task session (a task inside a task too) tags and wakes the root conversation only', { skip: NO_WAKES }, async t => {
+test('plugin: a subagent\'s task session (a task inside a task too) tags and wakes the root conversation only', { skip: NO_OPENCODE_WAKES }, async t => {
   const child = 'ses_cccccccccccccccccccc';
   const grandchild = 'ses_dddddddddddddddddddd';
   const great = 'ses_ffffffffffffffffffff';
@@ -311,7 +312,7 @@ test('plugin: a subagent\'s task session (a task inside a task too) tags and wak
   assert.equal((await tag(hooks, great))._faiHostSession, SES_A);
 });
 
-test('plugin: when the root cannot be told, the call is not tagged (so no wake can go to a child)', { skip: NO_WAKES }, async t => {
+test('plugin: when the root cannot be told, the call is not tagged (so no wake can go to a child)', { skip: NO_OPENCODE_WAKES }, async t => {
   const child = 'ses_cccccccccccccccccccc';
   const middle = 'ses_mmmmmmmmmmmmmmmmmmmm';
   const loopA = 'ses_llllllllllllllllllla';
@@ -329,7 +330,7 @@ test('plugin: when the root cannot be told, the call is not tagged (so no wake c
   assert.equal(globalThis[STATE].sessions.size, 0);
 });
 
-test('plugin: only FAI\'s exact wake texts are taken (every template src/wake.js writes, nothing near them)', { skip: NO_WAKES }, async t => {
+test('plugin: only FAI\'s exact wake texts are taken (every template src/wake.js writes, nothing near them)', { skip: NO_OPENCODE_WAKES }, async t => {
   const client = fakeClient();
   const { hooks } = await loadPlugin(t, client);
   const path = process.env.FAI_OPENCODE_WAKE_SOCKET;
@@ -367,7 +368,7 @@ test('plugin: only FAI\'s exact wake texts are taken (every template src/wake.js
   }
 });
 
-test('plugin: a second plugin copy in the same OpenCode shares one socket and token; each session keeps its client', { skip: NO_WAKES }, async t => {
+test('plugin: a second plugin copy in the same OpenCode shares one socket and token; each session keeps its client', { skip: NO_OPENCODE_WAKES }, async t => {
   const first = fakeClient();
   const { hooks } = await loadPlugin(t, first);
   const token = process.env.FAI_OPENCODE_WAKE_TOKEN;
@@ -383,7 +384,7 @@ test('plugin: a second plugin copy in the same OpenCode shares one socket and to
   assert.equal(second.calls.length, 1);
 });
 
-test('channel: only for the MCP server OpenCode started itself (socket named after the parent, OPENCODE_PID agrees)', { skip: NO_WAKES }, () => {
+test('channel: only for the MCP server OpenCode started itself (socket named after the parent, OPENCODE_PID agrees)', { skip: NO_OPENCODE_WAKES }, () => {
   const env = { FAI_OPENCODE_WAKE_SOCKET: '/run/user/1000/fai-browser/oc-4242.sock', FAI_OPENCODE_WAKE_TOKEN: TOKEN, OPENCODE_PID: '4242' };
   assert.deepEqual(opencodeChannel(env, { ppid: 4242 }), { path: env.FAI_OPENCODE_WAKE_SOCKET, token: TOKEN });
   assert.equal(opencodeChannel(env, { ppid: 4243 }), null, 'a grandchild (bash tool, wrapper)');
@@ -395,7 +396,7 @@ test('channel: only for the MCP server OpenCode started itself (socket named aft
   assert.equal(opencodeChannel({ ...env, FAI_OPENCODE_WAKE_SOCKET: '/x/4242.sock' }, { ppid: 4242 }), null);
 });
 
-test('capability: opencode-plugin needs the channel, a tagged session and OpenCode 1.19 to 1.x', { skip: NO_WAKES }, () => {
+test('capability: opencode-plugin needs the channel, a tagged session and OpenCode 1.19 to 1.x', { skip: NO_OPENCODE_WAKES }, () => {
   assert.ok(WAKE_CAPABILITIES.includes('opencode-plugin'));
   const env = { FAI_OPENCODE_WAKE_SOCKET: '/r/fai-browser/oc-4242.sock', FAI_OPENCODE_WAKE_TOKEN: TOKEN, OPENCODE_PID: '4242' };
   const base = { host: 'opencode', env, ppid: 4242, opencodeSession: SES_A, opencodeVersion: true };
@@ -411,8 +412,7 @@ test('capability: opencode-plugin needs the channel, a tagged session and OpenCo
 
 // A fake plugin socket for the delivery side: `reply(lines, socket)` decides the answer.
 async function fakePlugin(t, reply) {
-  const dir = await mkdtemp(join(tmpdir(), 'fai-oc-'));
-  const path = join(dir, 'oc-4242.sock');
+  const { path, dir } = await pipeOrSocket(t, 'oc-4242.sock');
   const received = [];
   const server = net.createServer(socket => {
     let buffer = '';
@@ -434,7 +434,7 @@ async function fakePlugin(t, reply) {
   return { path, received };
 }
 
-test('delivery: auth and wake lines, then the plugin\'s answer (ok, each refusal, unknown session, silence, an echoed token)', { skip: NO_WAKES }, async t => {
+test('delivery: auth and wake lines, then the plugin\'s answer (ok, each refusal, unknown session, silence, an echoed token)', { skip: NO_OPENCODE_WAKES }, async t => {
   const answers = [
     [{ ok: true }, { ok: true }],
     [{ ok: false, code: 'bad_token', message: 'Wrong token.' }, { ok: false, code: 'refused', detail: 'bad_token' }],
@@ -462,7 +462,7 @@ test('delivery: auth and wake lines, then the plugin\'s answer (ok, each refusal
   assert.equal((await deliverOpencodePlugin({ path, token: TOKEN, sessionID: null, text: APPROVED })).code, 'unknown_session');
 });
 
-test('delivery end to end: deliverWake through the real plugin prompts the tagged session', { skip: NO_WAKES }, async t => {
+test('delivery end to end: deliverWake through the real plugin prompts the tagged session', { skip: NO_OPENCODE_WAKES }, async t => {
   const client = fakeClient();
   const { hooks } = await loadPlugin(t, client);
   await tag(hooks, SES_A);
@@ -475,7 +475,7 @@ test('delivery end to end: deliverWake through the real plugin prompts the tagge
   assert.equal((await deliverWake({ capability: 'opencode-plugin', text: APPROVED, env, opencodeSession: SES_A, ppid: 99 })).code, 'no_socket');
 });
 
-test('session targeting: Approve/Resume to the request\'s own session, an invite only when one session is recent', { skip: NO_WAKES }, async () => {
+test('session targeting: Approve/Resume to the request\'s own session, an invite only when one session is recent', { skip: NO_OPENCODE_WAKES }, async () => {
   const env = { FAI_OPENCODE_WAKE_SOCKET: '/r/fai-browser/oc-4242.sock', FAI_OPENCODE_WAKE_TOKEN: TOKEN, OPENCODE_PID: '4242' };
   let clock = 1_000_000;
   const owners = new Map([['req-1', SES_B]]);
