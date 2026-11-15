@@ -2,7 +2,7 @@
 // One-time local setup. Saves the pairing secret to .env.local in the settings directory (src/paths.js: FAI_HOME,
 // else ~/.config/fai-browser, ~/Library/Application Support/fai-browser on macOS), installs the native messaging host
 // for every detected browser so the extension pairs by itself, starts the FAI service, and offers to register FAI
-// Browser with each coding agent found on PATH. Settings from an older checkout-local install are moved first.
+// Browser with each coding agent found on PATH or as a Windows desktop app. Older checkout-local settings move first.
 // Last, when an official Firefox is installed, it offers to set up the FAI Browser profile for it (src/launcher/
 // launch.js: a separate profile with the signed add-on, paired); otherwise it prints the launcher command.
 // Your coding agent drives the browser; no key is needed.
@@ -24,7 +24,7 @@ import { homePaths, loadConfig } from '../src/home.js';
 import { readEnvFile, saveSettings } from '../src/settings.js';
 import { migrateLegacyHome } from '../src/migrate.js';
 import { applyNativeInstall, planNativeInstall } from '../src/native.js';
-import { InstallError, detectHosts, registerHost } from '../src/install.js';
+import { InstallError, detectHosts, registerHost, registrationSummary } from '../src/install.js';
 import { offerFirefoxProfile } from '../src/launcher/offer.js';
 
 async function ask(question, { yes = false } = {}) {
@@ -130,6 +130,9 @@ async function main() {
     for (const found of detectHosts()) {
       const yes = flags.yes || await ask(`Register FAI Browser with ${found.name}? [Y/n]: `, { yes: true });
       if (!yes) continue;
+      if (windows && found.host === 'codex' && !found.path) {
+        console.log('  Install the Codex CLI so FAI can wake Codex: npm install -g @openai/codex (ask your agent to help).');
+      }
       try {
         await registerHost(found.host, { claudePath: found.path });
         agents.push(found.name);
@@ -160,6 +163,7 @@ async function main() {
   console.log('\nNext:');
   steps.forEach((step, index) => console.log(`  ${index + 1}. ${step}`));
   if (native.written) console.log('The extension pairs by itself: nothing to copy or paste.');
+  console.log(registrationSummary(agents));
 }
 
 process.umask(0o077);

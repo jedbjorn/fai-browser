@@ -1,0 +1,151 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { detectHosts, InstallError, MCP_ENTRY, registerHost, registrationSummary } from '../src/install.js';
+
+function fixture(t) {
+  const home = mkdtempSync(join(tmpdir(), 'fai desktop 100% '));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const local = join(home, 'AppData', 'Local');
+  const env = { LOCALAPPDATA: local, PATH: '', PATHEXT: '.exe;.cmd' };
+  const file = (...parts) => {
+    const path = join(...parts);
+    mkdirSync(join(path, '..'), { recursive: true });
+    writeFileSync(path, 'fixture');
+    return path;
+  };
+  return { home, local, env, file,
+    detect: (overrides = {}) => detectHosts({ home, env, platform: 'win32', exec: () => '', ...overrides }) };
+}
+
+test('Windows desktop-only installs are detected in discovery locations without a command on PATH', t => {
+  const { local, file, detect } = fixture(t);
+  file(local, 'AnthropicClaude', 'claude.exe');
+  file(local, 'Programs', '@opencode-aidesktop', 'OpenCode.exe');
+  assert.deepEqual(detect({ exec: () => 'C:\\Program Files\\WindowsApps\\OpenAI.Codex_version_family\r\n' }), [
+    { host: 'claude', name: 'Claude (Code tab)', path: null, desktop: 'Claude (Code tab)' },
+    { host: 'codex', name: 'ChatGPT (Codex)', path: null, desktop: 'ChatGPT (Codex)' },
+    { host: 'opencode', name: 'OpenCode Desktop', path: null, desktop: 'OpenCode Desktop' },
+  ]);
+  assert.deepEqual(detect({ platform: 'linux' }), [], 'desktop detection is Windows-only');
+});
+
+test('ChatGPT local install and LOCALAPPDATA fallback; unrelated Store packages are ignored', t => {
+  const { home, local, env, detect } = fixture(t);
+  mkdirSync(join(local, 'Packages', 'OpenAI.ChatGPT-Desktop_other'), { recursive: true });
+  assert.deepEqual(detect(), []);
+  mkdirSync(join(local, 'OpenAI', 'Codex'), { recursive: true });
+  assert.equal(detect({ env: { ...env, LOCALAPPDATA: undefined }, home })[0].name, 'ChatGPT (Codex)');
+});
+
+test('Store discovery queries the current user without a shell and works before the app is launched', t => {
+  const { local, env, detect } = fixture(t);
+  assert.equal(existsSync(local), false);
+  const found = detect({ exec: (file, args, options) => {
+    assert.ok(file.endsWith('powershell.exe'));
+    assert.deepEqual(args, ['-NoProfile', '-NonInteractive', '-Command',
+      'Get-AppxPackage -Name OpenAI.Codex | Select-Object -ExpandProperty InstallLocation']);
+    assert.equal(options.shell, undefined);
+    assert.equal(options.env, env);
+    assert.equal(options.timeout, 5000);
+    return 'C:\\Program Files\\WindowsApps\\OpenAI.Codex_version_family\r\n';
+  } });
+  assert.equal(found[0].name, 'ChatGPT (Codex)');
+  assert.equal(found[0].path, null);
+});
+
+test('a failed Store query still detects local apps and does not invent a ChatGPT install', t => {
+  const { local, file, detect } = fixture(t);
+  const exec = () => { throw new Error('Store service unavailable'); };
+  file(local, 'AnthropicClaude', 'claude.exe');
+  assert.deepEqual(detect({ exec }).map(host => host.host), ['claude']);
+  mkdirSync(join(local, 'OpenAI', 'Codex'), { recursive: true });
+  assert.deepEqual(detect({ exec }).map(host => host.host), ['claude', 'codex']);
+});
+
+test('desktop and CLI detection produce one registration per shared config, preserving CLI-only behavior', t => {
+  const { home, local, env, file, detect } = fixture(t);
+  const bin = join(home, 'bin');
+  const claude = file(bin, 'claude.exe');
+  const codex = file(bin, 'codex.cmd');
+  env.PATH = bin;
+  assert.deepEqual(detect(), [
+    { host: 'claude', name: 'Claude Code', path: claude },
+    { host: 'codex', name: 'Codex', path: codex },
+  ]);
+  file(local, 'AnthropicClaude', 'claude.exe');
+  mkdirSync(join(local, 'OpenAI', 'Codex'), { recursive: true });
+  const found = detect();
+  assert.equal(found.length, 2);
+  assert.equal(found[0].path, claude, 'the desktop launcher must never be run as the CLI');
+  assert.equal(found[0].name, 'Claude Code and Claude (Code tab)');
+  assert.equal(found[1].name, 'Codex and ChatGPT (Codex)');
+});
+
+test('desktop-only ChatGPT and OpenCode get user config, skills and plugin, with an idempotent rerun', async t => {
+  const { home, local, env, file, detect } = fixture(t);
+  mkdirSync(join(local, 'OpenAI', 'Codex'), { recursive: true });
+  file(local, 'Programs', '@opencode-aidesktop', 'OpenCode.exe');
+  const oc = join(home, '.config', 'opencode', 'opencode.json');
+  file(home, '.config', 'opencode', 'opencode.json');
+  writeFileSync(oc, JSON.stringify({ model: 'keep-me', mcp: { existing: { type: 'remote', url: 'https://example.com' } } }));
+  for (const found of detect()) {
+    const options = { home, cwd: home, env, platform: 'win32', claudePath: found.path,
+      run: () => assert.fail('desktop config registration must not execute the app') };
+    await registerHost(found.host, options);
+    const rerun = await registerHost(found.host, options);
+    assert.ok(rerun.writes.every(write => write.action === 'unchanged'));
+  }
+  const codex = readFileSync(join(home, '.codex', 'config.toml'), 'utf8');
+  assert.match(codex, /\[mcp_servers.fai-browser\]/);
+  assert.ok(codex.includes(JSON.stringify(MCP_ENTRY)));
+  const config = JSON.parse(readFileSync(oc, 'utf8'));
+  assert.equal(config.model, 'keep-me');
+  assert.equal(config.mcp.existing.url, 'https://example.com');
+  assert.deepEqual(config.mcp['fai-browser'].command, [process.execPath, MCP_ENTRY]);
+  assert.ok(existsSync(join(home, '.config', 'opencode', 'plugins', 'fai-browser.js')));
+  assert.ok(existsSync(join(home, '.agents', 'skills', 'fai-browser', 'SKILL.md')));
+  assert.equal(readdirSync(join(home, '.config', 'opencode')).filter(name => name.includes('.bak-')).length, 1);
+});
+
+test('Claude desktop without the CLI prints manual registration and never edits live Claude config or runs the launcher', async t => {
+  const { home, local, env, file, detect } = fixture(t);
+  file(local, 'AnthropicClaude', 'claude.exe');
+  const config = file(home, '.claude.json');
+  const original = '{"runningSession":"leave intact","mcpServers":{"other":{}}}\n';
+  writeFileSync(config, original);
+  await assert.rejects(registerHost('claude', { home, cwd: home, env, platform: 'win32', claudePath: detect()[0].path,
+    run: () => assert.fail('no CLI is available') }), error => {
+    assert.ok(error instanceof InstallError);
+    assert.match(error.message, /install the Claude Code CLI/);
+    assert.match(error.snippet, /claude mcp add --scope user fai-browser/);
+    return true;
+  });
+  assert.equal(readFileSync(config, 'utf8'), original);
+  assert.equal(existsSync(join(home, 'AppData', 'Roaming', 'Claude', 'claude_desktop_config.json')), false,
+    'plain Claude Desktop chat is excluded');
+});
+
+test('Claude command failure is a registration failure, with a manual command and untouched config', async t => {
+  const { home, env, file } = fixture(t);
+  const cli = file(home, 'bin', 'claude.exe');
+  const config = file(home, '.claude.json');
+  const calls = [];
+  await assert.rejects(registerHost('claude', { home, cwd: home, env, platform: 'win32', claudePath: cli,
+    run: (path, args) => { calls.push([path, args]); throw new Error('host command failed'); } }), error => {
+    assert.match(error.message, /add-json failed/);
+    assert.match(error.snippet, /claude mcp add --scope user/);
+    return true;
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(readFileSync(config, 'utf8'), 'fixture');
+});
+
+test('closing summary names registered apps and gives a distinct result when none registered', () => {
+  assert.equal(registrationSummary(['ChatGPT (Codex)', 'OpenCode Desktop']),
+    'Registered apps: ChatGPT (Codex), OpenCode Desktop. Restart them so they load FAI Browser.');
+  assert.equal(registrationSummary([]),
+    'Registered apps: none. Connect your coding agent using the setup instructions above.');
+});

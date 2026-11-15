@@ -538,9 +538,41 @@ export function findOnPath(name, { env = process.env, platform = process.platfor
   return null;
 }
 
-/** The coding agents installed on PATH, in HOSTS order: [{ host, name, path }]. */
-export function detectHosts(options = {}) {
-  return HOSTS.map(host => ({ host, name: HOST_NAMES[host], path: findOnPath(host, options) })).filter(item => item.path);
+/** Windows desktop locations verified by F8 discovery. Claude's launcher is not the Code CLI. */
+function windowsDesktopHosts(env, home, exec) {
+  const local = env.LOCALAPPDATA || join(home, 'AppData', 'Local');
+  const desktops = {};
+  if (existsSync(join(local, 'AnthropicClaude', 'claude.exe'))) desktops.claude = 'Claude (Code tab)';
+  // Query the current user's installed Store package: WindowsApps is protected and app data need not exist yet.
+  let storeCodex = false;
+  try {
+    const powershell = join(env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    storeCodex = Boolean(exec(powershell, ['-NoProfile', '-NonInteractive', '-Command',
+      'Get-AppxPackage -Name OpenAI.Codex | Select-Object -ExpandProperty InstallLocation'],
+    { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, windowsHide: true }).trim());
+  } catch {
+    // PowerShell or the Store service can be unavailable; the observed local app folder still works below.
+  }
+  if (storeCodex || existsSync(join(local, 'OpenAI', 'Codex'))) desktops.codex = 'ChatGPT (Codex)';
+  if (existsSync(join(local, 'Programs', '@opencode-aidesktop', 'OpenCode.exe'))) desktops.opencode = 'OpenCode Desktop';
+  return desktops;
+}
+
+/** CLI and Windows desktop hosts, once per shared config, in HOSTS order. A desktop-only host has path: null. */
+export function detectHosts({ env = process.env, platform = process.platform, home = homedir(), exec = execFileSync } = {}) {
+  const desktops = platform === 'win32' ? windowsDesktopHosts(env, home, exec) : {};
+  return HOSTS.map(host => {
+    const path = findOnPath(host, { env, platform });
+    const desktop = desktops[host];
+    const name = desktop ? (path ? `${HOST_NAMES[host]} and ${desktop}` : desktop) : HOST_NAMES[host];
+    return { host, name, path, ...(desktop ? { desktop } : {}) };
+  }).filter(item => item.path || item.desktop);
+}
+
+/** Setup's final line, also repeated by the Windows bootstrap installer. Only successful registrations go here. */
+export function registrationSummary(names) {
+  return names.length ? `Registered apps: ${names.join(', ')}. Restart them so they load FAI Browser.`
+    : 'Registered apps: none. Connect your coding agent using the setup instructions above.';
 }
 
 /**
@@ -548,11 +580,15 @@ export function detectHosts(options = {}) {
  * Claude Code its `claude mcp remove` then `claude mcp add-json` run directly. Resolves `{ host, writes }`; throws an
  * InstallError (with the snippet or command to run by hand) when it cannot.
  */
-export async function registerHost(host, { env = process.env, home = homedir(), cwd = process.cwd(), claudePath = 'claude',
-  platform = process.platform, run = commandRunner({ env, platform }) } = {}) {
+export async function registerHost(host, { env = process.env, home = homedir(), cwd = process.cwd(),
+  platform = process.platform, claudePath = findOnPath('claude', { env, platform }), run = commandRunner({ env, platform }) } = {}) {
   const plan = planInstall({ host, scope: 'user', cwd, env, home, platform });
   const writes = await applyPlan(plan);
   if (host === 'claude') {
+    if (!claudePath) {
+      throw new InstallError('Claude Code command not found; ask your agent to install the Claude Code CLI, then run:', {
+        snippet: `${plan.command}\n` });
+    }
     // A Windows batch shim (npm's claude.cmd) runs through cmd.exe, which cannot pass the JSON of add-json intact:
     // the same entry goes through `claude mcp add` with plain arguments instead.
     const batch = isBatchFile(claudePath, platform);
@@ -585,7 +621,7 @@ export function claudeAddArgs({ command, args, env }) {
 }
 
 /**
- * The two commands to run by hand in PowerShell (Windows is unsupported). Values are single-quoted, so a pasted line
+ * The two commands to run by hand in PowerShell. Values are single-quoted, so a pasted line
  * expands no `$` or backtick (`'` doubled inside).
  */
 export function claudeAddCommandWindows(server) {
