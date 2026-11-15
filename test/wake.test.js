@@ -9,7 +9,7 @@ import {
   detectHost, hostSessionId, repoName, resetCodexSupport, wakeCapability, wakeReason, wakeText, WAKE_REASONS,
 } from '../src/wake.js';
 import { fakeCodex, startFakeClaudeSocket } from './helpers/fake-agents.js';
-import { NO_CLAUDE_WAKES, NO_CODEX_WAKES } from './helpers/platform.js';
+import { NO_CLAUDE_WAKES, NO_CODEX_WAKES, WINDOWS } from './helpers/platform.js';
 
 test('wake reasons: every setup failure is a fixed code; a bound capability is ok and opt-out wins', () => {
   const claude = { host: 'claude', ppid: 4242, env: {
@@ -17,7 +17,7 @@ test('wake reasons: every setup failure is a fixed code; a bound capability is o
   } };
   const codex = { host: 'codex', env: { FAI_CODEX_BIN: process.execPath }, threadId: 'thread', codexReady: true };
   const opencode = { host: 'opencode', ppid: 4242, opencodeVersion: true, opencodeSession: 'ses_abcdefghij', env: {
-    FAI_OPENCODE_WAKE_SOCKET: join('/s', 'oc-4242.sock'), FAI_OPENCODE_WAKE_TOKEN: 'a'.repeat(64), OPENCODE_PID: '4242',
+    FAI_OPENCODE_WAKE_SOCKET: WINDOWS ? '\\\\.\\pipe\\fai-browser-oc-4242-0123456789abcdef' : '/s/oc-4242.sock', FAI_OPENCODE_WAKE_TOKEN: 'a'.repeat(64), FAI_OPENCODE_PID: '4242',
   } };
   const cases = [
     [claude, 'ok'], [codex, 'ok'], [opencode, 'ok'],
@@ -51,6 +51,9 @@ test('host detection: the MCP client name first, then the environment', () => {
     'a named other client is never taken for Claude Code (so a test harness never writes to a real socket)');
   assert.equal(detectHost(null, { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'abc' }), 'claude');
   assert.equal(detectHost(null, { OPENCODE: '1' }), 'opencode');
+  assert.equal(detectHost(null, { FAI_OPENCODE_PID: '4242' }), 'opencode');
+  assert.equal(detectHost(null, { OPENCODE_PID: '4242' }), 'unknown', 'no fallback to the old host variable');
+  assert.equal(detectHost({ name: 'test-host' }, { FAI_OPENCODE_PID: '4242' }), 'unknown');
   assert.equal(detectHost(null, {}), 'unknown');
 });
 

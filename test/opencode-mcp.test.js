@@ -1,5 +1,5 @@
 // OpenCode wakes end to end: FAI's real plugin (src/opencode-plugin.js) runs in this test process with a fake OpenCode
-// client, so this process plays OpenCode (OPENCODE_PID is its pid and it spawns the MCP server directly), and the real
+// client, so this process plays Desktop's sidecar (no OPENCODE_PID, it spawns the MCP server directly), and the real
 // daemon runs with a fake hub. The plugin's tag reaches the MCP server as _faiHostSession; invites, Approve and Resume
 // are delivered through the plugin's socket to the right session. No real OpenCode is ever reachable from here.
 import test from 'node:test';
@@ -51,17 +51,18 @@ async function setup(t, { clientInfo = { name: 'opencode', version: '1.19.5' }, 
   }
   const mcpEnv = {
     PATH: process.env.PATH, HOME: home, FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port), FAI_MCP_APPROVAL_WAIT_MS: '1000',
-    OPENCODE: '1', OPENCODE_PID: String(process.pid),
-    ...(plugin ? { FAI_OPENCODE_WAKE_SOCKET: process.env.FAI_OPENCODE_WAKE_SOCKET, FAI_OPENCODE_WAKE_TOKEN: process.env.FAI_OPENCODE_WAKE_TOKEN } : {}),
+    ...(plugin ? { FAI_OPENCODE_PID: process.env.FAI_OPENCODE_PID, FAI_OPENCODE_WAKE_SOCKET: process.env.FAI_OPENCODE_WAKE_SOCKET, FAI_OPENCODE_WAKE_TOKEN: process.env.FAI_OPENCODE_WAKE_TOKEN } : {}),
   };
+  assert.equal(mcpEnv.OPENCODE_PID, undefined);
   const mcp = spawnMcp(mcpEnv);
   t.after(async () => {
     await mcp.close();
     await daemon.close();
-    globalThis[STATE]?.server.close();
+    if (globalThis[STATE]) await new Promise(resolve => globalThis[STATE].server.close(resolve));
     delete globalThis[STATE];
     delete process.env.FAI_OPENCODE_WAKE_SOCKET;
     delete process.env.FAI_OPENCODE_WAKE_TOKEN;
+    delete process.env.FAI_OPENCODE_PID;
     if (savedRuntime === undefined) delete process.env.XDG_RUNTIME_DIR;
     else process.env.XDG_RUNTIME_DIR = savedRuntime;
     await rm(home, { recursive: true, force: true });
@@ -83,7 +84,7 @@ const text = result => result.content.map(block => block.text ?? '').join('\n');
 const inviteOf = (ctx, requestId) => ctx.hub.published.at(-1)?.find(view => view.requestId === requestId)?.invite;
 const sessionNow = async ctx => (await ctx.api('GET', '/v1/status')).body.sessions[0];
 
-test('MCP (OpenCode): not ready until a tagged FAI call; the tag never reaches the schema; an invite wakes that session', { skip: NO_OPENCODE_WAKES }, async t => {
+test('MCP (OpenCode Desktop sidecar, no OPENCODE_PID): not ready until a tagged FAI call; the tag never reaches the schema; an invite wakes that session', { skip: NO_OPENCODE_WAKES }, async t => {
   const ctx = await setup(t);
   assert.equal(ctx.session.host, 'opencode');
   assert.equal(ctx.session.wake, 'none');
