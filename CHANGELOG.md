@@ -18,7 +18,7 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 
 ### Acceptance pending
 
-- **Release blocked:** Windows 10 app-level invite, Approve and Resume wake acceptance (#5b) awaits the FnB-attended session. Channel/fake-host proof does not establish that apps take a new turn. Windows 11 is not yet checked; the FnB will check parity separately. No version bump or release in this Sprint.
+- **Release blocked:** Windows 10 app-level wake acceptance (#5b) ran live. Claude's Code tab (Sonnet 5.5) and ChatGPT's Codex mode (GPT-6.1 Terra) each took a new turn on their own for an invite, an Approve and a Resume. OpenCode Desktop 1.19.5 failed: its provider refuses the free Big Pickle model on that version ("no longer supports free models"), so it cannot take a turn, and its wake reason stays `opencode_no_plugin`. OpenCode 2.x is unsupported. The same plugin wake passed on the OpenCode CLI 1.19.5. Release waits for a ruling on OpenCode Desktop. Windows 11 is not yet checked; the FnB will check parity separately. No version bump or release in this Sprint.
 
 ## 0.10.0 (2026-11-15)
 
