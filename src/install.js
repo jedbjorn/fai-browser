@@ -299,6 +299,14 @@ function planSkill(target, { link, force }) {
   }
   const writes = [];
   const replaceLink = info?.isSymbolicLink() ?? false;
+  const tasks = join(target, 'tasks');
+  // An older archive install copied the flattened source symlink before failing on the first task guide.
+  // Recover only that known file inside a FAI-owned skill; never remove a foreign file or follow a tasks symlink.
+  const replaceTasks = info?.isDirectory() && lstatOrNull(tasks)?.isFile()
+    && SKILL_MARKER.test(readText(join(target, 'SKILL.md')) ?? '') && readText(tasks) === '../../tasks';
+  if (replaceTasks) {
+    writes.push({ path: tasks, action: 'replace', kind: 'directory' });
+  }
   // The skill's own files, then the task guides the skill points at (tasks/<name>/SKILL.md, the same relative path
   // under the installed skill, so the pointer resolves wherever the skill is installed).
   const files = [...skillFiles().map(name => ({ source: join(SKILL_SOURCE, name), name })),
@@ -307,7 +315,7 @@ function planSkill(target, { link, force }) {
     const text = readFileSync(source, 'utf8');
     const content = name === 'SKILL.md' ? stampedSkill(text) : text;
     const path = join(target, name);
-    const current = replaceLink ? null : readText(path);
+    const current = replaceLink || (replaceTasks && name.startsWith('tasks/')) ? null : readText(path);
     if (current === content) {
       writes.push({ path, action: 'unchanged', content });
     } else {
@@ -436,6 +444,12 @@ export async function applyPlan(plan) {
   for (const write of plan.writes) {
     const record = { path: write.path, action: write.action };
     if (write.action === 'unchanged') {
+      done.push(record);
+      continue;
+    }
+    if (write.kind === 'directory') {
+      await rm(write.path, { force: true });
+      await mkdir(write.path, { recursive: true });
       done.push(record);
       continue;
     }
