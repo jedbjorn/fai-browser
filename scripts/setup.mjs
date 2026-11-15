@@ -126,6 +126,7 @@ async function main() {
   console.log((await refreshService(paths)).text);
 
   const agents = [];
+  let opencodeManual = false;
   if (!flags['no-register']) {
     for (const found of detectHosts()) {
       const yes = flags.yes || await ask(`Register FAI Browser with ${found.name}? [Y/n]: `, { yes: true });
@@ -138,6 +139,9 @@ async function main() {
         agents.push(found.name);
         console.log(`  Registered with ${found.name}.`);
       } catch (error) {
+        if (found.host === 'opencode' && error instanceof InstallError && error.path?.endsWith('opencode.jsonc')) {
+          opencodeManual = true;
+        }
         console.log(`  Could not register with ${found.name}: ${error.message}`);
         if (error instanceof InstallError && error.snippet) console.log(error.snippet);
       }
@@ -163,7 +167,7 @@ async function main() {
   console.log('\nNext:');
   steps.forEach((step, index) => console.log(`  ${index + 1}. ${step}`));
   if (native.written) console.log('The extension pairs by itself: nothing to copy or paste.');
-  console.log(registrationSummary(agents));
+  console.log(registrationSummary(agents, { opencodeManual }));
 }
 
 process.umask(0o077);

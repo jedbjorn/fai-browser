@@ -395,7 +395,8 @@ export function planInstall({ host, scope = 'project', link = false, force = fal
     const entry = hostEntry('opencode', server);
     const snippet = () => stableJson({ $schema: 'https://opencode.ai/config.json', mcp: { [SERVER_NAME]: entry } });
     if (existsSync(jsonc)) {
-      throw new InstallError(`${jsonc} is JSONC; add this entry by hand`, { exitCode: 2, snippet: snippet(),
+      throw new InstallError(`${jsonc} is JSONC; ask your agent to add the printed snippet, then copy the wake plugin from `
+        + `${OPENCODE_PLUGIN_SOURCE} to ${opencodePluginPath({ scope, cwd, home })} (create its directory if needed) and restart OpenCode`, { exitCode: 2, snippet: snippet(),
         path: jsonc });
     }
     plan.writes.push(planJsonConfig(path, 'mcp', entry, {
@@ -594,10 +595,12 @@ export function detectHosts({ env = process.env, platform = process.platform, ho
   }).filter(item => item.path || item.desktop);
 }
 
-/** Setup's final line, also repeated by the Windows bootstrap installer. Only successful registrations go here. */
-export function registrationSummary(names) {
-  return names.length ? `Registered apps: ${names.join(', ')}. Restart them so they load FAI Browser.`
+/** Setup's final line, repeated by the Windows bootstrap installer; distinguish manual setup from registration. */
+export function registrationSummary(names, { opencodeManual = false } = {}) {
+  const summary = names.length ? `Registered apps: ${names.join(', ')}. Restart them so they load FAI Browser.`
     : 'Registered apps: none. Connect your coding agent using the setup instructions above.';
+  return opencodeManual ? `${summary} OpenCode was not auto-registered because opencode.jsonc exists. `
+    + 'OpenCode needs one manual step: ask your agent to apply the printed snippet and wake-plugin instructions, then restart OpenCode.' : summary;
 }
 
 /**

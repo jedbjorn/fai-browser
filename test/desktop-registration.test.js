@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { detectHosts, InstallError, MCP_ENTRY, registerHost, registrationSummary } from '../src/install.js';
+import { detectHosts, InstallError, MCP_ENTRY, OPENCODE_PLUGIN_SOURCE, registerHost, registrationSummary } from '../src/install.js';
+import { wakeReason } from '../src/wake.js';
 
 function fixture(t) {
   const home = mkdtempSync(join(tmpdir(), 'fai desktop 100% '));
@@ -137,6 +138,32 @@ test('desktop-only ChatGPT and OpenCode get user config, skills and plugin, with
   assert.ok(existsSync(join(home, '.config', 'opencode', 'plugins', 'fai-browser.js')));
   assert.ok(existsSync(join(home, '.agents', 'skills', 'fai-browser', 'SKILL.md')));
   assert.equal(readdirSync(join(home, '.config', 'opencode')).filter(name => name.includes('.bak-')).length, 1);
+});
+
+test('OpenCode JSONC refusal preserves config and explains the manual snippet and wake plugin step', async t => {
+  const { home, env, file } = fixture(t);
+  const config = file(home, '.config', 'opencode', 'opencode.jsonc');
+  const original = '// Keep provider and model configuration\n{"model":"keep-me"}\n';
+  writeFileSync(config, original);
+  await assert.rejects(registerHost('opencode', { home, env, platform: 'win32' }), error => {
+    assert.ok(error instanceof InstallError);
+    assert.equal(error.path, config);
+    assert.match(error.message, /ask your agent to add the printed snippet/);
+    assert.ok(error.message.includes(OPENCODE_PLUGIN_SOURCE));
+    assert.ok(error.message.includes(join(home, '.config', 'opencode', 'plugins', 'fai-browser.js')));
+    assert.ok(JSON.parse(error.snippet).mcp['fai-browser']);
+    return true;
+  });
+  assert.equal(readFileSync(config, 'utf8'), original);
+  assert.equal(existsSync(join(home, '.config', 'opencode', 'opencode.json')), false);
+  assert.equal(existsSync(join(home, '.config', 'opencode', 'plugins', 'fai-browser.js')), false);
+  assert.equal(wakeReason({ host: 'opencode', env: {}, platform: 'win32' }), 'opencode_no_plugin');
+  for (const names of [[], ['Claude (Code tab)', 'ChatGPT (Codex)']]) {
+    const summary = registrationSummary(names, { opencodeManual: true });
+    assert.ok(summary.startsWith(registrationSummary(names)));
+    assert.match(summary, /OpenCode was not auto-registered because opencode\.jsonc exists/);
+    assert.match(summary, /OpenCode needs one manual step:.*printed snippet and wake-plugin instructions/);
+  }
 });
 
 test('Claude desktop without the CLI prints manual registration and never edits live Claude config or runs the launcher', async t => {

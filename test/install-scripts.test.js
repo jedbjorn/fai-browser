@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
-import { findOnPath } from '../src/install.js';
+import { findOnPath, registrationSummary } from '../src/install.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const SH = join(ROOT, 'scripts', 'install.sh');
@@ -310,8 +310,11 @@ test('Windows installer streams setup output, preserves its exit code and closes
   const script = join(app, 'summary.ps1');
   writeFileSync(script, `$node = ${quote(process.execPath)}\n$app = ${quote(app)}\nfunction Say($text) { Write-Output $text }\n`
     + `${runSetup}\n$code = $LASTEXITCODE\nWrite-Output "setup-exit: $code"\n${summary}\n`);
-  for (const [names, code] of [['ChatGPT (Codex), OpenCode Desktop', 0], ['none', 7]]) {
-    const line = `Registered apps: ${names}. Restart them so they load FAI Browser.`;
+  for (const [line, code] of [
+    [registrationSummary(['ChatGPT (Codex)', 'OpenCode Desktop']), 0],
+    [registrationSummary(['Claude (Code tab)', 'ChatGPT (Codex)'], { opencodeManual: true }), 0],
+    [registrationSummary([]), 7],
+  ]) {
     writeFileSync(join(app, 'scripts', 'setup.mjs'),
       `console.log('Setup progress'); console.log(${JSON.stringify(line)}); process.exitCode = ${code};\n`);
     const result = ps(['-File', script]);
