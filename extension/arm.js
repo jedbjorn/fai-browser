@@ -1,14 +1,15 @@
 // The waiting prompt for a page that opened by itself (arm.html?tab=<tabId>, opened by the worker's showPrompt next
-// to the page's window): approves its bound task tab using native optional host access, with a level choice and
-// Deny. The toolbar remains an alternative and provides the activeTab gesture needed for screenshots. The choice never goes above what the agent asked for (permissions.js levelChoices; the worker checks again).
+// to the page's window): Use or Act approves its bound task tab using native optional host access.
+// Listed test requests may explicitly enable testing with Act. Toolbar approval offers the same choices.
 // It renders from chrome.storage.session (armedTabs, requests) and closes itself once its tab is no longer armed
 // (approved, denied, expired or closed). Everything an agent wrote is rendered with textContent only.
 import { LEVEL_TEXT, levelChoices, normalizePermissions, startTarget } from './permissions.js';
-import { PIN_HINT, actionShortcut, fillLevelSelect, iconPinned, orShortcut } from './ui.js';
+import { PIN_HINT, actionShortcut, iconPinned, orShortcut } from './ui.js';
 
 const tabId = Number(new URLSearchParams(location.search).get('tab'));
 const detail = document.getElementById('detail');
-const select = document.getElementById('level');
+const testing = document.getElementById('testing');
+const act = document.getElementById('act');
 const help = document.getElementById('level-help');
 const warning = document.getElementById('level-warning');
 const approve = document.getElementById('approve');
@@ -61,28 +62,22 @@ function render() {
   const client = String(arm.client || request?.client || 'An agent').slice(0, 80);
   const host = request ? startTarget(request)?.host ?? '' : '';
   const reason = typeof request?.reason === 'string' && request.reason ? ` "${request.reason}"` : '';
-  detail.textContent = `${client} asks for ${host || 'that page'}:${reason}. Click the FAI Browser icon there`
-    + `${orShortcut(shortcut)}, or approve here at the level below. Your browser may ask for site access.`
-    + ' Screenshots may still need a click on the toolbar icon. Browser site access covers this host on all ports; agent access stays within the approved origins.'
-    + (arm.tabMode === 'multiple' ? ' Multiple task tabs: up to eight tabs on the approved site; allow browser site access when asked.'
-      : ' One task tab: a new tab or popup pauses the task.');
-  // The levels the request card would offer: at or below what the agent asked for (Test site only when every
-  // requested origin is a listed test site). Without the request yet, only the armed level itself.
-  const options = request ? levelChoices(request, permissions).options
-    : [{ level: arm.level, ...LEVEL_TEXT[arm.level] }];
-  const current = fillLevelSelect(select, options, arm.level);
-  select.disabled = approving || options.length < 2;
-  const chosen = options.find(option => option.level === current);
-  help.textContent = chosen?.description ?? '';
-  warning.hidden = current !== 'testing';
-  select.setAttribute('aria-describedby', current === 'testing' ? 'level-help level-warning' : 'level-help');
-  document.body.dataset.level = current;
-  // A paused task resumed in a new tab (its card's "Resume in a new tab") says Resume, never the new-request Approve.
-  approve.textContent = approving ? 'Approving…' : `${request?.state === 'paused' ? 'Resume at' : 'Approve'} ${chosen?.name ?? 'request'}`;
+  detail.textContent = `${client} asks for ${host || 'that page'}:${reason}. Choose Use or Act here or in the toolbar popup.`
+    + ' Your browser may ask for site access. Screenshots may still need the toolbar icon.';
+  const options = request ? levelChoices(request, permissions).options : [];
+  const canTest = options.some(option => option.level === 'testing');
+  document.getElementById('testing-choice').hidden = !canTest;
+  if (!canTest) testing.checked = false;
+  testing.disabled = approving;
+  help.textContent = 'Use: one task tab, reading and navigation only. Act: actions and up to eight task tabs.';
+  warning.hidden = !testing.checked;
+  approve.textContent = 'Use';
+  act.textContent = 'Act';
   // Enabled as soon as the request is known and the held check is in: a click before arm_prepare answers is kept.
   const pattern = request ? (sameArm(approval, arm) ? approval.pattern : sitePattern(arm, request)) : null;
   const asked = pattern ? askedPatterns(sameArm(approval, arm) ? approval : null, pattern, request) : [];
   approve.disabled = approving || !pattern || !checkHeld(asked);
+  act.disabled = approve.disabled;
   if (request && !sameArm(shownReported, arm)) {
     shownReported = arm;
     report(arm, 'shown');
@@ -214,7 +209,7 @@ function siteAccessAnswer(arm, access, late) {
 // A failure found here (not by the worker, which reports its own refusals): reported with its code.
 const localFailure = (code, message) => Object.assign(new Error(message), { code, local: true });
 
-approve.addEventListener('click', () => {
+function approveChoice(level) {
   const arm = currentArm();
   const request = arm ? requests.find(item => item.requestId === arm.requestId) : null;
   if (approving || !arm || !request) return;
@@ -225,11 +220,11 @@ approve.addEventListener('click', () => {
   if (!asked.every(item => typeof heldBefore.get(item) === 'boolean')) return;
   // This click's own snapshot: its grant changes the browser's permissions (and so heldBefore) before it is reported.
   const before = new Map(asked.map(item => [item, heldBefore.get(item)]));
-  const level = select.value;
   approving = true;
   approve.disabled = true;
   approve.textContent = 'Approving…';
-  select.disabled = true;
+  testing.disabled = true;
+  act.disabled = true;
   // Native user gesture: no await, messaging or storage read before permissions.request.
   let access;
   let threw = false;
@@ -248,7 +243,9 @@ approve.addEventListener('click', () => {
   }, () => {});
   say('Waiting for browser site access…');
   complete(arm, prepared, pattern, asked, before, access, level);
-});
+}
+approve.addEventListener('click', () => approveChoice('read-only'));
+act.addEventListener('click', () => approveChoice(testing.checked ? 'testing' : 'full'));
 
 const holds = pattern => Promise.resolve(chrome.permissions?.contains?.({ origins: [pattern] })).then(held => held === true, () => false);
 
@@ -265,11 +262,11 @@ async function complete(arm, prepared, pattern, asked, before, access, level) {
   try {
     const answer = await siteAccessAnswer(arm, access, granted => {
       trackObtained(arm, asked, before, granted);
-      if (granted && !approving && !closing) say('Site access was allowed after this approval was given up. Click Approve again.');
+      if (granted && !approving && !closing) say('Site access was allowed after this approval was given up. Choose Use or Act again.');
     });
     if (answer.timedOut) {
       throw localFailure('site_access_timeout', `Your browser did not show or answer its site-access prompt, so nothing `
-        + `was approved. Click the FAI Browser icon on the ${taskHost(arm)} tab to approve there, or click Approve again.`);
+        + `was approved. Click the FAI Browser icon on the ${taskHost(arm)} tab to approve there, or choose Use or Act again.`);
     }
     let { granted } = answer;
     await trackObtained(arm, asked, before, granted);
@@ -305,16 +302,7 @@ async function complete(arm, prepared, pattern, asked, before, access, level) {
   }
 }
 
-select.addEventListener('change', async () => {
-  const level = select.value;
-  try {
-    const reply = await chrome.runtime.sendMessage({ type: 'arm_level', tabId, level });
-    if (reply?.error) throw new Error(reply.error);
-    status.textContent = `Your approval will approve ${LEVEL_TEXT[level]?.name ?? level}.`;
-  } catch (error) {
-    status.textContent = error.message;
-  }
-});
+testing.addEventListener('change', render);
 
 deny.addEventListener('click', async () => {
   const arm = arms.find(item => item.tabId === tabId);

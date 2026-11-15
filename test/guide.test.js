@@ -36,7 +36,7 @@ test('every guide topic answers, the index names them all, and each stays under 
   // The index alone carries the rules that matter most (a host may call the guide once, without a topic).
   const index = guideText('index');
   for (const rule of [/page\.digest answers the task/, /Never a guessed address \(url, allowedUrls or origins\)/,
-    /focus/, /child_tab/, /Resume/, /same requestId/, /Never log in/, /Do not release/]) assert.match(index, rule);
+    /focus/, /child_tab/, /Use or Act approval to resume/, /same requestId/, /Never log in/, /Do not release/]) assert.match(index, rule);
   // The tool's own schema offers exactly these topics.
   const tool = TOOLS.find(item => item.name === 'fai_browser_guide');
   assert.deepEqual(tool.inputSchema.properties.topic.enum, GUIDE_TOPICS);
@@ -66,8 +66,8 @@ test('guideCode explains every code it lists in one or two lines, with who acts'
     'tab_not_ready', 'ask_declined', 'ask_root', 'stopped']) {
     assert.ok(GUIDE_CODES.includes(code), code);
   }
-  assert.match(guideCode('child_tab'), /the user acts.*Resume.*Multiple task tabs/s);
-  assert.match(guideCode('tab_changed'), /came to the front.*Resume/);
+  assert.match(guideCode('child_tab'), /the user acts.*approves Act.*multiple task tabs/si);
+  assert.match(guideCode('tab_changed'), /came to the front.*Use or Act.*resume/);
   assert.match(guideCode('cross_origin'), /same|requestId/);
   assert.match(guideCode('cross_origin'), /Never guess/);
   assert.equal(guideCode('no_such_code'), null);
@@ -86,7 +86,7 @@ test('the guide names only real tools, every level, and the rules agents missed'
   assert.match(guideText('finding'), /Never construct or guess an address/);
   assert.match(guideText('finding'), /focus/);
   assert.match(guideText('finding'), /"…"/, 'a cut block is marked');
-  assert.match(guideText('tabs'), /child_tab[\s\S]*tab_changed[\s\S]*Multiple task tabs[\s\S]*openTab/);
+  assert.match(guideText('tabs'), /child_tab[\s\S]*tab_changed[\s\S]*Act approval[\s\S]*multiple task tabs[\s\S]*openTab/);
   assert.match(guideText('origins'), /same request[\s\S]*other site/);
   assert.match(guideText('troubleshooting'), /daemon logs[\s\S]*Version mismatch|Version mismatch[\s\S]*daemon logs/);
   assert.match(guideText('troubleshooting'), /bug report/i);
@@ -133,7 +133,8 @@ test('versionNote: only when plain versions differ', () => {
 test('refusals of one-tab acts stop with their own remedy, never the purchase line', () => {
   const next = directNext({ status: 'needs_user', code: 'refused_action', needs: { who: 'user', message: ONE_TAB_TEXT } });
   assert.equal(next.kind, 'stop');
-  assert.match(next.text, /Multiple task tabs/);
+  assert.match(next.text, /approve Act/);
+  assert.doesNotMatch(next.text, /Advanced|Tab access/);
   assert.doesNotMatch(next.text, /purchases/);
   const cross = directNext({ status: 'needs_user', code: 'cross_origin', needs: { who: 'user', message: 'x' } }, { requestId: 'req_abcd' });
   assert.equal(cross.kind, 'relay');
@@ -232,8 +233,12 @@ test('guideCode: who acts is true for every code; advice matches what the MCP to
   assert.match(guideCode('stopped'), /the task ended/);
   for (const code of OUTCOME_CODES) assert.doesNotMatch(guideCode(code), /nobody can continue/, code);
   assert.doesNotMatch(guideCode('time_budget'), /timeoutMs/, 'no MCP tool takes timeoutMs');
-  assert.match(guideCode('refused_action'), /Multiple task tabs/, 'some refusals without needs.level lift another way');
-  assert.match(guideCode('tab_changed'), /One task tab/, 'Tab access switched back pauses as tab_changed');
+  assert.match(guideCode('refused_action'), /approve Act/, 'one-tab refusals point to the Act button');
+  assert.match(guideCode('tab_changed'), /Use or Act to resume/, 'resume uses the same two approval choices');
+  assert.doesNotMatch(guideText('tabs'), /Advanced|turns it on|Tab access back|invited tab is always one/);
+  assert.match(guideText('levels'), /Use (?:grants|approves) read-only navigation[^\n]*one (?:task )?tab/);
+  assert.match(guideText('levels'), /Act (?:grants|approves) full actions[^\n]*multiple task tabs/);
+  assert.doesNotMatch(guideText('levels'), /preselected/);
   assert.match(guideCode('select_tab'), /toolbar icon/);
   assert.match(guideCode('select_tab'), /declined/);
 });

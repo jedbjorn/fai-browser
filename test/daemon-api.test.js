@@ -600,10 +600,10 @@ test('without config.json or a popup setting the budget in effect is the default
   assert.deepEqual(status.body.budget, { maxCalls: 50, maxMs: 1_200_000, source: 'default' });
 });
 
-test('a request is approved on its page when the extension opens pages right away (Interactive or less, a page to open); the wording follows', async t => {
+test('a request is approved on its page when the extension opens pages right away (any mode, a page to open); the wording follows', async t => {
   const ctx = await setup(t);
-  const PAGE = /its task page opened in an existing browser window; click Approve in the page request modal \(grant browser site access if asked\), or use the FAI Browser toolbar icon/;
-  const WINDOW = /click Open in the FAI Browser window, then Approve in the page request modal/;
+  const PAGE = /Use or Act/;
+  const WINDOW = /Use or Act/;
   const viewOf = async requestId => (await ctx.api('GET', `/v1/requests/${requestId}`)).body;
   const blocked = async requestId => (await ctx.api('POST', '/v1/act', { requestId, actionId: 'a0', expectation: { urlIncludes: '/x' } })).body.result;
   // An extension that reports nothing about the setting (older): the window wording.
@@ -620,7 +620,7 @@ test('a request is approved on its page when the extension opens pages right awa
   assert.equal((await viewOf(pageId)).approval, 'page');
   let result = await blocked(pageId);
   assert.equal(result.code, 'select_tab');
-  assert.match(result.needs.message, /task page opened in an existing browser window; click Approve in the page request modal/);
+  assert.match(result.needs.message, /Use or Act/);
   assert.match(result.next.text, PAGE);
   assert.deepEqual(result.lease, { requestId: pageId, state: 'pending' }, 'the lease block is unchanged');
   // Interactive still opens by itself; an exact origin without a url has a page to open too.
@@ -631,9 +631,9 @@ test('a request is approved on its page when the extension opens pages right awa
   // Full and Testing get the window, where the level is picked; so does a request with only domain roots and no url.
   for (const mode of ['full', 'testing']) {
     const id = await requestTab(ctx, { mode, url: `${ORIGIN}/cart` });
-    assert.equal((await viewOf(id)).approval, 'window', mode);
+    assert.equal((await viewOf(id)).approval, 'page', mode);
     result = await blocked(id);
-    assert.equal(result.needs.message, LEASE_MESSAGES.select_tab, mode);
+    assert.match(result.needs.message, PAGE, mode);
     assert.match(result.next.text, WINDOW);
     await cancel(id);
   }

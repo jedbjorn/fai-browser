@@ -171,49 +171,44 @@ test('compat: the Chromium build gets no exact-origin keeper', () => {
   assert.equal(chromium.listeners.added.length, 0);
 });
 
-test('compat keeper: the approval click asks for the request\'s exact origins, and only what it added goes when the request ends', async () => {
+test('compat keeper: explicit button permissions preserve personal access and remove only FAI additions', async () => {
   const ff = compatContext();
-  const { chrome, session, local, requested, removed, permissions, settle } = ff;
+  const { chrome, session, local, removed, permissions, settle } = ff;
   const request = { requestId: 'r1', state: 'pending',
     origins: ['https://docs.example.com', 'http://127.0.0.1:8080', 'https://*.example.org'] };
-  // The user already allowed docs.example.com by hand: never tracked, never removed.
   permissions.add('https://docs.example.com/*');
   await chrome.storage.session.set({ requests: [request], armedTabs: [{ tabId: 7, requestId: 'r1', level: 'read-only' }] });
   await settle();
-  assert.equal(ff.listeners.clicked.length, 1);
-  ff.listeners.clicked[0]({ id: 7, url: 'https://docs.example.com/start' });
-  assert.ok(ff.context.faiCompat.approvalAccess(7) instanceof Object);
-  assert.equal(ff.context.faiCompat.approvalAccess(8), null);
-  assert.equal(await ff.context.faiCompat.approvalAccess(7), true);
-  assert.deepEqual(requested, [['https://docs.example.com/*', 'http://127.0.0.1/*']], 'portless, no domain root, synchronously');
+  assert.equal(ff.listeners.clicked.length, 0, 'no native permission request on toolbar opening');
+  assert.equal(ff.context.faiCompat.approvalAccess, undefined, 'no legacy automatic approval hook');
+  // Shared UI records patterns immediately before its Use/Act gesture requests permission.
+  await chrome.storage.session.set({ compatExpectedOrigins: { 'http://127.0.0.1/*': Date.now() } });
+  await chrome.permissions.request({ origins: ['https://docs.example.com/*', 'http://127.0.0.1/*'] });
   await settle();
   assert.deepEqual(local.compatGrantedOrigins, ['http://127.0.0.1/*']);
   assert.ok(session.compatExpectedOrigins['http://127.0.0.1/*']);
-
-  // Active, then paused: kept.
   await chrome.storage.session.set({ requests: [{ ...request, state: 'active' }] });
   await chrome.storage.session.set({ requests: [{ ...request, state: 'paused' }] });
   await settle();
   assert.deepEqual(removed, []);
-  // Released: the keeper removes what it added, not the user's own grant.
   await chrome.storage.session.set({ requests: [{ ...request, state: 'released' }] });
   await settle();
   assert.deepEqual(removed, [['http://127.0.0.1/*']]);
   assert.ok(permissions.has('https://docs.example.com/*'));
   assert.deepEqual(local.compatGrantedOrigins, []);
-
-  // A permission added without an approval click (the extensions panel) is not tracked.
   for (const fn of ff.listeners.added) fn({ origins: ['https://other.example/*'] });
   await settle();
-  assert.deepEqual(local.compatGrantedOrigins, []);
+  assert.deepEqual(local.compatGrantedOrigins, [], 'manual access is never attributed to FAI');
 });
 
-test('compat keeper: a click on an unarmed tab before anything loaded asks for that page\'s own origin only', async () => {
+test('compat keeper: a stale or early icon click cannot request permission or grant access', async () => {
   const ff = compatContext();
-  ff.listeners.clicked[0]({ id: 3, url: 'https://shop.example:8443/cart' });
-  assert.deepEqual(ff.requested, [['https://shop.example/*']]);
-  ff.listeners.clicked[0]({ id: 4, url: 'about:blank' });
-  assert.equal(ff.requested.length, 1);
+  for (const click of ff.listeners.clicked) click({ id: 3, url: 'https://shop.example:8443/cart' });
+  assert.equal(ff.listeners.clicked.length, 0);
+  assert.equal(ff.context.faiCompat.approvalAccess, undefined);
+  assert.deepEqual(ff.requested, []);
+  await ff.settle();
+  assert.deepEqual(ff.requested, []);
 });
 
 test('ui.js exactOriginPatterns matches compat.js and is empty in the Chromium build', () => {

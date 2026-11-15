@@ -132,7 +132,8 @@ async function approve(env, requestId, { level, tabMode = 'single', ask = false,
   }, { requestId, level, tabMode, ask, guardMs, url: env.origin });
 }
 
-async function activeRequest(env, { mode = 'reversible', tabMode = 'multiple', origins = [env.origin] } = {}) {
+async function activeRequest(env, { mode = null, tabMode = 'multiple', origins = [env.origin] } = {}) {
+  mode ??= tabMode === 'multiple' ? 'full' : 'read-only';
   const { requestId } = await env.client.requestTab({ origins, mode, reason: 'Work on the task page' });
   assert.equal(await approve(env, requestId, { level: mode, tabMode }), 'ok');
   assert.equal((await env.client.wait({ requestId, maxMs: 5000 })).state, 'active');
@@ -237,9 +238,9 @@ test('#30 an unapproved origin: refused up front, asked on the same request, app
     card = await until(() => env.context.pages().find(page => page.url().includes('popup.html')));
   }
   if (card) {
-    await card.waitForSelector('.ask-approve:not([disabled])', { timeout: 5000 });
+    await card.waitForSelector('.ask-approve[data-level="read-only"]:not([disabled])', { timeout: 5000 });
     assert.match(await card.locator('.ask-meta').innerText(), /Same task and tab: add http:\/\/localhost:\d+/);
-    await card.click('.ask-approve');
+    await card.click('.ask-approve[data-level="read-only"]');
   } else {
     assert.fail('the FAI Browser window with the ask card did not open');
   }
@@ -257,19 +258,19 @@ test('#30 an unapproved origin: refused up front, asked on the same request, app
   assert.equal((await env.client.getRequest(requestId)).state, 'active');
 });
 
-test('#30 a higher level on the same request keeps its id, lease, page and tab mode', async t => {
+test('#30 Act on the same Use request keeps its id, lease and page while enabling multiple tabs', async t => {
   const env = await launch(t);
-  const requestId = await activeRequest(env, { mode: 'read-only', tabMode: 'multiple' });
+  const requestId = await activeRequest(env, { mode: 'read-only', tabMode: 'single' });
   const observed = await env.client.observe({ requestId });
   await act(env, requestId, actionFor(observed, 'Details').id);
   const lease = (await env.client.getRequest(requestId)).lease;
   const asked = await env.client.ask(requestId, { mode: 'reversible' });
   assert.equal(asked.request.ask.level, 'reversible');
-  await env.worker.evaluate(async ({ requestId, askId }) => approveOnSessionTab({ type: 'start', requestId, level: 'reversible', ask: true,
+  await env.worker.evaluate(async ({ requestId, askId }) => approveOnSessionTab({ type: 'start', requestId, level: 'full', ask: true,
     askId, tabMode: 'multiple' }), { requestId, askId: asked.request.ask.id });
   const view = await env.client.getRequest(requestId);
   assert.deepEqual([view.requestId, view.state, view.lease.leaseId, view.grant.level, view.grant.tabMode],
-    [requestId, 'active', lease.leaseId, 'reversible', 'multiple']);
+    [requestId, 'active', lease.leaseId, 'full', 'multiple']);
   const now = await env.client.observe({ requestId });
   assert.equal((now.page ?? now.observation).title, 'Details page', 'the same page, not the start URL');
   assert.equal(now.permissions?.tabMode ?? 'multiple', 'multiple');
@@ -299,13 +300,13 @@ test('#30 an ask that changes while its card is open: marked updated, Approve he
   const requestId = await activeRequest(env, { mode: 'reversible', tabMode: 'single' });
   await env.client.ask(requestId, { origins: [env.partner] });
   const card = await faiWindow(env);
-  await card.waitForSelector('.ask-approve:not([disabled])', { timeout: 5000 });
+  await card.waitForSelector('.ask-approve[data-level="read-only"]:not([disabled])', { timeout: 5000 });
   assert.equal(await card.locator('.ask-changed').count(), 0);
   await env.client.ask(requestId, { mode: 'interactive' });
   await card.waitForSelector('.ask-changed', { timeout: 5000 });
-  assert.equal(await card.locator('.ask-approve[disabled]').count(), 1, 'Approve is held right after the change');
-  assert.match(await card.locator('.ask-meta').innerText(), /allow Use/);
-  await card.waitForSelector('.ask-approve:not([disabled])', { timeout: 3000 });
+  assert.equal(await card.locator('.ask-approve[disabled]').count(), 2, 'both approval choices are held right after the change');
+  assert.match(await card.locator('.ask-meta').innerText(), /allow Act/);
+  await card.waitForSelector('.ask-approve[data-level="read-only"]:not([disabled])', { timeout: 3000 });
 });
 
 // Review item 3, the reviewer's probe: a tab the user opened from the task page before any request existed has that
@@ -348,9 +349,9 @@ test('#30 an ask on an invited tab: its card shows in the FAI Browser window and
   const asked = await api('POST', `/v1/requests/${invited.requestId}/ask`, { origins: [env.partner] }, headers);
   assert.equal(asked.body.asked, true, JSON.stringify(asked.body));
   const card = await faiWindow(env);
-  await card.waitForSelector('.ask-approve:not([disabled])', { timeout: 5000 });
+  await card.waitForSelector('.ask-approve[data-level="read-only"]:not([disabled])', { timeout: 5000 });
   assert.match(await card.locator('.ask-meta').innerText(), /add http:\/\/localhost:\d+/);
-  await card.click('.ask-approve');
+  await card.click('.ask-approve[data-level="read-only"]');
   assert.ok(await until(async () => !(await api('GET', `/v1/requests/${invited.requestId}`, undefined, headers)).body.ask),
     'the ask is answered from the card');
   const view = (await api('GET', `/v1/requests/${invited.requestId}`, undefined, headers)).body;
@@ -399,8 +400,8 @@ test('#30 + #35: links to a reachable lease origin, an unlisted one and an unrea
   // C asked on the same request and approved on its card: the link becomes an ordinary click, followed in the same tab.
   await env.client.ask(requestId, { origins: [env.third] });
   const card = await faiWindow(env);
-  await card.waitForSelector('.ask-approve:not([disabled])', { timeout: 5000 });
-  await card.click('.ask-approve');
+  await card.waitForSelector('.ask-approve[data-level="read-only"]:not([disabled])', { timeout: 5000 });
+  await card.click('.ask-approve[data-level="read-only"]');
   assert.ok(await until(async () => !(await env.client.getRequest(requestId)).ask), 'the ask is answered');
   const view = await env.client.getRequest(requestId);
   assert.deepEqual([view.state, view.lease.leaseId, view.lease.tabId], ['active', leaseId, tabId]);

@@ -282,7 +282,7 @@ test('daemon: lease level is validated and stored as the grant; missing level ke
   assert.equal((view.request ?? view).grant.level, 'full');
   assert.equal(ctx.hub.bound.at(-1).level, 'full', 'the hub lease carries the grant');
   const run = await ctx.api('POST', '/v1/observe', { requestId: full });
-  assert.deepEqual(run.body.permissions, { requested: 'testing', granted: 'full', effective: 'full', testing: false, scope: 'origin', tabMode: 'single' });
+  assert.deepEqual(run.body.permissions, { requested: 'full', granted: 'full', effective: 'full', testing: false, scope: 'origin', tabMode: 'single' });
 
   // An older extension (no level): reversible for a reversible-or-higher request, else read-only.
   const legacy = await ctx.request('interactive');
@@ -308,6 +308,37 @@ const LOGIN_PAGE = { title: 'Sign in', text: 'Sign in to the test app', controls
   { id: '2', role: 'textbox', type: 'password', label: 'Password', enabled: true, risk: 'reversible' },
   { id: '3', role: 'button', label: 'Sign in', enabled: true, risk: 'sign_in' },
 ] };
+
+test('daemon: explicit Act upgrades a legacy read request; Use clamps cached actions and resumed sessions', async t => {
+  const ctx = await daemonSetup(t);
+  const requestId = await ctx.request('read-only');
+  const bridge = ctx.hub.bridgeForTab(1);
+  bridge.pages['/'] = { title: 'Draft', text: 'Edit the draft', controls: [
+    { id: 'save', role: 'button', label: 'Save draft', enabled: true, risk: 'submit' },
+    link('next', 'Next', '/next'),
+  ] };
+  const observe = extra => ctx.api('POST', '/v1/observe', { requestId, capture: false, ...extra });
+  await ctx.hub.approve(requestId, { level: 'full', tabMode: 'multiple' });
+  const actView = (await observe()).body;
+  assert.equal(actView.permissions.effective, 'full');
+  assert.equal(actView.permissions.tabMode, 'multiple');
+  const save = actView.actions.find(action => action.label === 'Save draft' && action.type === 'click');
+  assert.ok(save, 'Act offers saves even when the agent originally asked only to read');
+  const leaseId = ctx.daemon.request(requestId).lease.leaseId;
+  await ctx.hub.approve(requestId, { level: 'read-only', tabMode: 'single' });
+  assert.equal(ctx.daemon.request(requestId).lease.leaseId, leaseId, 'same active lease is lowered in place');
+  const stale = await ctx.api('POST', '/v1/act', { requestId, mode: 'full', actionId: save.id, revision: actView.revision });
+  assert.notEqual(stale.body.result?.status, 'completed');
+  const useView = (await observe({ mode: 'full' })).body;
+  assert.equal(useView.permissions.effective, 'read-only');
+  assert.equal(useView.permissions.tabMode, 'single');
+  assert.ok(!useView.actions.some(action => action.label === 'Save draft'));
+  await ctx.hub.emit({ type: 'status', leaseId, status: 'paused', reason: 'paused' });
+  await ctx.hub.approve(requestId, { level: 'read-only', tabMode: 'single' });
+  assert.equal((await observe()).body.permissions.effective, 'read-only', 'resume never inherits earlier Act authority');
+  await ctx.hub.approve(requestId, { level: 'full', tabMode: 'multiple' });
+  assert.ok((await observe()).body.actions.some(action => action.label === 'Save draft'), 'a fresh explicit Act choice restores actions');
+});
 
 test('daemon: the extension lowers a testing grant (lease_level); raising is refused; receipts and offers follow', async t => {
   const ctx = await daemonSetup(t);

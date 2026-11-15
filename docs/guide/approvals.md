@@ -8,19 +8,21 @@ risky action** inside that tab. Neither can be pre-approved by the agent. Rules 
 
 When an agent calls `fai_browser_open`, a card appears in the extension (and a `?` badge on the icon):
 
-- **Who and what:** the agent's name, "asks for Use", the exact origins (or "all of example.com") and the reason, marked
-  as the agent's words and rendered as text.
-- **Allow:** a level selector offering the asked level and everything below it, preselected to what was asked. Test site is
-  never preselected and appears only for origins you listed as test sites. **Preselect up to** (Advanced) caps the default.
-- **Approve:** approve the opened task tab directly in its request modal, or click the toolbar icon. The modal asks
-  the browser for access to that host; the toolbar click grants `activeTab`.
+- **Who and what:** the agent’s name, exact origins (or "all of example.com") and reason, marked
+  as the agent’s words and rendered as text.
+- **Use:** one click approves reading, links, navigation, scrolling and waiting in one task tab.
+- **Act:** one click approves actions and up to eight task tabs on approved sites. Save, send, submit,
+  delete and cookie acceptance remain subject to the task, origin and action guardrails.
 
-How you get there depends on the level asked:
+The request card, request modal, resume and invite controls use the same two buttons. There is no Read/View
+choice, level dropdown, default-level setting or separate tab-access setting. Both buttons are available even
+when an older agent asks for `read-only`, `reversible` or `interactive`: Act is your explicit authorization to
+act. Existing grants never become Act automatically. Explicit lower API modes still cap an individual call.
+For a request for `testing` on listed test origins, a separate test-only checkbox enables testing with Act;
+it is never selected automatically and adds no third normal approval button.
 
-| Asked | What happens |
-|---|---|
-| Read, Use | The page opens in a fresh task tab in an existing normal window, with a request modal. Choose the level and click **Approve** there, or click the FAI Browser icon on the task tab |
-| Act, Test site | The FAI Browser window opens with the request card; confirm the level and click **Open**, then **Approve** in the request modal (or click the icon on the task tab) |
+The task page can open automatically when that setting is enabled. Opening a page grants nothing: choose
+Use or Act in its request modal or the FAI Browser popup. The browser may then ask for site access.
 
 The modal's browser permission covers the exact scheme and host across all ports; the agent remains restricted to
 the approved origins and task tab(s). Access acquired for this approval is removed when no live task needs it;
@@ -30,7 +32,7 @@ Screenshots may still require the toolbar click because a host grant alone does
 not grant screenshot access. The modal never asks for all-sites access to work around that limit.
 
 "Open requested pages right away" and "Show a window when an agent asks" are settings under Advanced. While the agent holds the
-tab it sits in a tab group titled `FAI` and the icon shows `ON`. **Pause** and **Stop** sit at the top of the popup, above every card. **Pause** pauses the tab (a run in progress ends) until you press **Resume**, **Stop** releases the tab. Domain
+tab it sits in a tab group titled `FAI` and the icon shows `ON`. **Pause** and **Stop** sit at the top of the popup, above every card. **Pause** pauses the tab (a run in progress ends) until you choose **Use** or **Act** to resume, **Stop** releases the tab. Domain
 roots are remembered for 24 hours only if you turn that on.
 
 ## 2. Approve once
@@ -40,9 +42,9 @@ Some actions are offered to the agent marked `needsApproval` ("asks the user"):
 | Class | Examples | Asks |
 |---|---|---|
 | purchase | Pay, Place order, Subscribe; a Continue/Next/Confirm inside a checkout region | at every level that offers it, while the Approve gate is on |
-| delete | "Are you sure? Delete project" confirm button; cancel a subscription | below Act it asks; at Act it runs as granted |
-| secret | Create, reveal, show, copy or rotate an API key, token, password, recovery codes; the eye toggle next to a secret field | at every level including Test site |
-| submit / delete above the level | A submit the granted level does not allow | asks instead of refusing; the result also names `needs.level` |
+| delete | "Are you sure? Delete project" confirm button; cancel a subscription | at Act it runs as granted; Use never permits actions |
+| secret | Create, reveal, show, copy or rotate an API key, token, password, recovery codes; the eye toggle next to a secret field | from Act, including testing |
+| submit / delete above the level | A submit the granted level does not allow | legacy action grants may ask; Use requires Act approval first |
 | secret handle | `fill_secret`, `copy_secret` | always, whatever the settings |
 
 When the agent acts on one, the call **blocks** and a small **"Approve this action?"** window opens with a red `!` badge. It shows:
@@ -77,7 +79,7 @@ a level request. Secret handle uses ask whatever these say.
 
 ## 3. What is never approvable
 
-A label you forbade (`policy`, `config.json`), a page outside the approved origins, browser-internal pages, anything at Read,
+A label you forbade (`policy`, `config.json`), a page outside the approved origins, browser-internal pages, actions at Use,
 sign-in and password or card fields outside Test site, consent accepts below Act. For these the agent is refused (or handed back
 to you) and no window opens.
 
@@ -86,7 +88,7 @@ to you) and no window opens.
 - Read the window, not the agent's summary. The control label and total come from the page; "Agent says" is the model's claim.
 - Deny anything you did not expect, then tell the agent why.
 - Keep the Approve gate on. Turning it off is for test setups.
-- Use the lowest level. A request for Act on a site you only want read is a reason to deny and re-ask for Read.
+- Choose Use when you only want the agent to read and navigate; choose Act when you want it to act.
 - Test site mode is for your own staging apps. The tab card says "TEST SITE, no guardrails" while it is on.
 
 Next: [secret-redaction.md](secret-redaction.md), [safety-model.md](safety-model.md), [troubleshooting.md](troubleshooting.md).

@@ -490,7 +490,7 @@ function untilNext(outcome, requestId, timeoutText, goneMs) {
         text: `The tab is ready (request ${requestId} is active). Continue the task: ${continueOn(requestId)}.` };
     case 'timeout':
       return { kind: 'relay', text: `Request ${requestId} is still ${outcome.lastState ?? 'waiting'} after `
-        + `${timeoutText}. Ask the user to ${outcome.lastState === 'pending' ? 'approve it' : 'click Resume'} in the `
+        + `${timeoutText}. Ask the user to ${outcome.lastState === 'pending' ? 'approve it' : 'choose Use or Act to resume'} in the `
         + `FAI Browser extension and to tell you when they have; then ${continueOn(requestId)}. Or run this `
         + 'wait again.' };
     case 'interrupted':

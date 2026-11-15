@@ -132,29 +132,20 @@ export { siteRoot, originCovered, sitePattern, hostInSite, isSiteSuffix };
 /** Levels in ascending order. A level is a ceiling: each one includes everything below it. */
 export const LEVELS = Object.freeze(['read-only', 'reversible', 'interactive', 'full', 'testing']);
 
-/**
- * Levels the user may pick as the preselect ceiling ("Preselect up to", under Advanced). Testing is only ever picked
- * per request. 'reversible' stays valid for settings saved before the popup merged it into Use.
- */
+/** Legacy stored ceilings remain readable but never preselect or authorize a new approval. */
 export const DEFAULT_LEVELS = Object.freeze(['read-only', 'reversible', 'interactive', 'full']);
-
-/** A request card preselects the level the agent asked for, up to this ceiling (never Testing). */
 export const DEFAULT_LEVEL = 'full';
-
-/**
- * The popup's four names. Read, Use, Act, Test site: Use stands for both reversible and interactive (a card offers
- * the higher one the request allows), so the user sees one choice per kind of action. Agents keep the internal names.
- */
-export const UI_LEVELS = Object.freeze(['read-only', 'interactive', 'full', 'testing']);
+/** The two normal approval buttons. Testing is an explicit test-only modifier on Act. */
+export const UI_LEVELS = Object.freeze(['read-only', 'full']);
 
 export const MAX_TESTING_ORIGINS = 50;
 
 /** Plain words for each level: a name and a one-line description (at most 15 words). */
 export const LEVEL_TEXT = Object.freeze({
-  'read-only': Object.freeze({ name: 'Read', description: 'Reads pages and follows links on the site.' }),
-  reversible: Object.freeze({ name: 'Use', description: 'Clicks, picks options and fills text you gave. Never submits.' }),
-  interactive: Object.freeze({ name: 'Use', description: 'Clicks, fills, searches and filters. Never saves or sends.' }),
-  full: Object.freeze({ name: 'Act', description: 'Also saves, sends and deletes. Recognized purchases require approval when offered; otherwise they stay refused. No sign-in.' }),
+  'read-only': Object.freeze({ name: 'Use', description: 'One task tab. Reads pages, follows links and scrolls. No actions.' }),
+  reversible: Object.freeze({ name: 'Act', description: 'Legacy action limit: clicks and fills without submitting.' }),
+  interactive: Object.freeze({ name: 'Act', description: 'Legacy action limit: searches and filters without saving or sending.' }),
+  full: Object.freeze({ name: 'Act', description: 'Multiple task tabs. Clicks, fills, saves, sends and deletes. Recognized purchases require approval when offered; otherwise they stay refused. No sign-in.' }),
   testing: Object.freeze({ name: 'Test site', description: 'May log in and buy on test sites. Origin, policy, redaction and approval protections remain.' }),
 });
 
@@ -275,41 +266,21 @@ export function requestedLevel(request) {
   return 'read-only';
 }
 
-/**
- * The levels a request card (and the waiting prompt) offers: never above what the agent asked for. Read always; Use
- * when it asked for reversible or more (interactive, or reversible when that is what it asked for); Act from full;
- * Test site only for a testing request whose every origin is a listed testing environment.
- */
+/** Both normal choices are explicit grants, independent of a legacy requested-mode ceiling. */
 export function offeredLevels(requested, testing = false) {
-  const rank = LEVELS.indexOf(isLevel(requested) ? requested : 'read-only');
-  const out = ['read-only'];
-  if (rank >= LEVELS.indexOf('reversible')) out.push(minLevel(requested, 'interactive'));
-  if (rank >= LEVELS.indexOf('full')) out.push('full');
-  if (requested === 'testing' && testing) out.push('testing');
-  return out;
+  return ['read-only', 'full', ...(requested === 'testing' && testing ? ['testing'] : [])];
 }
 
-/** The highest of `offered` at or below `level`. */
-function highestUpTo(offered, level) {
-  const rank = LEVELS.indexOf(level);
-  return [...offered].reverse().find(item => LEVELS.indexOf(item) <= rank) ?? offered[0];
-}
-
-/**
- * The request card's level selector: `{ requested, preset, options: [{ level, name, description, warning }] }`.
- * Only levels at or below what the agent asked for are offered (offeredLevels). The preset is what the agent asked
- * for, up to the user's "Preselect up to" ceiling (default Act), never Testing: the user picks Test site by hand.
- */
+/** Two explicit approvals; stored preselection never authorizes actions. */
 export function levelChoices(request, permissions) {
-  const { defaultLevel, testingOrigins } = normalizePermissions(permissions);
+  const { testingOrigins } = normalizePermissions(permissions);
   const requested = requestedLevel(request);
-  const origins = Array.isArray(request?.origins) ? request.origins : [];
-  const levels = offeredLevels(requested, testingAllowed(origins, testingOrigins));
-  const options = levels.map(level => ({ level, ...LEVEL_TEXT[level], warning: level === 'testing' }));
-  // A ceiling saved as Reversible (before Use merged it with Interactive) counts as Use.
-  const ceiling = defaultLevel === 'reversible' ? 'interactive' : defaultLevel;
-  const preset = highestUpTo(levels, minLevel(minLevel(requested, ceiling), 'full'));
-  return { requested, preset, options };
+  const levels = offeredLevels(requested, testingAllowed(request?.origins, testingOrigins));
+  return { requested, preset: 'read-only', options: levels.map(level => ({ level, ...LEVEL_TEXT[level], warning: level === 'testing' })) };
+}
+
+export function approvalTabMode(level) {
+  return level === 'full' || level === 'testing' ? 'multiple' : 'single';
 }
 
 /** The domain roots among a request's origins. */
@@ -350,7 +321,7 @@ export function scopeChoices(request, currentOrigin) {
 /**
  * Where "Open <host>" opens a request, or null when it cannot: `{ url, origin, host }`. The request's `url` when it
  * is http(s) on one of its origins, else the first exact origin plus "/"; a request with domain roots only and no url
- * has none. Opening needs no host permission: the toolbar icon click on the opened tab is the approval.
+ * has none. Opening alone needs no host permission; Use or Act is a separate explicit grant.
  */
 export function startTarget(request) {
   const origins = Array.isArray(request?.origins) ? request.origins.filter(entry => typeof entry === 'string') : [];
@@ -453,9 +424,7 @@ export function normalizeRememberedSites(stored, now = Date.now()) {
  * The line under "All of <root>" about Chrome's site-access prompt, given which of the roots' patterns Chrome already
  * holds (`held`), which roots are remembered (`remembered`, [{ root, until }]) and the level chosen on the card:
  * `{ kind, text }` with kind `prompt` (Chrome will ask), `remembered` (no prompt, remembered for this level),
- * `again` (remembered for Read-only/Reversible only: the popup ends it as soon as the card shows this, before any
- * click, so Chrome asks again) or `granted`
- * (Chrome already allows the extension there, from its site-access setting: no prompt will appear).
+ * `granted` (browser host permission already exists). An explicit Act ends remembered access after the task.
  */
 export function promptNote(choice, { held = [], remembered = [], level = 'read-only', clock = ms => new Date(ms).toISOString() } = {}) {
   const heldAll = choice.patterns.every(pattern => held.includes(pattern));
@@ -466,7 +435,7 @@ export function promptNote(choice, { held = [], remembered = [], level = 'read-o
     return { kind: 'remembered', text: `Remembered until ${clock(Math.min(...rememberedHere.map(site => site.until)))}: no Chrome prompt.` };
   }
   if (rememberedAll) {
-    return { kind: 'again', text: `Remembered for lower levels only: ending it so Chrome asks again at ${LEVEL_TEXT[level]?.name ?? level}.` };
+    return { kind: 'granted', text: 'Browser site access is already allowed. Act ends its remembered approval when this task finishes.' };
   }
   return { kind: 'granted', text: 'Chrome already allows this extension on these sites (its site access setting): no prompt will appear.' };
 }

@@ -33,7 +33,7 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // OpenCode session ids (ses_ plus base62).
 export const OPENCODE_SESSION = /^ses_[A-Za-z0-9]{10,60}$/;
-const LEVEL_NAMES = { 'read-only': 'Read', reversible: 'Use', interactive: 'Use', full: 'Act', testing: 'Test site' };
+const LEVEL_NAMES = { 'read-only': 'Use', reversible: 'Act (limited)', interactive: 'Act (limited)', full: 'Act', testing: 'Act (test site)' };
 
 /**
  * The host this MCP server runs under: the MCP client's own name from initialize first (an OpenCode started from a
@@ -347,7 +347,7 @@ export function deliverOpencodePlugin({ path, token, sessionID, text, timeoutMs 
 // --- wake texts (FAI-authored, fixed templates; never page text, a URL or a title) ----------------------------------
 
 const safeId = value => (ID.test(String(value ?? '')) ? String(value) : 'unknown');
-const levelName = level => LEVEL_NAMES[level] ?? 'Read';
+const levelName = level => LEVEL_NAMES[level] ?? 'Use';
 
 /** The user's own words from the popup's "What should it do?", one line, clipped; '' when none. */
 export function cleanInviteText(text) {

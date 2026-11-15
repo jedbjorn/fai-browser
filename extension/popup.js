@@ -5,7 +5,7 @@
 // Everything an agent wrote (reason, instruction, client, origins) is rendered with textContent only. The pairing
 // secret is never shown or put into the page: its field only ever holds what the user types, and is cleared once saved.
 import {
-  LEVEL_TEXT, addTestingOrigin, budgetFromFields, describeBudget, describeOrigins, levelChoices, normalizeBudget,
+  approvalTabMode, LEVEL_TEXT, addTestingOrigin, budgetFromFields, describeBudget, describeOrigins, levelChoices, normalizeBudget,
   normalizeDomainMemory, normalizePermissions, normalizeRememberedSites, originCovered, promptNote, removeTestingOrigin,
   requestedLevel, requestRoots, scopeChoices, sitePattern, startTarget, SECRET_MODE_TEXT, normalizeSecretRedaction,
   addRelaxedOrigin, removeRelaxedOrigin,
@@ -14,7 +14,7 @@ import { mountApprovals } from './approval-card.js';
 import { mountUpdate } from './update-card.js';
 import { agentLabel, mountInvite } from './invite-card.js';
 import {
-  PIN_HINT, TESTING_WARNING, actionShortcut, allSitesGranted, askSiteAccess, element, fillLevelSelect, iconPinned,
+  PIN_HINT, TESTING_WARNING, actionShortcut, allSitesGranted, askSiteAccess, element, iconPinned,
   orShortcut, pressGuard, removeAllSites, replaceCardsPreservingFocus, requestAllSites,
 } from './ui.js';
 
@@ -39,7 +39,7 @@ const heldPatterns = new Set();
 const checkedPatterns = new Set();
 // The bound toolbar shortcut ("Ctrl+Shift+Y"), read from chrome.commands; '' when none is set.
 const shortcut = await actionShortcut();
-const OPEN_ARMED = `On the opened tab, click the FAI Browser icon${orShortcut(shortcut)} to approve.`;
+const OPEN_ARMED = `On the task tab, choose Use or Act in the FAI Browser popup${orShortcut(shortcut)}.`;
 const ENDING_REMEMBERED = 'Ending the remembered site access first; approve again in a moment.';
 
 const status = document.getElementById('status');
@@ -60,7 +60,6 @@ const requestList = document.getElementById('request-list');
 const holdRender = pressGuard(requestList);
 const requestsEmpty = document.getElementById('requests-empty');
 const transportLabel = document.getElementById('transport');
-const defaultLevel = document.getElementById('default-level');
 const testingList = document.getElementById('testing-list');
 const testingEmpty = document.getElementById('testing-empty');
 const testingOrigin = document.getElementById('testing-origin');
@@ -70,7 +69,6 @@ const rememberDomains = document.getElementById('remember-domains');
 const rememberedList = document.getElementById('remembered-list');
 const approvalWindow = document.getElementById('approval-window');
 const openRightAway = document.getElementById('open-right-away');
-const tabMode = document.getElementById('tab-mode');
 const budgetCalls = document.getElementById('budget-calls');
 const budgetMinutes = document.getElementById('budget-minutes');
 const budgetEffective = document.getElementById('budget-effective');
@@ -147,7 +145,7 @@ function elsewhereCard(request) {
   const move = element('button', 'primary-button move-request', 'Open here');
   move.type = 'button';
   move.disabled = busy;
-  move.addEventListener('click', () => send('move', { requestId: request.requestId }, 'Moved here. Approve it below.'));
+  move.addEventListener('click', () => send('move', { requestId: request.requestId }, 'Moved here. Choose Use or Act below.'));
   const deny = element('button', 'link-button deny-request', 'Deny');
   deny.type = 'button';
   deny.disabled = busy;
@@ -228,16 +226,20 @@ function askCard(request) {
   const own = view.session?.requestId === request.requestId && ['active', 'paused'].includes(view.status);
   const covered = Boolean(currentOrigin && originCovered(currentOrigin, wanted.origins));
   const actions = element('div', 'request-actions');
-  const approve = element('button', 'primary-button approve-request ask-approve', own ? 'Approve on the FAI tab' : 'Approve this tab');
-  approve.type = 'button';
-  approve.disabled = busy || settling || (!own && (!covered || windowMode));
+  for (const choice of level.buttons) {
+    const approve = element('button', 'primary-button approve-request ask-approve', choice.name);
+    approve.type = 'button';
+    approve.dataset.level = choice.level;
+    approve.disabled = busy || settling || (!own && (!covered || windowMode));
+    approve.addEventListener('click', () => approveAsk(request, wanted, level.pick(choice.level), own));
+    actions.append(approve);
+  }
   if (settling) setTimeout(render, ASK_SETTLE_MS - (Date.now() - shown.at) + 20);
-  approve.addEventListener('click', () => approveAsk(request, wanted, level.value(), own));
   const decline = element('button', 'link-button deny-request ask-decline', 'Decline');
   decline.type = 'button';
   decline.disabled = busy;
   decline.addEventListener('click', () => send('deny', { requestId: request.requestId, ask: true }, 'Declined. The task keeps what it had.'));
-  actions.append(approve, decline);
+  actions.append(decline);
   card.append(actions);
   return card;
 }
@@ -245,13 +247,20 @@ function askCard(request) {
 // Approve an ask: site access for the added sites inside this click (the browser asks once), then the worker applies
 // it on the same request (approveOnSessionTab, or this tab).
 function approveAsk(request, wanted, level, own) {
-  const origins = [...(Array.isArray(request.ask?.origins) ? request.ask.origins : []),
-    ...(Array.isArray(request.ask?.access) ? request.ask.access : [])].filter(origin => !String(origin).includes('*'));
-  const asked = askSiteAccess(null, { requestId: request.requestId, level, origins, tabMode: 'multiple' });
+  const needed = level === 'read-only'
+    ? [...(request.ask?.origins ?? []), ...(request.ask?.access ?? [])] : wanted.origins ?? [];
+  const origins = [...new Set([own ? view.session?.origin : currentOrigin, ...needed])]
+    .filter(origin => typeof origin === 'string' && !origin.includes('*'));
+  const roots = requestRoots(wanted);
+  const domain = roots.length && (view.session?.scope === 'domain' || requestRoots({ origins: request.ask?.origins }).length);
+  const scope = domain ? { value: () => 'domain', patterns: roots.map(sitePattern), prompt: () => null } : null;
+  const asked = askSiteAccess(scope, { requestId: request.requestId, level, origins, tabMode: 'multiple' });
   const attemptId = reportAttempt(request, true);
   // askId: exactly the ask this card shows; a changed ask is refused (ask_changed) and the card shows the new one.
-  return asked.granted.then(() => send('start', { requestId: request.requestId, level, ask: true, askId: request.ask?.id, attemptId,
-    tabMode: own ? view.session?.tabMode ?? 'single' : tabMode.value, ...(own ? { onSessionTab: true } : {}) }));
+  return asked.granted.then(ok => {
+    if (!ok) { status.textContent = 'Browser site access was not granted. Nothing was approved.'; return; }
+    return send('start', { requestId: request.requestId, level, ask: true, askId: request.ask?.id, attemptId,
+    tabMode: approvalTabMode(level), ...(domain ? { scope: 'domain' } : {}), ...(own ? { onSessionTab: true } : {}) }); });
 }
 
 function requestCard(request, { serving }) {
@@ -290,8 +299,8 @@ function requestCard(request, { serving }) {
     const who = request.owner ? agentLabel(request.owner) : 'your agent';
     card.append(element('p', 'level-warning owner-wake-failed', `Could not wake ${who}. Tell it to continue.`));
   }
-  const tabs = serving ? view.session?.tabMode : tabMode.value;
-  card.append(element('p', 'field-help tab-access', tabs === 'multiple'
+  const tabs = serving ? view.session?.tabMode : null;
+  if (serving) card.append(element('p', 'field-help tab-access', tabs === 'multiple'
     ? 'Multiple task tabs: up to eight tabs on the approved site. Browser site access required.'
     : 'One task tab: a new tab or popup pauses the task.'));
   if (serving) {
@@ -321,45 +330,34 @@ function requestCard(request, { serving }) {
   const onFaiTab = Boolean(windowMode && live?.origin && live.requestId !== request.requestId
     && origins.length && originCovered(live.origin, origins));
   // "Open <host>": this tab (or a non-http one) does not cover the request, so the page opens in a new tab, armed:
-  // the toolbar icon click there is the approval.
+  // Use or Act opens and approves that task page directly.
   const target = startTarget(request);
   const opens = Boolean(!onFaiTab && target && origins.length && (!currentOrigin || mismatch));
   const scope = mismatch && !opens ? null : scopeSelector(request, level.value, opens ? target.origin : currentOrigin);
   if (scope) {
     card.append(scope.node);
     card.dataset.scope = scope.value();
-    level.onChange(scope.refresh);
   }
   if (mismatch) {
     const text = `This tab is on ${currentOrigin}; the agent asked for: ${described}`;
-    card.append(element('p', 'request-mismatch', opens ? `${text}. Open ${target.host} opens it in a new tab; approve there with the FAI Browser icon.` : text));
+    card.append(element('p', 'request-mismatch', opens ? `${text}. Use or Act opens the task page and approves your choice.` : text));
   }
   const actions = element('div', 'request-actions');
-  // A paused task's Resume is a secondary button with its own words, never the primary Approve or Open of a new request.
-  const approve = paused
-    ? element('button', opens ? 'secondary-button resume-request resume-open' : 'secondary-button resume-request',
-      opens ? `Resume in a new ${target.host} tab` : 'Resume on this tab')
-    : element('button', opens ? 'primary-button open-request'
-      : onFaiTab ? 'primary-button fai-tab-request' : 'primary-button approve-request',
-    opens ? `Open ${target.host}` : onFaiTab ? 'Approve on the FAI tab' : 'Approve this tab');
-  approve.type = 'button';
-  // The approval window's own tab is never the one to approve: a request with no page to open is approved on its tab.
-  approve.disabled = (Boolean(mismatch) && !opens && !onFaiTab) || (windowMode && !opens && !onFaiTab) || busy;
-  if (windowMode && !opens && !onFaiTab) {
-    card.append(element('p', 'request-mismatch', 'Open a page it asked for, then approve there with the FAI Browser icon.'));
+  for (const choice of level.buttons) {
+    const approve = element('button', 'primary-button approve-request', choice.name);
+    approve.type = 'button';
+    approve.dataset.level = choice.level;
+    approve.title = `${paused ? 'Resume: ' : ''}${choice.description}`;
+    approve.disabled = (Boolean(mismatch) && !opens && !onFaiTab) || (windowMode && !opens && !onFaiTab) || busy;
+    approve.addEventListener('click', () => {
+      const selected = level.pick(choice.level);
+      return opens ? openRequest(request, selected, scope, target)
+        : approveRequest(request, selected, scope, onFaiTab);
+    });
+    actions.append(approve);
   }
-  approve.addEventListener('click', () => (opens ? openRequest(request, level.value(), scope, target)
-    : onFaiTab ? approveRequest(request, level.value(), scope, true)
-      : approveRequest(request, level.value(), scope)));
-  actions.append(approve);
-  if (target && !opens && !onFaiTab) {
-    // This tab matches: approving it stays the primary path; the start URL can still get a new tab.
-    const elsewhere = element('button', paused ? 'link-button resume-open' : 'link-button open-request',
-      paused ? 'Resume in a new tab' : 'Open in a new tab');
-    elsewhere.type = 'button';
-    elsewhere.disabled = busy;
-    elsewhere.addEventListener('click', () => openRequest(request, level.value(), scope, target));
-    actions.append(elsewhere);
+  if (windowMode && !opens && !onFaiTab) {
+    card.append(element('p', 'request-mismatch', 'Open the requested page, then choose Use or Act in the FAI Browser popup.'));
   }
   const deny = element('button', 'link-button deny-request', request.state === 'paused' ? 'Release' : 'Deny');
   deny.type = 'button';
@@ -370,43 +368,26 @@ function requestCard(request, { serving }) {
   return card;
 }
 
-// The request card's level selector: only levels at or below what the agent asked for, preset to what it asked for
-// (up to the "Preselect up to" setting). Test site appears only when every requested origin is a listed test site
-// (the worker checks this again).
+// Explicit Use/Act approvals. Testing is an optional, unchecked modifier on eligible test requests.
 function levelSelector(request) {
-  const { preset, options } = levelChoices(request, permissions);
-  const offered = options.map(option => option.level);
-  let chosen = chosenLevels.get(request.requestId);
-  if (!offered.includes(chosen)) chosen = preset;
+  const { options } = levelChoices(request, permissions);
   const wrap = element('div', 'request-level');
-  const id = `level-${request.requestId.replace(/[^\w-]/g, '_')}`;
-  const label = element('label', '', 'Allow');
-  label.htmlFor = id;
-  const select = element('select', 'level-select');
-  select.id = id;
-  fillLevelSelect(select, options, chosen);
-  select.disabled = busy || options.length < 2;
-  const help = element('p', 'level-help');
-  help.id = `${id}-help`;
-  const warning = element('p', 'level-warning', TESTING_WARNING);
-  warning.id = `${id}-warning`;
-  select.setAttribute('aria-describedby', help.id);
-  const update = () => {
-    const option = options.find(item => item.level === select.value);
-    help.textContent = option?.description ?? '';
-    warning.hidden = select.value !== 'testing';
-    select.setAttribute('aria-describedby', select.value === 'testing' ? `${help.id} ${warning.id}` : help.id);
-    wrap.closest('.request-card')?.setAttribute('data-level', select.value);
-  };
+  wrap.append(element('p', 'level-help', 'Use: one task tab, reading and navigation only. Act: actions and up to eight task tabs.'));
+  const testing = element('input');
+  testing.type = 'checkbox';
+  testing.checked = chosenLevels.get(request.requestId) === 'testing';
+  testing.disabled = busy;
+  if (options.some(option => option.level === 'testing')) {
+    const label = element('label', 'check-row');
+    label.append(testing, element('span', '', 'Enable testing with Act (test sites only)'));
+    wrap.append(label, element('p', 'level-warning', TESTING_WARNING));
+  } else testing.checked = false;
+  let selected = 'read-only';
   const listeners = [];
-  select.addEventListener('change', () => {
-    chosenLevels.set(request.requestId, select.value);
-    update();
-    for (const listener of listeners) listener();
-  });
-  wrap.append(label, select, help, warning);
-  update();
-  return { node: wrap, value: () => select.value, onChange: listener => listeners.push(listener) };
+  testing.addEventListener('change', () => chosenLevels.set(request.requestId, testing.checked ? 'testing' : 'read-only'));
+  return { node: wrap, buttons: options.filter(option => option.level !== 'testing'), value: () => selected,
+    pick: level => { selected = level === 'full' && testing.checked ? 'testing' : level; for (const listener of listeners) listener(); return selected; },
+    onChange: listener => listeners.push(listener) };
 }
 
 // The request card's site choice for a domain root: "All of example.com" (preset, as the agent asked) or only the tab's
@@ -420,7 +401,7 @@ function scopeSelector(request, levelValue, here = currentOrigin) {
   const name = `scope-${request.requestId.replace(/[^\w-]/g, '_')}`;
   const help = element('p', 'level-help');
   // Whether Chrome will prompt: it does not when the permission is already held (remembered, or allowed in the
-  // extension's site access setting); a remembered grant counts only for Read and Use without submitting.
+  // extension's site access setting). Remembered host access never selects an approval button.
   const note = element('p', 'level-help scope-prompt');
   let prompt = null;
   const update = () => {
@@ -430,9 +411,7 @@ function scopeSelector(request, levelValue, here = currentOrigin) {
     note.dataset.kind = prompt.kind;
     note.hidden = chosen !== 'domain';
     wrap.closest('.request-card')?.setAttribute('data-scope', chosen);
-    // Above the remembered levels on a remembered domain: end the remembered grant now, on the card, so the Approve
-    // click can request the permission synchronously (inside its user gesture) and Chrome prompts again.
-    if (prompt.kind === 'again' && chosen === 'domain') endRemembered(choice);
+
   };
   for (const option of choice.options) {
     const label = element('label', 'scope-option');
@@ -453,25 +432,6 @@ function scopeSelector(request, levelValue, here = currentOrigin) {
   wrap.append(help, note);
   update();
   return { node: wrap, value: () => chosen, patterns: choice.patterns, refresh: update, prompt: () => prompt };
-}
-
-// Removes a remembered grant's host permission and forgets the domain (the worker updates its list), then re-renders:
-// the card then reads "Chrome asks you to allow site access". Approve waits for it (see askSiteAccess).
-const endingRemembered = new Set();
-function endRemembered(choice) {
-  const patterns = choice.patterns.filter(pattern => !endingRemembered.has(pattern));
-  if (!patterns.length || !chrome.permissions?.remove) return;
-  for (const pattern of patterns) endingRemembered.add(pattern);
-  Promise.resolve(chrome.permissions.remove({ origins: patterns })).catch(() => false).then(async () => {
-    for (const root of choice.roots) await chrome.runtime.sendMessage({ type: 'forget', root }).catch(() => {});
-    for (const pattern of patterns) {
-      heldPatterns.delete(pattern);
-      endingRemembered.delete(pattern);
-    }
-    rememberedSites = rememberedSites.filter(site => !choice.roots.includes(site.root));
-    renderRemembered();
-    render();
-  });
 }
 
 // Asks Chrome which root patterns of the visible requests it already holds, then re-renders once.
@@ -499,16 +459,17 @@ function clock(ms) {
 // anything is awaited. A declined prompt falls back to the tab's exact origin, and the receipt's permissions.scope says
 // "origin". The worker checks the permission itself before it asks for the domain.
 function approveRequest(request, level, scope, onSessionTab = false) {
-  const asked = askSiteAccess(scope, { requestId: request.requestId, level, origins: onSessionTab ? [view.session.origin] : currentOrigin ? [currentOrigin] : request.origins, tabMode: tabMode.value });
+  const asked = askSiteAccess(scope, { requestId: request.requestId, level, origins: [...new Set([onSessionTab ? view.session.origin : currentOrigin, ...(request.origins ?? [])])].filter(Boolean), tabMode: approvalTabMode(level) });
   if (asked.blocked) {
     status.textContent = ENDING_REMEMBERED;
     return Promise.resolve();
   }
   const attemptId = reportAttempt(request);
   return asked.granted.then(ok => {
+    if (approvalTabMode(level) === 'multiple' && !ok) { status.textContent = 'Act needs browser site access. Nothing was approved.'; return; }
     const extra = scope ? { scope: ok ? 'domain' : 'origin' } : {};
     const note = asked.domain && !ok ? 'Chrome site access was not allowed: approved for this tab\'s origin only.' : '';
-    return send('start', { requestId: request.requestId, level, tabMode: tabMode.value, attemptId, ...(onSessionTab ? { onSessionTab: true } : {}), ...extra }, note);
+    return send('start', { requestId: request.requestId, level, tabMode: approvalTabMode(level), attemptId, ...(onSessionTab ? { onSessionTab: true } : {}), ...extra }, note);
   });
 }
 
@@ -523,23 +484,21 @@ function reportAttempt(request, ask = false) {
 }
 
 // Open <host>. No Chrome permission is needed for that: the worker opens the request's start URL in a new tab and
-// arms that tab, and the toolbar icon click there is the approval (activeTab, which screenshots need). For "All of
+// approves it with the explicit choice, after native host access. For "All of
 // <root>", Chrome's prompt can close this popup before it resolves, so the worker opens and arms the tab itself when
 // the permission arrives (`intent`: exactly one open, whichever comes first).
 function openRequest(request, level, scope, target) {
-  const asked = askSiteAccess(scope, { requestId: request.requestId, level, intent: true, origins: [new URL(target.url).origin], tabMode: tabMode.value });
+  const asked = askSiteAccess(scope, { requestId: request.requestId, level, intent: true, approve: true, origins: [...new Set([new URL(target.url).origin, ...(request.origins ?? [])])], tabMode: 'multiple' });
   if (asked.blocked) {
     status.textContent = ENDING_REMEMBERED;
     return Promise.resolve();
   }
   const attemptId = reportAttempt(request);
   return asked.granted.then(ok => {
-    const note = asked.domain && !ok ? `Chrome site access was not allowed: ${target.host} opened for its own origin only. ${OPEN_ARMED}`
-      : OPEN_ARMED;
-    return send('open', { requestId: request.requestId, level, tabMode: tabMode.value, attemptId, scope: asked.domain && ok ? 'domain' : 'origin' }, note)
-      .then(opened => {
-        if (opened && windowMode) window.close();
-      });
+    if (!ok) { status.textContent = 'Browser site access was not granted. Nothing was approved.'; return; }
+    return send('open', { requestId: request.requestId, level, approve: true, attemptId,
+      tabMode: approvalTabMode(level), scope: asked.domain ? 'domain' : 'origin' }, '')
+      .then(opened => { if (opened && windowMode) window.close(); });
   });
 }
 
@@ -589,8 +548,6 @@ function saveBudget() {
 }
 
 function renderPermissions() {
-  // A ceiling saved as Reversible (before the popup merged it into Use) shows as Use.
-  defaultLevel.value = permissions.defaultLevel === 'reversible' ? 'interactive' : permissions.defaultLevel;
   const items = permissions.testingOrigins.map(origin => {
     const item = element('li');
     const remove = element('button', 'link-button', 'Remove');
@@ -902,7 +859,6 @@ pairButton.addEventListener('click', () => send('pair').then(ok => {
   if (ok) paired = true;
 }));
 
-defaultLevel.addEventListener('change', () => savePermissions({ ...permissions, defaultLevel: defaultLevel.value }));
 const addOrigin = () => {
   const result = addTestingOrigin(permissions, testingOrigin.value);
   if (result.error) {
@@ -991,12 +947,7 @@ approvalWindow.addEventListener('change', () => {
     testingError.textContent = `Could not save permissions: ${error.message}`;
   });
 });
-// On by default (an absent value is on): the worker opens a request's page armed, with no click, at the requested
-// level up to Use; Act and Test site requests get the window instead. The icon click still approves.
-tabMode.value = config.tabMode === 'multiple' ? 'multiple' : 'single';
-tabMode.addEventListener('change', () => {
-  chrome.storage.local.set({ tabMode: tabMode.value }).then(render).catch(error => { status.textContent = error.message; });
-});
+// Opening a page approves nothing; Use or Act remains an explicit user choice.
 openRightAway.checked = config.openRightAway !== false;
 openRightAway.addEventListener('change', () => {
   chrome.storage.local.set({ openRightAway: openRightAway.checked }).catch(error => {

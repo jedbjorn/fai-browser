@@ -69,12 +69,13 @@ test('wake texts are fixed FAI templates: ids, level and the user\'s own words o
     userText: 'Find the\ncheapest   flight\u0000' });
   assert.match(invite, /^\[FAI Browser\] The user invited you/);
   assert.match(invite, /Call fai_browser_open with \{"inviteId": "inv-abc12345"\}/);
-  assert.match(invite, /level Use/);
+  assert.match(invite, /level Act \(limited\)/);
   assert.match(invite, /the user's own words\): "Find the cheapest flight"/);
   assert.equal(invite.split('\n').length, 2, 'the user text is one labelled line');
   assert.match(wakeText({ kind: 'invite', inviteId: 'inv-abc12345', level: 'full' }), /typed no task/);
   assert.match(wakeText({ kind: 'resume', requestId: 'req_9' }), /resumed tab request req_9.*fai_browser_observe with requestId req_9/);
-  assert.match(wakeText({ kind: 'approved', requestId: 'req_9', level: 'interactive' }), /approved tab request req_9 at level Use/);
+  assert.match(wakeText({ kind: 'approved', requestId: 'req_9', level: 'interactive' }), /approved tab request req_9 at level Act \(limited\)/);
+  assert.match(wakeText({ kind: 'approved', requestId: 'req_9', level: 'read-only' }), /at level Use/);
   assert.match(wakeText({ kind: 'resume', requestId: 'req 9; evil' }), /request unknown/, 'an id that is not one is never echoed');
   assert.equal(cleanInviteText('x'.repeat(900)).length, 500);
   assert.equal(cleanInviteText(42), '');
