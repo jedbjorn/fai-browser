@@ -1563,3 +1563,43 @@ test('popup: Use approves added sites without re-requesting declined unrelated o
     assert.equal(start.tabMode, level === 'read-only' ? 'single' : 'multiple');
   }
 });
+
+
+test('popup: a pending native Act prompt locks the approval choices and denial allows a fresh Use click', async t => {
+  const page = await popup(t, { local: { ...PAIRED }, requests: [request(['http://localhost:3000'], 'read-only')] });
+  await page.evaluate(() => {
+    chrome.permissions.request = value => {
+      __permissionRequests.push(value);
+      return new Promise(resolve => { globalThis.__answerNative = resolve; });
+    };
+  });
+  await page.click('.approve-request[data-level="full"]');
+  assert.equal(await page.locator('.approve-request[data-level="read-only"]').isDisabled(), true);
+  await page.evaluate(() => document.querySelector('.approve-request[data-level="read-only"]').click());
+  assert.equal(await page.evaluate(() => __permissionRequests.length), 1);
+  assert.equal(await page.evaluate(() => __sent.filter(message => message.type === 'start').length), 0);
+  await page.evaluate(() => __answerNative(false));
+  await page.waitForFunction(() => !document.querySelector('.approve-request[data-level="read-only"]').disabled);
+  await page.click('.approve-request[data-level="read-only"]');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'start'));
+  assert.deepEqual(await page.evaluate(() => __sent.filter(message => message.type === 'start').map(message => message.level)), ['read-only']);
+});
+
+
+test('popup: Pause cancels an outstanding Act choice even if native access is allowed later', async t => {
+  const origin = 'http://localhost:3000';
+  const pending = { ...request([origin], 'read-only'), state: 'active',
+    ask: { id: 'ask-pause', at: new Date().toISOString(), level: 'full', origins: [] } };
+  const page = await popup(t, { local: { ...PAIRED }, requests: [pending],
+    state: { status: 'active', session: { requestId: 'req_1', tabId: 7, origin, level: 'read-only', scope: 'origin' } } });
+  await page.evaluate(() => {
+    chrome.permissions.request = () => new Promise(resolve => { globalThis.__answerNative = resolve; });
+  });
+  await page.click('.ask-approve[data-level="full"]');
+  assert.equal(await page.locator('#pause').isDisabled(), false, 'Pause stays available during native permission');
+  await page.click('#pause');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'pause'));
+  await page.evaluate(() => __answerNative(true));
+  await page.waitForTimeout(50);
+  assert.equal(await page.evaluate(() => __sent.filter(message => message.type === 'start').length), 0, 'the late answer cannot resume the paused task');
+});

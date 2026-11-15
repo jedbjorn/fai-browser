@@ -3807,6 +3807,7 @@ async function bindSession(message, given) {
     if (own.tabMode === 'multiple' && !own.patterns.includes(taskPattern)) own.patterns.push(taskPattern);
     if (own.tabMode !== 'multiple') own.tabs = own.tabs.filter(entry => entry.tabId === own.tabId);
     own.reachable = await reachableOrigins(own);
+    if (askedSites.length && !REMEMBER_LEVELS.includes(level)) await forgetSites(askedSites.map(siteRoot));
     settlePending();
     await setStatus('active');
     if (cleanLevel(level) === 'testing' && !own.devHooks) ignore(armDevHooks(own));

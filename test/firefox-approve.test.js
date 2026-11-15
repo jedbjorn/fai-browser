@@ -1,13 +1,11 @@
 // Real, headless Firefox with the Firefox build of the extension, a private daemon and FAI_HOME (issue #36 item 1):
 // approving a request whose page opened by itself, on every surface, never waits silently or approves late.
 //
-// - Firefox shows the site-access prompt of a permissions.request() only in the active window. Clicked in a request
-//   modal (arm.html) whose window the desktop had not activated, Approve used to wait for a prompt nobody could see,
-//   with nothing in daemon.log, and approved the request much later when the window became active and the prompt was
-//   allowed. The same wait without a bound was behind the toolbar icon (compat.js asks for the exact origin inside the
-//   icon click) and the popup's Approve (which sends `start` only once the prompt answered).
-// - The toolbar icon on the task tab while it is blank or still loading: it used to open the popup (the armed look was
-//   applied only once the page had loaded, and Firefox clears it at the commit), which offered to open the page again.
+// - Native site-access requests start only inside explicit Use/Act button gestures. Unanswered prompts are bounded,
+//   logged, and a late native grant cannot revive the expired FAI approval.
+// - Opening the toolbar on a blank or streaming task exposes choices and never approves by itself.
+// - Use keeps one task tab; Act enables guarded actions and multiple task tabs. Both retain exact-host permissions
+//   through navigation and remove only permissions FAI itself acquired when the task ends.
 //
 // The site-access wait is shortened for the test (storage.local siteAccessWaitMs). Skipped without a Firefox binary
 // (FIREFOX_PATH, else `firefox` on PATH). Marionette drives only this throwaway browser. Run it in a memory cap:
@@ -195,7 +193,7 @@ const allowPrompt = ctx => ctx.chrome(`const found = permissionNote(); if (!foun
   found.note.mainAction.callback({ source: 'button' }); found.win.PopupNotifications.remove(found.note); return true;`);
 const promptOpen = ctx => ctx.chrome('return Boolean(permissionNote());');
 
-// The toolbar icon clicked on the task tab (Firefox's own browser-action path: onClicked on an armed tab, else the popup).
+// The toolbar icon opens the popup on every task tab; only an explicit Use/Act button approves.
 async function clickIcon(ctx, match) {
   const [first] = await ctx.handles();
   await ctx.marionette.send('WebDriver:SwitchToWindow', { handle: first, focus: false });
@@ -274,8 +272,8 @@ test('Firefox: the icon on a blank task opens choices; explicit Use waits for th
   ctx.release();
   const outcome = await ctx.client.wait({ requestId: created.requestId, maxMs: 20_000 });
   assert.equal(outcome.state, 'active');
-  assert.equal(outcome.grant.level, 'read-only');
-  assert.equal(outcome.grant.tabMode, 'single');
+  assert.equal((await ctx.stateOf(created.requestId)).grant.level, 'read-only');
+  assert.equal((await ctx.stateOf(created.requestId)).grant.tabMode, 'single');
 });
 
 test('Firefox: a streaming task keeps toolbar choices; explicit Act grants actions and multiple tabs', { skip, timeout: 90_000 }, async t => {
@@ -294,8 +292,8 @@ test('Firefox: a streaming task keeps toolbar choices; explicit Act grants actio
   assert.ok(await allowPrompt(ctx));
   const outcome = await ctx.client.wait({ requestId: created.requestId, maxMs: 15_000 });
   assert.equal(outcome.state, 'active');
-  assert.equal(outcome.grant.level, 'full');
-  assert.equal(outcome.grant.tabMode, 'multiple');
+  assert.equal((await ctx.stateOf(created.requestId)).grant.level, 'full');
+  assert.equal((await ctx.stateOf(created.requestId)).grant.tabMode, 'multiple');
 });
 
 test('Firefox: toolbar Act permission waits are bounded, and a late answer cannot approve', { skip, timeout: 90_000 }, async t => {
@@ -317,8 +315,8 @@ test('Firefox: toolbar Act permission waits are bounded, and a late answer canno
   await clickApprove(ctx, arm, 'full');
   const outcome = await ctx.client.wait({ requestId: created.requestId, maxMs: 10_000 });
   assert.equal(outcome.state, 'active');
-  assert.equal(outcome.grant.level, 'full');
-  assert.equal(outcome.grant.tabMode, 'multiple');
+  assert.equal((await ctx.stateOf(created.requestId)).grant.level, 'full');
+  assert.equal((await ctx.stateOf(created.requestId)).grant.tabMode, 'multiple');
 });
 
 // The toolbar popup's content runs in its own process: a frame script reads and clicks in it (with user input, so the
@@ -357,7 +355,11 @@ test('Firefox: the popup\'s Approve whose site-access prompt is not answered is 
 });
 
 // The add-on's host permissions as Firefox holds them now.
-const heldOrigins = ctx => ctx.chrome('return [...extension.allowedOrigins.patterns].map(pattern => pattern.pattern);');
+const heldOrigins = async ctx => {
+  const [handle] = await ctx.handles();
+  await ctx.marionette.send('WebDriver:SwitchToWindow', { handle, focus: false });
+  return ctx.chrome('return [...extension.allowedOrigins.patterns].map(pattern => pattern.pattern);');
+};
 
 // Issue #36 review: a request with an exact origin and domain roots, approved from the popup's "Approve this tab"
 // (Firefox asks for the roots and the exact origin in one prompt) or the toolbar icon (the exact origins): the session

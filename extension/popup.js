@@ -80,6 +80,9 @@ const view = { status: config.status, session: null, connection: null, requests:
 let currentOrigin = null;
 let currentTabId = null;
 let busy = false;
+let approvalPending = false;
+let approvalEpoch = 0;
+let pendingChoice = null;
 let closing = false;
 // "Invite agent" (extension/invite-card.js), mounted once the current tab is known.
 let invitePanel = null;
@@ -144,11 +147,11 @@ function elsewhereCard(request) {
   const actions = element('div', 'request-actions');
   const move = element('button', 'primary-button move-request', 'Open here');
   move.type = 'button';
-  move.disabled = busy;
+  move.disabled = busy || approvalPending;
   move.addEventListener('click', () => send('move', { requestId: request.requestId }, 'Moved here. Choose Use or Act below.'));
   const deny = element('button', 'link-button deny-request', 'Deny');
   deny.type = 'button';
-  deny.disabled = busy;
+  deny.disabled = busy || approvalPending;
   deny.addEventListener('click', () => send('deny', { requestId: request.requestId }));
   actions.append(move, deny);
   card.append(actions);
@@ -230,23 +233,48 @@ function askCard(request) {
     const approve = element('button', 'primary-button approve-request ask-approve', choice.name);
     approve.type = 'button';
     approve.dataset.level = choice.level;
-    approve.disabled = busy || settling || (!own && (!covered || windowMode));
+    approve.disabled = busy || approvalPending || settling || (!own && (!covered || windowMode));
     approve.addEventListener('click', () => approveAsk(request, wanted, level.pick(choice.level), own));
     actions.append(approve);
   }
   if (settling) setTimeout(render, ASK_SETTLE_MS - (Date.now() - shown.at) + 20);
   const decline = element('button', 'link-button deny-request ask-decline', 'Decline');
   decline.type = 'button';
-  decline.disabled = busy;
+  decline.disabled = busy || approvalPending;
   decline.addEventListener('click', () => send('deny', { requestId: request.requestId, ask: true }, 'Declined. The task keeps what it had.'));
   actions.append(decline);
   card.append(actions);
   return card;
 }
 
+// A native prompt can outlive the popup's render. Accept only the first approval choice
+// until it resolves; Pause and Stop remain available while native access is pending.
+function cancelPendingApproval() {
+  approvalEpoch++;
+  approvalPending = false;
+  const canceled = pendingChoice;
+  pendingChoice = null;
+  if (canceled?.intentId) chrome.runtime.sendMessage({ type: 'intent_cancel',
+    intentId: canceled.intentId, requestId: canceled.requestId }).catch(() => {});
+}
+
+function finishApproval(asked, complete) {
+  const epoch = ++approvalEpoch;
+  pendingChoice = asked;
+  approvalPending = true;
+  for (const control of requestList.querySelectorAll('button, select, input')) control.disabled = true;
+  return asked.granted.then(ok => epoch === approvalEpoch ? complete(ok) : undefined).finally(() => {
+    if (epoch !== approvalEpoch) return;
+    pendingChoice = null;
+    approvalPending = false;
+    render();
+  });
+}
+
 // Approve an ask: site access for the added sites inside this click (the browser asks once), then the worker applies
 // it on the same request (approveOnSessionTab, or this tab).
 function approveAsk(request, wanted, level, own) {
+  if (busy || approvalPending) return Promise.resolve();
   const needed = level === 'read-only'
     ? [...(request.ask?.origins ?? []), ...(request.ask?.access ?? [])] : wanted.origins ?? [];
   const origins = [...new Set([own ? view.session?.origin : currentOrigin, ...needed])]
@@ -257,7 +285,7 @@ function approveAsk(request, wanted, level, own) {
   const asked = askSiteAccess(scope, { requestId: request.requestId, level, origins, tabMode: 'multiple' });
   const attemptId = reportAttempt(request, true);
   // askId: exactly the ask this card shows; a changed ask is refused (ask_changed) and the card shows the new one.
-  return asked.granted.then(ok => {
+  return finishApproval(asked, ok => {
     if (!ok) { status.textContent = 'Browser site access was not granted. Nothing was approved.'; return; }
     return send('start', { requestId: request.requestId, level, ask: true, askId: request.ask?.id, attemptId,
     tabMode: approvalTabMode(level), ...(domain ? { scope: 'domain' } : {}), ...(own ? { onSessionTab: true } : {}) }); });
@@ -348,7 +376,7 @@ function requestCard(request, { serving }) {
     approve.type = 'button';
     approve.dataset.level = choice.level;
     approve.title = `${paused ? 'Resume: ' : ''}${choice.description}`;
-    approve.disabled = (Boolean(mismatch) && !opens && !onFaiTab) || (windowMode && !opens && !onFaiTab) || busy;
+    approve.disabled = (Boolean(mismatch) && !opens && !onFaiTab) || (windowMode && !opens && !onFaiTab) || busy || approvalPending;
     approve.addEventListener('click', () => {
       const selected = level.pick(choice.level);
       return opens ? openRequest(request, selected, scope, target)
@@ -361,7 +389,7 @@ function requestCard(request, { serving }) {
   }
   const deny = element('button', 'link-button deny-request', request.state === 'paused' ? 'Release' : 'Deny');
   deny.type = 'button';
-  deny.disabled = busy;
+  deny.disabled = busy || approvalPending;
   deny.addEventListener('click', () => send('deny', { requestId: request.requestId }));
   actions.append(deny);
   card.append(actions);
@@ -376,7 +404,7 @@ function levelSelector(request) {
   const testing = element('input');
   testing.type = 'checkbox';
   testing.checked = chosenLevels.get(request.requestId) === 'testing';
-  testing.disabled = busy;
+  testing.disabled = busy || approvalPending;
   if (options.some(option => option.level === 'testing')) {
     const label = element('label', 'check-row');
     label.append(testing, element('span', '', 'Enable testing with Act (test sites only)'));
@@ -420,7 +448,7 @@ function scopeSelector(request, levelValue, here = currentOrigin) {
     input.name = name;
     input.value = option.scope;
     input.checked = option.scope === chosen;
-    input.disabled = busy;
+    input.disabled = busy || approvalPending;
     input.addEventListener('change', () => {
       chosen = option.scope;
       chosenScopes.set(request.requestId, chosen);
@@ -459,13 +487,14 @@ function clock(ms) {
 // anything is awaited. A declined prompt falls back to the tab's exact origin, and the receipt's permissions.scope says
 // "origin". The worker checks the permission itself before it asks for the domain.
 function approveRequest(request, level, scope, onSessionTab = false) {
+  if (busy || approvalPending) return Promise.resolve();
   const asked = askSiteAccess(scope, { requestId: request.requestId, level, origins: [...new Set([onSessionTab ? view.session.origin : currentOrigin, ...(request.origins ?? [])])].filter(Boolean), tabMode: approvalTabMode(level) });
   if (asked.blocked) {
     status.textContent = ENDING_REMEMBERED;
     return Promise.resolve();
   }
   const attemptId = reportAttempt(request);
-  return asked.granted.then(ok => {
+  return finishApproval(asked, ok => {
     if (approvalTabMode(level) === 'multiple' && !ok) { status.textContent = 'Act needs browser site access. Nothing was approved.'; return; }
     const extra = scope ? { scope: ok ? 'domain' : 'origin' } : {};
     const note = asked.domain && !ok ? 'Chrome site access was not allowed: approved for this tab\'s origin only.' : '';
@@ -488,13 +517,14 @@ function reportAttempt(request, ask = false) {
 // <root>", Chrome's prompt can close this popup before it resolves, so the worker opens and arms the tab itself when
 // the permission arrives (`intent`: exactly one open, whichever comes first).
 function openRequest(request, level, scope, target) {
+  if (busy || approvalPending) return Promise.resolve();
   const asked = askSiteAccess(scope, { requestId: request.requestId, level, intent: true, approve: true, origins: [...new Set([new URL(target.url).origin, ...(request.origins ?? [])])], tabMode: 'multiple' });
   if (asked.blocked) {
     status.textContent = ENDING_REMEMBERED;
     return Promise.resolve();
   }
   const attemptId = reportAttempt(request);
-  return asked.granted.then(ok => {
+  return finishApproval(asked, ok => {
     if (!ok) { status.textContent = 'Browser site access was not granted. Nothing was approved.'; return; }
     return send('open', { requestId: request.requestId, level, approve: true, attemptId,
       tabMode: approvalTabMode(level), scope: asked.domain ? 'domain' : 'origin' }, '')
@@ -819,6 +849,7 @@ function setBusy(value) {
 }
 
 async function send(type, extra = {}, note = '') {
+  if (type === 'pause' || type === 'stop') cancelPendingApproval();
   if (type === 'start' && !paired && !view.connection?.connected) {
     status.textContent = 'Pair with the FAI service first.';
     return;

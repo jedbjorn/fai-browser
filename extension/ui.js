@@ -106,7 +106,7 @@ export function askSiteAccess(scope, { requestId, level, intent = false, approve
     if (!ok) chrome.runtime.sendMessage({ type: 'intent_cancel', intentId, requestId }).catch(() => {});
     return ok;
   });
-  return { blocked: false, domain, granted, intentId };
+  return { blocked: false, domain, granted, intentId, requestId };
 }
 
 // Firefox ends activeTab at a tab's first navigation (Chrome keeps it until the tab leaves the origin), so in the

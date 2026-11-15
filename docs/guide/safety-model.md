@@ -104,7 +104,7 @@ session is listed to, and joinable by, that session alone; one made for no sessi
 can be joined by any registered agent session, never by a bare client token. Before the join nobody can read or act
 on the tab (`invite_not_joined`); after it every observe, act, run and release must come from the joining session
 (`not_owner`). Other clients see only the request's id and state, never its origin or the invite id. If the invite
-would end another agent's task in the same browser, the popup says so and needs a second tap.
+would end another agent's task in the same browser, the popup warns before the Use/Act click.
 
 To wake an idle agent, FAI's MCP server (the agent's own child process) writes one fixed FAI message to that agent's
 own channel: Claude Code's messaging socket, `codex queue` for its own thread, or FAI's own plugin inside OpenCode. The message names the invite or

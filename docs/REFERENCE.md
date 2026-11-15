@@ -795,9 +795,9 @@ subagent's call from its main session's (they share one server), so the text nam
 **Invite agent.** In the toolbar popup on any normal http(s) tab, the **Invite an agent to this tab** card lists the
 live sessions, most recently active first (host · repo · last active):
 
-- one session: **Invite Claude Code · my-repo**, one tap (two clicks with opening the popup);
-- several: one row per session, one tap on the row;
-- none: **Invite agent** makes an invite for no session in particular and shows the copy line.
+- one session: its name with direct **Use** and **Act** buttons;
+- several: one row per session, each with **Use** and **Act**;
+- none: **Use** or **Act** makes an invite for no session in particular and shows the copy line.
 
 The invite offers the same direct **Use** and **Act** buttons as a request: Use approves reading in one task
 tab, Act approves guarded actions and multiple task tabs on this exact origin. There is no level dropdown or remembered default that silently grants Act. A test-only option is available for listed testing origins.
@@ -809,7 +809,7 @@ browser needs it (Firefox, the exact origin), and the worker, which accepts `inv
 `sessionId`, `text`) over its paired channel. The daemon creates a request for that tab's exact origin (never a domain
 root), binds it at once as the browser's lease at the chosen level (one task tab for Use, multiple for Act; it supersedes that browser's other
 lease as any approval does: when that lease belongs to another agent session, the card first says "This will end
-<host · repo>'s current tab task" and the invite needs a second tap; request views carry their `owner` session for
+<host · repo>'s current tab task" before the Use/Act click; request views carry their `owner` session for
 this), creates a single-use invite id (`inv-` and 8 characters, 10 minutes), and queues the
 wake. The tab gets the usual `FAI` group mark. The card then shows "Waking …", "Sent to …. It should start in a
 moment" (with "If it does not start, tell it: join FAI invite inv-…" under it: a held message shows in Claude Code
@@ -1256,7 +1256,7 @@ One active tab lease per browser; approving another request in the same browser 
 **compat.js** ([extension/compat.js](../extension/compat.js)) loads first in the Firefox event page and only fills in what is missing, so the rest of the extension keeps calling `chrome.*` (Firefox's `chrome` namespace returns promises in MV3):
 
 - `chrome.offscreen`: Firefox's background is a page with a DOM, so the offscreen document is a hidden `<iframe src="offscreen.html">` in it. The same `offscreen.js` runs there and answers the same `annotate` message, so screenshot drawing, action-id tags and [secret boxes](#secret-redaction) are one code path in both browsers.
-- Exact-origin keeper. Chrome keeps `activeTab` until the tab leaves its origin; Firefox drops it at any navigation, after which the worker could neither read the tab's URL nor run `page.js`, and paused the lease (`origin_changed`). In the Firefox build the approval click (the toolbar click on an armed tab, or the popup's **Approve** or **Open <host>**) also asks, inside that click, for the request's exact origins as host permissions (`https://host/*`, port dropped; domain roots keep their own prompt). Firefox shows its permission prompt once per new site. The keeper records each pattern Firefox reports added after such a click (`chrome.storage.local.compatGrantedOrigins`) and removes it once no pending, active or paused request in `chrome.storage.session.requests` needs it; a site the user allowed by hand is never recorded, so never removed. Declining the prompt keeps the approval: the session works until the first navigation, which pauses it.
+- Exact-origin keeper. Chrome keeps `activeTab` until the tab leaves its origin; Firefox drops it at any navigation, after which the worker could neither read the tab's URL nor run `page.js`, and paused the lease (`origin_changed`). In the Firefox build an explicit **Use** or **Act** click in the popup or request modal asks, inside that click, for the request's exact origins as host permissions (`https://host/*`, port dropped; domain roots keep their own prompt). Firefox shows its permission prompt once per new site. The keeper records each pattern Firefox reports added after such a click (`chrome.storage.local.compatGrantedOrigins`) and removes it once no pending, active or paused request in `chrome.storage.session.requests` needs it; a site the user allowed by hand is never recorded, so never removed. An Act or direct-open approval requires this site access; declining it grants no session. Opening the toolbar alone neither requests site access nor approves a task.
 - Feature-detected as in Chrome: `tabGroups` (the tab mark; without it the badge and title remain), `action.getUserSettings` (the pin hint), `storage.local.setAccessLevel` (absent in Firefox, where `storage.local` is also readable by the add-on's own content scripts; `page.js` runs isolated from the page, so a page still cannot read it). The same in both: `storage.session`, `scripting.executeScript` with `func`/`args` (Firefox returns no `documentId`, so the injection retry targets the tab), `action.setPopup`/`onClicked`, `windows.create({type: 'popup'})`, `commands` (`_execute_action`, Ctrl+Shift+Y), `alarms`, `runtime.sendNativeMessage`.
 
 `chrome.tabs.group` names the tab's own window (`createProperties.windowId`): Firefox otherwise moved the tab into the last focused window, the prompt popup, and closing the prompt then closed the leased tab. Chrome already grouped the tab in its own window.

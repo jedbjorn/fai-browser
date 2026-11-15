@@ -4482,3 +4482,16 @@ test('Act fails closed when an incompatible daemon cannot honor its multiple-tab
     }
   }
 });
+
+test('reapproving a remembered Use domain as Act ends its remembered access on the same lease', async () => {
+  const { h } = await startedOnSite({ level: 'read-only', hostGrants: [`${ORIGIN}/*`],
+    local: { domainMemory: { remember: true }, rememberedSites: [{ root: 'example.com', until: Date.now() + 3600_000 }] } });
+  assert.equal(h.local.rememberedSites.length, 1);
+  const reply = await h.send({ type: 'start', requestId: 'req_1', level: 'full', scope: 'domain', onSessionTab: true });
+  assert.equal(reply.error, undefined, JSON.stringify(reply));
+  assert.equal(reply.session.leaseId, LEASE_ID, 'the existing lease is updated in place');
+  assert.equal(reply.session.tabMode, 'multiple');
+  assert.deepEqual(clone(h.local.rememberedSites), [], 'Act never inherits the remembered Use approval');
+  await h.send({ type: 'stop' });
+  await h.until(() => h.removed.includes(SITE_PATTERN));
+});
