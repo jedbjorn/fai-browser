@@ -3,7 +3,7 @@
 // child, and only ever writes to that host's own channel (docs/guide/safety-model.md "Invites and wakes").
 //
 // - Claude Code (2.1.224+, the token since 2.1.228) gives every stdio MCP child CLAUDE_CODE_MESSAGING_SOCKET (a unix
-//   socket) and CLAUDE_CODE_MESSAGING_TOKEN. One auth line and one user line make an idle session take a new turn.
+//   socket, or a named pipe on Windows) and CLAUDE_CODE_MESSAGING_TOKEN. One auth line and one user line wake a session.
 //   The format is the one the binary's own debug hint prints; it is undocumented and may change. The user setting
 //   crossSessionInbound (accept, hold, refuse) can hold or drop the message on the host's side.
 // - Codex (0.149+) queues a message for a thread: `codex queue --thread <id> --message <text>`. The thread id arrives on
@@ -15,7 +15,7 @@
 //   prompt and reported no error for 2 s: accepted, not yet answered.
 // - Anything else (an unknown host, a session without the env) cannot be woken: the popup shows the copy-text fallback
 //   ("Tell your agent: join FAI invite <id>").
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { connect } from 'node:net';
 import { accessSync, constants as fsConstants } from 'node:fs';
 import { basename, delimiter, isAbsolute, join } from 'node:path';
@@ -63,15 +63,30 @@ export function repoName(env = process.env, cwd = process.cwd()) {
 /**
  * Claude Code's messaging socket for this session, or null (a --bare session, an older Claude Code, another host).
  * The variables are inherited by everything Claude Code starts, a Bash command's children included, so they prove
- * nothing on their own: the socket is `<dir>/<claude pid>.sock`, and it counts only when that pid is this process's
- * parent (`ppid`), i.e. Claude Code started this MCP server itself. A wrapper in between (npx, a shell script) fails
- * closed: no socket, the copy-line fallback. `install --host claude` writes the node command directly.
+ * nothing on their own. On POSIX the socket must be `<dir>/<ppid>.sock`. Windows pipe names carry no pid, so require
+ * Claude Code's own MCP client name, a session id, and a live parent image of claude.exe (CLI and desktop discovery).
+ * A wrapper in between fails closed. `install --host claude` writes the node command directly.
  */
-export function claudeSocket(env = process.env, { ppid = process.ppid } = {}) {
+export function claudeSocket(env = process.env, { ppid = process.ppid, clientInfo = null,
+  platform = process.platform, exec = execFileSync } = {}) {
   const path = env.CLAUDE_CODE_MESSAGING_SOCKET;
   const token = env.CLAUDE_CODE_MESSAGING_TOKEN ?? env.CLAUDE_CODE_MESSAGING_SOCKET_TOKEN;
   if (typeof path !== 'string' || !path || typeof token !== 'string' || !token) return null;
-  if (!Number.isInteger(ppid) || ppid <= 1 || basename(path) !== `${ppid}.sock`) return null;
+  if (!Number.isSafeInteger(ppid) || ppid <= 1) return null;
+  if (platform !== 'win32') return basename(path) === `${ppid}.sock` ? { path, token } : null;
+  if (!/^\\\\[.?]\\pipe\\/i.test(path) || detectHost(clientInfo, {}) !== 'claude'
+    || !hostSessionId('claude', env)) return null;
+  try {
+    // No shell, no localized column headers. Match both the exact image and the requested pid; missing, malformed,
+    // duplicate or failed tasklist output is unbound. Do not cache: a stale parent must never authorize delivery.
+    const output = String(exec('tasklist.exe', ['/FI', `PID eq ${ppid}`, '/FO', 'CSV', '/NH'], {
+      encoding: 'utf8', timeout: 3_000, maxBuffer: 64 * 1024, windowsHide: true, shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })).trim();
+    if (!new RegExp(`^"claude\\.exe","${ppid}","[^"\\r\\n]*","[0-9]+","[^"\\r\\n]*"$`, 'i').test(output)) return null;
+  } catch {
+    return null;
+  }
   return { path, token };
 }
 
@@ -393,9 +408,9 @@ export function wakeText({ kind, inviteId, requestId, level, userText }) {
  * a FAI call: `opencodeSession`), else none. `codexReady` is the cached `codex queue --help` answer.
  */
 export function wakeCapability({ host, env = process.env, threadId = null, codexReady = false, ppid = process.ppid,
-  opencodeSession = null, opencodeVersion = false }) {
+  opencodeSession = null, opencodeVersion = false, clientInfo = null, platform = process.platform, exec = execFileSync }) {
   if (env.FAI_WAKE === '0') return 'none';
-  if (host === 'claude' && claudeSocket(env, { ppid })) return 'claude-socket';
+  if (host === 'claude' && claudeSocket(env, { ppid, clientInfo, platform, exec })) return 'claude-socket';
   if (host === 'codex' && threadId && codexReady) return 'codex-queue';
   if (host === 'opencode' && opencodeVersion && opencodeSessionId(opencodeSession) && opencodeChannel(env, { ppid })) {
     return 'opencode-plugin';
@@ -430,11 +445,11 @@ export function wakeReason(options) {
 
 /** Deliver one wake through `capability`; resolves {ok} or {ok: false, code, message}, never throws. */
 export async function deliverWake({ capability, text, env = process.env, threadId = null, opencodeSession = null,
-  ppid = process.ppid }) {
+  ppid = process.ppid, clientInfo = null, platform = process.platform, exec = execFileSync }) {
   try {
     if (env.FAI_WAKE === '0') return { ok: false, code: 'disabled', message: 'Waking is off (FAI_WAKE=0).' };
     if (capability === 'claude-socket') {
-      const socket = claudeSocket(env, { ppid });
+      const socket = claudeSocket(env, { ppid, clientInfo, platform, exec });
       if (!socket) return { ok: false, code: 'no_socket', message: 'This session has no messaging socket.' };
       return await deliverClaudeSocket({ ...socket, text });
     }

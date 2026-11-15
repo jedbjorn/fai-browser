@@ -11,7 +11,7 @@ export const POSIX_PATHS = WINDOWS
   : false;
 
 // Each channel unit lifts its own skip once its Windows implementation and fakes pass CI.
-export const NO_CLAUDE_WAKES = WINDOWS ? 'Claude wake binding does not support Windows pipes yet' : false;
+export const NO_CLAUDE_WAKES = false;
 export const NO_CODEX_WAKES = WINDOWS ? 'Codex wakes and test binaries do not support Windows executables yet' : false;
 export const NO_OPENCODE_WAKES = WINDOWS ? 'the OpenCode plugin does not support Windows pipes yet' : false;
 

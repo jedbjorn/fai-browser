@@ -11,9 +11,8 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createDaemon } from '../src/daemon.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
-import { spawnMcp } from './helpers/mcp-harness.js';
 import { ORIGIN, link } from './runtime-fixtures.js';
-import { fakeCodex, startFakeClaudeSocket } from './helpers/fake-agents.js';
+import { fakeCodex, spawnClaudeMcp, startFakeClaudeSocket } from './helpers/fake-agents.js';
 import { NO_CLAUDE_WAKES, NO_CODEX_WAKES } from './helpers/platform.js';
 
 const SECRET_TITLE = 'Payroll - TOP SECRET 5521';
@@ -46,7 +45,7 @@ async function setup(t, { clientName = 'claude-code', env = {}, socket = true } 
     CLAUDE_CODE_SESSION_ID: '00000000-test-session', CLAUDE_PROJECT_DIR: '/somewhere/private/my-project',
     ...env,
   };
-  const mcp = spawnMcp(mcpEnv);
+  const mcp = await spawnClaudeMcp(t, mcpEnv);
   t.after(async () => {
     await mcp.close();
     await daemon.close();

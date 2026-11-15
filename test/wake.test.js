@@ -12,7 +12,7 @@ import { fakeCodex, startFakeClaudeSocket } from './helpers/fake-agents.js';
 import { NO_CLAUDE_WAKES, NO_CODEX_WAKES } from './helpers/platform.js';
 
 test('wake reasons: every setup failure is a fixed code; a bound capability is ok and opt-out wins', () => {
-  const claude = { host: 'claude', ppid: 4242, env: {
+  const claude = { host: 'claude', ppid: 4242, platform: 'linux', env: {
     CLAUDE_CODE_MESSAGING_SOCKET: join('/s', '4242.sock'), CLAUDE_CODE_MESSAGING_TOKEN: 'private-token',
   } };
   const codex = { host: 'codex', env: { FAI_CODEX_BIN: process.execPath }, threadId: 'thread', codexReady: true };
@@ -62,11 +62,11 @@ test('repo name is the folder name only, never the path', () => {
 
 test('capabilities: claude-socket needs Claude Code and both variables; codex-queue a thread and codex queue', () => {
   const env = { CLAUDE_CODE_MESSAGING_SOCKET: '/run/user/1000/cc-socks/4242.sock', CLAUDE_CODE_MESSAGING_TOKEN: 't' };
-  assert.deepEqual(claudeSocket(env, { ppid: 4242 }), { path: '/run/user/1000/cc-socks/4242.sock', token: 't' });
-  assert.deepEqual(claudeSocket({ CLAUDE_CODE_MESSAGING_SOCKET: '/s/4242.sock', CLAUDE_CODE_MESSAGING_SOCKET_TOKEN: 'u' }, { ppid: 4242 }),
+  assert.deepEqual(claudeSocket(env, { ppid: 4242, platform: 'linux' }), { path: '/run/user/1000/cc-socks/4242.sock', token: 't' });
+  assert.deepEqual(claudeSocket({ CLAUDE_CODE_MESSAGING_SOCKET: '/s/4242.sock', CLAUDE_CODE_MESSAGING_SOCKET_TOKEN: 'u' }, { ppid: 4242, platform: 'linux' }),
     { path: '/s/4242.sock', token: 'u' });
   assert.equal(claudeSocket({ CLAUDE_CODE_MESSAGING_SOCKET: '/s/4242.sock' }, { ppid: 4242 }), null, 'no token (a --bare or older session)');
-  assert.equal(wakeCapability({ host: 'claude', env, ppid: 4242 }), 'claude-socket');
+  assert.equal(wakeCapability({ host: 'claude', env, ppid: 4242, platform: 'linux' }), 'claude-socket');
   assert.equal(wakeCapability({ host: 'unknown', env, ppid: 4242 }), 'none');
   assert.equal(wakeCapability({ host: 'claude', env: { ...env, FAI_WAKE: '0' }, ppid: 4242 }), 'none');
   assert.equal(wakeCapability({ host: 'codex', env: {}, threadId: '01a1c03e-9e28-72a2-8cdb-bb6ca9545521', codexReady: true }), 'codex-queue');
@@ -83,6 +83,52 @@ test('an inherited messaging socket is not this session\'s: only one named after
   assert.equal(claudeSocket({ ...env, CLAUDE_CODE_MESSAGING_SOCKET: '/x/4242.sock.evil' }, { ppid: 4242 }), null);
   assert.equal(hostSessionId('claude', { CLAUDE_CODE_SESSION_ID: '655645a7-9481-41d0-9ebc-892634b309cf' }), '655645a7-9481-41d0-9ebc-892634b309cf');
   assert.equal(hostSessionId('codex', { CLAUDE_CODE_SESSION_ID: 'x' }), null);
+});
+
+test('Windows Claude pipes require the client, session and live parent image; all lookup failures close the channel', () => {
+  const env = { CLAUDE_CODE_MESSAGING_SOCKET: '\\\\.\\pipe\\LOCAL\\undocumented-name',
+    CLAUDE_CODE_MESSAGING_TOKEN: 'private-token', CLAUDE_CODE_SESSION_ID: 'test-session' };
+  const calls = [];
+  const options = { platform: 'win32', ppid: 4242, clientInfo: { name: 'claude-code' },
+    exec: (...args) => { calls.push(args); return '"claude.exe","4242","Console","1","10,000 K"\r\n'; } };
+  assert.deepEqual(claudeSocket(env, options), { path: env.CLAUDE_CODE_MESSAGING_SOCKET, token: 'private-token' });
+  assert.deepEqual(calls[0], ['tasklist.exe', ['/FI', 'PID eq 4242', '/FO', 'CSV', '/NH'], {
+    encoding: 'utf8', timeout: 3_000, maxBuffer: 64 * 1024, windowsHide: true, shell: false,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }]);
+  assert.ok(claudeSocket({ ...env, CLAUDE_CODE_MESSAGING_SOCKET: '\\\\?\\pipe\\any-name' }, options));
+  assert.ok(claudeSocket({ ...env, CLAUDE_CODE_MESSAGING_TOKEN: undefined,
+    CLAUDE_CODE_MESSAGING_SOCKET_TOKEN: 'legacy-token' }, options));
+  for (const path of ['/tmp/4242.sock', '\\\\server\\pipe\\x', '\\\\.\\pipes\\x', 'C:\\pipe\\x']) {
+    assert.equal(claudeSocket({ ...env, CLAUDE_CODE_MESSAGING_SOCKET: path }, options), null, path);
+  }
+  for (const clientInfo of [null, {}, { name: 'test-host' }, { name: 'opencode' }, { name: 'claude-desktop' }]) {
+    assert.equal(claudeSocket({ ...env, CLAUDECODE: '1' }, { ...options, clientInfo }), null,
+      'inherited environment cannot substitute for the MCP client name');
+  }
+  for (const key of ['CLAUDE_CODE_MESSAGING_SOCKET', 'CLAUDE_CODE_MESSAGING_TOKEN', 'CLAUDE_CODE_SESSION_ID']) {
+    assert.equal(claudeSocket({ ...env, [key]: '' }, options), null, key);
+  }
+  for (const ppid of [1, 0, -2, 1.5, '4242', NaN, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(claudeSocket(env, { ...options, ppid }), null);
+  }
+  for (const output of ['', 'INFO: No tasks are running which match the specified criteria.',
+    '"node.exe","4242","Console","1","10 K"', '"claude.exe","5151","Console","1","10 K"',
+    '"claude.exe.evil","4242","Console","1","10 K"', 'claude.exe 4242',
+    '"claude.exe","4242","Console","1","10 K"\n"claude.exe","4242","Console","1","10 K"']) {
+    const unbound = { ...options, exec: () => output };
+    assert.equal(claudeSocket(env, unbound), null, output);
+    assert.equal(wakeReason({ ...unbound, host: 'claude', env }), 'claude_channel_unbound');
+  }
+  for (const code of ['ENOENT', 'EACCES', 'ETIMEDOUT', 'ENOBUFS']) {
+    const failed = { ...options, exec: () => { throw Object.assign(new Error(code), { code }); } };
+    assert.equal(claudeSocket(env, failed), null);
+    assert.equal(wakeReason({ ...failed, host: 'claude', env }), 'claude_channel_unbound');
+  }
+  assert.equal(wakeCapability({ ...options, host: 'claude', env }), 'claude-socket');
+  assert.equal(wakeReason({ ...options, host: 'claude', env }), 'ok');
+  assert.equal(wakeReason({ ...options, host: 'claude', env: { ...env, FAI_WAKE: '0' } }), 'wakes_off');
+  assert.equal(wakeReason({ ...options, host: 'claude', env: { ...env, CLAUDE_CODE_MESSAGING_TOKEN: '' } }), 'claude_no_messaging');
 });
 
 test('the Codex thread id comes from a tools/call _meta', () => {
@@ -134,7 +180,7 @@ test('Claude socket: a refusal line, no socket and a write that never lands each
   const unauthorized = await deliverClaudeSocket({ path: wrongToken.path, token: 'wrong', text: 'x' });
   assert.equal(unauthorized.code, 'refused');
 
-  const missing = await deliverClaudeSocket({ path: join(refusing.dir, 'nope.sock'), token: 't', text: 'x' });
+  const missing = await deliverClaudeSocket({ path: `${refusing.path}.missing`, token: 't', text: 'x' });
   assert.deepEqual([missing.ok, missing.code], [false, 'no_socket']);
   const unset = await deliverClaudeSocket({ path: '', token: '', text: 'x' });
   assert.equal(unset.code, 'no_socket');
@@ -149,14 +195,22 @@ test('Claude socket: a refusal line, no socket and a write that never lands each
 
 test('deliverWake routes by capability and never throws', { skip: NO_CLAUDE_WAKES }, async t => {
   const fake = await startFakeClaudeSocket(t, { pid: 4242 });
-  const env = { CLAUDE_CODE_MESSAGING_SOCKET: fake.path, CLAUDE_CODE_MESSAGING_TOKEN: fake.token };
-  assert.deepEqual(await deliverWake({ capability: 'claude-socket', text: 'one', env, ppid: 4242 }), { ok: true });
-  assert.equal((await deliverWake({ capability: 'none', text: 'x', env, ppid: 4242 })).code, 'no_wake');
-  assert.equal((await deliverWake({ capability: 'claude-socket', text: 'x', env: {}, ppid: 4242 })).code, 'no_socket');
-  assert.equal((await deliverWake({ capability: 'claude-socket', text: 'x', env, ppid: 5151 })).code, 'no_socket',
+  const env = { CLAUDE_CODE_MESSAGING_SOCKET: fake.path, CLAUDE_CODE_MESSAGING_TOKEN: fake.token,
+    CLAUDE_CODE_SESSION_ID: 'test-session' };
+  let image = 'claude.exe';
+  const binding = { clientInfo: { name: 'claude-code' },
+    exec: () => `"${image}","4242","Console","1","10 K"` };
+  assert.deepEqual(await deliverWake({ ...binding, capability: 'claude-socket', text: 'one', env, ppid: 4242 }), { ok: true });
+  assert.equal((await deliverWake({ ...binding, capability: 'none', text: 'x', env, ppid: 4242 })).code, 'no_wake');
+  assert.equal((await deliverWake({ ...binding, capability: 'claude-socket', text: 'x', env: {}, ppid: 4242 })).code, 'no_socket');
+  assert.equal((await deliverWake({ ...binding, capability: 'claude-socket', text: 'x', env, ppid: 5151 })).code, 'no_socket',
     'another process\'s socket is never written to');
   assert.equal(fake.received.length, 1);
-  assert.equal((await deliverWake({ capability: 'claude-socket', text: 'x', env: { ...env, FAI_WAKE: '0' }, ppid: 4242 })).code, 'disabled');
+  assert.equal((await deliverWake({ ...binding, capability: 'claude-socket', text: 'x', env: { ...env, FAI_WAKE: '0' }, ppid: 4242 })).code, 'disabled');
+  image = 'node.exe';
+  const rejected = await deliverWake({ ...binding, platform: 'win32', capability: 'claude-socket', text: 'x',
+    env: { ...env, CLAUDE_CODE_MESSAGING_SOCKET: '\\\\.\\pipe\\not-connected' }, ppid: 4242 });
+  assert.equal(rejected.code, 'no_socket', 'delivery rechecks the live image even after a successful binding');
 });
 
 test('Codex: codex queue --thread <id> --message <text> as argv (no shell), outcomes from the exit and stderr', { skip: NO_CODEX_WAKES }, async t => {

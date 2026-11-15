@@ -2,12 +2,33 @@
 // Code messaging socket (auth line + user line, in a temp dir) and a fake `codex` binary that records its argv. No real
 // session's socket or binary is ever used.
 import net from 'node:net';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pipeOrSocket } from './pipe-or-socket.js';
+import { MCP_MAIN, spawnMcp } from './mcp-harness.js';
 
 export const TOKEN = 'fake-messaging-token-0123456789ab';
+
+/** Windows MCP integration tests use a real parent image, a private copy of Node named claude.exe. */
+export async function spawnClaudeMcp(t, env, { bound = true } = {}) {
+  if (process.platform !== 'win32') return spawnMcp(env);
+  const dir = await mkdtemp(join(tmpdir(), 'fai-claude-parent-'));
+  const bin = join(dir, bound ? 'claude.exe' : 'other.exe');
+  const script = join(dir, 'parent.mjs');
+  await copyFile(process.execPath, bin);
+  await writeFile(script, `import { spawn } from 'node:child_process';
+const child = spawn(${JSON.stringify(process.execPath)}, [${JSON.stringify(MCP_MAIN)}], { stdio: 'inherit' });
+child.on('error', error => { console.error(error); process.exit(1); });
+child.on('exit', code => process.exit(code ?? 1));
+`);
+  const mcp = spawnMcp(env, { bin, args: [script] });
+  t.after(async () => {
+    await mcp.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+  return mcp;
+}
 
 /**
  * A fake Claude Code messaging socket: reads newline-delimited JSON, checks the auth line, records the user lines.

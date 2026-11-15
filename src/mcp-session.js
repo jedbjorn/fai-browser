@@ -39,13 +39,14 @@ export class AgentSession {
    * joined that request, or null).
    */
   constructor({ env, home, connect, clientName, host, log = () => {}, waiting = () => false,
-    onOutcome = () => {}, clientVersion = null, opencodeOwnerOf = () => null, now = Date.now,
+    onOutcome = () => {}, clientVersion = null, clientInfo = null, opencodeOwnerOf = () => null, now = Date.now,
     deliver = deliverWake, pollMs = POLL_MS, backoffMs = BACKOFF_MIN_MS, cwd = process.cwd(), pid = process.pid,
     ppid = undefined }) {
     this.env = env;
     this.home = home;
     this.connect = connect;
     this.clientName = clientName;
+    this.clientInfo = clientInfo;
     this.host = host;
     this.log = log;
     this.waiting = waiting;
@@ -102,7 +103,7 @@ export class AgentSession {
 
   wakeOptions() {
     return { host: this.host, env: this.env, threadId: this.threadId, codexReady: this.codexReady,
-      ppid: this.ppid, opencodeSession: this.hostSessionId, opencodeVersion: this.opencodeVersion };
+      ppid: this.ppid, clientInfo: this.clientInfo, opencodeSession: this.hostSessionId, opencodeVersion: this.opencodeVersion };
   }
 
   /**
@@ -121,7 +122,7 @@ export class AgentSession {
   }
 
   view() {
-    const note = this.host === 'claude' && !claudeSocket(this.env, { ppid: this.ppid })
+    const note = this.host === 'claude' && !claudeSocket(this.env, { ppid: this.ppid, clientInfo: this.clientInfo })
       ? 'no messaging socket of its own (Claude Code 2.1.224+, not --bare, the MCP server started by Claude Code itself)'
       : this.host === 'opencode' && (!this.opencodeVersion || !opencodeChannel(this.env, { ppid: this.ppid }))
         ? 'no FAI plugin channel (install --host opencode, OpenCode 1.19 to 1.x, not --pure, the MCP server started by OpenCode itself)'
@@ -367,7 +368,8 @@ export class AgentSession {
           ? (wake.kind === 'invite'
             ? { ok: false, code: 'ambiguous_session', message: 'Several OpenCode sessions use FAI here: paste the line into the one you mean' }
             : { ok: false, code: 'unknown_session', message: 'No OpenCode session of this server made this request' })
-          : await this.deliver({ capability, text, env: this.env, threadId: this.threadId, opencodeSession, ppid: this.ppid });
+          : await this.deliver({ capability, text, env: this.env, threadId: this.threadId, opencodeSession,
+            ppid: this.ppid, clientInfo: this.clientInfo });
         outcome = delivered.ok ? { outcome: 'delivered', ...(delivered.reply ? { message: delivered.reply } : {}) }
           : { outcome: 'failed', code: delivered.code ?? 'wake_failed', message: delivered.message ?? 'The wake failed.' };
         this.log(`wake ${wake.kind} ${outcome.outcome}${delivered.ok ? '' : ` (${outcome.code})`}`);
