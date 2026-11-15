@@ -222,7 +222,8 @@ function planCodexConfig(path, block, force) {
 
 function skillFiles() {
   return readdirSync(SKILL_SOURCE, { withFileTypes: true })
-    .filter(entry => entry.isFile())
+    // Windows zip extraction materializes the tasks symlink as a text file. Task guides are copied separately.
+    .filter(entry => entry.isFile() && entry.name !== 'tasks')
     .map(entry => entry.name)
     .sort();
 }

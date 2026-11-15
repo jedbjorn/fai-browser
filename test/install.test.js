@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, realpathSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { MCP_ENTRY, OPENCODE_PLUGIN_SOURCE, SKILL_SOURCE, TASKS_SOURCE, claudeAddCommandWindows, refreshUserSkills,
   taskGuides } from '../src/install.js';
 import { ALWAYS_LOAD_META, TOOLS } from '../src/mcp.js';
@@ -37,6 +38,32 @@ async function sandbox(t) {
 
 const read = path => readFileSync(path, 'utf8');
 const backups = dir => readdirSync(dir).filter(name => name.includes('.bak-'));
+
+test('archive install copies task guides when the skill tasks symlink was extracted as a text file', async t => {
+  const { root, home, project } = await sandbox(t);
+  const source = resolve(import.meta.dirname, '..');
+  const archive = join(root, 'archive');
+  await mkdir(join(archive, 'src'), { recursive: true });
+  for (const file of ['package.json', 'src/install.js', 'src/paths.js', 'src/opencode-plugin.js']) {
+    await copyFile(join(source, file), join(archive, file));
+  }
+  await cp(SKILL_SOURCE, join(archive, 'skills', 'fai-browser'), {
+    recursive: true, filter: path => path !== join(SKILL_SOURCE, 'tasks'),
+  });
+  await cp(TASKS_SOURCE, join(archive, 'tasks'), { recursive: true });
+  await writeFile(join(archive, 'skills', 'fai-browser', 'tasks'), '../../tasks');
+  const { planInstall, applyPlan } = await import(pathToFileURL(join(archive, 'src', 'install.js')).href);
+  for (const host of ['claude', 'codex', 'opencode']) {
+    const options = { host, scope: 'user', home, cwd: project, env: {} };
+    await applyPlan(planInstall(options));
+    const skill = join(home, host === 'claude' ? '.claude' : '.agents', 'skills', 'fai-browser');
+    assert.ok(lstatSync(join(skill, 'tasks')).isDirectory());
+    for (const guide of taskGuides()) {
+      assert.equal(read(join(skill, guide)), read(join(source, guide)));
+    }
+    assert.ok(planInstall(options).writes.every(write => write.action === 'unchanged'));
+  }
+});
 
 test('claude project install writes .mcp.json and copies the stamped skill; a rerun changes nothing', async t => {
   const { project, install } = await sandbox(t);
