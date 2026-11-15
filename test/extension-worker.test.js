@@ -3254,7 +3254,7 @@ test('modal approval while the page never commits says it is still loading', asy
   h.grant(message.pattern);
   Object.assign(h.openedTabs.get(9), { url: '', pendingUrl: `${SHOP}/cart`, status: 'loading' });
   const answer = await h.send(message, MODAL_SENDER);
-  assert.equal(answer.error, 'The page is still loading. Approve again once it has loaded.');
+  assert.equal(answer.error, 'The page is still loading. Choose Use or Act once it has loaded.');
   assert.equal(h.sent.some(m => m.type === 'lease'), false);
 });
 

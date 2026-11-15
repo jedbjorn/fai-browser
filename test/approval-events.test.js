@@ -32,9 +32,9 @@ test('approvalEvent keeps codes and an origin only', () => {
   assert.ok(APPROVAL_STEPS.includes('failed') && APPROVAL_STEPS.includes('denied'));
 });
 
-test('approval steps: a failed approval on the page says to use the toolbar icon on the task tab', () => {
+test('approval steps: a failed approval on the page says to choose Use or Act in the toolbar popup on the task tab', () => {
   assert.match(approvalSteps('toolbar'), /last approval attempt in the browser did not complete/);
-  assert.match(approvalSteps('toolbar'), /FAI Browser toolbar icon on its task tab/);
+  assert.match(approvalSteps('toolbar'), /FAI Browser toolbar popup on its task tab and choose Use or Act/);
   assert.match(selectTabMessage('page'), /page request modal/);
   assert.doesNotMatch(approvalSteps('page'), /did not complete/);
   // A declined browser prompt is the user's choice: said as such, no instructions to push past it.
@@ -71,14 +71,14 @@ test('the extension\'s approval events land in daemon.log and a modal failure re
   report({ surface: 'page_modal', step: 'failed', reason: 'site_access_timeout', origin: `${ORIGIN}/#view/deep/link` });
   let pending;
   for (let i = 0; i < 100 && (pending = await view()).approval !== 'toolbar'; i++) await sleep(20);
-  assert.equal(pending.approval, 'toolbar', 'a failed modal approval points the agent at the toolbar icon');
+  assert.equal(pending.approval, 'toolbar', 'a failed modal approval points the agent at the toolbar choices');
   assert.equal(pending.approvalIssue.reason, 'site_access_timeout');
   assert.equal(pending.approvalIssue.surface, 'page_modal');
 
   // The agent's open/observe result says the same.
   const blocked = (await client.observe({ requestId: created.requestId })).result;
   assert.equal(blocked.code, 'select_tab', JSON.stringify(blocked).slice(0, 300));
-  assert.match(blocked.needs.message, /did not complete.*toolbar icon on its task tab/);
+  assert.match(blocked.needs.message, /did not complete.*toolbar popup on its task tab and choose Use or Act/);
 
   const lines = (await readFile(paths.logFile, 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line));
   const events = lines.filter(line => line.event === 'approval');

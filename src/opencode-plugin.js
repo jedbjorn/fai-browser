@@ -29,7 +29,9 @@ const SESSION = /^ses_[A-Za-z0-9]{10,60}$/;
 // FAI's wake texts (src/wake.js wakeText), matched whole: ids as FAI writes them, a level name, the tool, and for an
 // invite the user's own words as one JSON string of at most 500 characters.
 const ID = String.raw`([A-Za-z0-9][A-Za-z0-9._:-]{0,127})`;
-const LEVEL = String.raw`(?:Read|Use|Act|Test site)`;
+// Exact current display labels plus the two labels older FAI services emitted.
+// Keep every group noncapturing: the wake validator compares its two captured IDs.
+const LEVEL = String.raw`(?:Read|Use|Act(?: \(limited\)| \(test site\))?|Test site)`;
 const NEXT_TOOL = String.raw`fai_browser_observe`;
 const PREFIX = String.raw`^\[FAI Browser\] `;
 const APPROVED = new RegExp(String.raw`${PREFIX}The user approved tab request ${ID} at level ${LEVEL}\. Call ${NEXT_TOOL} with requestId ${ID} and continue the task\.$`);

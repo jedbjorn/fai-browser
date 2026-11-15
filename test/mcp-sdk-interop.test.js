@@ -25,7 +25,7 @@ test('the MCP SDK client can list and call every core tool', { skip: !sdk && 'no
   await client.connect(transport);
   t.after(() => client.close());
   assert.equal(client.getServerVersion().name, 'fai-browser');
-  assert.match(client.getInstructions(), /tab the user approves/);
+  assert.match(client.getInstructions(), /task tabs the user approves/);
   const { tools } = await client.listTools();
   assert.equal(tools.length, 8);
   // The per-tool eager-load hint survives the wire and the SDK's schema parsing, on the loop's tools only.
