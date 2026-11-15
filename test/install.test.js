@@ -6,7 +6,7 @@ import { copyFile, cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/pr
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { MCP_ENTRY, OPENCODE_PLUGIN_SOURCE, SKILL_SOURCE, TASKS_SOURCE, claudeAddCommandWindows, planInstall,
+import { MCP_ENTRY, OPENCODE_PLUGIN_SOURCE, SKILL_SOURCE, TASKS_SOURCE, applyPlan, claudeAddCommandWindows, planInstall,
   refreshUserSkills, stampedSkill, taskGuides } from '../src/install.js';
 import { ALWAYS_LOAD_META, TOOLS } from '../src/mcp.js';
 
@@ -91,14 +91,15 @@ test('partial-install recovery preserves foreign skills, foreign tasks files and
 
   await writeFile(join(skill, 'SKILL.md'), stampedSkill(read(join(SKILL_SOURCE, 'SKILL.md'))));
   await writeFile(tasks, 'My task notes\n');
-  assert.throws(() => planInstall(options), { code: 'ENOTDIR' });
+  // Windows can report a child of a regular file as ENOENT during planning; applying must still refuse it.
+  await assert.rejects(async () => applyPlan(planInstall(options)));
   assert.equal(read(tasks), 'My task notes\n');
 
   const external = join(root, 'external-tasks');
   await writeFile(external, '../../tasks');
   await rm(tasks);
   await symlink(external, tasks, 'file');
-  assert.throws(() => planInstall(options), { code: 'ENOTDIR' });
+  await assert.rejects(async () => applyPlan(planInstall(options)));
   assert.ok(lstatSync(tasks).isSymbolicLink());
   assert.equal(read(external), '../../tasks');
 });
