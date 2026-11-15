@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
-import { findOnPath } from '../src/install.js';
+import { findOnPath, registrationSummary } from '../src/install.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const SH = join(ROOT, 'scripts', 'install.sh');
@@ -295,4 +295,31 @@ test('install.ps1 refuses an elevated window before it changes anything', { skip
 
 test('the PATH helper used above finds programs by PATHEXT on Windows', { skip: PS_SKIP }, () => {
   assert.ok(findOnPath('node'), `node on PATH (${String(process.env.Path ?? process.env.PATH).split(delimiter).length} entries)`);
+});
+
+test('Windows installer streams setup output, preserves its exit code and closes with its actual registrations', { skip: PS_SKIP }, t => {
+  const app = scratch(t);
+  mkdirSync(join(app, 'scripts'));
+  const source = readFileSync(PS1, 'utf8').split('\n');
+  const runSetup = source.find(line => line.includes('Tee-Object -Variable setupOutput'));
+  const summary = source.filter(line => line.trimStart().startsWith('$registrationSummary =')
+    || line.trimStart().startsWith('if ($registrationSummary)')).join('\n');
+  assert.ok(runSetup);
+  assert.ok(summary);
+  const quote = value => `'${value.replaceAll("'", "''")}'`;
+  const script = join(app, 'summary.ps1');
+  writeFileSync(script, `$node = ${quote(process.execPath)}\n$app = ${quote(app)}\nfunction Say($text) { Write-Output $text }\n`
+    + `${runSetup}\n$code = $LASTEXITCODE\nWrite-Output "setup-exit: $code"\n${summary}\n`);
+  for (const [line, code] of [
+    [registrationSummary(['ChatGPT (Codex)', 'OpenCode Desktop']), 0],
+    [registrationSummary(['Claude (Code tab)', 'ChatGPT (Codex)'], { opencodeManual: true }), 0],
+    [registrationSummary([]), 7],
+  ]) {
+    writeFileSync(join(app, 'scripts', 'setup.mjs'),
+      `console.log('Setup progress'); console.log(${JSON.stringify(line)}); process.exitCode = ${code};\n`);
+    const result = ps(['-File', script]);
+    assert.equal(result.out.trim().split(/\r?\n/).at(-1), line, result.out);
+    assert.match(result.out, /Setup progress/);
+    assert.ok(result.out.includes(`setup-exit: ${code}`), result.out);
+  }
 });

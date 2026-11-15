@@ -222,7 +222,8 @@ function planCodexConfig(path, block, force) {
 
 function skillFiles() {
   return readdirSync(SKILL_SOURCE, { withFileTypes: true })
-    .filter(entry => entry.isFile())
+    // Windows zip extraction materializes the tasks symlink as a text file. Task guides are copied separately.
+    .filter(entry => entry.isFile() && entry.name !== 'tasks')
     .map(entry => entry.name)
     .sort();
 }
@@ -298,6 +299,14 @@ function planSkill(target, { link, force }) {
   }
   const writes = [];
   const replaceLink = info?.isSymbolicLink() ?? false;
+  const tasks = join(target, 'tasks');
+  // An older archive install copied the flattened source symlink before failing on the first task guide.
+  // Recover only that known file inside a FAI-owned skill; never remove a foreign file or follow a tasks symlink.
+  const replaceTasks = info?.isDirectory() && lstatOrNull(tasks)?.isFile()
+    && SKILL_MARKER.test(readText(join(target, 'SKILL.md')) ?? '') && readText(tasks) === '../../tasks';
+  if (replaceTasks) {
+    writes.push({ path: tasks, action: 'replace', kind: 'directory' });
+  }
   // The skill's own files, then the task guides the skill points at (tasks/<name>/SKILL.md, the same relative path
   // under the installed skill, so the pointer resolves wherever the skill is installed).
   const files = [...skillFiles().map(name => ({ source: join(SKILL_SOURCE, name), name })),
@@ -306,7 +315,7 @@ function planSkill(target, { link, force }) {
     const text = readFileSync(source, 'utf8');
     const content = name === 'SKILL.md' ? stampedSkill(text) : text;
     const path = join(target, name);
-    const current = replaceLink ? null : readText(path);
+    const current = replaceLink || (replaceTasks && name.startsWith('tasks/')) ? null : readText(path);
     if (current === content) {
       writes.push({ path, action: 'unchanged', content });
     } else {
@@ -394,7 +403,8 @@ export function planInstall({ host, scope = 'project', link = false, force = fal
     const entry = hostEntry('opencode', server);
     const snippet = () => stableJson({ $schema: 'https://opencode.ai/config.json', mcp: { [SERVER_NAME]: entry } });
     if (existsSync(jsonc)) {
-      throw new InstallError(`${jsonc} is JSONC; add this entry by hand`, { exitCode: 2, snippet: snippet(),
+      throw new InstallError(`${jsonc} is JSONC; ask your agent to add the printed snippet, then copy the wake plugin from `
+        + `${OPENCODE_PLUGIN_SOURCE} to ${opencodePluginPath({ scope, cwd, home })} (create its directory if needed) and restart OpenCode`, { exitCode: 2, snippet: snippet(),
         path: jsonc });
     }
     plan.writes.push(planJsonConfig(path, 'mcp', entry, {
@@ -434,6 +444,12 @@ export async function applyPlan(plan) {
   for (const write of plan.writes) {
     const record = { path: write.path, action: write.action };
     if (write.action === 'unchanged') {
+      done.push(record);
+      continue;
+    }
+    if (write.kind === 'directory') {
+      await rm(write.path, { force: true });
+      await mkdir(write.path, { recursive: true });
       done.push(record);
       continue;
     }
@@ -538,9 +554,67 @@ export function findOnPath(name, { env = process.env, platform = process.platfor
   return null;
 }
 
-/** The coding agents installed on PATH, in HOSTS order: [{ host, name, path }]. */
-export function detectHosts(options = {}) {
-  return HOSTS.map(host => ({ host, name: HOST_NAMES[host], path: findOnPath(host, options) })).filter(item => item.path);
+/** Windows desktop locations verified by F8 discovery. Claude's launcher is not the Code CLI. */
+function windowsDesktopHosts(env, home, exec) {
+  const local = env.LOCALAPPDATA || join(home, 'AppData', 'Local');
+  const desktops = {};
+  if (existsSync(join(local, 'AnthropicClaude', 'claude.exe'))) desktops.claude = 'Claude (Code tab)';
+  // Query the current user's installed Store package: WindowsApps is protected and app data need not exist yet.
+  let storeCodex = false;
+  try {
+    const powershell = join(env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    storeCodex = Boolean(exec(powershell, ['-NoProfile', '-NonInteractive', '-Command',
+      'Get-AppxPackage -Name OpenAI.Codex | Select-Object -ExpandProperty InstallLocation'],
+    { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, windowsHide: true }).trim());
+  } catch {
+    // PowerShell or the Store service can be unavailable; the observed local app folder still works below.
+  }
+  if (storeCodex || existsSync(join(local, 'OpenAI', 'Codex'))) desktops.codex = 'ChatGPT (Codex)';
+  if (existsSync(join(local, 'Programs', '@opencode-aidesktop', 'OpenCode.exe'))) desktops.opencode = 'OpenCode Desktop';
+  return desktops;
+}
+
+function directoryNames(path) {
+  try {
+    return readdirSync(path, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name);
+  } catch (error) {
+    if (['ENOENT', 'EACCES', 'EPERM'].includes(error.code)) return [];
+    throw error;
+  }
+}
+
+/** The Code tab downloads its CLI here after sign-in; the AnthropicClaude launcher is an Electron app. */
+function windowsClaudeCli(env, home) {
+  const root = join(env.APPDATA || join(home, 'AppData', 'Roaming'), 'Claude', 'claude-code');
+  const versions = directoryNames(root).filter(name => /^\d+\.\d+\.\d+$/.test(name))
+    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  for (const version of versions) {
+    for (const hash of directoryNames(join(root, version)).filter(name => /^[a-f0-9]+$/i.test(name)).sort()) {
+      const path = join(root, version, hash, 'claude.exe');
+      if (lstatOrNull(path)?.isFile()) return path;
+    }
+  }
+  return null;
+}
+
+/** CLI and Windows desktop hosts, once per shared config. path is a runnable CLI, never a desktop launcher. */
+export function detectHosts({ env = process.env, platform = process.platform, home = homedir(), exec = execFileSync } = {}) {
+  const desktops = platform === 'win32' ? windowsDesktopHosts(env, home, exec) : {};
+  return HOSTS.map(host => {
+    const onPath = findOnPath(host, { env, platform });
+    const path = onPath ?? (host === 'claude' && platform === 'win32' ? windowsClaudeCli(env, home) : null);
+    const desktop = desktops[host];
+    const name = desktop ? (onPath ? `${HOST_NAMES[host]} and ${desktop}` : desktop) : HOST_NAMES[host];
+    return { host, name, path, ...(desktop ? { desktop } : {}) };
+  }).filter(item => item.path || item.desktop);
+}
+
+/** Setup's final line, repeated by the Windows bootstrap installer; distinguish manual setup from registration. */
+export function registrationSummary(names, { opencodeManual = false } = {}) {
+  const summary = names.length ? `Registered apps: ${names.join(', ')}. Restart them so they load FAI Browser.`
+    : 'Registered apps: none. Connect your coding agent using the setup instructions above.';
+  return opencodeManual ? `${summary} OpenCode was not auto-registered because opencode.jsonc exists. `
+    + 'OpenCode needs one manual step: ask your agent to apply the printed snippet and wake-plugin instructions, then restart OpenCode.' : summary;
 }
 
 /**
@@ -548,11 +622,17 @@ export function detectHosts(options = {}) {
  * Claude Code its `claude mcp remove` then `claude mcp add-json` run directly. Resolves `{ host, writes }`; throws an
  * InstallError (with the snippet or command to run by hand) when it cannot.
  */
-export async function registerHost(host, { env = process.env, home = homedir(), cwd = process.cwd(), claudePath = 'claude',
-  platform = process.platform, run = commandRunner({ env, platform }) } = {}) {
+export async function registerHost(host, { env = process.env, home = homedir(), cwd = process.cwd(),
+  platform = process.platform,
+  claudePath = findOnPath('claude', { env, platform }) ?? (platform === 'win32' ? windowsClaudeCli(env, home) : null),
+  run = commandRunner({ env, platform }) } = {}) {
   const plan = planInstall({ host, scope: 'user', cwd, env, home, platform });
   const writes = await applyPlan(plan);
   if (host === 'claude') {
+    if (!claudePath) {
+      throw new InstallError('Claude Code command not found; ask your agent to install the Claude Code CLI, then run:', {
+        snippet: `${plan.command}\n` });
+    }
     // A Windows batch shim (npm's claude.cmd) runs through cmd.exe, which cannot pass the JSON of add-json intact:
     // the same entry goes through `claude mcp add` with plain arguments instead.
     const batch = isBatchFile(claudePath, platform);
@@ -585,7 +665,7 @@ export function claudeAddArgs({ command, args, env }) {
 }
 
 /**
- * The two commands to run by hand in PowerShell (Windows is unsupported). Values are single-quoted, so a pasted line
+ * The two commands to run by hand in PowerShell. Values are single-quoted, so a pasted line
  * expands no `$` or backtick (`'` doubled inside).
  */
 export function claudeAddCommandWindows(server) {

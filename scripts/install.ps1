@@ -199,7 +199,7 @@
     # Setup points the pairing helper and the coding agents at this copy; after it, older copies can go.
     Push-Location $app
     try {
-      & $node (Join-Path $app 'scripts\setup.mjs') --yes --download-firefox
+      & $node (Join-Path $app 'scripts\setup.mjs') --yes --download-firefox | Tee-Object -Variable setupOutput
       $code = $LASTEXITCODE
     } finally {
       Pop-Location
@@ -216,9 +216,10 @@
 
     Step "FAI Browser $version is installed"
     Say 'Open it any time from the Start menu (FAI Browser).'
-    Say 'Restart your coding agent (Claude Code, Codex, OpenCode) so it loads FAI Browser, then ask it to work in your browser.'
     Say 'Update: run the same install command again.'
     Say "Remove: powershell -ExecutionPolicy Bypass -File `"$root\uninstall.ps1`""
+    $registrationSummary = @($setupOutput | Where-Object { $_ -like 'Registered apps:*' }) | Select-Object -Last 1
+    if ($registrationSummary) { Say $registrationSummary }
   } catch {
     Write-Host ''
     Write-Host "FAI Browser install failed: $($_.Exception.Message)" -ForegroundColor Red
