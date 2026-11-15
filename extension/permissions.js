@@ -138,11 +138,15 @@ export const DEFAULT_LEVEL = 'full';
 /** The two normal approval buttons. Testing is an explicit test-only modifier on Act. */
 export const UI_LEVELS = Object.freeze(['read-only', 'full']);
 
+// Only explicit approval clicks in UIs that display this disclosure opt a session into the bounded resolver.
+export const AUTOMATIC_POPUPS_POLICY = 'necessary-newsletter-v1';
+export const AUTOMATIC_POPUPS_TEXT = 'Necessary cookies only; dismiss newsletter popups';
+
 export const MAX_TESTING_ORIGINS = 50;
 
 /** Plain words for each level: a name and a one-line description (at most 15 words). */
 export const LEVEL_TEXT = Object.freeze({
-  'read-only': Object.freeze({ name: 'Use', description: 'One task tab. Reads pages, follows links and scrolls. No actions.' }),
+  'read-only': Object.freeze({ name: 'Use', description: 'One task tab. Reads pages, follows links and scrolls; includes disclosed popup cleanup.' }),
   reversible: Object.freeze({ name: 'Act', description: 'Legacy action limit: clicks and fills without submitting.' }),
   interactive: Object.freeze({ name: 'Act', description: 'Legacy action limit: searches and filters without saving or sending.' }),
   full: Object.freeze({ name: 'Act', description: 'Multiple task tabs. Clicks, fills, saves, sends and deletes. Recognized purchases require approval when offered; otherwise they stay refused. No sign-in.' }),

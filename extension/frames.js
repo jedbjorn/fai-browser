@@ -228,6 +228,7 @@
       width: box.width,
       height: box.height,
       declared: typeof slot.declared === 'string' ? slot.declared : null,
+      presentation: slot.presentation,
     };
   }
 
@@ -272,7 +273,7 @@
           unread.push({ origin, reason: 'limit' });
         } else {
           reading.push({ slot, frame: { frameId: probe.frameId, documentId: typeof probe.documentId === 'string' ? probe.documentId : null,
-            origin, path: slot.path, dx: slot.dx, dy: slot.dy, clip: slot.clip } });
+            origin, path: slot.path, dx: slot.dx, dy: slot.dy, clip: slot.clip, presentation: slot.presentation } });
         }
       }
       const observed = await Promise.all(reading.map(({ frame }) => callFrame(tabId, frame, 'observe', [options]).then(
@@ -308,6 +309,22 @@
       const again = await callFrame(tabId, item.frame, 'observe', [options]).catch(() => null);
       if (again && Array.isArray(again.controls)) item.observation = again;
     }
+    // Batch up to the control cap in each containing document, after the context re-read.
+    // This is one injection per ancestor/frame, never one injection per control.
+    for (const item of read) {
+      if (!item.observation.controls.some(control => control.actionability === 'ready')) continue;
+      const points = await callFrame(tabId, item.frame, 'controlPoints', []).catch(() => []);
+      const validated = await validateFramePoints(tabId, item.frame, points.map(entry => entry.point), read.map(entry => entry.frame)).catch(() => []);
+      const allowed = new Set(points.filter((entry, i) => validated[i]).map(entry => entry.id));
+      for (const control of item.observation.controls) {
+        if (control.actionability !== 'ready' || allowed.has(control.id)) continue;
+        control.actionability = item.frame.presentation === 'reveal' ? 'reveal' : 'blocked';
+        control.actionabilityReason = item.frame.presentation === 'reveal' ? 'frame_offscreen' : 'frame_unavailable';
+        if (control.actionability === 'reveal') control.offscreen = true;
+        control.visible = false;
+        if (control.href) (item.observation.unrevealedUrls ??= []).push(control.href);
+      }
+    }
     state.topFacts = facts(current);
     for (const item of read) item.frame.facts = facts(item.observation);
     return { top: current, read, unread };
@@ -332,7 +349,7 @@
     let overlay = top.overlay ?? null;
     for (const { frame, observation } of read) {
       const id = local => `f${frame.n}.${local}`;
-      const shown = frame.clip.right > frame.clip.left && frame.clip.bottom > frame.clip.top && inViewport(frame.clip, viewport);
+      const shown = (!frame.presentation || frame.presentation === 'ready') && frame.clip.right > frame.clip.left && frame.clip.bottom > frame.clip.top && inViewport(frame.clip, viewport);
       const own = String(observation.text ?? '');
       if (shown && own) {
         const room = FRAME_TEXT_TOTAL - text.length - 2;
@@ -344,7 +361,7 @@
       for (const code of Array.isArray(observation.warnings) ? observation.warnings : []) {
         if (code !== 'cross_origin_frame') warnings.add(code);
       }
-      for (const block of Array.isArray(observation.blocks) ? observation.blocks : []) {
+      for (const block of shown && Array.isArray(observation.blocks) ? observation.blocks : []) {
         const copy = { ...block };
         if (copy.ref !== undefined) copy.ref = id(copy.ref);
         if (!shown) copy.offscreen = true;
@@ -379,6 +396,7 @@
     const frameShare = Math.min(ranked.length, Math.max(FRAME_CONTROLS_SHARE, FRAME_CONTROLS_MAX - topControls.length));
     const topShare = Math.min(topControls.length, FRAME_CONTROLS_MAX - frameShare);
     out.controls = [...topControls.slice(0, topShare), ...ranked.slice(0, frameShare)];
+    out.unrevealedUrls = [...new Set([...(top.unrevealedUrls ?? []), ...read.flatMap(item => item.observation.unrevealedUrls ?? [])])].slice(0, 1000);
     const dropped = (topControls.length - topShare) + (ranked.length - frameShare);
     if (dropped > 0) {
       out.controlsDropped = (Number(top.controlsDropped) || 0) + dropped;
@@ -413,7 +431,7 @@
     if (listed.length) out.frames = listed;
     // The revision: the top document's when no frame was read; else one that stands for all of them.
     if (read.length) {
-      const key = [top.revision, ...read.map(({ frame, observation }) => `${frame.n}:${frame.frameId}:${observation.revision}`)].join('|');
+      const key = [top.revision, ...read.map(({ frame, observation }) => `${frame.n}:${frame.frameId}:${observation.revision}:${observation.controls.map(control => control.actionability ?? 'legacy').join(',')}`)].join('|');
       let composite = null;
       for (const [revision, parts] of state.composites) if (parts.key === key) composite = revision;
       if (!composite) {
@@ -569,9 +587,22 @@
       return outcome?.observation ? withFrames(tab.id, outcome, options) : outcome;
     }
     await prepareFrameAct(tab.id, expectedRevision, frame, options);
+    const revealDeadline = Date.now() + 1000;
+    if (action.type === 'reveal') {
+      const known = states.get(tab.id)?.frames ?? [];
+      const ancestors = [...known.filter(item => item.path.length < frame.path.length && startsWith(frame.path, item.path)), frame]
+        .sort((a, b) => a.path.length - b.path.length);
+      for (const child of ancestors) {
+        if (Date.now() >= revealDeadline) break;
+        const parent = known.filter(item => item.path.length < child.path.length && startsWith(child.path, item.path))
+          .sort((a, b) => b.path.length - a.path.length)[0];
+        if (parent) await callFrame(tab.id, parent, 'revealFrame', [child.path, revealDeadline]);
+        else await callPage(tab.id, 'revealFrame', [child.path, revealDeadline]);
+      }
+    }
     const id = value => `f${frame.n}.${value}`;
     const fromUrl = reportedUrl(tab.url);
-    const inFrame = { ...action, target: local };
+    const inFrame = { ...action, target: local, ...(action.type === 'reveal' ? { revealDeadline } : {}) };
     const frameApproval = approval ? { ...approval, target: local } : null;
     let outcome;
     let navigated = false;
@@ -605,7 +636,74 @@
       return { ...kept, fromUrl, target, settle: after.settle, observation: after.observation, frameNavigated: true };
     }
     const observation = await withFrames(tab.id, await callPage(tab.id, 'observe', [options]), options);
+    if (action.type === 'reveal') {
+      const revealed = observation.controls.find(control => control.id === id(local));
+      kept.reveal = { revealed: revealed?.actionability === 'ready',
+        ...(revealed?.actionability !== 'ready' ? { reason: revealed?.actionabilityReason ?? 'frame_unavailable' } : {}) };
+    }
     return { ...kept, fromUrl, target, observation };
+  }
+
+  // The worker supplies the shared stage budget. Visit only frames that were already
+  // read under this lease; this method never expands origin access or activates tabs.
+  async function clearNuisances(tabId, options = {}) {
+    const automatic = [];
+    const nuisancePending = [];
+    let attempted = 0;
+    let stopped = false;
+    const remaining = Math.max(0, Math.min(2, Number(options.remaining) || 0));
+    const deadline = Math.min(Date.now() + 2000, Number(options.deadline) || 0);
+    if (options.enabled !== true || !remaining) return { automatic, nuisancePending, attempted, stopped };
+    const known = (states.get(tabId)?.frames ?? []).slice(0, FRAME_READ_MAX);
+    for (const frame of known) {
+      if (Date.now() >= deadline || attempted >= remaining) break;
+      let requested = false;
+      const started = Date.now();
+      try {
+        await recheckFrame(tabId, frame);
+        requested = true;
+        const result = await callFrame(tabId, frame, 'clearNuisances', [{ ...options, deadline, remaining: remaining - attempted }]);
+        attempted += Math.max(0, Math.min(remaining - attempted, Number(result?.attempted) || 0));
+        automatic.push(...(Array.isArray(result?.automatic) ? result.automatic.slice(0, 2 - automatic.length) : []));
+        nuisancePending.push(...(Array.isArray(result?.nuisancePending) ? result.nuisancePending.slice(0, 2 - nuisancePending.length) : []));
+        if (result?.stopped || result?.automatic?.some(receipt => receipt.outcome !== 'dismissed')) { stopped = true; break; }
+      } catch {
+        const operation = options.operations?.[0] === 'newsletter_dismiss' ? 'newsletter_dismiss' : 'cookies_necessary';
+        // A lost frame reply can follow a press. Charge one shared attempt and never replay that uncertain action.
+        if (requested) {
+          attempted++;
+          automatic.push({ operation, outcome: 'unavailable', reason: 'input_unavailable', ms: Date.now() - started });
+        }
+        nuisancePending.push({ operation, reason: 'target_unavailable' });
+        stopped = true;
+        break;
+      }
+    }
+    return { automatic: automatic.slice(0, 2), nuisancePending: nuisancePending.slice(0, 2), attempted, stopped };
+  }
+
+  // Validate child-local pointer coordinates in every containing document. The worker
+  // supplies the sender frame id; no page-provided path or origin is trusted.
+  async function validateFramePoints(tabId, frame, points, known) {
+    let child = frame;
+    let at = points.slice(0, FRAME_CONTROLS_MAX);
+    for (let depth = 0; depth < FRAME_DEPTH_MAX; depth++) {
+      const parent = known.filter(item => item.path.length < child.path.length && startsWith(child.path, item.path))
+        .sort((a, b) => b.path.length - a.path.length)[0];
+      if (!parent) return await callPage(tabId, 'framePoints', [child.path, at]);
+      await recheckFrame(tabId, parent);
+      at = await callFrame(tabId, parent, 'framePoints', [child.path, at]);
+      if (!Array.isArray(at) || !at.some(Boolean)) return [];
+      child = parent;
+    }
+    return [];
+  }
+  async function validatePoint(tabId, frameId, point) {
+    const known = states.get(tabId)?.frames ?? [];
+    const frame = known.find(item => item.frameId === frameId);
+    if (!frame) return false;
+    await recheckFrame(tabId, frame);
+    return Boolean((await validateFramePoints(tabId, frame, [point], known))?.[0]);
   }
 
   // Screenshot redaction for the tab's cross-origin frames, placed where they are now. The top document's query
@@ -720,5 +818,5 @@
   }
 
   globalThis.faiFrames = { withFrames, optionsOf, observeTab, approvalInfo, execute, frameTarget, redaction, topContext,
-    frameApproved, resolve };
+    frameApproved, resolve, validatePoint, clearNuisances };
 })();

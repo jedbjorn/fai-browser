@@ -99,7 +99,7 @@ test('popup: one live session is one tap; Use explicitly grants read-only and th
   await page.click('#invite .invite-agent[data-level=read-only]');
   await page.waitForSelector('#invite .invite-status');
   const sent = await page.evaluate(() => __sent.filter(message => message.type === 'invite'));
-  assert.deepEqual(sent, [{ type: 'invite', sessionId: 'ses_1', level: 'read-only', text: 'Compare the two plans',
+  assert.deepEqual(sent, [{ type: 'invite', sessionId: 'ses_1', level: 'read-only', text: 'Compare the two plans', automaticPopups: 'necessary-newsletter-v1',
     tabId: 7, origin: 'https://shop.example' }], 'the tab and origin the popup showed go along');
   assert.match(await page.textContent('#invite .invite-line'), /^Sent to Claude Code · fai-browser\. It should start in a moment\.$/);
   assert.match(await page.textContent('#invite .invite-copy-text'), /^If it does not start, tell it: join FAI invite inv-abcd2345$/,

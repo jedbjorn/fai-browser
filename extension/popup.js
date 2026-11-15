@@ -5,7 +5,7 @@
 // Everything an agent wrote (reason, instruction, client, origins) is rendered with textContent only. The pairing
 // secret is never shown or put into the page: its field only ever holds what the user types, and is cleared once saved.
 import {
-  approvalTabMode, LEVEL_TEXT, addTestingOrigin, budgetFromFields, describeBudget, describeOrigins, levelChoices, normalizeBudget,
+  approvalTabMode, AUTOMATIC_POPUPS_POLICY, AUTOMATIC_POPUPS_TEXT, LEVEL_TEXT, addTestingOrigin, budgetFromFields, describeBudget, describeOrigins, levelChoices, normalizeBudget,
   normalizeDomainMemory, normalizePermissions, normalizeRememberedSites, originCovered, promptNote, removeTestingOrigin,
   requestedLevel, requestRoots, scopeChoices, sitePattern, startTarget, SECRET_MODE_TEXT, normalizeSecretRedaction,
   addRelaxedOrigin, removeRelaxedOrigin,
@@ -288,7 +288,8 @@ function approveAsk(request, wanted, level, own) {
   return finishApproval(asked, ok => {
     if (!ok) { status.textContent = 'Browser site access was not granted. Nothing was approved.'; return; }
     return send('start', { requestId: request.requestId, level, ask: true, askId: request.ask?.id, attemptId,
-    tabMode: approvalTabMode(level), ...(domain ? { scope: 'domain' } : {}), ...(own ? { onSessionTab: true } : {}) }); });
+    tabMode: approvalTabMode(level), automaticPopups: AUTOMATIC_POPUPS_POLICY,
+    ...(domain ? { scope: 'domain' } : {}), ...(own ? { onSessionTab: true } : {}) }); });
 }
 
 function requestCard(request, { serving }) {
@@ -400,7 +401,8 @@ function requestCard(request, { serving }) {
 function levelSelector(request) {
   const { options } = levelChoices(request, permissions);
   const wrap = element('div', 'request-level');
-  wrap.append(element('p', 'level-help', 'Use: one task tab, reading and navigation only. Act: actions and up to eight task tabs.'));
+  wrap.append(element('p', 'level-help', 'Use: one task tab for reading and navigation. Act: actions and up to eight task tabs.'));
+  wrap.append(element('p', 'automatic-popups-help', AUTOMATIC_POPUPS_TEXT));
   const testing = element('input');
   testing.type = 'checkbox';
   testing.checked = chosenLevels.get(request.requestId) === 'testing';
@@ -498,7 +500,8 @@ function approveRequest(request, level, scope, onSessionTab = false) {
     if (approvalTabMode(level) === 'multiple' && !ok) { status.textContent = 'Act needs browser site access. Nothing was approved.'; return; }
     const extra = scope ? { scope: ok ? 'domain' : 'origin' } : {};
     const note = asked.domain && !ok ? 'Chrome site access was not allowed: approved for this tab\'s origin only.' : '';
-    return send('start', { requestId: request.requestId, level, tabMode: approvalTabMode(level), attemptId, ...(onSessionTab ? { onSessionTab: true } : {}), ...extra }, note);
+    return send('start', { requestId: request.requestId, level, tabMode: approvalTabMode(level), automaticPopups: AUTOMATIC_POPUPS_POLICY,
+      attemptId, ...(onSessionTab ? { onSessionTab: true } : {}), ...extra }, note);
   });
 }
 

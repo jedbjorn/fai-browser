@@ -240,7 +240,7 @@ test('popup: testing is an unchecked option with Act only for testing requests o
   await page.click('.approve-request[data-level=full]');
   const sent = await page.evaluate(() => __sent);
   const { attemptId, ...start } = sent.find(message => message.type === 'start');
-  assert.deepEqual(start, { type: 'start', requestId: 'req_1', level: 'testing', tabMode: 'multiple' });
+  assert.deepEqual(start, { type: 'start', requestId: 'req_1', level: 'testing', tabMode: 'multiple', automaticPopups: 'necessary-newsletter-v1' });
   assert.ok(sent.findIndex(message => message.type === 'approval_attempt' && message.attemptId === attemptId)
     < sent.findIndex(message => message.type === 'start'));
 });
@@ -251,6 +251,8 @@ test('popup: Use ignores a saved action default and grants read-only with one ta
   const start = await page.evaluate(() => __sent.find(message => message.type === 'start'));
   assert.equal(start.level, 'read-only');
   assert.equal(start.tabMode, 'single');
+  assert.equal(start.automaticPopups, 'necessary-newsletter-v1');
+  assert.match(await page.textContent('.request-card'), /Necessary cookies only; dismiss newsletter popups/);
 });
 
 test('popup: replacing a request card preserves keyboard focus on its direct approval button', async t => {
@@ -1335,6 +1337,8 @@ test('arm.html Approve requests exact host permission in the click gesture, then
   assert.equal(message.at, ARM.at);
   assert.equal(message.level, 'read-only');
   assert.equal(message.granted, true);
+  assert.equal(message.automaticPopups, 'necessary-newsletter-v1');
+  assert.match(await page.textContent('#level-help'), /Necessary cookies only; dismiss newsletter popups/);
 });
 
 test('arm.html denied browser access leaves the modal open and announces the failure', async t => {

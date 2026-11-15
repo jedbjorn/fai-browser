@@ -13,6 +13,7 @@ import { siteRoot } from './origins.js';
 import { capOffer, relevanceHints } from './relevance.js';
 import { withResumeWait } from './resume.js';
 import { NOT_WEB_LINK_TEXT, OTHER_SITE_NEXT, OTHER_SITE_TEXT, otherSiteBrief } from './other-site.js';
+import { automaticPopupEvidence, automaticPopupScope } from './automatic-popups.js';
 
 export const RESULT_VERSION = 2;
 
@@ -32,6 +33,34 @@ export const RECOVERABLE_CODES = new Set(['stale', 'target_unavailable', 'captur
 
 export const PAGE_TEXT_LIMIT = 600;
 const STEP_TEXT_LIMIT = 500;
+
+/** Public page projection: private DOM destinations cannot become hints, records, or debug addresses. */
+export function publicObservation(observation) {
+  if (!observation || typeof observation !== 'object') return observation;
+  const ready = new Set((observation.controls ?? []).filter(control => !control.actionability || control.actionability === 'ready')
+    .map(control => control.href).filter(Boolean));
+  ready.add(observation.url);
+  const hidden = new Set([...(observation.unrevealedUrls ?? []), ...(observation.controls ?? [])
+    .filter(control => control.actionability && control.actionability !== 'ready').map(control => control.href)]
+    .filter(href => typeof href === 'string' && href && !ready.has(href)));
+  const clean = value => {
+    if (typeof value === 'string') {
+      let out = value;
+      for (const href of hidden) out = out.split(href).join('[unrevealed link]');
+      return out;
+    }
+    if (Array.isArray(value)) return value.map(clean);
+    if (!value || typeof value !== 'object') return value;
+    const out = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (key === 'unrevealedUrls') continue;
+      if (key === 'href' && (hidden.has(item) || (value.actionability && value.actionability !== 'ready'))) continue;
+      out[key] = clean(item);
+    }
+    return out;
+  };
+  return clean(observation);
+}
 
 /** Statuses whose results carry ranked answer candidates. */
 export const ANSWER_STATUSES = new Set(['completed', 'unverified', 'checkpoint']);
@@ -573,6 +602,7 @@ const DIRECT_RESULT_CHARS = PAGE_TEXT_LIMIT;
  * direction, an approximate or contradictory global count. Raw open/pagination refs become action ids for Agent direct.
  */
 export function recordResultsOf(observation, instruction = '') {
+  observation = publicObservation(observation);
   const members = recordsOf(observation).filter(record => record.list === 0);
   if (members.length < 3) return null;
   const rawMeta = (Array.isArray(observation?.recordLists) ? observation.recordLists : [])
@@ -587,6 +617,10 @@ export function recordResultsOf(observation, instruction = '') {
     const hints = record.hints ?? {};
     const date = hints.when?.find(text => RESULT_DATE.test(text));
     const fields = resultFields(record, date);
+    const control = observation.controls?.find(control => String(control.id) === String(record.ref));
+    const route = record.ref === undefined ? {} : control?.actionability === 'reveal'
+      ? { revealRef: record.ref }
+      : !control?.actionability || control.actionability === 'ready' ? { openRef: record.ref } : {};
     const projected = {
       id: record.id,
       title: record.title,
@@ -595,7 +629,7 @@ export function recordResultsOf(observation, instruction = '') {
       ...(hints.rating !== undefined ? { rating: hints.rating, ...(hints.scale !== undefined ? { scale: hints.scale } : {}) } : {}),
       ...(hints.reviews !== undefined ? { reviews: hints.reviews } : {}),
       ...(fields.length ? { fields } : {}),
-      ...(record.ref !== undefined ? { openRef: record.ref } : {}),
+      ...route,
       ...Object.fromEntries(['sponsored', 'unavailable', 'offscreen'].filter(flag => record[flag] === true).map(flag => [flag, true])),
     };
     const { id, ...row } = projected;
@@ -619,8 +653,11 @@ function withResultActions(results, actions) {
   if (!results) return null;
   const byRef = new Map((actions ?? []).filter(action => action?.id && action.target !== undefined
     && (action.type === 'click' || action.type === 'navigate_allowed_url')).map(action => [String(action.target), action.id]));
-  const records = results.records.map(({ openRef, ...record }) => ({
+  const reveals = new Map((actions ?? []).filter(action => action?.id && action.type === 'reveal')
+    .map(action => [String(action.target), action.id]));
+  const records = results.records.map(({ openRef, revealRef, ...record }) => ({
     ...record, ...(openRef !== undefined && byRef.has(openRef) ? { open: byRef.get(openRef) } : {}),
+    ...(revealRef !== undefined && reveals.has(String(revealRef)) ? { reveal: reveals.get(String(revealRef)) } : {}),
   }));
   const out = { ...results, records };
   if (results.pagination) {
@@ -647,6 +684,7 @@ function withoutProjectedRows(digest, results) {
  */
 export function compactPage(observation, question = '') {
   if (!observation) return null;
+  observation = publicObservation(observation);
   const text = String(observation.text ?? '');
   const { digest, truncated } = buildDigest(observation, question);
   const results = recordResultsOf(observation, question);
@@ -672,7 +710,7 @@ const line = (value, limit) => String(value ?? '').replace(/\s+/g, ' ').trim().s
 
 /** `{ tabs?, dialog?, logs? }` of an observation, each cleaned and bounded; empty when it has none. */
 export function pageExtras(observation) {
-  const out = {};
+  const out = automaticPopupEvidence(observation);
   if (!observation || typeof observation !== 'object') return out;
   if (Array.isArray(observation.tabs) && observation.tabs.length > 1) {
     out.tabs = observation.tabs.slice(0, MAX_PAGE_TABS)
@@ -754,6 +792,7 @@ export function framesNote(result) {
 
 /** Compact post-action observation stored on each step. */
 export function compactStepObservation(observation) {
+  observation = publicObservation(observation);
   const text = String(observation.text ?? '');
   return {
     revision: observation.revision,
@@ -823,6 +862,9 @@ function leanStep(step) {
   if (point) out.point = point;
   // A fill the field did not keep (fill_not_kept): the trail says so next to the action. Runtime-written.
   if (step?.fill?.kept === false) out.fill = 'not_kept';
+  if (typeof step?.reveal?.revealed === 'boolean') out.reveal = { revealed: step.reveal.revealed,
+    ...(typeof step.reveal.reason === 'string' && /^[a-z_]{1,40}$/.test(step.reveal.reason) ? { reason: step.reveal.reason } : {}) };
+  Object.assign(out, automaticPopupEvidence(step));
   return out;
 }
 
@@ -1207,6 +1249,9 @@ function directNextStep(result, context = {}) {
     const missed = result.verification?.checked === true && result.verification.passed !== true;
     return { kind: 'choose', text: `${missed ? 'The expectation did not pass on this page. ' : ''}${directChooseText(offered.revision)}` };
   }
+  if (code === 'target_unavailable' && offered && result.steps?.some(step => step.reveal?.revealed === false)) {
+    return { kind: 'choose', text: `Reveal did not make the target available. ${directChooseText(offered.revision)}` };
+  }
   if (code === 'expectation_failed') {
     return offered
       ? { kind: 'choose', text: `The expectation did not pass on this page. ${directChooseText(offered.revision)}` }
@@ -1275,6 +1320,7 @@ export function directResult(source) {
   }
   const permissions = cleanPermissions(result.permissions);
   if (permissions) out.granted = { level: permissions.effective, asked: permissions.requested,
+    ...automaticPopupScope(permissions),
     ...(permissions.tabMode ? { tabMode: permissions.tabMode } : {}), ...(permissions.browser ? { browser: permissions.browser.name } : {}) };
   if (typeof result.revision === 'string') out.revision = result.revision;
   if (Array.isArray(result.actions)) out.actions = result.actions;
@@ -1282,6 +1328,7 @@ export function directResult(source) {
   if (out.moreActions && Number.isInteger(result.moreOtherSites) && result.moreOtherSites > 0) out.moreOtherSites = result.moreOtherSites;
   if (result.consent) out.consent = result.consent;
   if (result.overlay) out.overlay = result.overlay;
+  Object.assign(out, automaticPopupEvidence(result));
   const kind = result.next?.kind;
   if (result.needs?.message && ['relay', 'stop', 'approve'].includes(kind)) {
     out.needs = { message: String(result.needs.message) };
@@ -1418,6 +1465,7 @@ export function agentResult(source) {
   if (Number.isFinite(result.approvalMs) && result.approvalMs > 0) out.approvalMs = Math.round(result.approvalMs);
   // A host act: one line per action that ran (runtime-written; labels are page text, a typed value only its length).
   if (Array.isArray(result.did) && result.did.length) out.did = result.did.filter(line => typeof line === 'string').slice(0, 25);
+  Object.assign(out, automaticPopupEvidence(result));
   // Trusted (daemon-written): this agent's own request that replaced a closed one.
   if (typeof result.replacedBy === 'string' && REQUEST_REF.test(result.replacedBy)) out.replacedBy = result.replacedBy;
   // The lease's tabs, a JavaScript dialog and Test-site logs on the page the act ended on (pageExtras; untrusted).
@@ -1459,6 +1507,7 @@ export function cleanPermissions(value) {
   // `origin` (exact origins) or `domain` (the request's domain roots, approved by the user); left out when unknown.
   if (value.scope === 'origin' || value.scope === 'domain') out.scope = value.scope;
   if (value.tabMode === 'single' || value.tabMode === 'multiple') out.tabMode = value.tabMode;
+  Object.assign(out, automaticPopupScope(value));
   // The browser that holds the tab: {id, product, name}, plain strings only.
   const browser = value.browser;
   if (browser && typeof browser.id === 'string' && typeof browser.name === 'string') {
@@ -1513,6 +1562,8 @@ function actionBriefOf(action) {
       return `select ${quoted(action.optionLabel ?? action.value)} in ${quoted(action.label)}`;
     case 'scroll':
       return `scroll ${action.direction ?? 'down'}`;
+    case 'reveal':
+      return `reveal ${role}${quoted(action.label)}`;
     case 'wait':
       return 'wait';
     case 'navigate_allowed_url':
@@ -1539,7 +1590,8 @@ const OVERLAY_KINDS = new Set(['sign_in', 'newsletter', 'promo', 'app', 'permiss
 const OBSERVE_CONSENT_BUTTONS = 10;
 
 export function leanObserve(response, options = {}) {
-  const page = response?.page ?? {};
+  const rawPage = response?.page ?? {};
+  const page = publicObservation(rawPage);
   const all = Array.isArray(response?.actions) ? response.actions : [];
   const permissions = cleanPermissions(response?.permissions);
   let listed;
@@ -1561,7 +1613,8 @@ export function leanObserve(response, options = {}) {
   const instruction = options.instruction || options.answerQuestion || '';
   const sites = otherSitesOf(all, listed, page);
   const results = withResultActions(recordResultsOf(page, instruction), listed);
-  const rawDigest = Array.isArray(response?.digest) ? response.digest : buildDigest(page, instruction).digest;
+  const rawDigest = Array.isArray(response?.digest)
+    ? publicObservation({ ...rawPage, digest: response.digest }).digest : buildDigest(page, instruction).digest;
   const digest = withoutProjectedRows(rawDigest, results).map(digestText).filter(Boolean);
   const out = {
     revision: response?.revision ?? page.revision,

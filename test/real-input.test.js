@@ -58,12 +58,20 @@ async function open(t, body, { realistic = true, path = '/', origin = ORIGIN } =
 function act(run, label, action) {
   return run(`(async () => {
     const allow = ${JSON.stringify(ALLOW)};
-    const o = __faiPage.observe({ allow, blocks: false });
+    let o = __faiPage.observe({ allow, blocks: false });
     const label = ${JSON.stringify(label)};
-    const control = label === null ? null : o.controls.find(c => c.label.includes(label));
+    let control = label === null ? null : o.controls.find(c => c.label.includes(label));
     if (label !== null && !control) return { error: 'no control ' + label + ' in ' + o.controls.map(c => c.label).join('|') };
-    const action = { ...${JSON.stringify(action)}, ...(control ? { target: control.id } : {}) };
     try {
+      // Discovery and activation are separate decisions: the fixture explicitly reveals an offscreen control,
+      // then selects its new offer. Input's own click must never silently scroll and activate it.
+      if (${JSON.stringify(action.type)} === 'click' && control?.actionability === 'reveal') {
+        await __faiPage.execute({ type: 'reveal', target: control.id }, o.revision, { quietMs: 30, capMs: 400 }, [], [], allow);
+        o = __faiPage.observe({ allow, blocks: false });
+        control = o.controls.find(c => c.label.includes(label));
+        if (!control) return { error: 'no control after reveal ' + label };
+      }
+      const action = { ...${JSON.stringify(action)}, ...(control ? { target: control.id } : {}) };
       const r = await __faiPage.execute(action, o.revision, { quietMs: 30, capMs: 400 }, [], [], allow);
       return { inputMs: r.inputMs ?? null, fill: r.fill ?? null, expectNavigation: r.expectNavigation };
     } catch (e) { return { error: e.code + ': ' + e.message }; }

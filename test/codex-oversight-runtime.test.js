@@ -8,7 +8,7 @@ test('codex oversight: runtime consent decisions and list candidates fit the dec
   assert.match(decision, /by:\s*[^;]*'runtime'/, 'mechanical consent/nudge steps emit by: runtime');
   const blocks = declarations.match(/export type BlockType\s*=([\s\S]*?);/)[1];
   assert.match(blocks, /'list'/, 'provider-ranked list candidates emit source.t: list');
-  const step = declarations.match(/export interface Step \{([\s\S]*?)\n\}/)[1];
+  const step = declarations.match(/export interface Step(?: extends [^{]+)? \{([\s\S]*?)\n\}/)[1];
   assert.match(step, /class\??:/, 'runtime emits the action gate class');
   assert.match(step, /lateNavigation\??:/, 'runtime emits lateNavigation after a late re-observe');
 });

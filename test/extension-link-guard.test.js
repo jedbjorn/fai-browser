@@ -221,28 +221,37 @@ for (const engine of ENGINES) {
     const offered = offeredPaths(observed);
     for (const [name] of IN_VIEW) assert.ok(!offered.has(`/n/${name}`), `${name}: offered`);
     assert.ok(!offered.has('/n/partly-covered'), 'partly-covered: offered');
-    // Below the fold the covering is unknown at observe time: a click by id scrolls the link into view, where the page
-    // script judges it again and refuses it before clicking, as it refuses any action link.
+    // Discovery permits scrolling only. The fresh page still refuses every dangerous link after reveal.
     for (const [name] of BELOW) {
       const run = await open(t, 'read-only', '/fold');
       const seen = await run.look();
-      const action = seen.actions.find(entry => entry.href === `${ORIGIN}/n/${name}`);
+      const control = await run.tab.evaluate(href => __faiPage.observe().controls.find(control => control.href === href), `${ORIGIN}/n/${name}`);
+      const action = seen.actions.find(entry => entry.target === control?.id);
       if (!action) continue;
+      assert.equal(action.type, 'reveal');
+      assert.equal(action.href, undefined);
       const result = await run.runtime.act(action.id, { revision: seen.observation.revision });
-      assert.notEqual(result.status, 'checkpoint', `${name}: ${result.code}`);
+      assert.ok(!result.offer?.actions.some(entry => entry.type === 'click' && entry.href === `${ORIGIN}/n/${name}`), `${name}: activated after reveal`);
+      assert.deepEqual(run.bridge.executions.map(entry => entry.type), ['reveal']);
       assert.equal(run.tab.url(), `${ORIGIN}/fold`, `${name} navigated`);
       await run.context.close();
     }
-    // Honest links below the fold (one holding an action word in a longer title) are revealed and clicked once.
+    // Honest links require a separate reveal decision, then exactly one activation.
     for (const name of ['fold-honest', 'fold-honest-action-word']) {
       const run = await open(t, 'read-only', '/fold');
       const seen = await run.look();
-      const honest = seen.actions.find(entry => entry.href === `${ORIGIN}/n/${name}`);
+      const control = await run.tab.evaluate(href => __faiPage.observe().controls.find(control => control.href === href), `${ORIGIN}/n/${name}`);
+      const honest = seen.actions.find(entry => entry.target === control?.id);
       assert.ok(honest, `${name} is offered`);
-      const result = await run.runtime.act(honest.id, { revision: seen.observation.revision });
+      assert.equal(honest.type, 'reveal');
+      const prepared = await run.runtime.act(honest.id, { revision: seen.observation.revision });
+      assert.equal(run.tab.url(), `${ORIGIN}/fold`, 'reveal does not navigate');
+      const click = prepared.offer.actions.find(entry => entry.type === 'click' && entry.href === `${ORIGIN}/n/${name}`);
+      assert.ok(click, `${name} is clickable after reveal`);
+      const result = await run.runtime.act(click.id, { revision: prepared.offer.revision });
       assert.equal(result.status, 'checkpoint', `${name}: ${result.code}: ${result.reason}`);
       assert.equal(run.tab.url(), `${ORIGIN}/n/${name}`);
-      assert.equal(run.bridge.executions.length, 1);
+      assert.deepEqual(run.bridge.executions.map(entry => entry.type), ['reveal', 'click']);
       await run.context.close();
     }
   });

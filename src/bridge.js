@@ -36,6 +36,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { acceptUpgrade, offeredProtocols, rejectUpgrade } from './ws.js';
 import { LEVELS, clampLevel, isLevel, levelRank } from './guardrails.js';
+import { automaticPopupScope } from './automatic-popups.js';
 
 export const PROTOCOL_VERSION = 3;
 // Chrome derives this ID from the `key` in extension/manifest.json, so every unpacked install shares it.
@@ -923,6 +924,11 @@ export function createHub({
       // The screenshot arrives separately (possibly before this result).
       armScreenshotTimeout(body.id);
       const forwarded = { observation: result.observation, settle: result.settle ?? { reason: 'none', ms: 0 } };
+      if (typeof result.reveal?.revealed === 'boolean') {
+        forwarded.reveal = { revealed: result.reveal.revealed,
+          ...(typeof result.reveal.reason === 'string' && /^[a-z_]{1,40}$/.test(result.reveal.reason)
+            ? { reason: result.reveal.reason } : {}) };
+      }
       if (result.navigated === true) {
         forwarded.navigated = true;
         if (typeof result.url === 'string') forwarded.url = result.url;
@@ -1090,6 +1096,7 @@ export function createHub({
           // anything else is the exact-origin scope.
           scope: message.scope === 'domain' ? 'domain' : 'origin',
           tabMode: message.tabMode ?? 'single',
+          ...automaticPopupScope(message),
           // The user approved what the agent asked for on this request (a higher level, another origin): it joins it.
           ask: message.ask === true,
           // Which ask the user's card showed: only that exact ask is applied.
@@ -1127,6 +1134,7 @@ export function createHub({
           title: typeof message.title === 'string' ? message.title.slice(0, 300) : '',
           level: message.level,
           tabMode: message.tabMode ?? 'single',
+          ...automaticPopupScope(message),
           sessionId: typeof message.sessionId === 'string' ? message.sessionId.slice(0, 64) : null,
           // The user's own words from the popup's "What should it do?" field.
           text: typeof message.text === 'string' ? message.text.slice(0, 2000) : '',

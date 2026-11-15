@@ -5,7 +5,7 @@
 // optional "What should it do?" text is the user's own words: it comes only from this input.
 // Everything the daemon reports (host, repo name, ids, errors) is rendered with textContent only.
 import { askSiteAccess, element, TESTING_WARNING } from './ui.js';
-import { approvalTabMode } from './permissions.js';
+import { approvalTabMode, AUTOMATIC_POPUPS_POLICY, AUTOMATIC_POPUPS_TEXT } from './permissions.js';
 
 export const HOST_NAMES = Object.freeze({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', unknown: 'Agent' });
 export const INVITE_LEVELS = Object.freeze([
@@ -96,7 +96,7 @@ export function mountInvite({ root, context, onState, say }) {
     asked.granted.then(ok => {
       if (approvalTabMode(chosen) === 'multiple' && !ok) throw new Error('Act needs browser site access. Nothing was approved.');
       return chrome.runtime.sendMessage({ type: 'invite', sessionId: agent?.sessionId ?? null, level: chosen,
-      text: text.value.trim(), tabId: ctx.currentTabId, origin: ctx.currentOrigin }); }).then(reply => {
+      automaticPopups: AUTOMATIC_POPUPS_POLICY, text: text.value.trim(), tabId: ctx.currentTabId, origin: ctx.currentOrigin }); }).then(reply => {
       if (reply?.error) throw new Error(reply.error);
       text.value = '';
       say('');
@@ -174,7 +174,8 @@ export function mountInvite({ root, context, onState, say }) {
     const top = element('div', 'card-topline');
     top.append(element('span', 'card-label', 'INVITE AN AGENT TO THIS TAB'));
     wrap.append(top);
-    wrap.append(element('p', 'field-help', 'Use: one task tab, reading and navigation only. Act: actions and up to eight task tabs.'), text);
+    wrap.append(element('p', 'field-help', 'Use: one task tab for reading and navigation. Act: actions and up to eight task tabs.'), text);
+    wrap.append(element('p', 'automatic-popups-help', AUTOMATIC_POPUPS_TEXT));
     text.disabled = busy;
     if ((ctx.testingOrigins ?? []).includes(ctx.currentOrigin)) {
       const label = element('label', 'check-row');

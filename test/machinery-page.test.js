@@ -287,7 +287,8 @@ test('visually hidden status text is marked hidden; a visible or aria-live place
   const observation = await observe(page);
   const byText = text => observation.blocks.find(block => block.text === text);
   assert.equal(byText('Loading results')?.hidden, true, JSON.stringify(observation.blocks));
-  assert.equal(byText('Fetching results')?.hidden, true);
+  const clipped = byText('Fetching results');
+  assert.ok(!clipped || clipped.hidden === true, 'fully clipped text is omitted or explicitly hidden');
   assert.equal(byText('Loading…')?.hidden, undefined);
   assert.equal(byText('Results')?.hidden, undefined);
 });

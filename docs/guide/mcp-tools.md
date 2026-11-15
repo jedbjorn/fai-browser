@@ -1,6 +1,6 @@
 # MCP tools
 
-Reference for the tools `fai-browser-mcp` exposes (your agent chooses every action), derived from the tool definitions
+Reference for the tools `fai-browser-mcp` exposes (your agent chooses task actions), derived from the tool definitions
 in `src/mcp.js` (`TOOLS`).
 The exhaustive field-by-field description is in [REFERENCE.md](../REFERENCE.md#agent-direct).
 
@@ -20,6 +20,9 @@ fai_browser_act   { ..., expectation }   -> status completed + verification.pass
 Revisions are **single-use**. A plain click, link, fill, key or navigation may leave `revision` out: it then runs on the
 current page, and a control that changed label or class there is refused (`stale`). Actions marked `needsApproval`, secret
 uses and points need the revision of the result they came from. A spent or unknown revision is refused with the current one.
+
+A `reveal` action scrolls to a candidate and returns a new observation without clicking. Choose the link's new action
+after it becomes visible and reachable. Links inside closed menus require an offered action on their visible controller first.
 
 ## Common values
 
@@ -185,6 +188,8 @@ a1  fill "Search" with supplied query
 a2  click "Place order" (asks the user) [purchase]
 (12 more not listed; these are the most relevant)
 ```
+
+`automatic` receipts report bounded necessary-only cookie choices and newsletter dismissal under the scope disclosed by new Use/Act approvals. `nuisancePending` names cases for the agent to handle; these receipts never verify task completion. Automatic changes return fresh choices and prevent replay of a previously selected action.
 
 Trusted lines come first (`next`, status, `granted`, ids, revision, needs and warnings), then the page under the **untrusted page
 text** heading. `status` is `observed` for a page read, `acted` for an act that landed with nothing to check, else the runtime

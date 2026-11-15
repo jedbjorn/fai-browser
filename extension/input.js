@@ -62,6 +62,7 @@
   }
 
   function composedParent(node) {
+    if (node.assignedSlot) return node.assignedSlot;
     if (node.parentElement) return node.parentElement;
     const parent = node.parentNode;
     return parent && parent.nodeType === 11 ? parent.host ?? null : null;
@@ -81,9 +82,11 @@
   function deepHit(doc, x, y) {
     let hit = doc.elementFromPoint(x, y);
     while (hit?.shadowRoot) {
-      const inner = hit.shadowRoot.elementFromPoint(x, y);
-      if (!inner || inner === hit) break;
-      hit = inner;
+      const root = hit.shadowRoot;
+      const inner = root.elementFromPoint(x, y);
+      const next = inner && inner !== hit ? inner : root.elementsFromPoint?.(x, y).find(node => node !== hit && root.contains(node));
+      if (!next || next === hit) break;
+      hit = next;
     }
     return hit;
   }
@@ -246,15 +249,19 @@
   // `late`.
   async function sendTrusted(steps, { deadline } = {}) {
     if (!config.trusted || document.hidden || typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return { ok: false, dispatched: 0 };
+    let reply;
     try {
-      const reply = await chrome.runtime.sendMessage({
+      reply = await chrome.runtime.sendMessage({
         kind: 'fai-trusted-input', steps, viewport: { width: innerWidth, height: innerHeight },
         ...(Number.isFinite(deadline) ? { deadline: Math.round(deadline) } : {}),
       });
-      return reply && typeof reply.dispatched === 'number' ? reply : { ok: false, dispatched: 0 };
     } catch {
-      return { ok: false, dispatched: 0 };
+      return { ok: false, dispatched: 0, uncertain: true };
     }
+    // Revoked authority is not a transport refusal. Abort the input action rather than replaying any pointer,
+    // keyboard or text steps synthetically after Stop, cancellation, or an expired automatic stage.
+    if (reply?.cancelled === true) throw Object.assign(new Error('Trusted input authority expired or was cancelled'), { code: 'target_unavailable' });
+    return reply && typeof reply.dispatched === 'number' ? reply : { ok: false, dispatched: 0, uncertain: true };
   }
 
   function trustedMoves(doc, x, y) {
@@ -265,6 +272,90 @@
       if (point.gap) steps.push({ wait: Math.round(point.gap) });
     }
     return { steps, end: { x: points.at(-1).x + offset.x, y: points.at(-1).y + offset.y } };
+  }
+
+  // Explicit link clicks have their own bounded motor profile. The constants are product tuning, not measured
+  // universal human timings. Other pointer users (typing focus, hover and wheel positioning) keep pathTo's profile.
+  function clickPlan(start, end, fragment, draw = Math.random) {
+    const between = (low, high) => low + draw() * (high - low);
+    const clamp = (low, high, value) => Math.min(high, Math.max(low, value));
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const distance = Math.hypot(dx, dy);
+    const width = Math.max(8, Math.min(fragment?.width || 8, fragment?.height || 8));
+    const preparation = Math.round(between(15, 35));
+    const variation = between(0.92, 1.08);
+    const travel = distance < 1 ? 0 : Math.round(clamp(80, 260,
+      clamp(80, 260, 40 + 45 * Math.log2(1 + distance / width)) * variation));
+    const hover = Math.round(between(20, 50));
+    const hold = Math.round(between(55, 95));
+    const count = travel ? Math.max(2, Math.ceil(travel / 16)) : 1;
+    const bow = between(-1, 1) * Math.min(24, distance * 0.06);
+    const points = [];
+    for (let i = 1; i <= count; i++) {
+      const t = i / count;
+      const eased = t ** 3 * (10 + t * (-15 + 6 * t));
+      const bend = Math.sin(Math.PI * eased) * bow;
+      points.push({
+        x: i === count ? end.x : start.x + dx * eased - (distance ? dy / distance : 0) * bend,
+        y: i === count ? end.y : start.y + dy * eased + (distance ? dx / distance : 0) * bend,
+        at: Math.round(travel * t),
+      });
+    }
+    return { preparation, travel, hover, hold, total: preparation + travel + hover + hold, points };
+  }
+
+  // Worker timers remain usable when the task window is minimized. They do not activate the tab or require the
+  // debugger. An absent worker is supported only for visible standalone input fixtures; hidden input fails closed.
+  async function clickPause(ms) {
+    if (!config.enabled || ms <= 0) return true;
+    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+      try {
+        const reply = await chrome.runtime.sendMessage({ kind: 'fai-click-delay', ms: Math.min(450, Math.ceil(ms)) });
+        return reply?.ok === true && reply?.paced === true;
+      } catch {
+        return false;
+      }
+    }
+    if (document.hidden) return false;
+    await pause(ms);
+    return !document.hidden;
+  }
+
+  async function clickMotion(doc, plan, offset, trusted) {
+    const view = doc.defaultView;
+    const points = plan.points.map(point => ({ ...point,
+      x: px(Math.min(view.innerWidth - 1, Math.max(0, point.x))),
+      y: px(Math.min(view.innerHeight - 1, Math.max(0, point.y))),
+    }));
+    if (trusted) {
+      const steps = [];
+      for (const point of points) {
+        steps.push({ until: point.at }, { m: 'mouse', type: 'mouseMoved', x: point.x + offset.x, y: point.y + offset.y });
+      }
+      const reply = await sendTrusted(steps);
+      if (reply.uncertain) return { ok: false, trusted: true };
+      if (reply.dispatched) {
+        if (!reply.ok) return { ok: false, trusted: true };
+        const end = points.at(-1);
+        cursor = { x: end.x + offset.x, y: end.y + offset.y };
+        return { ok: true, trusted: true };
+      }
+    }
+    const started = performance.now();
+    for (const point of points) {
+      // Absolute deadlines account for time spent in handlers/transport instead of adding the interval again.
+      if (!(await clickPause(Math.max(0, point.at - (performance.now() - started))))) return { ok: false };
+      const { x, y } = point;
+      const previous = cursor ? { x: cursor.x - offset.x, y: cursor.y - offset.y } : { x, y };
+      const hit = deepHit(doc, x, y) ?? doc.documentElement;
+      hoverTo(hit, view, x, y);
+      const init = mouseInit(view, x, y, { movementX: Math.round(x - previous.x), movementY: Math.round(y - previous.y) });
+      fire(hit, 'pointermove', 'PointerEvent', pointerInit(init));
+      fire(hit, 'mousemove', 'MouseEvent', init);
+      cursor = { x: x + offset.x, y: y + offset.y };
+    }
+    return { ok: true, trusted: false };
   }
 
   function visibleRect(el) {
@@ -278,8 +369,7 @@
     return { left, top, right, bottom, width: right - left, height: bottom - top };
   }
 
-  // A point a person would aim at: near the middle of the element's visible part, and one where the element (or
-  // something inside it) is what is on top. A covered element is pressed at its centre.
+  // A point a person would aim at: near the middle of the element's visible part. A covered element has no point.
   function aimAt(el) {
     const doc = el.ownerDocument;
     const rect = visibleRect(el);
@@ -295,8 +385,7 @@
         if (hit && within(hit, el)) return { x, y };
       }
     }
-    const box = el.getBoundingClientRect();
-    return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    return null;
   }
 
   function disabled(el) {
@@ -384,10 +473,10 @@
    * press removed or disabled gets no click, as with a real mouse.
    * Resolves { clicked, stale, ms }.
    */
-  async function click(el, { point = null, stillValid = () => true, think: withThink = true } = {}) {
+  async function click(el, { point = null, fragment = null, explicitClick = false, stillValid = () => true, think: withThink = true } = {}) {
     const started = performance.now();
-    if (withThink) await think();
-    if (!point) await reveal(el);
+    if (!explicitClick && withThink) await think();
+    if (!explicitClick && !point) await reveal(el);
     if (!el.isConnected) return finish(started, { clicked: false, stale: true });
     const doc = el.ownerDocument;
     const view = doc.defaultView;
@@ -398,47 +487,74 @@
       x = point.x - offset.x;
       y = point.y - offset.y;
     } else {
-      ({ x, y } = aimAt(el));
+      const aimed = aimAt(el);
+      if (!aimed) return finish(started, { clicked: false, unavailable: true });
+      ({ x, y } = aimed);
     }
-    if (config.trusted) {
+    let plan = null;
+    let trustedMoved = false;
+    if (explicitClick) {
+      const offset = frameOffset(doc);
+      let start = cursor ? { x: cursor.x - offset.x, y: cursor.y - offset.y } : restingPoint(view, x, y);
+      if (start.x < 0 || start.y < 0 || start.x >= view.innerWidth || start.y >= view.innerHeight) start = restingPoint(view, x, y);
+      plan = clickPlan(start, { x, y }, fragment);
+      if (!(await clickPause(plan.preparation))) return finish(started, { clicked: false, unavailable: true });
+      if (!el.isConnected || !(await stillValid())) return finish(started, { clicked: false, stale: true });
+      const moved = await clickMotion(doc, plan, offset, config.trusted);
+      if (!moved.ok) return finish(started, { clicked: false, unavailable: true });
+      trustedMoved = moved.trusted;
+      if (!el.isConnected || !(await stillValid())) return finish(started, { clicked: false, stale: true });
+      if (!(await clickPause(plan.hover))) return finish(started, { clicked: false, unavailable: true });
+    } else if (config.trusted) {
       const moves = trustedMoves(doc, x, y);
-      if ((await sendTrusted(moves.steps)).dispatched) {
+      const moved = await sendTrusted(moves.steps);
+      if (moved.uncertain) return finish(started, { clicked: false, unavailable: true });
+      if (moved.dispatched) {
+        if (!moved.ok) return finish(started, { clicked: false, unavailable: true });
         cursor = moves.end;
         await pause(jitter(35, 25, 8));
-        if (!el.isConnected || !stillValid()) return finish(started, { clicked: false, stale: true });
-        // The browser presses whatever is on top at the point: only ever the element or something inside it, else
-        // the synthetic press below goes to the element itself.
-        const hit = deepHit(doc, x, y);
-        if (hit && within(hit, el)) {
-          const { x: tx, y: ty } = moves.end;
-          const pressed = await sendTrusted([
-            { m: 'mouse', type: 'mousePressed', x: tx, y: ty }, { wait: Math.round(jitter(70, 30, 25)) },
-            { m: 'mouse', type: 'mouseReleased', x: tx, y: ty },
-          ]);
-          if (pressed.dispatched) return finish(started, { clicked: true, trusted: true });
-        }
+        trustedMoved = true;
       }
     }
-    await moveTo(doc, x, y);
-    await pause(jitter(35, 25, 8));
-    if (!el.isConnected || !stillValid()) return finish(started, { clicked: false, stale: true });
+    if (!explicitClick && !trustedMoved) {
+      await moveTo(doc, x, y);
+      await pause(jitter(35, 25, 8));
+    }
+    if (!el.isConnected || !(await stillValid())) return finish(started, { clicked: false, stale: true });
     // What is under the pointer now (a hover may have changed the layout); only ever the element or inside it.
     const hit = deepHit(doc, x, y);
-    const target = hit && within(hit, el) ? hit : el;
+    if (!hit || !within(hit, el) || disabled(el) || disabled(hit)) return finish(started, { clicked: false, unavailable: true });
+    if (trustedMoved) {
+      const offset = frameOffset(doc);
+      const hold = plan?.hold ?? Math.round(jitter(70, 30, 25));
+      const pressed = await sendTrusted([
+        { m: 'mouse', type: 'mousePressed', x: x + offset.x, y: y + offset.y },
+        explicitClick ? { until: hold } : { wait: hold },
+        { m: 'mouse', type: 'mouseReleased', x: x + offset.x, y: y + offset.y },
+      ]);
+      // A partial trusted press is never replayed synthetically. The worker attempts a matching release on failure.
+      if (pressed.dispatched || pressed.uncertain) return finish(started, { clicked: pressed.ok === true, trusted: true,
+        ...(plan ? { plannedMs: plan.total } : {}), ...(!pressed.ok ? { unavailable: true } : {}) });
+      // A refused trusted press may have spent time attaching. Revalidate before taking the synthetic path.
+      if (!el.isConnected || !(await stillValid()) || deepHit(doc, x, y) !== hit) return finish(started, { clicked: false, stale: true });
+    }
+    const target = hit;
     const down = mouseInit(view, x, y, { buttons: 1, detail: 1 });
     const pointerOk = fire(target, 'pointerdown', 'PointerEvent', pointerInit(down));
     const mouseOk = pointerOk ? fire(target, 'mousedown', 'MouseEvent', down) : true;
     if (mouseOk && target.isConnected) pressFocus(target);
-    await pause(jitter(70, 30, 25));
+    let paced = true;
+    if (plan) paced = await clickPause(plan.hold);
+    else await pause(jitter(70, 30, 25));
     const up = mouseInit(view, x, y, { buttons: 0, detail: 1 });
     const release = target.isConnected ? target : el;
     if (release.isConnected) {
       fire(release, 'pointerup', 'PointerEvent', pointerInit(up));
       if (pointerOk) fire(release, 'mouseup', 'MouseEvent', up);
     }
-    if (!release.isConnected || disabled(release) || disabled(el)) return finish(started, { clicked: false });
+    if (!paced || !release.isConnected || disabled(release) || disabled(el)) return finish(started, { clicked: false, ...(!paced ? { unavailable: true } : {}) });
     fire(release, 'click', 'PointerEvent', pointerInit(up, { detail: 1 }));
-    return finish(started, { clicked: true });
+    return finish(started, { clicked: true, ...(plan ? { plannedMs: plan.total } : {}) });
   }
 
   function finish(started, result) {
@@ -1425,11 +1541,19 @@
    * `secret` (fill_secret; a password field counts as one) plans the rhythm blind, with no slips.
    * Resolves { typed, chunked, slips, corrected, fallback, ms }.
    */
-  async function type(el, text, { kept = () => true, fallback = null, secret = false } = {}) {
+  async function type(el, text, { kept = () => true, fallback = null, secret = false, stillValid = null } = {}) {
     const started = performance.now();
     await think();
     const doc = el.ownerDocument;
-    if (deepActive(doc) !== el) await click(el, { think: false });
+    if (deepActive(doc) !== el) {
+      const focused = await click(el, { think: false, ...(stillValid ? { stillValid } : {}) });
+      if (focused.stale || focused.unavailable) {
+        const error = new Error('The input target is unavailable'); error.code = 'target_unavailable'; throw error;
+      }
+    }
+    if (stillValid && !(await stillValid())) {
+      const error = new Error('The input target changed'); error.code = 'stale'; throw error;
+    }
     if (el.isConnected && deepActive(doc) !== el) {
       commitPending(el);
       el.focus({ preventScroll: true });
@@ -1493,9 +1617,10 @@
    * Enter in a field: keydown, keypress, then (unless the page cancelled either) the change the typing earned and
    * `onEnter()` (the caller's implicit submission), then keyup. Resolves { proceeded, ms }.
    */
-  async function enter(el, onEnter = () => {}) {
+  async function enter(el, onEnter = () => {}, stillValid = null) {
     const started = performance.now();
     await think();
+    if (stillValid && !(await stillValid())) { const error = new Error('The input target changed'); error.code = 'stale'; throw error; }
     const doc = el.ownerDocument;
     if (deepActive(doc) !== el) {
       commitPending(el);
@@ -1577,14 +1702,17 @@
    * digit with `mods.ctrl`/`mods.meta`), with Shift/Ctrl/Meta held around it as a keyboard does, and the key's default
    * action (keyDefault) when the page did not cancel it. Resolves { proceeded, ms }.
    */
-  async function press(el, name, mods = {}) {
+  async function press(el, name, mods = {}, stillValid = null) {
     const started = performance.now();
     await think();
+    if (stillValid && !(await stillValid())) return finish(started, { proceeded: false, stale: true });
     const key = NAMED[name] ?? (/^[a-z0-9]$/i.test(name) ? keyFor(name.toLowerCase()) : null);
     if (!key) throw new Error(`Unknown key ${name}`);
     const held = [mods.ctrl && NAMED.Control, mods.meta && NAMED.Meta, mods.shift && NAMED.Shift].filter(Boolean);
     const flags = { shift: Boolean(mods.shift), ctrl: Boolean(mods.ctrl), meta: Boolean(mods.meta) };
-    if (config.trusted) {
+    // Guarded control activation uses the synthetic default below. Native Space keyup performs activation inside
+    // the browser, before an asynchronous presentation check could suppress it. Other keys retain trusted replay.
+    if (config.trusted && !stillValid) {
       const bits = (flags.ctrl ? CDP_CTRL : 0) | (flags.meta ? CDP_META : 0) | (flags.shift ? CDP_SHIFT : 0);
       const steps = [];
       for (const mod of held) steps.push({ m: 'key', type: 'rawKeyDown', key: mod.key, code: mod.code, keyCode: mod.keyCode, modifiers: bits }, { wait: Math.round(jitter(50, 20, 15)) });
@@ -1594,11 +1722,22 @@
       { m: 'key', type: 'keyUp', key: key.key, code: key.code, keyCode: key.keyCode, modifiers: bits });
       for (const mod of [...held].reverse()) steps.push({ wait: Math.round(jitter(40, 20, 10)) }, { m: 'key', type: 'keyUp', key: mod.key, code: mod.code, keyCode: mod.keyCode });
       const reply = await sendTrusted(steps);
-      if (reply.dispatched) return finish(started, { proceeded: true, trusted: true });
+      if (reply.dispatched || reply.uncertain) return finish(started, { proceeded: reply.ok === true, trusted: true });
     }
     for (const mod of held) {
       fireKey(el, 'keydown', mod, flags);
       await pause(jitter(50, 20, 15));
+    }
+    if (stillValid) {
+      try {
+        if (!(await stillValid())) {
+          for (const mod of [...held].reverse()) if (el.isConnected) fireKey(el, 'keyup', mod, {});
+          return finish(started, { proceeded: false, stale: true });
+        }
+      } catch (error) {
+        for (const mod of [...held].reverse()) if (el.isConnected) fireKey(el, 'keyup', mod, {});
+        throw error;
+      }
     }
     const proceeded = fireKey(el, 'keydown', key, flags);
     if (proceeded && name === 'Space' && !held.length) fireKey(el, 'keypress', key, flags);
@@ -1608,7 +1747,10 @@
       await pause(jitter(40, 20, 10));
       if (el.isConnected) fireKey(el, 'keyup', mod, {});
     }
-    if (proceeded && el.isConnected && !held.some(mod => mod !== NAMED.Shift)) keyDefault(el, name, flags);
+    if (proceeded && el.isConnected && !held.some(mod => mod !== NAMED.Shift)) {
+      if (stillValid && !(await stillValid())) return finish(started, { proceeded: false, stale: true });
+      keyDefault(el, name, flags);
+    }
     return finish(started, { proceeded });
   }
 
@@ -1622,7 +1764,9 @@
     await reveal(el);
     if (!el.isConnected) return finish(started, { hovered: false });
     const doc = el.ownerDocument;
-    const { x, y } = aimAt(el);
+    const aimed = aimAt(el);
+    if (!aimed) return finish(started, { hovered: false, unavailable: true });
+    const { x, y } = aimed;
     if (config.trusted) {
       const moves = trustedMoves(doc, x, y);
       if ((await sendTrusted(moves.steps)).dispatched) {
@@ -1639,10 +1783,14 @@
    * moment to pick, then `choose()` (the caller sets the value and fires input and change, as the browser does when
    * an option is picked from its popup).
    */
-  async function select(el, choose) {
+  async function select(el, choose, stillValid = null) {
     const started = performance.now();
-    await click(el);
+    const clicked = await click(el, stillValid ? { stillValid } : {});
+    if (clicked.stale || clicked.unavailable) {
+      const error = new Error('The select target is unavailable'); error.code = 'target_unavailable'; throw error;
+    }
     await pause(jitter(150, 80, 60));
+    if (stillValid && !(await stillValid())) { const error = new Error('The select target changed'); error.code = 'stale'; throw error; }
     choose();
     return finish(started, {});
   }
@@ -1738,6 +1886,7 @@
     get enabled() { return config.enabled; },
     click, keyboardClick, type, enter, press, hover, select, scroll, reveal, configure,
     stats: () => ({ ...totals }),
+    motion: { plan: clickPlan, seeded },
     // The typing rhythm's pure parts, for test/typing-rhythm.test.js.
     rhythm: { session: rhythmSession, plan: typingPlan, steps: rhythmSteps, seeded, params: RHYTHM, neighbours: NEIGHBOURS, containedOnce, backspace: trustedBackspace },
   };

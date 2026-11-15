@@ -117,6 +117,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
   // Stand-in for page.js; installed on the VM global when the worker injects files: ['page.js'].
   // `pageExecute`, when set, replaces the page's execute (after the revision check).
   let pageExecute = null;
+  let clearNuisances = null;
   // Screenshot redaction: page.js's secret boxes before and after the capture (`arm` true before). `redaction`, when
   // set, replaces the default (no boxes, a page that held still).
   let redaction = null;
@@ -124,6 +125,10 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
   // The Approve gate: what page.js reports for a control (approvalInfo); `approvalInfo` replaces it.
   let approvalInfo = null;
   const fakePage = {
+    clearNuisances(options) {
+      pageArgs.push({ method: 'clearNuisances', args: clone([options]) });
+      return clearNuisances ? clearNuisances(options) : { observation: observation(), attempted: 0, automatic: [] };
+    },
     approvalInfo(target, expectedRevision, ...rest) {
       pageArgs.push({ method: 'approvalInfo', args: clone([target, expectedRevision, ...rest]) });
       if (expectedRevision !== `doc:${revision}`) throw Object.assign(new Error('Stale observation'), { code: 'stale' });
@@ -555,6 +560,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     pageArgs,
     annotations,
     set pageExecute(fn) { pageExecute = fn; },
+    set clearNuisances(fn) { clearNuisances = fn; },
     secretCalls,
     set observationText(text) { observationText = text; },
     set pageVault(list) { pageVault = list; },
@@ -564,6 +570,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     set scriptOverride(fn) { scriptOverride = fn; },
     set observationExtra(value) { observationExtra = value; },
     set frameScript(fn) { frameScript = fn; },
+    set framePointBroker(fn) { context.faiFrames.validatePoint = fn; },
     // Simulates a document navigation of the leased tab: loading at `start` ms, the new URL committed at
     // `commit`, complete at `complete`. With `events: false` only chrome.tabs.get shows it (no onUpdated).
     navigate(url, { start = 0, commit = start, complete = commit + 50, events = true, load = true } = {}) {
@@ -2247,9 +2254,9 @@ test('open with "All of <root>": domain scope when Chrome holds the root, origin
 });
 
 // A request's page opened by itself ("Open requested pages right away", the default), armed, with its prompt window.
-async function openedRightAway({ mode = 'reversible', local = {}, defaultLevel = 'read-only', client = 'Codex', timeScale = 1,
+async function openedRightAway({ mode = 'reversible', local = {}, defaultLevel = 'read-only', client = 'Codex', timeScale = 1, leaseGrant = null,
   request = {} } = {}) {
-  const h = harness({ hostGrants: [], leaseOrigins: [SHOP], local, permissions: { defaultLevel }, timeScale });
+  const h = harness({ hostGrants: [], leaseOrigins: [SHOP], local, permissions: { defaultLevel }, timeScale, leaseGrant });
   await h.waitFor(m => m.type === 'hello');
   h.push({ type: 'requests', requests: [pendingRequest('req_1', { mode, client, ...request })] });
   await h.until(() => h.session.armedTabs?.length === 1 && h.session.armedTabs[0].promptWindowId !== null);
@@ -4494,4 +4501,205 @@ test('reapproving a remembered Use domain as Act ends its remembered access on t
   assert.deepEqual(clone(h.local.rememberedSites), [], 'Act never inherits the remembered Use approval');
   await h.send({ type: 'stop' });
   await h.until(() => h.removed.includes(SITE_PATTERN));
+});
+
+test('frame point broker accepts only an approved child of the active task lease', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  const calls = [];
+  h.framePointBroker = async (...args) => { calls.push(clone(args)); return true; };
+  const message = { kind: 'fai.framePoint', point: { x: 12, y: 14 } };
+  const sender = { id: 'ext', tab: { id: 7 }, frameId: 5, url: `${PORTAL}/blade` };
+  for (const bad of [
+    { ...sender, id: 'foreign' }, { ...sender, tab: { id: 9 } }, { ...sender, frameId: 0, url: `${ELSEWHERE}/` },
+    { ...sender, frameId: -1 }, { ...sender, url: `${ELSEWHERE}/frame` },
+  ]) assert.deepEqual(await h.send(message, bad), { ok: false });
+  for (const point of [null, { x: -1, y: 1 }, { x: Infinity, y: 1 }, { x: 1, y: 100_001 }]) {
+    assert.deepEqual(await h.send({ ...message, point }, sender), { ok: false });
+  }
+  assert.equal(calls.length, 0, 'unapproved requests never reach the geometry broker');
+  assert.deepEqual(await h.send(message, sender), { ok: true, valid: true });
+  assert.deepEqual(calls, [[7, 5, { x: 12, y: 14 }]]);
+  assert.deepEqual(await h.send(message, { ...sender, frameId: 0, url: `${ORIGIN}/` }), { ok: true, valid: true });
+  assert.equal(calls.length, 1, 'top-document checks require the lease but no parent geometry');
+  h.setActiveTab(9);
+  assert.deepEqual(await h.send(message, sender), { ok: false });
+  assert.equal(calls.length, 1, 'a background task tab is not inspected');
+});
+
+test('frame point broker propagates obstruction and refuses a lease stopped during inspection', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  const message = { kind: 'fai.framePoint', point: { x: 12, y: 14 } };
+  const sender = { id: 'ext', tab: { id: 7 }, frameId: 5, url: `${PORTAL}/blade` };
+  h.framePointBroker = async () => false;
+  assert.deepEqual(await h.send(message, sender), { ok: true, valid: false });
+  let release;
+  let entered = false;
+  h.framePointBroker = () => { entered = true; return new Promise(resolve => { release = resolve; }); };
+  const checking = h.send(message, sender);
+  await h.until(() => entered);
+  await h.send({ type: 'stop' });
+  release(true);
+  assert.deepEqual(await checking, { ok: false });
+});
+
+test('click pacing messages reach the worker timer only for the current approved task', async () => {
+  const h = await started({ leaseOrigins: [ORIGIN, PORTAL] });
+  const message = { kind: 'fai-click-delay', ms: 2 };
+  const sender = { id: 'ext', tab: { id: 7 }, frameId: 0, url: `${ORIGIN}/` };
+  assert.deepEqual(await h.send(message, sender), { ok: true, paced: true });
+  assert.deepEqual(await h.send(message, { ...sender, frameId: 5, url: `${PORTAL}/blade` }), { ok: true, paced: true });
+  assert.equal((await h.send(message, { ...sender, tab: { id: 9 } })).ok, false);
+  assert.equal((await h.send(message, { ...sender, frameId: 5, url: `${ELSEWHERE}/frame` })).ok, false);
+  assert.equal((await h.send({ ...message, ms: 451 }, sender)).ok, false);
+  await h.send({ type: 'stop' });
+  assert.equal((await h.send(message, sender)).ok, false);
+});
+
+const AUTOMATIC_POLICY = 'necessary-newsletter-v1';
+const POPUP_SENDER = { id: 'ext', url: 'chrome-extension://ext/popup.html' };
+
+async function automaticStarted({ marker = AUTOMATIC_POLICY, echoed = marker, sender = POPUP_SENDER } = {}) {
+  const h = harness({ leaseGrant: { tabMode: 'single', ...(echoed ? { automaticPopups: echoed } : {}) } });
+  await h.waitFor(message => message.type === 'hello');
+  const reply = await h.send({ type: 'start', requestId: 'req_1', level: 'read-only', ...(marker ? { automaticPopups: marker } : {}) }, sender);
+  assert.equal(reply.status, 'active');
+  return h;
+}
+
+test('automatic popup authority comes only from disclosed user approval and the matching daemon grant', async () => {
+  for (const options of [{ marker: null }, { marker: 'future-policy' }, { echoed: null },
+    { sender: { id: 'ext', tab: { id: 7 }, frameId: 0, url: `${ORIGIN}/` } },
+    { sender: { id: 'ext' } }]) {
+    const h = await automaticStarted(options);
+    const state = await h.send({ type: 'state' });
+    assert.equal(state.session.automaticPopups, undefined, JSON.stringify(options));
+    const id = h.command('observe', { level: 'read-only', automaticPopups: AUTOMATIC_POLICY });
+    await h.waitFor(message => message.type === 'result' && message.id === id);
+    assert.equal(h.pageArgs.some(entry => entry.method === 'clearNuisances'), false);
+    assert.equal(h.sent.find(message => message.type === 'lease').automaticPopups,
+      (options.marker === undefined ? AUTOMATIC_POLICY : options.marker) === AUTOMATIC_POLICY
+        && options.sender === undefined ? AUTOMATIC_POLICY : undefined);
+  }
+  const approved = await automaticStarted();
+  const state = await approved.send({ type: 'state' });
+  assert.equal(state.session.automaticPopups, AUTOMATIC_POLICY);
+  assert.equal(state.session.level, 'read-only');
+});
+
+test('automatic popup stage shares two attempts across cookies/newsletter and does not expand Use capabilities', async () => {
+  const h = await automaticStarted();
+  let cookies = true;
+  let newsletter = true;
+  h.clearNuisances = options => {
+    assert.deepEqual(clone(options.allow), ['navigate']);
+    assert.equal(options.enabled, true);
+    assert.equal(options.remaining, 1);
+    assert.ok(options.deadline >= Date.now() && options.deadline <= Date.now() + 2000);
+    const operation = options.operations[0];
+    if (operation === 'cookies_necessary' && cookies || operation === 'newsletter_dismiss' && newsletter) {
+      if (operation === 'cookies_necessary') cookies = false;
+      else newsletter = false;
+      h.bumpRevision();
+      return { attempted: 1, automatic: [{ operation, outcome: 'dismissed', reason: 'popup_gone_or_changed', ms: 300,
+        label: operation === 'cookies_necessary' ? 'Reject all' : 'Close' }] };
+    }
+    return { attempted: 0, automatic: [] };
+  };
+  const id = h.command('observe', { level: 'read-only', terms: ['flights'] });
+  const result = await h.waitFor(message => message.type === 'result' && message.id === id);
+  assert.deepEqual(result.result.automatic.map(item => item.operation), ['cookies_necessary', 'newsletter_dismiss']);
+  assert.equal(result.result.revision, 'doc:3');
+  const calls = h.pageArgs.filter(entry => entry.method === 'clearNuisances').length;
+  const again = h.command('observe', { level: 'read-only' });
+  await h.waitFor(message => message.type === 'result' && message.id === again);
+  assert.equal(h.pageArgs.filter(entry => entry.method === 'clearNuisances').length, calls, 'document attempt budget survives observations');
+});
+
+test('automatic popup stage stops on unchanged, sanitizes pending reasons, and never runs during point location', async () => {
+  const h = await automaticStarted();
+  let attempts = 0;
+  h.clearNuisances = () => {
+    attempts++;
+    return { attempted: 1, automatic: [{ operation: 'cookies_necessary', outcome: 'unchanged', reason: 'popup_unchanged', ms: 250 }],
+      nuisancePending: [{ operation: 'cookies_necessary', reason: 'no_clear_cookie_choice' },
+        { operation: 'newsletter_dismiss', reason: 'page-made-instruction' }], stopped: true };
+  };
+  const located = h.command('locate', { point: { x: 5, y: 5 }, expectedRevision: 'doc:1', level: 'read-only' });
+  await h.waitFor(message => message.type === 'result' && message.id === located);
+  assert.equal(attempts, 0);
+  const id = h.command('observe', { level: 'read-only' });
+  const result = await h.waitFor(message => message.type === 'result' && message.id === id);
+  assert.equal(attempts, 1);
+  assert.equal(result.result.automatic[0].outcome, 'unchanged');
+  assert.deepEqual(result.result.nuisancePending, [{ operation: 'cookies_necessary', reason: 'no_clear_cookie_choice' }]);
+});
+
+test('automatic popup stage starts no second action after its shared deadline and aborts when stopped', async () => {
+  const h = await automaticStarted();
+  let calls = 0;
+  let deadlineTiming;
+  let deadlinePoint;
+  h.clearNuisances = async () => {
+    calls++;
+    await sleep(2050);
+    const sender = { id: 'ext', tab: { id: 7 }, frameId: 0, url: `${ORIGIN}/` };
+    deadlineTiming = await h.send({ kind: 'fai-click-delay', ms: 0 }, sender);
+    deadlinePoint = await h.send({ kind: 'fai.framePoint', point: { x: 5, y: 5 } }, sender);
+    return { attempted: 1, automatic: [{ operation: 'cookies_necessary', outcome: 'unavailable', reason: 'input_unavailable', ms: 2050 }] };
+  };
+  const id = h.command('observe', { level: 'read-only' });
+  const result = await h.waitFor(message => message.type === 'result' && message.id === id);
+  assert.equal(calls, 1);
+  assert.equal(deadlineTiming.ok, false, 'expired stage cannot continue pointer timing');
+  assert.equal(deadlinePoint.ok, false, 'expired stage cannot press');
+  assert.equal(result.result.automatic.length, 1);
+  const interrupted = await automaticStarted();
+  let release;
+  interrupted.clearNuisances = () => new Promise(resolve => { release = resolve; });
+  const waiting = interrupted.command('observe', { level: 'read-only' });
+  await interrupted.until(() => Boolean(release));
+  await interrupted.send({ type: 'stop' });
+  release({ attempted: 0, automatic: [] });
+  const stopped = await interrupted.waitFor(message => message.type === 'result' && message.id === waiting);
+  assert.ok(['stopped', 'session_inactive'].includes(stopped.error.code));
+  assert.equal(interrupted.pageArgs.filter(entry => entry.method === 'clearNuisances').length, 1);
+});
+
+test('automatic popup cancellation revokes pending pointer timing and the final point broker', async () => {
+  const h = await automaticStarted();
+  let resume;
+  let cancelledTiming;
+  let cancelledPoint;
+  h.clearNuisances = async () => {
+    await new Promise(resolve => { resume = resolve; });
+    const sender = { id: 'ext', tab: { id: 7 }, frameId: 0, url: `${ORIGIN}/` };
+    cancelledTiming = await h.send({ kind: 'fai-click-delay', ms: 0 }, sender);
+    cancelledPoint = await h.send({ kind: 'fai.framePoint', point: { x: 5, y: 5 } }, sender);
+    return { attempted: 1, automatic: [{ operation: 'cookies_necessary', outcome: 'unavailable', reason: 'input_unavailable', ms: 20 }] };
+  };
+  const id = h.command('observe', { level: 'read-only' });
+  await h.until(() => Boolean(resume));
+  h.push({ type: 'cancel', id });
+  resume();
+  const result = await h.waitFor(message => message.type === 'result' && message.id === id);
+  assert.ok(result.error);
+  assert.equal(cancelledTiming.ok, false);
+  assert.equal(cancelledPoint.ok, false);
+  assert.equal(h.pageArgs.filter(entry => entry.method === 'clearNuisances').length, 1);
+});
+
+test('automatic popup policy follows modal and invite approvals and is revoked by a legacy reapproval', async () => {
+  const approved = await automaticStarted();
+  const downgraded = await approved.send({ type: 'start', requestId: 'req_1', level: 'read-only' }, POPUP_SENDER);
+  assert.equal(downgraded.session.automaticPopups, undefined);
+  const invite = harness({ leaseGrant: { level: 'read-only', tabMode: 'single', automaticPopups: AUTOMATIC_POLICY } });
+  await invite.waitFor(message => message.type === 'hello');
+  const invited = await invite.send({ type: 'invite', level: 'read-only', tabId: 7, origin: ORIGIN, automaticPopups: AUTOMATIC_POLICY }, POPUP_SENDER);
+  assert.ok(invited.invited.inviteId, JSON.stringify(invited));
+  assert.equal((await invite.send({ type: 'state' })).session.automaticPopups, AUTOMATIC_POLICY);
+  assert.equal(invite.sent.find(message => message.type === 'invite').automaticPopups, AUTOMATIC_POLICY);
+  const { h, message } = await modalPrepared({ leaseGrant: { tabMode: 'single', automaticPopups: AUTOMATIC_POLICY } });
+  h.grant(message.pattern);
+  const modal = await h.send({ ...message, type: 'arm_approve', level: 'read-only', granted: true, automaticPopups: AUTOMATIC_POLICY }, MODAL_SENDER);
+  assert.equal(modal.session.automaticPopups, AUTOMATIC_POLICY);
 });

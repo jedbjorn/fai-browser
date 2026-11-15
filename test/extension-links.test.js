@@ -216,7 +216,7 @@ for (const engine of ENGINES) {
     const observed = await look();
     const lean = leanObserve({ revision: observed.observation.revision, page: observed.observation, actions: observed.actions,
       offer: observed.offer, digest: observed.digest });
-    const shown = lean.actions.filter(action => /^click "Section \d+"$/.test(action.description)).length;
+    const shown = lean.actions.filter(action => /^(?:click|reveal) "Section \d+"$/.test(action.description)).length;
     assert.equal(shown, 40, 'the read-only listing cap');
     assert.ok(lean.moreActions >= 150 - 40, `moreActions ${lean.moreActions}: every unlisted link is counted`);
     assert.ok(lean.warnings.some(code => /^controls_capped:\d+$/.test(code)));
@@ -230,19 +230,25 @@ for (const engine of ENGINES) {
   test(`${engine.name}: a footer link to another site shows its destination and is followed by requesting it`, { skip }, async t => {
     const { tab, bridge, runtime, look } = await open(t, '/footer');
     const observed = await look();
-    const site = byLabel(observed, 'Our marketing site');
+    const discovery = byLabel(observed, 'Our marketing site');
+    assert.equal(discovery?.type, 'reveal');
+    assert.equal(discovery.href, undefined, 'an unrevealed destination is private');
+    assert.equal(byLabel(observed, 'Social')?.type, 'reveal');
+    assert.ok(!JSON.stringify(observed).includes('https://jane.example.org/site/'));
+    const prepared = await runtime.act(discovery.id, { revision: observed.observation.revision });
+    const site = byLabel({ actions: prepared.offer.actions }, 'Our marketing site');
     assert.equal(site?.type, 'other_site');
     assert.equal(site.href, 'https://jane.example.org/site/');
     assert.equal(site.description, `Link ${site.target} to https://jane.example.org/site/ (other site): Our marketing site`);
-    assert.equal(byLabel(observed, 'Social')?.type, 'other_site', 'a new-tab link to another site too');
+    assert.equal(byLabel({ actions: prepared.offer.actions }, 'Social')?.type, 'other_site', 'a new-tab link to another site too');
     assert.ok(!observed.actions.some(action => action.label === 'Email'), 'a mailto: link is no site');
     assert.ok(listedLabels(observed).includes('Our marketing site'));
 
-    const result = await runtime.act(site.id, { revision: observed.observation.revision });
+    const result = await runtime.act(site.id, { revision: prepared.offer.revision });
     assert.equal(result.code, 'cross_origin');
     assert.equal(result.needs.message, OTHER_SITE_TEXT);
     assert.equal(agentResult(result).next.text, OTHER_SITE_NEXT);
-    assert.equal(bridge.executions.length, 0, 'nothing was clicked');
+    assert.deepEqual(bridge.executions.map(entry => entry.type), ['reveal'], 'only scrolling was performed');
     assert.equal(tab.url(), `${ORIGIN}/footer`);
   });
 
@@ -250,12 +256,13 @@ for (const engine of ENGINES) {
     const { look } = await open(t, '/bigproject');
     const lean = observed => leanObserve({ revision: observed.observation.revision, page: observed.observation,
       actions: observed.actions, offer: observed.offer, digest: observed.digest });
-    const plain = lean(await look());
-    assert.deepEqual(plain.actions.filter(action => /other site/.test(action.description)).map(action => action.description),
-      ['link to https://widget-company.example/contact (other site): "Built by Widget Co"'], 'listed with no task or focus');
+    const discovery = await look();
+    assert.equal(byLabel(discovery, 'Built by Widget Co')?.type, 'reveal');
+    const plain = lean(discovery);
+    assert.ok(!JSON.stringify(plain).includes('https://widget-company.example/contact'), 'hidden footer destination stays private');
     for (const focus of ['widget-company', 'contact']) {
       const focused = lean(await look({ focus }));
-      assert.ok(focused.actions.some(action => /widget-company\.example/.test(action.description)), focus);
+      assert.ok(focused.actions.some(action => /reveal "Built by Widget Co"/.test(action.description)), focus);
     }
     // Twelve links to other sites: five listed, the rest named in the moreActions count.
     const profile = await open(t, '/profile');

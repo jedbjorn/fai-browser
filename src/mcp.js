@@ -23,6 +23,7 @@ import { validateExpectation } from './expectation.js';
 import { scrubSecrets } from './secrets.js';
 import { withResumeWait } from './resume.js';
 import { AgentSession } from './mcp-session.js';
+import { automaticPopupEvidence } from './automatic-popups.js';
 import { detectHost, opencodeChannel, opencodeSessionId } from './wake.js';
 import { LEVELS, levelRank, normalizeAdditions } from './guardrails.js';
 import { browserMatches } from './bridge.js';
@@ -924,6 +925,12 @@ export function directText(structured, previous = null) {
   }
   const granted = result.granted;
   if (granted?.level) lines.push(`granted: ${granted.level}${granted.asked ? ` (asked ${granted.asked})` : ''}${granted.tabMode ? `; task tabs: ${granted.tabMode}` : ''}${granted.browser ? `; browser: ${oneLine(granted.browser, 40)}` : ''}`);
+  if (granted?.automaticPopups === 'necessary-newsletter-v1') lines.push('automatic popups: necessary cookies only; dismiss newsletter popups');
+  const popupEvidence = automaticPopupEvidence(result);
+  for (const item of popupEvidence.automatic ?? []) {
+    lines.push(`automatic: ${item.operation} ${item.outcome}${item.reason ? ` (${item.reason})` : ''}${item.ms !== undefined ? `; ${item.ms} ms` : ''}`);
+  }
+  for (const item of popupEvidence.nuisancePending ?? []) lines.push(`popup needs agent: ${item.operation} (${item.reason})`);
   if (result.needs?.message) lines.push(`needs: ${result.needs.message}${result.needs.level ? ` (level ${result.needs.level})` : ''}`);
   if (result.waited) lines.push(`waited: ${result.waited.passed ? 'condition met' : 'condition not met'} after ${result.waited.ms} ms`);
   for (const warning of result.warnings ?? []) lines.push(`warning: ${warningLine(warning)}`);

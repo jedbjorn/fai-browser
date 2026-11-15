@@ -561,7 +561,7 @@
     } catch {
       // An unparsable base: every href is parsed.
     }
-    flatCache = { text: new Map(), parts: new Map(), hostAncestors, links: new Map(), backgrounds: new Map(), clips: new Map(), baseHere,
+    flatCache = { styles: new WeakMap(), modals: new WeakMap(), text: new Map(), parts: new Map(), hostAncestors, links: new Map(), backgrounds: new Map(), clips: new Map(), baseHere,
       webPage: location.protocol === 'https:' || location.protocol === 'http:' };
   }
 
@@ -590,7 +590,10 @@
   }
 
   function styleOf(el) {
-    return (el.ownerDocument?.defaultView ?? window).getComputedStyle(el);
+    if (flatCache?.styles.has(el)) return flatCache.styles.get(el);
+    const style = (el.ownerDocument?.defaultView ?? window).getComputedStyle(el);
+    flatCache?.styles.set(el, style);
+    return style;
   }
 
   function sameLeaseOrigin(frameEl) {
@@ -740,10 +743,63 @@
         clip = { left: Math.max(clip.left, frame.clip.left), top: Math.max(clip.top, frame.clip.top),
           right: Math.min(clip.right, frame.clip.right), bottom: Math.min(clip.bottom, frame.clip.bottom) };
       }
-      slots.push({ path, box: { x: left, y: top, width, height }, clip, declared: declaredOrigin(el) });
+      slots.push({ path, box: { x: left, y: top, width, height }, clip, declared: declaredOrigin(el), presentation: assessActionability(el).state });
       slotted.add(el);
     }
     return slots;
+  }
+
+  // Used only by the trusted worker, never as an agent command. Resolve a descendant
+  // frame path through readable ancestors and test the exact point in its parent.
+  function framePoint(path, point) {
+    const own = framePath();
+    if (!own || !Array.isArray(path) || path.length <= own.length || path.length > MAX_FRAME_DEPTH
+      || !own.every((n, i) => path[i] === n) || ![point?.x, point?.y].every(Number.isFinite)) return null;
+    let doc = document;
+    const chain = [];
+    for (let i = own.length; i < path.length; i++) {
+      const child = [...doc.querySelectorAll('iframe,frame')].find(el => frameIndexIn(doc.defaultView, el) === path[i]);
+      if (!child) return null;
+      chain.push(child);
+      if (i + 1 < path.length) {
+        try { doc = child.contentDocument; } catch { return null; }
+        if (!doc) return null;
+      }
+    }
+    let at = { ...point };
+    for (let i = chain.length - 1; i >= 0; i--) {
+      const el = chain[i];
+      if (!frameTranslationOnly(el)) return null;
+      const box = el.getBoundingClientRect();
+      // Transformed frames need a proper coordinate transform; never guess one.
+      if (Math.abs(box.width - el.offsetWidth) > 1 || Math.abs(box.height - el.offsetHeight) > 1) return null;
+      const style = styleOf(el);
+      at = { x: at.x + box.left + el.clientLeft + (parseFloat(style.paddingLeft) || 0),
+        y: at.y + box.top + el.clientTop + (parseFloat(style.paddingTop) || 0) };
+      if (assessActionability(el, at).state !== 'ready') return null;
+    }
+    return at;
+  }
+  async function revealFrame(path, deadline) {
+    const own = framePath();
+    if (!own || !Array.isArray(path) || !own.every((n, i) => path[i] === n) || path.length <= own.length || path.length > MAX_FRAME_DEPTH) return false;
+    let doc = document;
+    let child;
+    for (let i = own.length; i < path.length; i++) {
+      child = [...doc.querySelectorAll('iframe,frame')].find(el => frameIndexIn(doc.defaultView, el) === path[i]);
+      if (!child) return false;
+      if (i + 1 < path.length) {
+        try { doc = child.contentDocument; } catch { return false; }
+        if (!doc) return false;
+      }
+    }
+    return (await revealTarget(child, Math.min(Date.now() + 1000, Number(deadline) || Infinity))).revealed;
+  }
+  function controlPoints() {
+    return [...targets].flatMap(([id, el]) => {
+      const assessment = assessActionability(el);
+      return assessment.state === 'ready' ? [{ id, point: assessment.point }] : [];
+    });
   }
 
   // Facts of this document alone (never the context it was sent): what the worker unions across the tab's documents.
@@ -866,6 +922,278 @@
     if (el.checkVisibility) return el.checkVisibility({ visibilityProperty: true });
     const style = styleOf(el);
     return style.visibility !== 'hidden' && style.display !== 'none';
+  }
+
+  // One bounded mechanical assessment for offers and presses. Geometry stays private; only the
+  // categorical state enters observations/revisions. CSS masks/complex clips fail closed.
+  const ACTION_FRAGMENTS = 40;
+  const composedParent = node => node?.assignedSlot ?? parentOf(node);
+  const rectIntersection = (a, b) => ({ left: Math.max(a.left, b.left), top: Math.max(a.top, b.top),
+    right: Math.min(a.right, b.right), bottom: Math.min(a.bottom, b.bottom) });
+  const positiveRect = r => r.right > r.left && r.bottom > r.top;
+  function pointerOwner(el, point, fragment = null) {
+    const doc = el.ownerDocument;
+    let hit = doc.elementFromPoint(point.x, point.y);
+    for (let depth = 0; hit?.shadowRoot && depth < 12; depth++) {
+      const root = hit.shadowRoot;
+      const inner = root.elementFromPoint(point.x, point.y);
+      const next = inner && inner !== hit ? inner : root.elementsFromPoint?.(point.x, point.y)
+        .find(node => node !== hit && root.contains(node));
+      if (!next || next === hit) break;
+      hit = next;
+    }
+    // A covering sibling inside the same link is still link-owned, but it does not expose the text beneath it.
+    if (fragment?.node && hit !== fragment.owner && !fragment.owner.shadowRoot?.contains(hit)) {
+      let transparentToHit = false;
+      for (let owner = fragment.owner, depth = 0; owner && depth++ < 80; owner = composedParent(owner)) {
+        if (owner === hit) { transparentToHit = true; break; }
+        if (styleOf(owner).pointerEvents !== 'none') break;
+      }
+      if (!transparentToHit) return false;
+    }
+    for (let depth = 0; hit && depth < 80; hit = composedParent(hit), depth++) {
+      if (hit === el) return true;
+      if (hit.matches?.(CONTROL_SELECTOR)) return false;
+    }
+    return false;
+  }
+  function presentationBlock(el) {
+    let depth = 0;
+    for (let node = el; node; node = composedParent(node)) {
+      if (++depth > 80) return 'limit';
+      const style = styleOf(node);
+      if (node.inert || node.hasAttribute('inert')) return 'inert';
+      if (node.matches?.(':disabled') || node.getAttribute('aria-disabled') === 'true') return 'disabled';
+      if (style.display === 'none' || style.contentVisibility === 'hidden') return 'hidden';
+      if (Number(style.opacity) === 0 || /\bopacity\(\s*0(?:\.0+)?%?\s*\)/.test(style.filter)) return 'transparent';
+      if (style.clipPath && style.clipPath !== 'none' || style.maskImage && style.maskImage !== 'none') return 'complex_clip';
+      if (node.tagName === 'DETAILS' && !node.open) {
+        const summary = [...node.children].find(child => child.tagName === 'SUMMARY');
+        if (!summary || !(summary === el || summary.contains(el))) return 'closed';
+      }
+    }
+    // Modal top-layer blocking is normally also caught by hit testing, but it matters offscreen too.
+    const doc = el.ownerDocument;
+    let modals = flatCache?.modals.get(doc);
+    if (!modals) {
+      modals = doc.querySelectorAll('dialog:modal');
+      flatCache?.modals.set(doc, modals);
+    }
+    for (const modal of modals) {
+      if (!modal.contains(el)) return 'modal';
+    }
+    return null;
+  }
+  const paintedColor = color => Boolean(color && color !== 'transparent' && color !== 'none'
+    && !/(?:\/\s*0(?:\.0+)?%?\s*\)|^(?:rgba|hsla)\([^)]*,\s*0(?:\.0+)?%?\s*\))$/i.test(color));
+  function paintsText(style) {
+    const fill = style.webkitTextFillColor || style.color;
+    return paintedColor(fill) || parseFloat(style.webkitTextStrokeWidth) > 0 && paintedColor(style.webkitTextStrokeColor)
+      || style.textDecorationLine !== 'none' && paintedColor(style.textDecorationColor)
+      || style.textShadow !== 'none' && (style.textShadow.match(/rgba?\([^)]*\)/g) ?? []).some(paintedColor);
+  }
+  function paintsBox(node, style) {
+    if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'IFRAME', 'FRAME', 'IMG', 'VIDEO', 'CANVAS'].includes(node.tagName.toUpperCase())) return true;
+    const colored = paintedColor;
+    if (node.tagName.toUpperCase() === 'SVG') {
+      for (const shape of [...node.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line,text,use,image')].slice(0, 40)) {
+        const ink = styleOf(shape);
+        if (ink.display !== 'none' && ink.visibility === 'visible' && Number(ink.opacity) > 0
+          && (paintedColor(ink.fill) && Number(ink.fillOpacity) > 0 || paintedColor(ink.stroke) && Number(ink.strokeOpacity) > 0)) return true;
+      }
+    }
+    if (colored(style.backgroundColor) || style.backgroundImage && style.backgroundImage !== 'none') return true;
+    for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
+      if (parseFloat(style[`border${side}Width`]) > 0 && style[`border${side}Style`] !== 'none' && colored(style[`border${side}Color`])) return true;
+    }
+    for (const pseudo of (node.childNodes.length ? [] : ['::before', '::after'])) {
+      const generated = node.ownerDocument.defaultView.getComputedStyle(node, pseudo);
+      if (generated.content && !['none', 'normal', '""'].includes(generated.content) && generated.display !== 'none'
+        && generated.visibility === 'visible' && Number(generated.opacity) > 0) return true;
+    }
+    return false;
+  }
+  function actionFragments(el) {
+    const fragments = [];
+    const queue = [el];
+    let seen = 0;
+    while (queue.length && seen++ < 80 && fragments.length < ACTION_FRAGMENTS) {
+      const node = queue.shift();
+      if (node.nodeType === Node.TEXT_NODE) {
+        const owner = node.parentElement;
+        if (!owner || !node.nodeValue?.trim() || presentationBlock(owner) || styleOf(owner).visibility !== 'visible' || !paintsText(styleOf(owner))) continue;
+        const range = node.ownerDocument.createRange();
+        range.selectNodeContents(node);
+        for (const rect of [...range.getClientRects()].slice(0, ACTION_FRAGMENTS - fragments.length)) {
+          if (positiveRect(rect)) fragments.push({ rect, owner, node });
+        }
+        continue;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE || presentationBlock(node)) continue;
+      const style = styleOf(node);
+      if (style.visibility === 'visible' && paintsBox(node, style)) {
+        for (const rect of [...node.getClientRects()].slice(0, ACTION_FRAGMENTS - fragments.length)) {
+          if (positiveRect(rect)) fragments.push({ rect, owner: node });
+        }
+      }
+      // Include descendants for display:contents and visibility/pointer overrides. Never borrow
+      // the geometry of an independent nested control.
+      for (const child of flatChildren(node)) {
+        if (child.nodeType === Node.ELEMENT_NODE && child !== el && child.matches(CONTROL_SELECTOR)) continue;
+        if (queue.length < 80) queue.push(child);
+      }
+    }
+    // A blank decorative cover must not establish presentation when all of a text link's readable content is hidden.
+    // Retain the control's own box and genuine graphical children (icons/images remain valid link content).
+    if (fragments.some(fragment => fragment.node)) return fragments.filter(fragment => fragment.node
+      || fragment.owner === el || /^(?:INPUT|TEXTAREA|SELECT|BUTTON|IMG|VIDEO|CANVAS|SVG)$/.test(fragment.owner.tagName.toUpperCase())
+      || styleOf(fragment.owner).backgroundImage !== 'none');
+    return fragments;
+  }
+  function clippedFragment(fragment) {
+    const { owner } = fragment;
+    const view = owner.ownerDocument.defaultView;
+    let rect = { left: fragment.rect.left, top: fragment.rect.top, right: fragment.rect.right, bottom: fragment.rect.bottom };
+    let recoverable = false;
+    for (let node = composedParent(owner), depth = 0; node && depth++ < 80; node = composedParent(node)) {
+      const style = styleOf(node);
+      const box = node.getBoundingClientRect();
+      const clipX = /^(hidden|clip|auto|scroll)$/.test(style.overflowX);
+      const clipY = /^(hidden|clip|auto|scroll)$/.test(style.overflowY);
+      if (!clipX && !clipY) continue;
+      const clip = { left: clipX ? box.left + node.clientLeft : -Infinity,
+        right: clipX ? box.left + node.clientLeft + node.clientWidth : Infinity,
+        top: clipY ? box.top + node.clientTop : -Infinity,
+        bottom: clipY ? box.top + node.clientTop + node.clientHeight : Infinity };
+      const missedX = rect.right <= clip.left || rect.left >= clip.right;
+      const missedY = rect.bottom <= clip.top || rect.top >= clip.bottom;
+      if (missedX || missedY) {
+        const canX = !missedX || /^(auto|scroll)$/.test(style.overflowX) && node.scrollWidth > node.clientWidth;
+        const canY = !missedY || /^(auto|scroll)$/.test(style.overflowY) && node.scrollHeight > node.clientHeight;
+        if (!canX || !canY) return { rect: null, recoverable: false };
+        recoverable = true;
+      }
+      rect = rectIntersection(rect, clip);
+    }
+    const viewport = { left: 0, top: 0, right: view.innerWidth, bottom: view.innerHeight };
+    if (!positiveRect(rectIntersection(rect, viewport))) {
+      const root = owner.ownerDocument.scrollingElement;
+      recoverable ||= Boolean(root && ((root.scrollHeight > view.innerHeight && (rect.bottom <= 0 || rect.top >= view.innerHeight))
+        || (root.scrollWidth > view.innerWidth && (rect.right <= 0 || rect.left >= view.innerWidth))));
+    }
+    return { rect: rectIntersection(rect, viewport), recoverable };
+  }
+  let actionabilityCache = null;
+  function assessActionability(el, requiredPoint = null, depth = 0) {
+    if (!requiredPoint && actionabilityCache?.has(el)) return actionabilityCache.get(el);
+    const result = assessActionabilityNow(el, requiredPoint, depth);
+    if (!requiredPoint && el && actionabilityCache) actionabilityCache.set(el, result);
+    return result;
+  }
+  function frameTranslationOnly(el) {
+    for (let node = el, depth = 0; node && depth++ < 80; node = composedParent(node)) {
+      const style = styleOf(node);
+      if (style.perspective && style.perspective !== 'none' || style.zoom && !['1', 'normal'].includes(style.zoom)) return false;
+      if (style.scale && style.scale !== 'none' && style.scale.split(/\s+/).some(value => Number(value) !== 1)) return false;
+      if (style.rotate && !['none', '0deg'].includes(style.rotate)) return false;
+      if (style.translate && style.translate !== 'none') {
+        const parts = style.translate.split(/\s+/);
+        if (parts.length > 2 && parseFloat(parts[2]) !== 0) return false;
+      }
+      if (style.transform && style.transform !== 'none') {
+        try {
+          const matrix = new DOMMatrixReadOnly(style.transform);
+          if (!matrix.is2D || matrix.a !== 1 || matrix.b !== 0 || matrix.c !== 0 || matrix.d !== 1) return false;
+        } catch { return false; }
+      }
+    }
+    const own = styleOf(el);
+    return !['paddingLeft', 'paddingRight', 'paddingTop', 'paddingBottom'].some(side => parseFloat(own[side]) > 0);
+  }
+  function assessActionabilityNow(el, requiredPoint = null, depth = 0) {
+    const blocked = reason => ({ state: 'blocked', reason });
+    if (!el?.isConnected || !el.ownerDocument?.defaultView || depth > MAX_FRAMES) return blocked('detached');
+    try { if (el.ownerDocument.defaultView.document !== el.ownerDocument) return blocked('detached'); }
+    catch { return blocked('detached'); }
+    const problem = presentationBlock(el);
+    if (problem) return blocked(problem);
+    const fragments = actionFragments(el);
+    if (!fragments.length) return blocked('hidden');
+    let recoverable = false;
+    let painted = false;
+    let frameReveal = false;
+    for (const fragment of fragments) {
+      const clipped = clippedFragment(fragment);
+      recoverable ||= clipped.recoverable;
+      const rect = clipped.rect;
+      if (!rect || !positiveRect(rect)) continue;
+      painted = true;
+      const width = rect.right - rect.left;
+      const height = rect.bottom - rect.top;
+      const points = requiredPoint ? [requiredPoint] : [[.5,.5],[.2,.2],[.8,.2],[.2,.8],[.8,.8]]
+        .map(([x,y]) => ({ x: Math.round(rect.left + width*x), y: Math.round(rect.top + height*y) }));
+      for (const point of points) {
+        if (point.x < rect.left || point.x >= rect.right || point.y < rect.top || point.y >= rect.bottom || !pointerOwner(el, point, fragment)) continue;
+        const frame = frameByDoc.get(el.ownerDocument);
+        const topPoint = frame ? { x: point.x + frame.dx, y: point.y + frame.dy } : point;
+        if (frame) {
+          if (!frameTranslationOnly(frame.el)) return blocked('transformed_frame');
+          const parent = assessActionability(frame.el, topPoint, depth + 1);
+          if (parent.state !== 'ready') {
+            frameReveal ||= parent.state === 'reveal';
+            continue;
+          }
+        }
+        return { state: 'ready', reason: 'reachable', point: topPoint, fragment: { width, height }, geometry: rect };
+      }
+    }
+    return frameReveal || !painted && recoverable ? { state: 'reveal', reason: 'offscreen' } : blocked(painted ? 'covered' : 'clipped');
+  }
+  function targetIdentity(el) {
+    return JSON.stringify([roleOf(el), labelOf(el), el.getAttribute('href'), el.href, el.getAttribute('target'),
+      el.getAttribute('type'), el.getAttribute('src'), el.getAttribute('aria-checked'), el.getAttribute('aria-selected'), el.checked]);
+  }
+  function activationGuard(el) {
+    const identity = targetIdentity(el);
+    const doc = el.ownerDocument;
+    const href = doc.location.href;
+    return async () => {
+      assertFrameApproved();
+      if (!el.isConnected || doc.location.href !== href || targetIdentity(el) !== identity) throw new PageError('stale', 'The control identity changed before input');
+      const current = assessActionability(el);
+      if (current.state !== 'ready') throw new PageError('target_unavailable', `Target is unavailable: ${current.reason}`);
+      if (pageContext.frame || typeof chrome !== 'undefined' && chrome.runtime?.id) {
+        if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) throw new PageError('target_unavailable', 'Frame presentation verification is unavailable');
+        const reply = await chrome.runtime.sendMessage({ kind: 'fai.framePoint', point: current.point });
+        if (!reply?.ok || reply.valid !== true || assessActionability(el).state !== 'ready' || targetIdentity(el) !== identity) throw new PageError('target_unavailable', 'The containing frame is unavailable');
+      }
+      return true;
+    };
+  }
+  async function revealTarget(el, preparationDeadline = Date.now() + 1000) {
+    const identity = targetIdentity(el);
+    const doc = el.ownerDocument;
+    const href = doc.location.href;
+    const started = performance.now();
+    let previous = '';
+    let assessment = assessActionability(el);
+    for (let attempt = 0; attempt < 3 && performance.now() - started < 1000 && Date.now() < preparationDeadline; attempt++) {
+      if (!el.isConnected || doc.location.href !== href || targetIdentity(el) !== identity) throw new PageError('stale', 'The reveal target changed');
+      if (assessment.state === 'ready') return { revealed: true };
+      if (assessment.state !== 'reveal' && attempt === 0) return { revealed: false, reason: assessment.reason };
+      const rect = el.getBoundingClientRect();
+      const position = JSON.stringify([rect.x, rect.y, rect.width, rect.height]);
+      if (position === previous) break;
+      previous = position;
+      // Native scrolling handles both axes and all existing ancestor scrollers without focus or activation.
+      el.scrollIntoView({ block: attempt ? 'nearest' : 'center', inline: 'center', behavior: 'instant' });
+      const frame = frameByDoc.get(doc);
+      frame?.el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      // A synchronous layout read makes this bounded even when hidden-document timers are throttled.
+      void el.getBoundingClientRect();
+      assessment = assessActionability(el);
+    }
+    return { revealed: assessment.state === 'ready', ...(assessment.state !== 'ready' ? { reason: assessment.reason } : {}) };
   }
 
   // A form field the page marks as not for people: hidden from assistive technology and the tab order on the field
@@ -2107,6 +2435,10 @@
     }
     if (clipped) readings.push(pieces.map(piece => piece.inside).join(''));
     if (hidden) readings.push(pieces.filter(piece => !piece.masked).map(piece => piece.strict ?? piece.text).join(''));
+    // A clipped action word may still be recognisable while its neutral prefix is entirely hidden. Judge the
+    // complete surviving text pieces too: a half-visible "Sign out" must not become safe navigation as "Sign".
+    if (clipped || hidden) readings.push(pieces.filter(piece => !piece.masked && (piece.strict ?? piece.inside).trim())
+      .map(piece => piece.text).join(''));
     const shown = pieces.filter(piece => piece.inside.trim());
     // Visual order: the pieces sorted by their boxes (top to bottom, left to right), when there are a few.
     if (shown.length >= 2 && shown.length <= SEEN_ORDER_PIECES) {
@@ -2898,6 +3230,203 @@
     return Boolean(lastOverlay?.closers.some(closer => closer.el === el));
   }
 
+  // Automatic nuisance handling has its own narrow approval scope. These exact phrases
+  // are deliberately stricter than the manual consent/overlay classifications above.
+  const AUTO_COOKIE_NAMES = new Set([
+    'reject all', 'reject all cookies', 'reject optional cookies', 'reject non-essential cookies',
+    'reject nonessential cookies', 'decline all', 'decline all cookies', 'decline optional cookies',
+    'necessary only', 'necessary cookies only', 'only necessary cookies', 'essential cookies only',
+    'only essential cookies', 'strictly necessary cookies only', 'accept necessary only',
+    'accept only necessary', 'accept only necessary cookies', 'allow only necessary cookies',
+    'use necessary cookies only', 'continue without accepting',
+    'tout refuser', 'refuser tout', 'refuser tous les cookies', 'uniquement les cookies nécessaires',
+    'seulement les cookies nécessaires', 'alle ablehnen', 'alle cookies ablehnen', 'nur notwendige cookies',
+    'nur erforderliche cookies', 'rechazar todo', 'rechazar todas', 'solo cookies necesarias',
+    'rifiuta tutti', 'rifiuta tutto', 'solo cookie necessari', 'rejeitar todos', 'recusar todos',
+    'apenas cookies necessários', 'alles weigeren', 'alleen noodzakelijke cookies',
+  ]);
+  const AUTO_NEWSLETTER_NAMES = new Set(['close', 'dismiss', 'x', '×', '✕', '✖', 'no thanks', 'no, thanks',
+    'no thank you', 'not now', 'close newsletter', 'close newsletter popup', 'dismiss newsletter',
+    'fermer', 'non merci', 'schließen', 'nein danke', 'cerrar', 'no gracias', 'chiudi', 'no grazie',
+    'fechar', 'não obrigado', 'sluiten', 'nee bedankt']);
+  // Runtime instruction terms may split "sign me up" into just "sign". Broad intent terms conservatively retain
+  // the modal rather than dismiss a signup/digest flow the user requested.
+  const AUTO_NEWSLETTER_TASK = /newsletter|subscrib|subscription|mailing|e-?mail|signup|sign-up|register|registration|\bsign\b|\bjoin\b|\bdigest\b/iu;
+  const AUTO_OTHER_DIALOG = /\b(?:sign[ -]?in|log[ -]?in|password|create (?:an? |your )?account|check ?out|payment|credit card|order summary|paywall|paid|premium|billing|verify (?:your )?age|legal age)\b|[$€£¥₹]\s*\d|\b\d[\d.,]*\s*(?:usd|eur|gbp|dollars?|euros?|pounds?)\b/iu;
+  const AUTO_TEXT_LIMIT = 1500;
+  const AUTO_DATA_NODE_LIMIT = 2000;
+  const nuisanceProofs = new WeakSet();
+  const nuisanceAttempts = new Set();
+  let nuisanceAttemptCount = 0;
+  let explicitDocumentInteraction = false;
+  function nuisanceNames(el) {
+    return [...new Set([el.getAttribute('aria-label'), labelledByName(el), el.innerText, el.textContent,
+      generatedText(el), hasFlatParts(el) ? flatText(el) : '', el.title, labelOf(el),
+      el.tagName === 'INPUT' && ['button', 'submit'].includes(el.type) ? el.value : '']
+      .map(value => cleanText(value).toLocaleLowerCase().replace(/[.!]+$/u, '').trim()).filter(Boolean))];
+  }
+  function nuisanceNamesAgree(el, names) {
+    const labels = nuisanceNames(el);
+    return labels.length > 0 && labels.every(label => names.has(label));
+  }
+  function nuisanceFingerprint(operation, root, el) {
+    return hash(JSON.stringify([operation, shortText(root, 1500), nuisanceNames(el)]));
+  }
+  function newsletterHasData(root) {
+    // Entered/autofilled state remains meaningful when CSS hides a field. Scan all bounded descendants and open
+    // shadow roots, retaining the form if the inspection cannot finish. Only type=hidden transport fields are exempt.
+    const scopes = [root];
+    let scanned = 0;
+    while (scopes.length) {
+      const scope = scopes.pop();
+      if (scope.shadowRoot) scopes.push(scope.shadowRoot);
+      for (const el of scope.querySelectorAll('*')) {
+        if (++scanned > AUTO_DATA_NODE_LIMIT) return null;
+        if (el.shadowRoot) scopes.push(el.shadowRoot);
+        if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) && !el.isContentEditable) continue;
+        if (el.type === 'hidden' || ['button', 'submit', 'reset', 'image'].includes(el.type)) continue;
+        if (['checkbox', 'radio'].includes(el.type) ? el.checked : String(el.value ?? el.textContent ?? '').trim()) return true;
+      }
+    }
+    return false;
+  }
+  function nuisanceChoice(operation, terms, consent = lastConsent, overlay = lastOverlay) {
+    const pending = reason => ({ operation, reason });
+    if (operation === 'cookies_necessary') {
+      if (!consent) return null;
+      const root = consent.container;
+      if (shortText(root, AUTO_TEXT_LIMIT + 1).length > AUTO_TEXT_LIMIT) return pending('inspection_limit');
+      // Recognized and structurally cookie-related, not just an unrelated Reject control.
+      const candidates = [...consent.kinds].filter(([el, kind]) => kind !== 'accept'
+        && nuisanceNamesAgree(el, AUTO_COOKIE_NAMES) && !el.matches('a[href]')
+        && !(el.form && ['submit', 'image', 'reset'].includes(el.type))
+        && assessActionability(el).state === 'ready').map(([el]) => el);
+      if (!candidates.length) return pending('no_clear_cookie_choice');
+      // Every accepted phrase means the same optional-cookie refusal. DOM order is a
+      // stable tie-breaker for duplicate equivalent controls, never for different operations.
+      return { operation, root, el: candidates[0] };
+    }
+    if (!overlay || overlay.kind !== 'newsletter' || !overlay.modal) {
+      // The existing overlay reader owns the top document and open shadow roots.
+      // Do not silently mutate an unmodelled same-origin child's newsletter modal.
+      for (const frame of frameByDoc.values()) {
+        for (const panel of [...frame.doc.querySelectorAll('[aria-modal="true"],dialog[open]')].slice(0, MAX_OVERLAY_DIALOGS)) {
+          if (!(panel.getAttribute('aria-modal') === 'true' || panel.matches(':modal')) || !visible(panel)) continue;
+          if (overlayKind(panel, shortText(panel, 1500), overlayControls(panel)) === 'newsletter') return pending('frame_unsupported');
+        }
+      }
+      return null;
+    }
+    const root = overlay.root;
+    const physicalBlocking = overlay.panel.matches?.(':modal') || overlay.signals.has('covers_centre')
+      || overlay.signals.has('backdrop') || Boolean(floatingLayer(root)) && coverage(boxOf(root)) >= 0.12;
+    if (!physicalBlocking) return pending('not_blocking');
+    const text = shortText(root, AUTO_TEXT_LIMIT + 1);
+    if (text.length > AUTO_TEXT_LIMIT) return pending('inspection_limit');
+    // An explicitly scoped newsletter invitation is not an account signup. Remove just that complete phrase;
+    // separate account, membership, payment and promotional wording still defers the mixed dialog.
+    const otherText = text.replace(/\bsign[ -]?up\s+for\s+(?:(?:our|the|a|this)\s+)?(?:free\s+)?(?:newsletter|mailing list|e-?mail (?:updates|list|alerts|offers))\b/giu, 'newsletter');
+    if (AUTO_OTHER_DIALOG.test(otherText) || NAG_KINDS.some(([kind, words]) => kind !== 'newsletter' && words.test(otherText))) return pending('other_dialog');
+    if (explicitDocumentInteraction) return pending('agent_interaction');
+    if (!terms?.length) return pending('unknown_task');
+    if (terms.some(term => AUTO_NEWSLETTER_TASK.test(term))) return pending('task_related');
+    const data = newsletterHasData(root);
+    if (data === null) return pending('inspection_limit');
+    if (data) return pending('entered_data');
+    const candidates = overlay.closers.map(item => item.el).filter(el => nuisanceNamesAgree(el, AUTO_NEWSLETTER_NAMES)
+      && !el.matches('a[href]') && !(el.form && ['submit', 'image', 'reset'].includes(el.type))
+      && assessActionability(el).state === 'ready');
+    if (!candidates.length) return pending('no_clear_newsletter_close');
+    // Explicit Close/X first, then No thanks; equal dismissal operations retain DOM order.
+    candidates.sort((a, b) => Number(!nuisanceNames(a).some(name => ['close', 'dismiss', 'x', '×', '✕', '✖'].includes(name)))
+      - Number(!nuisanceNames(b).some(name => ['close', 'dismiss', 'x', '×', '✕', '✖'].includes(name))));
+    return { operation, root, el: candidates[0] };
+  }
+  function nuisanceProofHolds(proof, el) {
+    if (!proof || !nuisanceProofs.has(proof) || proof.el !== el || !el.isConnected || !proof.root.isConnected
+      || Date.now() >= proof.deadline || targetIdentity(el) !== proof.identity) return false;
+    const roots = collectShadowRoots();
+    const consent = detectConsent(roots);
+    const overlay = detectOverlay(roots, consent);
+    const candidate = nuisanceChoice(proof.operation, proof.terms, consent, overlay);
+    const currentRisk = riskOf(el, roleOf(el), labelOf(el), proof.operation === 'cookies_necessary' ? consent?.kinds.get(el) : null);
+    if (currentRisk.cls !== 'reversible' || currentRisk.secret || gateClass(currentRisk)) return false;
+    return candidate?.el === el && candidate.root === proof.root
+      && nuisanceFingerprint(proof.operation, proof.root, el) === proof.fingerprint;
+  }
+  async function clearNuisances(options = {}) {
+    const { terms, forbid, allow, sites, expectText } = options;
+    const observeOptions = { terms, forbid, allow, sites, expectText };
+    let observation = observe(observeOptions);
+    const automatic = [];
+    const nuisancePending = [];
+    let attempted = 0;
+    let stopped = false;
+    if (options.enabled !== true) return { observation, automatic, nuisancePending, attempted };
+    const deadline = Math.min(Date.now() + 2000, Number(options.deadline) || 0);
+    const remaining = Math.max(0, Math.min(2, Number.isInteger(options.remaining) ? options.remaining : 2));
+    const operations = ['cookies_necessary', 'newsletter_dismiss'].filter(operation => !Array.isArray(options.operations) || options.operations.includes(operation));
+    for (let pass = 0; pass < 2; pass++) {
+      let candidate = null;
+      for (const operation of operations) {
+        const found = nuisanceChoice(operation, normalizeTerms(terms) ?? []);
+        if (!found) continue;
+        if (!found.el) {
+          if (!nuisancePending.some(item => item.operation === operation && item.reason === found.reason)) nuisancePending.push(found);
+          // A cookie banner with no proven choice is handled by the agent before a lower overlay.
+          if (operation === 'cookies_necessary') stopped = true;
+          continue;
+        }
+        candidate = found;
+        break;
+      }
+      if (!candidate || stopped) break;
+      const { operation, root, el } = candidate;
+      const fingerprint = nuisanceFingerprint(operation, root, el);
+      const pending = reason => nuisancePending.push({ operation, reason });
+      if (Date.now() >= deadline) { pending('deadline'); break; }
+      if (attempted >= remaining || nuisanceAttemptCount >= 2) { pending('attempt_limit'); break; }
+      if (nuisanceAttempts.has(fingerprint)) { pending('already_attempted'); break; }
+      const target = [...targets].find(([, node]) => node === el)?.[0];
+      if (!target) { pending('target_unavailable'); break; }
+      const risk = targetRisks.get(target);
+      // Narrow permission never overrides policy, purchase/secret gates, or a dangerous form.
+      if (!risk || risk.cls !== 'reversible' || risk.secret || gateClass(risk)) { pending('guardrail'); break; }
+      if (!globalThis.__faiInput?.enabled) { pending('pacing_unavailable'); break; }
+      const proof = { ...candidate, fingerprint, identity: targetIdentity(el), terms: normalizeTerms(terms) ?? [], deadline };
+      nuisanceProofs.add(proof);
+      nuisanceAttempts.add(fingerprint);
+      nuisanceAttemptCount++;
+      attempted++;
+      const started = performance.now();
+      let outcome = 'unavailable';
+      let reason = 'target_unavailable';
+      const label = labelOf(el).slice(0, 120);
+      try {
+        await dispatch({ type: 'click', target }, observation.revision, null, proof);
+        await settle({ quietMs: 40, capMs: Math.max(1, Math.min(150, deadline - Date.now())) });
+        observation = observe(observeOptions);
+        const still = nuisanceChoice(operation, proof.terms);
+        // A replacement with the same fingerprint is unchanged, even if the old node detached.
+        const currentRoot = operation === 'cookies_necessary' ? lastConsent?.container : lastOverlay?.kind === 'newsletter' ? lastOverlay.root : null;
+        const same = currentRoot === root || still?.el && nuisanceFingerprint(operation, still.root, still.el) === fingerprint;
+        outcome = same ? 'unchanged' : 'dismissed';
+        reason = same ? 'popup_unchanged' : 'popup_gone_or_changed';
+      } catch (error) {
+        reason = ['stale', 'target_unavailable', 'blocked_risky', 'cross_origin'].includes(error?.code) ? error.code : 'input_unavailable';
+        observation = observe(observeOptions);
+      } finally {
+        nuisanceProofs.delete(proof);
+      }
+      automatic.push({ operation, outcome, reason, ms: Math.round(performance.now() - started), label });
+      // Reissue a fresh decision even for a no-op or prepress refusal.
+      signature = '';
+      observation = observe(observeOptions);
+      if (outcome !== 'dismissed') { stopped = true; break; }
+    }
+    return { observation, automatic, nuisancePending: nuisancePending.slice(0, 2), attempted, stopped };
+  }
+
   // Controls and blocks inside an overlay that is not a task dialog are marked `overlay: true`: the main content is
   // what the task is about. A task dialog's controls are the task.
   function inMarkedOverlay(el) {
@@ -3540,7 +4069,9 @@
     let visibleBlocks = 0;
     const isHidden = el => {
       if (!hidden.has(el)) {
+        const link = el.closest?.('a[href]');
         const value = SKIP_TEXT_TAGS.has(el.tagName.toUpperCase())
+          || (link && intersectsViewport(boxOf(link)) && assessActionability(link).state !== 'ready')
           || (el.checkVisibility ? !el.checkVisibility({ visibilityProperty: true }) : !el.getClientRects().length);
         hidden.set(el, value);
       }
@@ -3916,14 +4447,17 @@
         const box = boxOf(label);
         return box.width > 0 && box.height > 0;
       }) : null;
-      const rect = pickerLabel ? boxOf(pickerLabel) : own;
-      if (!(rect.width > 0 && rect.height > 0)) continue;
-      if (intersectsViewport(rect)) {
-        if (rendered(pickerLabel ?? el, rect)) inView.push({ el, rect, offscreen: false });
-      } else {
-        // Visibility of off-screen elements is checked only for the ones considered for a slot.
-        offView.push({ el, rect, offscreen: true });
+      let rect = pickerLabel ? boxOf(pickerLabel) : own;
+      if (!(rect.width > 0 && rect.height > 0)) {
+        if (styleOf(el).display !== 'contents') continue;
+        const fragment = actionFragments(el)[0]?.rect;
+        if (!fragment) continue;
+        rect = toTop(fragment, frameByDoc.get(el.ownerDocument));
       }
+      if (intersectsViewport(rect) && !rendered(pickerLabel ?? el, rect) && styleOf(el).visibility !== 'hidden' && styleOf(el).display !== 'contents') continue;
+      const item = { el, rect, offscreen: !intersectsViewport(rect), pickerLabel };
+      if (item.offscreen) offView.push(item);
+      else inView.push(item);
     }
     const labels = new Map();
     const labelFor = item => {
@@ -4043,6 +4577,7 @@
       ...offSites.filter(item => chosen.has(item)),
     ];
     for (const item of ordered) {
+      item.assessment = assessActionability(item.pickerLabel ?? item.el);
       item.label = labelFor(item);
       if (consent) {
         let node = item.el;
@@ -5694,7 +6229,8 @@
     };
   }
 
-  function describeControl(id, { el, rect, label, offscreen, consentKind, unnamed }) {
+  function describeControl(id, { el, rect, label, offscreen, consentKind, unnamed, assessment }) {
+    assessment ??= assessActionability(el);
     const role = roleOf(el);
     const risk = riskOf(el, role, label, consentKind);
     const control = {
@@ -5703,13 +6239,15 @@
       label,
       type: el.type,
       enabled: !el.disabled && el.getAttribute('aria-disabled') !== 'true',
-      visible: true,
+      visible: assessment.state === 'ready',
+      actionability: assessment.state,
+      actionabilityReason: assessment.reason,
       risk: wireRisk(risk),
       bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
     };
     // Refused only for ambiguous label words (riskOf): marked as a diagnostic; the block holds.
     if (risk.ambiguous) control.ambiguous = true;
-    if (offscreen) control.offscreen = true;
+    if (offscreen || assessment.state === 'reveal') control.offscreen = true;
     if (consentKind) control.consent = true;
     // Inside an open dialog (a date picker): a click there may re-render seconds later (the runtime's late change).
     else if (inDialog(el)) control.dialog = true;
@@ -5785,6 +6323,7 @@
   // `expectText` (the run's textIncludes) is looked for past the viewport too (findTexts): `textFound` lists the ones
   // the rendered page shows.
   function observe({ blocks: withBlocks = true, terms, forbid, allow, sites, expectText } = {}) {
+    actionabilityCache = new WeakMap();
     const normalized = normalizeTerms(terms);
     if (normalized) currentTerms = normalized;
     usePolicy({ forbid, allow, sites });
@@ -5832,8 +6371,8 @@
       location.href,
       document.title,
       stableText,
-      controls.map(c => (c.offscreen ? [c.id, c.role, c.href]
-        : [c.id, c.role, c.label, c.checked, c.filled, c.selectedValue, c.href])),
+      controls.map(c => (c.offscreen ? [c.id, c.role, c.href, c.actionability]
+        : [c.id, c.role, c.label, c.checked, c.filled, c.selectedValue, c.href, c.actionability])),
       Array.from(targets.values(), el => identities.get(el)),
     ]);
     const next = hash(semantic) + ':' + semantic.length;
@@ -5866,7 +6405,7 @@
     const expected = normalizeExpectText(expectText);
     findTexts.capped = false;
     const textFound = expected.length ? findTexts(expected, text, roots, Array.from(frameByDoc.values())) : null;
-    return {
+    const observation = {
       revision,
       documentId,
       url: location.href,
@@ -5880,6 +6419,8 @@
         ...(records.state ? { recordState: records.state } : {}) } : {}),
       ...(views?.unreadable.length ? { unreadable: views.unreadable } : {}),
       controls,
+      // Private provenance only: runtime never projects these DOM-only destinations as evidence.
+      unrevealedUrls: [...new Set(candidates.slice(0, 2000).filter(el => el.tagName === 'A' && actionabilityCache?.get(el)?.state !== 'ready').map(el => el.href))].slice(0, 1000),
       ...(capped ? { controlsDropped: dropped } : {}),
       ...(linksDropped ? { linksDropped } : {}),
       ...(offSiteDropped ? { offSiteDropped } : {}),
@@ -5894,6 +6435,8 @@
       // document holds, and in a page with such frames, or in a frame, this document's own page facts.
       ...frameExtras(crossOrigin, text),
     };
+    actionabilityCache = null;
+    return observation;
   }
 
   function frameExtras(crossOrigin, text) {
@@ -6130,7 +6673,7 @@
 
   // Validates and dispatches one action against the expected revision. Returns whether a document navigation
   // is expected, so the worker can wait for the new document instead of settling in this one.
-  async function dispatch(action, expectedRevision, approval = null) {
+  async function dispatch(action, expectedRevision, approval = null, nuisanceProof = null) {
     const observation = observe({ blocks: false });
     // A key pressed where focus is, or a dialog's answer, does not depend on the page the host saw.
     const pageWide = (action.type === 'press' && !action.target) || action.type === 'dialog';
@@ -6162,10 +6705,12 @@
       risk = targetRisks.get(action.target);
     }
     // A styled file picker hides its input: its rendered label stands in for it (selectControls).
-    const shown = node => rendered(node) || (action.type === 'upload' && Array.from(node.labels ?? []).some(label => rendered(label)));
+    const shown = node => assessActionability(node).state !== 'blocked' || (action.type === 'upload' && Array.from(node.labels ?? []).some(label => rendered(label)));
     if ((action.target || action.point) && (!el?.isConnected || !shown(el) || el.disabled || control?.enabled === false)) {
       throw new PageError('target_unavailable', 'Target is unavailable');
     }
+    const automaticNuisance = action.type === 'click' && nuisanceProofHolds(nuisanceProof, el);
+    if (nuisanceProof && !automaticNuisance) throw new PageError('target_unavailable', 'The automatic popup candidate changed');
     // Every action is checked against the granted capabilities: a control by its risk class, a targetless action
     // (scroll, wait, allowed URL) as navigation.
     let approved = false;
@@ -6186,22 +6731,15 @@
       if (action.type === 'upload' && !approved) {
         throw new PageError('blocked_risky', 'A file is uploaded only once the user approves it in the FAI Browser window');
       }
-      inert = action.type === 'hover' || action.type === 'press' || action.type === 'upload';
-      if (!inert && !dispatchable(risk) && !approved) throw new PageError('blocked_risky', blockedMessage(risk?.cls));
+      inert = ['hover', 'press', 'upload', 'reveal'].includes(action.type);
+      if (!inert && !dispatchable(risk) && !approved && !(automaticNuisance && risk?.cls === 'reversible')) throw new PageError('blocked_risky', blockedMessage(risk?.cls));
     } else if (!permits('navigation')) {
       throw new PageError('blocked_risky', blockedMessage('navigation'));
     }
-    // An off-screen target is brought into view first, as a user would scroll to it (and so the evidence
-    // screenshot shows it).
-    if (control?.offscreen && action.type !== 'scroll') {
+    // Pointer clicks never reveal implicitly: revealing consumes its own offer.
+    if (control?.offscreen && !['click', 'reveal', 'scroll'].includes(action.type)) {
       if (realInput()) await realInput().reveal(el);
       else el.scrollIntoView({ block: 'center', behavior: 'instant' });
-      // A link is judged again now that it is on screen: what covers its text is known only there. Refused as the
-      // check above refuses, before anything is clicked.
-      if (el.tagName === 'A' && control.role === 'link' && !inert && !approved) {
-        const again = riskOf(el, control.role, control.label ?? labelOf(el));
-        if (!dispatchable(again)) throw new PageError('blocked_risky', blockedMessage(again?.cls));
-      }
     }
     const result = {
       fromUrl: location.href,
@@ -6209,6 +6747,11 @@
       expectNavigation: false,
     };
     switch (action.type) {
+      case 'reveal': {
+        if (!el) throw new PageError('unsupported', 'Reveal requires a target');
+        result.reveal = await revealTarget(el, Math.min(Date.now() + 1000, Number(action.revealDeadline) || Infinity));
+        break;
+      }
       case 'click': {
         if (!el) throw new PageError('unsupported', 'Click requires a target');
         const ownLocation = el.ownerDocument.location;
@@ -6249,16 +6792,46 @@
         navigation?.addEventListener?.('navigate', onNavigate);
         form?.addEventListener('submit', onSubmit);
         try {
+          const identity = targetIdentity(el);
+          const doc = el.ownerDocument;
+          const href = doc.location.href;
+          const initial = assessActionability(el);
+          if (initial.state !== 'ready') throw new PageError('target_unavailable', `Target is unavailable: ${initial.reason}`);
+          const point = action.point ?? initial.point;
+          const stillValid = async () => {
+            if (nuisanceProof && !nuisanceProofHolds(nuisanceProof, el)) throw new PageError('target_unavailable', 'The automatic popup candidate changed');
+            assertFrameApproved();
+            if (!el.isConnected || doc.location.href !== href || targetIdentity(el) !== identity) throw new PageError('stale', 'The control identity changed before the click');
+            const frame = frameByDoc.get(doc);
+            const localPoint = frame ? { x: point.x - frame.dx, y: point.y - frame.dy } : point;
+            const current = assessActionability(el, localPoint);
+            if (current.state !== 'ready') throw new PageError('target_unavailable', `Target is unavailable: ${current.reason}`);
+            if (['left', 'top', 'right', 'bottom'].some(side => Math.abs(current.geometry[side] - initial.geometry[side]) > 1)) {
+              throw new PageError('target_unavailable', 'The control is moving; observe again after it settles');
+            }
+            if (!approved && !automaticNuisance && !dispatchable(riskOf(el, roleOf(el), labelOf(el), lastConsent?.kinds.get(el)))) throw new PageError('blocked_risky', 'The control changed before the click');
+            if (pageContext.frame || typeof chrome !== 'undefined' && chrome.runtime?.id) {
+              if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) throw new PageError('target_unavailable', 'Frame presentation verification is unavailable');
+              const reply = await chrome.runtime.sendMessage({ kind: 'fai.framePoint', point });
+              if (!reply?.ok || reply.valid !== true) throw new PageError('target_unavailable', 'The containing frame is unavailable');
+              if (nuisanceProof && !nuisanceProofHolds(nuisanceProof, el)) throw new PageError('target_unavailable', 'The automatic popup candidate changed during frame verification');
+              if (targetIdentity(el) !== identity || assessActionability(el, localPoint).state !== 'ready') throw new PageError('stale', 'The control changed during frame verification');
+            }
+            return true;
+          };
           if (realInput()) {
-            // A mouse click (input.js): pointer path, press, focus, release, click. The control is rechecked right
-            // before the press; one whose label or state changed while the pointer moved is a stale decision.
-            const label = labelOf(el);
-            const stillValid = () => rendered(el) && !el.disabled && labelOf(el) === label;
-            const { stale } = await realInput().click(el, { point: action.point ?? null, stillValid });
+            const { stale, unavailable } = await realInput().click(el, { point, fragment: initial.fragment, stillValid,
+              explicitClick: automaticNuisance || el.tagName === 'A' || control.role === 'link' });
             if (stale) throw new PageError('stale', 'The control changed before the click');
+            if (unavailable) throw new PageError('target_unavailable', 'Target is unavailable before the click');
           } else {
-            // A click on a text field focuses it first, as a pointer click does (pickers open on focus or on click).
+            // Two paint samples for the plain path; hidden documents cannot supply a
+            // paint tick, so conservatively withhold a moving CSS transition there.
+            if (!doc.hidden) await new Promise(resolve => doc.defaultView.requestAnimationFrame(resolve));
+            else if (el.getAnimations?.().some(animation => animation.playState === 'running')) throw new PageError('target_unavailable', 'The control is transitioning');
+            await stillValid();
             if (['INPUT', 'TEXTAREA'].includes(el.tagName)) el.focus({ preventScroll: true });
+            await stillValid();
             el.click();
           }
         } finally {
@@ -6310,7 +6883,7 @@
         };
         // Typed key by key (input.js, which reads the value back and corrects it once); the plain set when the field
         // does not show the text afterwards.
-        const typed = realInput() ? await realInput().type(el, action.text, { kept: () => fillKept(el, action.text).kept, fallback: setValue }) : null;
+        const typed = realInput() ? await realInput().type(el, action.text, { kept: () => fillKept(el, action.text).kept, fallback: setValue, stillValid: activationGuard(el) }) : null;
         if (!typed) setValue();
         // Read back after the page settles (execute): a controlled input or a picker's textbox may revert or ignore
         // the value, and a fill the field did not keep is no progress (a live Google Flights run reported the
@@ -6331,7 +6904,7 @@
         };
         // Typed like any fill (input.js; sign-in pages watch their key events most), the plain set as the fallback. The
         // rhythm is planned blind (`secret`): its timing, and so inputMs, depend on the value's length only.
-        const typed = realInput() ? await realInput().type(el, action.text, { kept: () => fillKept(el, action.text).kept, fallback: setSecret, secret: true }) : null;
+        const typed = realInput() ? await realInput().type(el, action.text, { kept: () => fillKept(el, action.text).kept, fallback: setSecret, secret: true, stillValid: activationGuard(el) }) : null;
         if (!typed) setSecret();
         rememberFilledSecret(el, action.text);
         result.fillCheck = () => ({ ...fillKept(el, action.text), ...(typed?.corrected ? { corrected: true } : {}) });
@@ -6363,7 +6936,7 @@
                 .find(field => (field.type === 'submit' || field.type === 'image') && !field.disabled);
               if (button) realInput().keyboardClick(button);
               else form.requestSubmit();
-            });
+            }, activationGuard(el));
           } else {
             el.focus({ preventScroll: true });
             const init = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
@@ -6402,8 +6975,8 @@
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
         };
-        if (realInput()) await realInput().select(el, choose);
-        else choose();
+        if (realInput()) await realInput().select(el, choose, activationGuard(el));
+        else { await activationGuard(el)(); choose(); }
         break;
       }
       case 'scroll':
@@ -6428,8 +7001,23 @@
             throw new PageError('blocked_risky', 'Space would activate a control that is not cleared at this level');
           }
         }
+        const activation = key.name === 'Space' && !key.modifier && at !== document.body && at !== document.documentElement && !textEntry(at);
+        const identity = activation ? targetIdentity(at) : null;
+        const validateActivation = async () => {
+          if (!activation) return true;
+          if (!at.isConnected || targetIdentity(at) !== identity) throw new PageError('stale', 'The keyboard target changed');
+          const current = assessActionability(at);
+          if (current.state !== 'ready') throw new PageError('target_unavailable', `Target is unavailable: ${current.reason}`);
+          if (pageContext.frame || typeof chrome !== 'undefined' && chrome.runtime?.id) {
+            if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) throw new PageError('target_unavailable', 'Frame presentation verification is unavailable');
+            const reply = await chrome.runtime.sendMessage({ kind: 'fai.framePoint', point: current.point });
+            if (!reply?.ok || !reply.valid || assessActionability(at).state !== 'ready' || targetIdentity(at) !== identity) throw new PageError('target_unavailable', 'The keyboard target is unavailable');
+          }
+          return true;
+        };
         const mods = { shift: key.shift, ctrl: key.ctrl, meta: key.meta };
-        if (realInput()) await realInput().press(at, key.name, mods);
+        await validateActivation();
+        if (realInput()) await realInput().press(at, key.name, mods, validateActivation);
         else {
           const init = { key: key.name === 'Space' ? ' ' : key.name, bubbles: true, cancelable: true, composed: true,
             shiftKey: key.shift, ctrlKey: key.ctrl, metaKey: key.meta };
@@ -6490,6 +7078,7 @@
     // label it reads again itself.
     const seen = approval ? await approvalDigest(approval).catch(() => null) : null;
     const inputBefore = realInput()?.stats().ms ?? 0;
+    if (['click', 'fill_supplied_text', 'fill_secret', 'select', 'press', 'submit_field', 'upload', 'hover'].includes(action.type)) explicitDocumentInteraction = true;
     const dispatched = await dispatch(action, expectedRevision, approval ? { ...approval, seen } : null);
     // The time realistic input added to this action (think time, pointer travel, typing), for the receipt.
     if (realInput()) dispatched.inputMs = realInput().stats().ms - inputBefore;
@@ -6504,6 +7093,7 @@
     const settled = await settle(settleOptions);
     // A fill's verdict is read once the page has settled, so a framework's re-render after the input event counts.
     if (fillCheck) dispatched.fill = fillCheck();
+    if (action.type === 'reveal') signature = '';
     return { ...dispatched, settle: settled, observation: observe({ expectText }) };
   }
 
@@ -6640,6 +7230,7 @@
   globalThis.__faiPage = {
     observe: secretReported(observe),
     execute: secretReported(execute),
+    clearNuisances: secretReported(clearNuisances),
     settleAndObserve: secretReported(settleAndObserve),
     locate: secretReported(locate),
     approvalInfo: secretReported(approvalInfo),
@@ -6649,5 +7240,9 @@
     secretNodes,
     // Numbers and fixed words only (rects, kinds, `[secret:~<hash>]` tags): nothing to scrub.
     redactionRects,
+    framePoint,
+    revealFrame,
+    framePoints: (path, points) => Array.isArray(points) ? points.slice(0, MAX_CONTROLS).map(point => point ? framePoint(path, point) : null) : [],
+    controlPoints,
   };
 })();

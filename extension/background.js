@@ -93,7 +93,7 @@ const WAIT_ACTION_MS = 500;
 // press / hover: a key (src/runtime.js pressKey) and a pointer rest, both from reversible (page.js checks); history:
 // back, forward or reload of the leased tab (same-origin entries only where the page can tell); switch_tab: another tab
 // of this lease (a popup or new tab it followed); dialog: a JavaScript dialog's answer (Test site, the main-world hook).
-const ACTION_TYPES = new Set(['click', 'fill_supplied_text', 'select', 'scroll', 'navigate_allowed_url', 'wait',
+const ACTION_TYPES = new Set(['click', 'reveal', 'fill_supplied_text', 'select', 'scroll', 'navigate_allowed_url', 'wait',
   'submit_field', 'fill_secret', 'copy_secret', 'press', 'hover', 'history', 'switch_tab', 'open_tab', 'dialog', 'upload']);
 const HISTORY_MOVES = new Set(['back', 'forward', 'reload']);
 // Errors that mean the grant no longer covers what the user selected; they end the session.
@@ -1220,6 +1220,7 @@ function sessionView() {
   if (!session) return null;
   const { requestId, leaseId, tabId, origin, status } = session;
   return { requestId, leaseId, tabId, origin, status, level: grantedLevel(), scope: session.scope ?? 'origin', tabMode: session.tabMode ?? 'single',
+    ...(session.automaticPopups === AUTOMATIC_POPUPS_POLICY ? { automaticPopups: AUTOMATIC_POPUPS_POLICY } : {}),
     ...(session.inviteId ? { inviteId: session.inviteId } : {}) };
 }
 
@@ -1232,6 +1233,7 @@ function approvalLevel(level) {
 function approvalTabMode(level) {
   return level === 'full' || level === 'testing' ? 'multiple' : 'single';
 }
+const AUTOMATIC_POPUPS_POLICY = 'necessary-newsletter-v1';
 
 /** A known level, or null. */
 // The popup's names for the levels (extension/permissions.js LEVEL_TEXT), for the icon title.
@@ -2270,6 +2272,119 @@ async function observePage(tabId, method, args) {
   }
 }
 
+const AUTOMATIC_OPERATIONS = new Set(['cookies_necessary', 'newsletter_dismiss']);
+const AUTOMATIC_REASONS = new Set(['popup_unchanged', 'popup_gone_or_changed', 'stale', 'target_unavailable',
+  'blocked_risky', 'cross_origin', 'input_unavailable']);
+const NUISANCE_PENDING_REASONS = new Set(['no_clear_cookie_choice', 'agent_interaction', 'unknown_task', 'task_related',
+  'entered_data', 'no_clear_newsletter_close', 'deadline', 'attempt_limit', 'already_attempted', 'target_unavailable',
+  'guardrail', 'pacing_unavailable', 'frame_unsupported', 'other_dialog', 'inspection_limit', 'not_blocking']);
+
+function automaticReceipt(value) {
+  if (!value || !AUTOMATIC_OPERATIONS.has(value.operation)
+    || !['dismissed', 'unchanged', 'unavailable'].includes(value.outcome)) return null;
+  return { operation: value.operation, outcome: value.outcome,
+    reason: AUTOMATIC_REASONS.has(value.reason) ? value.reason : 'input_unavailable',
+    ms: Number.isFinite(value.ms) ? Math.max(0, Math.min(60_000, Math.round(value.ms))) : 0,
+    ...(typeof value.label === 'string' ? { label: value.label.slice(0, 160) } : {}) };
+}
+
+// Only observation-return boundaries run this stage. No status/capture/locate call, nor an agent's pending choice,
+// can enable it. A document's two-attempt budget is shared across the top page and its approved child frames.
+async function automaticPopupStage(tab, observation, options, commandId = null) {
+  const current = session;
+  if (current?.automaticPopups !== AUTOMATIC_POPUPS_POLICY || current.status !== 'active') return observation;
+  const prior = current.automaticStage;
+  const run = async () => {
+    if (prior) {
+      await prior.catch(() => {});
+      if (session !== current || current.status !== 'active' || current.tabId !== tab.id) throw inactiveError();
+      observation = await observePage(tab.id, 'observe', [options]);
+    }
+    const leaseId = current.leaseId;
+    const deadline = Date.now() + 2_000;
+    const live = () => session === current && current.leaseId === leaseId && current.status === 'active'
+      && current.tabId === tab.id && current.automaticPopups === AUTOMATIC_POPUPS_POLICY
+      && (!commandId || !cancelled.has(commandId));
+    const assertLive = async () => {
+      if (!live()) throw inactiveError();
+      const active = await assertTab();
+      if (!live() || active.id !== tab.id) throw inactiveError();
+    };
+    await assertLive();
+    checkedObservation(observation, tab.id);
+    const documents = current.automaticDocuments ??= new Map();
+    const documentKey = `${tab.id}:${observation.documentId ?? observation.url}`;
+    let used = documents.get(documentKey) ?? 0;
+    if (used >= 2) {
+      const pending = observation.consent ? [{ operation: 'cookies_necessary', reason: 'attempt_limit' }]
+        : observation.overlay?.kind === 'newsletter' ? [{ operation: 'newsletter_dismiss', reason: 'attempt_limit' }] : [];
+      return pending.length ? { ...observation, nuisancePending: pending } : observation;
+    }
+    const automatic = [];
+    const pending = [];
+    let attempts = 0;
+    let stopped = false;
+    const consume = result => {
+      const attempted = Number.isInteger(result?.attempted) ? Math.max(0, Math.min(1, result.attempted)) : 0;
+      if (attempted) {
+        attempts += attempted;
+        used += attempted;
+        documents.set(documentKey, used);
+        while (documents.size > 20) documents.delete(documents.keys().next().value);
+      }
+      for (const value of Array.isArray(result?.automatic) ? result.automatic.slice(0, attempted) : []) {
+        const receipt = automaticReceipt(value);
+        if (receipt) automatic.push(receipt);
+      }
+      for (const value of Array.isArray(result?.nuisancePending) ? result.nuisancePending.slice(0, 2) : []) {
+        if (AUTOMATIC_OPERATIONS.has(value?.operation) && NUISANCE_PENDING_REASONS.has(value?.reason)
+          && !pending.some(item => item.operation === value.operation && item.reason === value.reason)) {
+          pending.push({ operation: value.operation, reason: value.reason });
+        }
+      }
+      stopped ||= result?.stopped === true || automatic.some(item => item.outcome !== 'dismissed');
+      return attempted;
+    };
+    for (const operation of ['cookies_necessary', 'newsletter_dismiss']) {
+      while (!stopped && attempts < 2 && used < 2 && Date.now() < deadline) {
+        await assertLive();
+        const args = { ...options, enabled: true, remaining: 1, deadline, operations: [operation] };
+        const guard = { commandId, deadline, leaseId, tabId: tab.id };
+        current.automaticGuard = guard;
+        let count = 0;
+        try {
+          count += consume(await callPage(tab.id, 'clearNuisances', [args]));
+          await assertLive();
+          if (!count && !stopped && Date.now() < deadline && globalThis.faiFrames?.clearNuisances) {
+            count += consume(await globalThis.faiFrames.clearNuisances(tab.id, args));
+            await assertLive();
+          }
+        } catch (error) {
+          if (!live()) throw inactiveError();
+          // A lost reply may follow a press. Spend the attempt and never replay it or claim a dismissal.
+          if (!count) consume({ attempted: 1, automatic: [{ operation, outcome: 'unavailable', reason: 'input_unavailable', ms: 0 }], stopped: true });
+          stopped = true;
+          break;
+        } finally {
+          if (current.automaticGuard === guard) delete current.automaticGuard;
+        }
+        if (!count) break;
+      }
+      if (stopped || attempts >= 2 || used >= 2 || Date.now() >= deadline) break;
+    }
+    if (attempts) {
+      await assertLive();
+      observation = await observePage(tab.id, 'observe', [options]);
+      await assertLive();
+    }
+    return { ...observation, ...(automatic.length ? { automatic: automatic.slice(0, 2) } : {}),
+      ...(pending.length ? { nuisancePending: pending.slice(0, 2) } : {}) };
+  };
+  const job = run();
+  current.automaticStage = job;
+  try { return await job; } finally { if (current.automaticStage === job) delete current.automaticStage; }
+}
+
 // The document was replaced or unloaded while a page call ran.
 function isTeardown(error) {
   if (error?.teardown) return true;
@@ -2844,7 +2959,9 @@ async function observeCommand(command) {
   if (session) session.expectText = expectText;
   const allow = commandCapabilities(command);
   const sites = sessionSites();
-  const observation = await observePage(tab.id, 'observe', [{ terms: session?.terms ?? [], forbid, allow, sites, expectText }]);
+  const observationOptions = { terms: session?.terms ?? [], forbid, allow, sites, expectText };
+  let observation = await observePage(tab.id, 'observe', [observationOptions]);
+  observation = await automaticPopupStage(tab, observation, observationOptions, command.id);
   // Test site: the dialog the page opened since the last read, and the dev logs when the observe asks for them.
   const dev = await devRead(tab.id, command.args?.logs === true);
   return checkedObservation(dev ? { ...observation, ...dev } : observation, tab.id);
@@ -3268,8 +3385,10 @@ async function executeCommand(command) {
     if (secret) rememberSensitive(secret.value);
     // Test site: a JavaScript dialog the action made the page open (answered by the hook at once).
     const dev = action.type === 'dialog' ? null : await devRead(session?.tabId ?? tab.id, false);
-    const observation = checkedObservation(dev?.dialog ? { ...outcome.observation, dialog: dev.dialog } : outcome.observation,
-      session?.tabId ?? tab.id);
+    const finalTabId = session?.tabId ?? tab.id;
+    const finalTab = finalTabId === tab.id ? tab : await chrome.tabs.get(finalTabId);
+    const prepared = await automaticPopupStage(finalTab, outcome.observation, { terms, forbid, allow, sites, expectText }, command.id);
+    const observation = checkedObservation(dev?.dialog ? { ...prepared, dialog: dev.dialog } : prepared, finalTabId);
     navigated ||= Boolean(outcome.fromUrl) && observation.url !== outcome.fromUrl;
     const settle = { reason: outcome.settle.reason, ms: Date.now() - dispatchedAt };
     if (navigated) Object.assign(settle, { navigated: true, url: observation.url });
@@ -3278,7 +3397,13 @@ async function executeCommand(command) {
     // A fill's read-back (booleans only); a secret fill names what the field holds by its handle, never its value.
     const kept = outcome.fill && typeof outcome.fill.kept === 'boolean' ? { kept: outcome.fill.kept, empty: outcome.fill.empty === true } : null;
     const fill = kept && action.type === 'fill_secret' ? { ...kept, holds: `[secret:${action.handle}]` } : kept;
-    return { observation, settle, navigated, captureDetails, ...(fill ? { fill } : {}) };
+    const reveal = action.type === 'reveal' && typeof outcome.reveal?.revealed === 'boolean'
+      ? { revealed: outcome.reveal.revealed,
+        ...(typeof outcome.reveal.reason === 'string' && /^[a-z_]{1,40}$/.test(outcome.reveal.reason)
+          ? { reason: outcome.reveal.reason } : {}) } : null;
+    return { observation, settle, navigated, captureDetails, ...(fill ? { fill } : {}), ...(reveal ? { reveal } : {}),
+      ...(observation.automatic ? { automatic: observation.automatic } : {}),
+      ...(observation.nuisancePending ? { nuisancePending: observation.nuisancePending } : {}) };
   } finally {
     navigation.dispose();
   }
@@ -3562,7 +3687,7 @@ async function handleCommand(command) {
     if (command.method === 'observe') {
       reply = { id: command.id, result: await observeCommand(command) };
     } else if (command.method === 'execute') {
-      const { observation, settle, navigated, captureDetails, fill } = await executeCommand(command);
+      const { observation, settle, navigated, captureDetails, fill, reveal, automatic, nuisancePending } = await executeCommand(command);
       // Following a navigation can keep a command busy for seconds. One cancelled meanwhile, or whose session
       // ended or changed, reports no navigation and starts no capture.
       if (cancelled.has(command.id) || session !== current || session?.status !== 'active') {
@@ -3574,7 +3699,8 @@ async function handleCommand(command) {
       if (captureDetails) startCapture(command.id, observation, captureDetails);
       // A navigation is reported at the top level and inside `settle` (the field the bridge forwards).
       reply = { id: command.id, result: { observation, settle, ...(navigated ? { navigated: true, url: observation.url } : {}),
-        ...(fill ? { fill } : {}) } };
+        ...(fill ? { fill } : {}), ...(reveal ? { reveal } : {}),
+        ...(automatic?.length ? { automatic } : {}), ...(nuisancePending?.length ? { nuisancePending } : {}) } };
     } else if (command.method === 'capture') {
       reply = { id: command.id, result: await captureCommand(command) };
     } else if (command.method === 'locate') {
@@ -3761,9 +3887,11 @@ async function bindSession(message, given) {
     const title = reportedText(String(tab.title ?? '').slice(0, 300));
     data = invite
       ? await send('invite', { tabId: tab.id, origin, title, level, tabMode: approvedTabMode,
+        ...(message.automaticPopups === AUTOMATIC_POPUPS_POLICY ? { automaticPopups: AUTOMATIC_POPUPS_POLICY } : {}),
         sessionId: typeof invite.sessionId === 'string' ? invite.sessionId : null,
         text: typeof invite.text === 'string' ? invite.text.slice(0, 500) : '' })
       : await send('lease', { requestId, tabId: leaseTabId, origin, title, level, tabMode: approvedTabMode, ...asked,
+        ...(message.automaticPopups === AUTOMATIC_POPUPS_POLICY ? { automaticPopups: AUTOMATIC_POPUPS_POLICY } : {}),
         // The ask the user's card showed (its id): the daemon applies exactly that one, or nothing.
         ...(message.ask === true ? { ask: true, askId: typeof message.askId === 'string' ? message.askId.slice(0, 64) : '' } : {}) });
   } catch (error) {
@@ -3798,9 +3926,12 @@ async function bindSession(message, given) {
     }
   }
   const previous = session;
+  const automaticPopups = message.automaticPopups === AUTOMATIC_POPUPS_POLICY
+    && data.grant?.automaticPopups === AUTOMATIC_POPUPS_POLICY ? AUTOMATIC_POPUPS_POLICY : null;
   if (own && previous === own && (data.leaseId ?? data.id) === own.leaseId) {
     // Re-approved in place: the level, origins and tab mode change; the tabs, the current tab and the page stay.
     own.level = level;
+    own.automaticPopups = automaticPopups;
     own.origins = leaseOrigins;
     own.tabMode = approvedTabMode === 'multiple' && data.grant?.tabMode === 'multiple' ? 'multiple' : 'single';
     own.patterns = [...new Set([...(own.patterns ?? []), ...askPatterns(message, leaseOrigins)])];
@@ -3829,6 +3960,7 @@ async function bindSession(message, given) {
     // The lease's approved origins, for following a consent wall's redirect (followConsentRedirect).
     origins: leaseOrigins,
     level,
+    automaticPopups,
     status: 'active',
     scope: leaseScope,
     sites,
@@ -4237,7 +4369,8 @@ async function finishModalApproval(message, sender, consentGuard = null) {
     // Focus the exact task tab, never the extension window's active tab.
     await chrome.tabs.update(tab.id, { active: true });
     await chrome.windows.update(tab.windowId, { focused: true });
-    await startSession({ requestId: arm.requestId, level: message.level, scope: arm.scope, tabMode: arm.tabMode },
+    await startSession({ requestId: arm.requestId, level: message.level, scope: arm.scope, tabMode: arm.tabMode,
+      automaticPopups: message.automaticPopups === AUTOMATIC_POPUPS_POLICY ? AUTOMATIC_POPUPS_POLICY : null },
       { ...tab, armGroupId: arm.groupId, modalPattern: pattern, modalPatterns: intent.extraPatterns, approvalGuard: validate });
     await disarm(arm.tabId, { keepGroup: true });
     reportApproval({ requestId: arm.requestId, surface: 'page_modal', step: 'approved', origin: intent.origin });
@@ -4327,8 +4460,53 @@ async function inviteAgent(message) {
   const text = typeof message.text === 'string' ? message.text.slice(0, 500) : '';
   // The tab the user saw in the popup, checked against the active tab before anything is bound (startSession).
   if (!Number.isInteger(message.tabId) || typeof message.origin !== 'string') throw new Error('Open the popup on the tab to invite to.');
-  await startSession({ type: 'start', level, invite: { sessionId, text, tabId: message.tabId, origin: message.origin } });
+  await startSession({ type: 'start', level,
+    automaticPopups: message.automaticPopups === AUTOMATIC_POPUPS_POLICY ? AUTOMATIC_POPUPS_POLICY : null,
+    invite: { sessionId, text, tabId: message.tabId, origin: message.origin } });
   return { inviteId: session?.inviteId ?? null, requestId: session?.requestId ?? null };
+}
+
+// A bounded timer for explicit pointer actions, independent of debugger permission and page visibility. Sender
+// checks bind both ends of the wait to the same active lease; a minimized task window remains supported.
+function automaticInputPermitted(current) {
+  const guard = current?.automaticGuard;
+  return !guard || guard.leaseId === current.leaseId && guard.tabId === current.tabId
+    && current.automaticPopups === AUTOMATIC_POPUPS_POLICY && Date.now() < guard.deadline
+    && (!guard.commandId || !cancelled.has(guard.commandId));
+}
+
+async function clickDelay(message, sender) {
+  const current = session;
+  const leaseId = current?.leaseId;
+  const permitted = () => sender.id === chrome.runtime.id && Number.isInteger(sender.frameId) && sender.frameId >= 0
+    && (sender.frameId === 0 || globalThis.faiFrames?.frameApproved(originOf(sender.url || '')) === true)
+    && sender.tab?.id === current?.tabId && current?.status === 'active' && current.leaseId === leaseId && session === current
+    && automaticInputPermitted(current);
+  if (!permitted()) return { ok: false, reason: 'not_leased' };
+  if (!Number.isInteger(message.ms) || message.ms < 0 || message.ms > 450) return { ok: false, reason: 'invalid' };
+  await new Promise(resolve => setTimeout(resolve, message.ms));
+  return permitted() ? { ok: true, paced: true } : { ok: false, reason: 'not_leased' };
+}
+
+// A child page asks whether its selected point is reachable through every approved ancestor frame. The broker
+// derives the path from its own observed frame records; page messages cannot name another frame or tab.
+async function framePointCheck(message, sender) {
+  const current = session;
+  const leaseId = current?.leaseId;
+  const permitted = () => sender.id === chrome.runtime.id && Number.isInteger(sender.frameId) && sender.frameId >= 0
+    && sender.tab?.id === current?.tabId && current?.status === 'active' && session === current
+    && current.leaseId === leaseId
+    && automaticInputPermitted(current)
+    && (sender.frameId === 0 ? sessionCovers(sender.url ?? '')
+      : globalThis.faiFrames?.frameApproved(originOf(sender.url ?? '')) === true);
+  const point = message.point;
+  if (!permitted() || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)
+    || point.x < 0 || point.y < 0 || point.x > 100_000 || point.y > 100_000
+    || (sender.frameId !== 0 && typeof globalThis.faiFrames?.validatePoint !== 'function')) return { ok: false };
+  await assertTab();
+  if (!permitted()) return { ok: false };
+  const valid = sender.frameId === 0 || await globalThis.faiFrames.validatePoint(current.tabId, sender.frameId, { x: point.x, y: point.y });
+  return permitted() ? { ok: true, valid: valid === true } : { ok: false };
 }
 
 function popupState() {
@@ -4342,6 +4520,14 @@ function popupState() {
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (message?.type === 'annotate') return;
+  if (message?.kind === 'fai.framePoint') {
+    framePointCheck(message, sender).then(respond, () => respond({ ok: false }));
+    return true;
+  }
+  if (message?.kind === 'fai-click-delay') {
+    clickDelay(message, sender).then(respond, () => respond({ ok: false, reason: 'unavailable' }));
+    return true;
+  }
   // input.js's trusted-input steps: answered by trusted-input.js only.
   if (message?.kind === 'fai-trusted-input') return;
   if (sender.id !== chrome.runtime.id) return;
@@ -4378,9 +4564,13 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       // `attemptId`: a popup click given up meanwhile approves nothing (popupAttemptDone).
       popupAttemptDone(message);
       // `onSessionTab`: "Approve on the FAI tab" (approveOnSessionTab); else the popup's own activeTab gesture.
-      if (message.onSessionTab === true) note = await approveOnSessionTab(message);
-      else await startSession(message);
       const surface = approvalSurface(sender);
+      // Content scripts and daemon command fields cannot opt into automatic work. Only disclosed approval UIs
+      // supply this marker; the daemon must echo it in its grant before the session enables the resolver.
+      const approvalMessage = { ...message, automaticPopups: !sender.tab && ['popup', 'window'].includes(surface)
+        && message.automaticPopups === AUTOMATIC_POPUPS_POLICY ? AUTOMATIC_POPUPS_POLICY : null };
+      if (message.onSessionTab === true) note = await approveOnSessionTab(approvalMessage);
+      else await startSession(approvalMessage);
       if (['popup', 'window'].includes(surface)) {
         reportApproval({ requestId: message.requestId ?? session?.requestId ?? null, surface, step: 'approved', origin: session?.origin ?? null });
       }
