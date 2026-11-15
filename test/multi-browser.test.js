@@ -727,11 +727,12 @@ test('regression: no snapshot sent to an extension carries another browser\'s id
 
 test('daemon: a stale binding in browsers.json refuses the id visibly; leftover temp files are removed at start', async t => {
   const home = await mkdtemp(join(tmpdir(), 'fai-multi-browser-'));
-  t.after(() => rm(home, { recursive: true, force: true }));
   await writeFile(join(home, 'browsers.json'), JSON.stringify({ [FIREFOX.id]: { usedAt: 1,
     origin: 'moz-extension://11111111-2222-4333-8444-555555555555' }, junk: 5, 'b-x': { origin: 1 } }));
   await writeFile(join(home, 'browsers.json.4242.tmp'), '{"half":');
   const ctx = await daemonWithBrowsers(t, { home });
+  // After hooks run in registration order: stop the daemon and its pending writes before removing its home.
+  t.after(() => rm(home, { recursive: true, force: true }));
   // The leftover from a crashed write is gone (a browsers.json save of this daemon may be writing its own temp file).
   assert.ok(!(await readdir(home)).includes('browsers.json.4242.tmp'), 'the leftover temp file is removed at start');
   const ext = await FakeExtension.connect({ port: ctx.daemon.port, origin: FIREFOX.origin, path: `/ext/ws?browser=${FIREFOX.id}` });
@@ -775,7 +776,6 @@ test('daemon: a browser cannot release a tab another browser holds; Deny of a pe
 
 test('daemon: the browser used last is remembered across a restart (browsers.json, no secrets)', async t => {
   const home = await mkdtemp(join(tmpdir(), 'fai-multi-browser-'));
-  t.after(() => rm(home, { recursive: true, force: true }));
   {
     const ctx = await daemonWithBrowsers(t, { home });
     const firefox = await ctx.open(FIREFOX);
@@ -791,6 +791,7 @@ test('daemon: the browser used last is remembered across a restart (browsers.jso
   assert.equal(saved[FIREFOX.id].origin, FIREFOX_ORIGIN);
   assert.deepEqual(Object.keys(saved[FIREFOX.id]).sort(), ['origin', 'usedAt']);
   const ctx = await daemonWithBrowsers(t, { home });
+  t.after(() => rm(home, { recursive: true, force: true }));
   await ctx.open(FIREFOX);
   await sleep(5);
   await ctx.open(CHROMIUM);
