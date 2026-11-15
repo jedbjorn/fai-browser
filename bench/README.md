@@ -153,7 +153,7 @@ npm run bench:compare -- --condition r --real-tools deferred --host sonnet:low -
 
 For the full "before" (old server instructions as well as deferred tools), point R at a checkout of the earlier commit: `--fai-mcp-command "node /path/to/old-checkout/src/mcp-main.js" --real-tools deferred`. The skill installed in the workspace still comes from this checkout.
 
-For the live counterpart (a real Claude Code host with the plain installed entry against the owner's daemon on 4318, headed Chrome, owner approval, live sites), see [live/README.md](live/README.md): `node bench/live/run.mjs --live`, verified with `--private`.
+For the live counterpart (a real Claude Code host with the plain installed entry against the owner's daemon on 4318, headed Chrome, owner approval, live sites), see [live/README.md](https://github.com/jedbjorn/fai-browser/blob/0ee5ede8862f5692fedbe6ef5e05eb8906ee140a/bench/live/README.md): `node bench/live/run.mjs --live`, verified with `--private`.
 
 ## Caveats
 

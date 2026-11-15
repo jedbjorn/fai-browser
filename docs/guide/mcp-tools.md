@@ -196,7 +196,7 @@ text** heading. `status` is `observed` for a page read, `acted` for an act that 
 status. Verification appears as `status: completed (...), verified: true`. **Only `status: "completed"` with
 `verification.passed: true` is verified**; an observation is evidence, not a result. Status, wait and release use the same short
 `key: value` rendering. Evidence metadata is text; its screenshot or trace follows as another content block. Tool errors keep
-the JSON `error` object in their text block. See [the host research and design](../dev/mcp-result-shape.md).
+the JSON `error` object in their text block. See [the host research and design](https://github.com/jedbjorn/fai-browser/blob/0ee5ede8862f5692fedbe6ef5e05eb8906ee140a/docs/dev/mcp-result-shape.md).
 
 | `next.kind` | Do |
 |---|---|

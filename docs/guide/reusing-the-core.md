@@ -3,7 +3,7 @@
 FAI Browser is written so its safety-critical parts are plain ES modules with no dependencies and no I/O: the guardrails, the
 secret redactor, origin matching, the page digest and the verification logic. You can embed them in your own agent, browser
 tool or test harness. This page maps the module boundaries and shows how to use the leaf modules today, from a checkout of
-this repository. Separate npm packages are planned; the proposal is in [docs/design/package-split.md](../design/package-split.md).
+this repository. Separate npm packages are planned; the proposal is in [docs/design/package-split.md](https://github.com/jedbjorn/fai-browser/blob/0ee5ede8862f5692fedbe6ef5e05eb8906ee140a/docs/design/package-split.md).
 
 ## Module map
 

@@ -19,7 +19,7 @@ async function files(dir, ext) {
 
 test('docs, skills and sources carry no merge conflict markers', async () => {
   const paths = [...await files('docs', ['.md']), ...await files('skills', ['.md']), ...await files('src', ['.js', '.ts']),
-    'README.md', 'AGENTS.md'];
+    'README.md', 'ARCHITECTURE.md', 'CONTRIBUTING.md', 'SECURITY.md'];
   for (const path of paths) {
     const text = await readFile(join(ROOT, path), 'utf8');
     assert.doesNotMatch(text, /^(<{7}|>{7}|={7})( |$)/m, path);
