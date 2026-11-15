@@ -84,6 +84,35 @@ test('desktop and CLI detection produce one registration per shared config, pres
   assert.equal(found[1].name, 'Codex and ChatGPT (Codex)');
 });
 
+test('Claude desktop uses its downloaded Code CLI without PATH and prefers the newest complete version', async t => {
+  const { home, local, env, file, detect } = fixture(t);
+  file(local, 'AnthropicClaude', 'claude.exe');
+  const root = join(home, 'AppData', 'Roaming', 'Claude', 'claude-code');
+  file(root, '2.9.0', 'abc123', 'claude.exe');
+  const cli = file(root, '2.10.0', 'def456', 'claude.exe');
+  mkdirSync(join(root, '2.11.0', 'abc123'), { recursive: true }); // interrupted download
+  file(root, 'unrelated', 'abc123', 'claude.exe');
+  file(root, '2.12.0', 'unrelated', 'claude.exe');
+  assert.deepEqual(detect(), [{ host: 'claude', name: 'Claude (Code tab)', path: cli, desktop: 'Claude (Code tab)' }]);
+  const calls = [];
+  await registerHost('claude', { home, cwd: home, env, platform: 'win32', run: (path, args) => calls.push([path, args]) });
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(([path]) => path === cli), 'registration runs the Code CLI, never the desktop launcher');
+  assert.equal(calls[1][1][1], 'add-json');
+  assert.equal(existsSync(join(home, '.claude.json')), false, 'FAI does not directly write the user config');
+  env.PATH = join(home, 'bin');
+  const standalone = file(env.PATH, 'claude.exe');
+  assert.equal(detect()[0].path, standalone, 'a standalone CLI on PATH still takes precedence');
+});
+
+test('Claude downloaded Code CLI honours APPDATA and is ignored on non-Windows systems', t => {
+  const { home, env, file, detect } = fixture(t);
+  env.APPDATA = join(home, 'custom roaming');
+  const cli = file(env.APPDATA, 'Claude', 'claude-code', '2.1.325', '806e0a45e6f5', 'claude.exe');
+  assert.equal(detect()[0].path, cli);
+  assert.deepEqual(detect({ platform: 'linux' }), []);
+});
+
 test('desktop-only ChatGPT and OpenCode get user config, skills and plugin, with an idempotent rerun', async t => {
   const { home, local, env, file, detect } = fixture(t);
   mkdirSync(join(local, 'OpenAI', 'Codex'), { recursive: true });

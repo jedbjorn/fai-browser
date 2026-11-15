@@ -558,13 +558,37 @@ function windowsDesktopHosts(env, home, exec) {
   return desktops;
 }
 
-/** CLI and Windows desktop hosts, once per shared config, in HOSTS order. A desktop-only host has path: null. */
+function directoryNames(path) {
+  try {
+    return readdirSync(path, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name);
+  } catch (error) {
+    if (['ENOENT', 'EACCES', 'EPERM'].includes(error.code)) return [];
+    throw error;
+  }
+}
+
+/** The Code tab downloads its CLI here after sign-in; the AnthropicClaude launcher is an Electron app. */
+function windowsClaudeCli(env, home) {
+  const root = join(env.APPDATA || join(home, 'AppData', 'Roaming'), 'Claude', 'claude-code');
+  const versions = directoryNames(root).filter(name => /^\d+\.\d+\.\d+$/.test(name))
+    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  for (const version of versions) {
+    for (const hash of directoryNames(join(root, version)).filter(name => /^[a-f0-9]+$/i.test(name)).sort()) {
+      const path = join(root, version, hash, 'claude.exe');
+      if (lstatOrNull(path)?.isFile()) return path;
+    }
+  }
+  return null;
+}
+
+/** CLI and Windows desktop hosts, once per shared config. path is a runnable CLI, never a desktop launcher. */
 export function detectHosts({ env = process.env, platform = process.platform, home = homedir(), exec = execFileSync } = {}) {
   const desktops = platform === 'win32' ? windowsDesktopHosts(env, home, exec) : {};
   return HOSTS.map(host => {
-    const path = findOnPath(host, { env, platform });
+    const onPath = findOnPath(host, { env, platform });
+    const path = onPath ?? (host === 'claude' && platform === 'win32' ? windowsClaudeCli(env, home) : null);
     const desktop = desktops[host];
-    const name = desktop ? (path ? `${HOST_NAMES[host]} and ${desktop}` : desktop) : HOST_NAMES[host];
+    const name = desktop ? (onPath ? `${HOST_NAMES[host]} and ${desktop}` : desktop) : HOST_NAMES[host];
     return { host, name, path, ...(desktop ? { desktop } : {}) };
   }).filter(item => item.path || item.desktop);
 }
@@ -581,7 +605,9 @@ export function registrationSummary(names) {
  * InstallError (with the snippet or command to run by hand) when it cannot.
  */
 export async function registerHost(host, { env = process.env, home = homedir(), cwd = process.cwd(),
-  platform = process.platform, claudePath = findOnPath('claude', { env, platform }), run = commandRunner({ env, platform }) } = {}) {
+  platform = process.platform,
+  claudePath = findOnPath('claude', { env, platform }) ?? (platform === 'win32' ? windowsClaudeCli(env, home) : null),
+  run = commandRunner({ env, platform }) } = {}) {
   const plan = planInstall({ host, scope: 'user', cwd, env, home, platform });
   const writes = await applyPlan(plan);
   if (host === 'claude') {
