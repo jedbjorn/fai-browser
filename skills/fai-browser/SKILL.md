@@ -6,7 +6,7 @@ description: Drive user-approved browser tabs for live tasks, never research/scr
 # FAI Browser
 
 Tools: `mcp__fai-browser__fai_browser_open` (or `mcp__fai_browser__…`).
-Flights/hotels: first read `tasks/<name>/SKILL.md` beside this file (`tasks/flights/SKILL.md`, `tasks/hotels/SKILL.md`).
+Flights/hotels: read `tasks/<name>/SKILL.md` beside this file first (`tasks/flights/SKILL.md`, `tasks/hotels/SKILL.md`).
 
 ## A. Open the task
 `fai_browser_open`: minimal `origins`, user-facing `reason`, `task` to rank digest/actions, lowest `mode`.
