@@ -5,8 +5,9 @@
 // (Node/Bun builtins only): it is copied into .opencode/plugins/ and runs inside OpenCode with OpenCode's rights.
 //
 // - At init it listens on a private unix socket, <runtime dir>/fai-browser/oc-<OpenCode's pid>.sock (directory 0700,
-//   socket 0600), and puts the socket path and a fresh random token in process.env, where the fai-browser MCP server
-//   OpenCode starts next finds them (FAI_OPENCODE_WAKE_SOCKET, FAI_OPENCODE_WAKE_TOKEN).
+//   socket 0600), or a Windows named pipe, \\.\pipe\fai-browser-oc-<pid>-<random>. It exports the channel path, a fresh
+//   256-bit token and its pid (FAI_OPENCODE_WAKE_SOCKET, FAI_OPENCODE_WAKE_TOKEN, FAI_OPENCODE_PID) for its MCP children.
+//   Windows pipe access rests on the token and parent binding, not Unix permissions.
 // - Before each FAI tool call it finds the calling session's root (a subagent's task session belongs to the
 //   conversation that started it) and adds that id as `_faiHostSession` to the call's arguments (the MCP server removes
 //   it before anything else reads them), so FAI knows which conversation asked for which tab.
@@ -289,20 +290,27 @@ function serve(state, connection) {
 }
 
 function start() {
-  const dir = socketDir();
-  const path = join(dir, `oc-${process.pid}.sock`);
-  if (Buffer.byteLength(path) > MAX_PATH) throw new Error('socket path too long');
-  removeStale(path);
-  try {
-    sweep(dir);
-  } catch {
-    // Best effort.
+  const windows = process.platform === 'win32';
+  let path;
+  if (windows) {
+    path = `\\\\.\\pipe\\fai-browser-oc-${process.pid}-${randomBytes(8).toString('hex')}`;
+  } else {
+    const dir = socketDir();
+    path = join(dir, `oc-${process.pid}.sock`);
+    if (Buffer.byteLength(path) > MAX_PATH) throw new Error('socket path too long');
+    removeStale(path);
+    try {
+      sweep(dir);
+    } catch {
+      // Best effort.
+    }
   }
   const state = { token: randomBytes(32).toString('hex'), path, sessions: new Map(), parents: new Map(),
     clients: new Map(), waiters: new Set(), busy: new Set(), server: null };
   state.server = createServer(connection => serve(state, connection));
   state.server.on('error', () => {});
   state.server.listen(path, () => {
+    if (windows) return;
     try {
       chmodSync(path, 0o600);
     } catch {
@@ -310,7 +318,7 @@ function start() {
     }
   });
   state.server.unref?.();
-  process.on('exit', () => {
+  if (!windows) process.on('exit', () => {
     try {
       unlinkSync(path);
     } catch {
@@ -320,6 +328,7 @@ function start() {
   // The fai-browser MCP server OpenCode starts after this reads them (and checks that OpenCode is its parent).
   process.env.FAI_OPENCODE_WAKE_SOCKET = path;
   process.env.FAI_OPENCODE_WAKE_TOKEN = state.token;
+  process.env.FAI_OPENCODE_PID = String(process.pid);
   return state;
 }
 

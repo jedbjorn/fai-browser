@@ -14,8 +14,10 @@ import {
   deliverOpencodePlugin, deliverWake, opencodeChannel, opencodeVersionOk, wakeCapability, wakeText, WAKE_CAPABILITIES,
 } from '../src/wake.js';
 import { AgentSession } from '../src/mcp-session.js';
-import { NO_OPENCODE_WAKES } from './helpers/platform.js';
+import { NO_OPENCODE_WAKES, WINDOWS } from './helpers/platform.js';
 import { pipeOrSocket } from './helpers/pipe-or-socket.js';
+
+const CHANNEL_PATH = WINDOWS ? '\\\\.\\pipe\\fai-browser-oc-4242-0123456789abcdef' : '/r/fai-browser/oc-4242.sock';
 
 const STATE = Symbol.for('fai-browser.opencode-wake.v1');
 const SES_A = 'ses_1a2b3c4d5e6f7g8h9i0j';
@@ -72,6 +74,7 @@ function resetPlugin() {
   }
   delete process.env.FAI_OPENCODE_WAKE_SOCKET;
   delete process.env.FAI_OPENCODE_WAKE_TOKEN;
+  delete process.env.FAI_OPENCODE_PID;
 }
 
 // Load the plugin as OpenCode would, in a private temp runtime dir; restored after the test.
@@ -136,17 +139,33 @@ test('plugin: FAI_WAKE=0 or a client without promptAsync turns it off (no socket
   assert.throws(() => lstatSync(join(dir, 'fai-browser')), /ENOENT/);
 });
 
-test('plugin: a private 0700 directory, a 0600 socket named after the pid, and both variables for the MCP child', { skip: NO_OPENCODE_WAKES }, async t => {
+test('plugin: a private 0700 directory, a 0600 socket named after the pid, and plugin pid for the MCP child', { skip: WINDOWS && 'Unix socket permissions only' }, async t => {
   const { dir } = await loadPlugin(t);
   const path = join(dir, 'fai-browser', `oc-${process.pid}.sock`);
   assert.equal(process.env.FAI_OPENCODE_WAKE_SOCKET, path);
   assert.match(process.env.FAI_OPENCODE_WAKE_TOKEN, /^[0-9a-f]{64}$/);
+  assert.equal(process.env.FAI_OPENCODE_PID, String(process.pid));
   assert.equal(lstatSync(join(dir, 'fai-browser')).mode & 0o777, 0o700);
   assert.ok(lstatSync(path).isSocket());
   assert.equal(lstatSync(path).mode & 0o777, 0o600);
 });
 
-test('plugin: a stale socket is replaced; a symlinked directory or a file in the socket\'s place turns it off', { skip: NO_OPENCODE_WAKES }, async t => {
+test('plugin: exports a parent-bound channel on every OS; Windows uses a random pipe without a directory', async t => {
+  const { dir } = await loadPlugin(t);
+  const env = process.env;
+  assert.equal(env.FAI_OPENCODE_PID, String(process.pid));
+  assert.match(env.FAI_OPENCODE_WAKE_TOKEN, /^[0-9a-f]{64}$/);
+  assert.deepEqual(opencodeChannel(env, { ppid: process.pid }), {
+    path: env.FAI_OPENCODE_WAKE_SOCKET, token: env.FAI_OPENCODE_WAKE_TOKEN,
+  });
+  assert.equal(opencodeChannel(env, { ppid: process.pid + 1 }), null, 'inherited by a non-host child');
+  if (WINDOWS) {
+    assert.match(env.FAI_OPENCODE_WAKE_SOCKET, /^\\\\\.\\pipe\\fai-browser-oc-\d+-[0-9a-f]{16}$/);
+    assert.throws(() => lstatSync(join(dir, 'fai-browser')), /ENOENT/);
+  }
+});
+
+test('plugin: a stale socket is replaced; a symlinked directory or a file in the socket\'s place turns it off', { skip: WINDOWS && 'Unix socket files and sweep only' }, async t => {
   const base = await mkdtemp(join(tmpdir(), 'fai-oc-'));
   t.after(() => rm(base, { recursive: true, force: true }));
   // A stale socket from an earlier OpenCode with this pid.
@@ -384,21 +403,44 @@ test('plugin: a second plugin copy in the same OpenCode shares one socket and to
   assert.equal(second.calls.length, 1);
 });
 
-test('channel: only for the MCP server OpenCode started itself (socket named after the parent, OPENCODE_PID agrees)', { skip: NO_OPENCODE_WAKES }, () => {
-  const env = { FAI_OPENCODE_WAKE_SOCKET: '/run/user/1000/fai-browser/oc-4242.sock', FAI_OPENCODE_WAKE_TOKEN: TOKEN, OPENCODE_PID: '4242' };
+test('channel: only for the MCP server OpenCode started itself (socket named after the parent, FAI_OPENCODE_PID agrees)', { skip: NO_OPENCODE_WAKES }, () => {
+  const env = { FAI_OPENCODE_WAKE_SOCKET: CHANNEL_PATH, FAI_OPENCODE_WAKE_TOKEN: TOKEN, FAI_OPENCODE_PID: '4242' };
   assert.deepEqual(opencodeChannel(env, { ppid: 4242 }), { path: env.FAI_OPENCODE_WAKE_SOCKET, token: TOKEN });
   assert.equal(opencodeChannel(env, { ppid: 4243 }), null, 'a grandchild (bash tool, wrapper)');
-  assert.equal(opencodeChannel({ ...env, OPENCODE_PID: '1' }, { ppid: 4242 }), null);
-  assert.equal(opencodeChannel({ ...env, OPENCODE_PID: undefined }, { ppid: 4242 }), null);
+  assert.equal(opencodeChannel({ ...env, FAI_OPENCODE_PID: '1' }, { ppid: 4242 }), null);
+  assert.equal(opencodeChannel({ ...env, FAI_OPENCODE_PID: undefined }, { ppid: 4242 }), null);
   assert.equal(opencodeChannel({ ...env, FAI_OPENCODE_WAKE_TOKEN: undefined }, { ppid: 4242 }), null);
   assert.equal(opencodeChannel({ ...env, FAI_OPENCODE_WAKE_TOKEN: 'short' }, { ppid: 4242 }), null);
   assert.equal(opencodeChannel({ ...env, FAI_OPENCODE_WAKE_SOCKET: '/run/user/1000/fai-browser/oc-77.sock' }, { ppid: 4242 }), null);
   assert.equal(opencodeChannel({ ...env, FAI_OPENCODE_WAKE_SOCKET: '/x/4242.sock' }, { ppid: 4242 }), null);
 });
 
+test('channel: Windows pipes and Unix sockets require the plugin pid, exact channel name and token', () => {
+  const pipe = '\\\\.\\pipe\\fai-browser-oc-4242-0123456789abcdef';
+  const socket = '/r/fai-browser/oc-4242.sock';
+  for (const platform of ['linux', 'darwin', 'win32']) {
+    const path = platform === 'win32' ? pipe : socket;
+    const env = { FAI_OPENCODE_WAKE_SOCKET: path, FAI_OPENCODE_WAKE_TOKEN: TOKEN, FAI_OPENCODE_PID: '4242' };
+    const options = { ppid: 4242, platform };
+    assert.deepEqual(opencodeChannel(env, options), { path, token: TOKEN });
+    assert.equal(opencodeChannel({ ...env, OPENCODE_PID: '1' }, options)?.path, path, 'legacy variable is irrelevant');
+    for (const pid of [undefined, '', '1', '4243', '04242', '4242oops']) {
+      assert.equal(opencodeChannel({ ...env, OPENCODE_PID: '4242', FAI_OPENCODE_PID: pid }, options), null, `${platform}: no legacy fallback`);
+    }
+    for (const ppid of [1, 0, -1, 4243, 4242.1, NaN]) assert.equal(opencodeChannel(env, { ...options, ppid }), null);
+    for (const token of [undefined, '', 'short', 'g'.repeat(64)]) {
+      assert.equal(opencodeChannel({ ...env, FAI_OPENCODE_WAKE_TOKEN: token }, options), null);
+    }
+    const badPaths = platform === 'win32'
+      ? [socket, pipe.replace('4242', '4243'), pipe.replace('\\\\.\\', '\\\\server\\'), pipe + '.evil', pipe.slice(0, -1), pipe + '\n']
+      : ['/x/4242.sock', '/x/oc-4243.sock', socket + '.evil', pipe];
+    for (const bad of badPaths) assert.equal(opencodeChannel({ ...env, FAI_OPENCODE_WAKE_SOCKET: bad }, options), null, bad);
+  }
+});
+
 test('capability: opencode-plugin needs the channel, a tagged session and OpenCode 1.19 to 1.x', { skip: NO_OPENCODE_WAKES }, () => {
   assert.ok(WAKE_CAPABILITIES.includes('opencode-plugin'));
-  const env = { FAI_OPENCODE_WAKE_SOCKET: '/r/fai-browser/oc-4242.sock', FAI_OPENCODE_WAKE_TOKEN: TOKEN, OPENCODE_PID: '4242' };
+  const env = { FAI_OPENCODE_WAKE_SOCKET: CHANNEL_PATH, FAI_OPENCODE_WAKE_TOKEN: TOKEN, FAI_OPENCODE_PID: '4242' };
   const base = { host: 'opencode', env, ppid: 4242, opencodeSession: SES_A, opencodeVersion: true };
   assert.equal(wakeCapability(base), 'opencode-plugin');
   assert.equal(wakeCapability({ ...base, opencodeSession: null }), 'none', 'before the first FAI call');
@@ -467,7 +509,7 @@ test('delivery end to end: deliverWake through the real plugin prompts the tagge
   const { hooks } = await loadPlugin(t, client);
   await tag(hooks, SES_A);
   const env = { FAI_OPENCODE_WAKE_SOCKET: process.env.FAI_OPENCODE_WAKE_SOCKET, FAI_OPENCODE_WAKE_TOKEN: process.env.FAI_OPENCODE_WAKE_TOKEN,
-    OPENCODE_PID: String(process.pid) };
+    FAI_OPENCODE_PID: String(process.pid) };
   assert.deepEqual(await deliverWake({ capability: 'opencode-plugin', text: APPROVED, env, opencodeSession: SES_A, ppid: process.pid }), { ok: true });
   assert.equal(client.calls.length, 1);
   const refused = await deliverWake({ capability: 'opencode-plugin', text: APPROVED, env, opencodeSession: SES_B, ppid: process.pid });
@@ -476,7 +518,7 @@ test('delivery end to end: deliverWake through the real plugin prompts the tagge
 });
 
 test('session targeting: Approve/Resume to the request\'s own session, an invite only when one session is recent', { skip: NO_OPENCODE_WAKES }, async () => {
-  const env = { FAI_OPENCODE_WAKE_SOCKET: '/r/fai-browser/oc-4242.sock', FAI_OPENCODE_WAKE_TOKEN: TOKEN, OPENCODE_PID: '4242' };
+  const env = { FAI_OPENCODE_WAKE_SOCKET: CHANNEL_PATH, FAI_OPENCODE_WAKE_TOKEN: TOKEN, FAI_OPENCODE_PID: '4242' };
   let clock = 1_000_000;
   const owners = new Map([['req-1', SES_B]]);
   const delivered = [];

@@ -13,7 +13,7 @@ export const POSIX_PATHS = WINDOWS
 // Each channel unit lifts its own skip once its Windows implementation and fakes pass CI.
 export const NO_CLAUDE_WAKES = WINDOWS ? 'Claude wake binding does not support Windows pipes yet' : false;
 export const NO_CODEX_WAKES = WINDOWS ? 'Codex wakes and test binaries do not support Windows executables yet' : false;
-export const NO_OPENCODE_WAKES = WINDOWS ? 'the OpenCode plugin does not support Windows pipes yet' : false;
+export const NO_OPENCODE_WAKES = false;
 
 /** A fake program the test writes as a POSIX shell script (`#!/bin/sh`), which Windows cannot run. */
 export const SH_SHIMS = WINDOWS ? 'the test fakes a program with a #!/bin/sh script, which Windows cannot run' : false;

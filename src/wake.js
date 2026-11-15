@@ -9,7 +9,7 @@
 // - Codex (0.149+) queues a message for a thread: `codex queue --thread <id> --message <text>`. The thread id arrives on
 //   every tools/call as _meta["x-codex-turn-metadata"].thread_id (also _meta.threadId).
 // - OpenCode (1.19+, below 2) runs FAI's own plugin (src/opencode-plugin.js, installed by `install --host opencode`).
-//   It listens on a private unix socket named after OpenCode's pid and tags each FAI tool call with the calling session
+//   It listens on a private unix socket or Windows pipe named after OpenCode's pid and tags each FAI tool call with the calling session
 //   (`_faiHostSession`); the MCP server asks it, with the token it minted, to prompt that session
 //   (client.session.promptAsync, with the session's own agent and model). The plugin answers once OpenCode accepted the
 //   prompt and reported no error for 2 s: accepted, not yet answered.
@@ -48,7 +48,7 @@ export function detectHost(clientInfo, env = process.env) {
   if (name === 'codex-mcp-client' || name.startsWith('codex')) return 'codex';
   if (name === 'opencode' || name.startsWith('opencode')) return 'opencode';
   if (name) return 'unknown';
-  if (env.OPENCODE || env.OPENCODE_PID) return 'opencode';
+  if (env.OPENCODE || env.FAI_OPENCODE_PID) return 'opencode';
   if (env.CLAUDECODE === '1' && env.CLAUDE_CODE_SESSION_ID) return 'claude';
   return 'unknown';
 }
@@ -78,15 +78,19 @@ export function claudeSocket(env = process.env, { ppid = process.ppid } = {}) {
 /**
  * FAI's OpenCode plugin channel for this process, or null. The plugin puts FAI_OPENCODE_WAKE_SOCKET and
  * FAI_OPENCODE_WAKE_TOKEN in OpenCode's environment, so everything OpenCode starts inherits them (a bash tool's children
- * too): they count only when OpenCode itself is this process's parent, i.e. the socket is `oc-<ppid>.sock` and
- * OPENCODE_PID (which OpenCode sets for itself) names the same pid. A wrapper in between fails closed.
+ * too): they count only when OpenCode itself is this process's parent. FAI_OPENCODE_PID (exported by the plugin,
+ * including in Desktop's sidecar) must name that parent, as must the Unix socket or Windows pipe. A wrapper in
+ * between fails closed. OPENCODE_PID is deliberately not a fallback: an old plugin is unbound.
  */
-export function opencodeChannel(env = process.env, { ppid = process.ppid } = {}) {
+export function opencodeChannel(env = process.env, { ppid = process.ppid, platform = process.platform } = {}) {
   const path = env.FAI_OPENCODE_WAKE_SOCKET;
   const token = env.FAI_OPENCODE_WAKE_TOKEN;
   if (typeof path !== 'string' || !path || typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) return null;
-  if (!Number.isInteger(ppid) || ppid <= 1 || basename(path) !== `oc-${ppid}.sock`) return null;
-  if (String(env.OPENCODE_PID ?? '') !== String(ppid)) return null;
+  if (!Number.isInteger(ppid) || ppid <= 1 || String(env.FAI_OPENCODE_PID ?? '') !== String(ppid)) return null;
+  const bound = platform === 'win32'
+    ? /^\\\\\.\\pipe\\fai-browser-oc-(\d+)-[0-9a-f]{16}$/.exec(path)?.[1] === String(ppid)
+    : basename(path) === `oc-${ppid}.sock`;
+  if (!bound) return null;
   return { path, token };
 }
 
