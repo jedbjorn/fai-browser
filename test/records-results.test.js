@@ -32,9 +32,11 @@ async function observe(t, name, transform = html => html) {
 }
 
 function actionsOf(observation) {
-  return observation.controls.filter(control => control.role === 'link' || control.role === 'button')
+  return observation.controls.filter(control => (control.role === 'link' || control.role === 'button')
+    && control.actionability !== 'blocked')
     .map((control, index) => ({
-      id: `a${index}`, type: 'click', target: control.id, role: control.role, label: control.label, href: control.href,
+      id: `a${index}`, type: control.actionability === 'reveal' ? 'reveal' : 'click', target: control.id,
+      role: control.role, label: control.label, ...(control.actionability === 'reveal' ? {} : { href: control.href }),
     }));
 }
 
@@ -243,7 +245,8 @@ test('projected rows stay within a character budget, retain metadata and leave d
   const late = relevant.records.find(record => record.id === 'r10');
   assert.ok(late, 'a task-relevant later row survives the projection budget');
   assert.match(late.date, /Posted \d+ Sep/);
-  assert.ok(late.open, 'the relevant row retains its offered open action');
+  assert.ok(late.reveal, 'the relevant offscreen row retains its offered reveal action');
+  assert.equal(late.open, undefined, 'a row outside the visible region is not offered as open');
 });
 
 test('complete requires an exact consistent global count and an unprojected primary list', async t => {

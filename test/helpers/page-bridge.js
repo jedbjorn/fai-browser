@@ -79,7 +79,8 @@ export class PageBridge {
     const navigated = value.observation.url !== fromUrl;
     const settle = { reason: value.settle?.reason ?? 'quiet', ms: 0 };
     if (navigated) Object.assign(settle, { navigated: true, url: value.observation.url });
-    return { observation: value.observation, settle, navigated, screenshot: Promise.resolve(null) };
+    return { observation: value.observation, settle, navigated, ...(value.reveal ? { reveal: value.reveal } : {}),
+      screenshot: Promise.resolve(null) };
   }
 
   // A point click's first half, as extension/background.js runs it: the control under a CSS viewport point on the

@@ -5,15 +5,23 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
-## 0.9.0 (2026-11-12)
+## 0.10.0 (2026-11-15)
 
 ### Changed
 
 - **Two direct approvals: Use and Act.** Use permits reading and navigation in one task tab; Act permits guarded actions and up to eight task tabs. Request cards, modals, invites and resumes no longer need level dropdowns or a separate tab-access preference. Existing grants do not silently gain permissions; legacy API modes remain supported as explicit call limits. Testing remains an explicit option for listed test origins.
+- **Reveal links before clicking.** Scrollable offscreen targets are offered as Reveal actions that return a fresh observation. Clicks require a shown, reachable target, including its containing frames; covered and hidden links no longer fall back to synthetic activation or alternate URL actions.
+- **Paced link clicks.** Explicit link clicks use bounded movement based on distance and target size, with the same plan for synthetic and trusted input. Worker timers preserve pacing in minimized task windows; typing and wheel timing keep their existing profiles.
+
+### Added
+
+- **Necessary-only cookies and newsletter dismissal.** New Use/Act approvals disclose bounded automatic handling: select an unambiguous reject/necessary-only choice or close an unsolicited newsletter modal. Actions use paced, visible controls; unclear choices return to the agent with receipts. Legacy approvals gain no automatic authority.
 
 ### Fixed
 
 - **Downloads keep multiple-tab tasks running.** A pending child URL is no longer adopted before it commits a document. If a download closes that empty tab and the approved task tab is active again, queued commands continue there without a spurious Resume. Single-tab approvals and switches to personal tabs still pause.
+
+## 0.9.0 (2026-11-12)
 
 ### Added
 

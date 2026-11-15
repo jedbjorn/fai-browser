@@ -13,7 +13,7 @@ import {
 import { aggregateItems, answerScope, buildMemory, coverage, itemValue, lineText, traceFacts } from './facts.js';
 import {
   ANSWER_STATUSES, MAX_ANSWER_CANDIDATES, bridgeError, buildVerdict, compactPage, pageExtras,
-  compactStepObservation, createResult, isKnownCode, nextFor, outcomeFor, redactSecrets, setOutcome,
+  compactStepObservation, createResult, isKnownCode, nextFor, outcomeFor, publicObservation, redactSecrets, setOutcome,
   DIALOG_LEVEL_TEXT, HISTORY_OFF_SITE_TEXT, ONE_TAB_TEXT, URL_REFUSED_TEXT, URL_SCHEME_TEXT, URL_UNSEEN_CROSS_TEXT,
 } from './result.js';
 import {
@@ -28,6 +28,7 @@ import {
 import { scrubSecrets, secretIds } from './secrets.js';
 import { NOT_WEB_LINK_TEXT, OTHER_SITE_TEXT, otherSiteLabel, otherSiteView } from './other-site.js';
 import { capActions, capOffer, relevanceHints } from './relevance.js';
+import { automaticPopupEvidence, automaticPopupScope } from './automatic-popups.js';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Limits
@@ -81,6 +82,34 @@ function sameHref(a, b) {
   } catch {
     return false;
   }
+}
+
+// Presentation is explicit on extension observations. Older/custom bridges keep their existing contract.
+function presentation(control) {
+  return control?.actionability ?? (control?.visible === false ? 'blocked' : 'ready');
+}
+
+// Unlike seenKey, destination authority includes the fragment (hash routers expose distinct views there).
+function destinationKey(href, base) {
+  if (typeof href !== 'string' || !href) return null;
+  try {
+    const url = new URL(href, base);
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : null;
+  } catch { return null; }
+}
+
+function unrevealedDestinations(observation) {
+  const urls = new Set();
+  for (const href of observation?.unrevealedUrls ?? []) {
+    const key = destinationKey(href, observation.url);
+    if (key) urls.add(key);
+  }
+  for (const control of observation?.controls ?? []) {
+    if (presentation(control) === 'ready' || !control.href) continue;
+    const key = destinationKey(control.href, observation.url);
+    if (key) urls.add(key);
+  }
+  return urls;
 }
 
 // Whether an instruction-only run asks anything (auto-confirm gate, instructionAsks): a real question mark, a wh-word
@@ -685,6 +714,20 @@ export function offeredActions(observation, options = {}) {
   // listed, so a host whose task needs one asks for the level at once (`controls_need_reversible:<n>`).
   let withheld = 0;
   for (const control of (observation.controls ?? []).slice(0, MAX_CONTROLS)) {
+    const presentationState = presentation(control);
+    if (presentationState === 'reveal') {
+      if (control.role === 'link' && control.href && !offSiteHref(control.href)) continue;
+      if (control.trap !== true && !control.sensitive && control.type !== 'password') {
+        const ref = String(control.id);
+        const role = control.role || 'control';
+        const safe = publicObservation({ url: observation.url, controls: [control], unrevealedUrls: observation.unrevealedUrls }).controls[0];
+        const label = clip(safe.label, 180) || `unlabelled ${role} ${ref}`;
+        controlActions.push({ type: 'reveal', target: ref, role, label,
+          description: `Reveal ${role} ${ref}: ${label} (scroll only; choose an action afterward)` });
+      }
+      continue;
+    }
+    if (presentationState !== 'ready') continue;
     if (control.enabled === false || control.visible === false) continue;
     // A field the page marks as not for people (page.js trapField: hidden from assistive technology and the tab order,
     // drawn invisible): never offered at any level. It stays in the observation for the page facts.
@@ -958,7 +1001,7 @@ export function actionKey(action) {
 export function actionClass(action) {
   if (action?.consent) return 'consent';
   if (['navigate_allowed_url', 'open_tab'].includes(action?.type)) return 'link';
-  if (['scroll', 'wait', 'history', 'switch_tab'].includes(action?.type)) return 'page';
+  if (['scroll', 'reveal', 'wait', 'history', 'switch_tab'].includes(action?.type)) return 'page';
   if (action?.type === 'click' && action.role === 'link') return 'link';
   return 'control';
 }
@@ -1059,8 +1102,10 @@ function validateObservation(observation) {
 
 /** Observation returned to hosts by observe(). Bounds are dropped; sensitive controls excluded. */
 function compactForDecision(observation) {
+  observation = publicObservation(observation);
   return {
     revision: observation.revision,
+    ...automaticPopupEvidence(observation),
     url: observation.url,
     title: clip(observation.title, 500),
     text: clip(observation.text, 12000),
@@ -1072,7 +1117,8 @@ function compactForDecision(observation) {
         role: control.role,
         label: clip(control.label, 300),
         type: control.type,
-        href: control.href,
+        href: presentation(control) === 'ready' ? control.href : undefined,
+        ...(control.actionability ? { actionability: control.actionability, actionabilityReason: control.actionabilityReason } : {}),
         selectedValue: control.selectedValue,
         filled: control.filled,
         checked: control.checked,
@@ -1440,7 +1486,8 @@ function configure(options) {
   const requested = options.mode ?? 'read-only';
   if (!MODES.has(requested)) throw new TypeError('Unknown action policy');
   const grant = options.grant && typeof options.grant === 'object' && isLevel(options.grant.level)
-    ? { level: options.grant.level, testing: options.grant.level === 'testing', tabMode: options.grant.tabMode === 'multiple' ? 'multiple' : 'single' }
+    ? { level: options.grant.level, testing: options.grant.level === 'testing', tabMode: options.grant.tabMode === 'multiple' ? 'multiple' : 'single',
+      ...automaticPopupScope(options.grant) }
     : null;
   if (options.grant !== undefined && options.grant !== null && !grant) throw new TypeError('grant.level must be a level');
   const level = clampLevel(requested, grant?.level ?? 'full');
@@ -1455,6 +1502,7 @@ function configure(options) {
       effective: level,
       testing: level === 'testing',
       tabMode: grant?.tabMode ?? 'single',
+      ...automaticPopupScope(grant),
       // What the approved origins cover: `domain` when they hold a domain root ("https://*.example.com", which the
       // daemon keeps only when the user approved it), else `origin`.
       scope: siteRoots(options.allowedOrigins).length ? 'domain' : 'origin',
@@ -1818,6 +1866,11 @@ class Session {
 
     const executedAt = Date.now();
     const after = execution.observation;
+    const popupEvidence = automaticPopupEvidence(after);
+    Object.assign(step, popupEvidence);
+    if (popupEvidence.automatic) this.result.automatic = [...(this.result.automatic ?? []), ...popupEvidence.automatic].slice(-4);
+    if (popupEvidence.nuisancePending) this.result.nuisancePending = popupEvidence.nuisancePending;
+    else delete this.result.nuisancePending;
     step.action.toUrl = after.url;
     step.settle = execution.settle?.reason ?? 'none';
     // The extension reports a navigation inside settle (bridge.js forwards only observation and settle).
@@ -1831,6 +1884,11 @@ class Session {
     if (fill) {
       step.fill = fill;
       if (!fill.kept) step.changed = false;
+    }
+    if (action.type === 'reveal' && typeof execution.reveal?.revealed === 'boolean') {
+      step.reveal = { revealed: execution.reveal.revealed,
+        ...(typeof execution.reveal.reason === 'string' && /^[a-z_]{1,40}$/.test(execution.reveal.reason)
+          ? { reason: execution.reveal.reason } : {}) };
     }
     this.result.observation = after;
 
@@ -1952,6 +2010,7 @@ class Session {
   /** Remember an observation for the earlier-page trail. */
   visit(observation) {
     if (!observation) return;
+    observation = publicObservation(observation);
     // The page script lists cross-origin frames it could not read (their content is never offered or sent).
     if (Array.isArray(observation.warnings) && observation.warnings.includes('cross_origin_frame')) {
       this.warn('cross_origin_frame');
@@ -2173,6 +2232,7 @@ class Session {
    * AGGREGATE_CANDIDATES first.
    */
   answerPlan(observation, question, { mainList = 0 } = {}) {
+    observation = publicObservation(observation);
     const trail = this.trail(question, observation);
     const own = pickAnswerCandidates(observation, question);
     const memory = this.answerMemory(question, observation, mainList);
@@ -2324,9 +2384,14 @@ class Session {
     } catch {
       // Evidence collection must never mask the outcome.
     }
+    this.result.observation = publicObservation(this.result.observation);
     this.result.page = compactPage(this.result.observation, this.question());
     // The lease's tabs, a JavaScript dialog and Test-site logs on the final page (src/result.js pageExtras).
     const final = this.result.observation;
+    if (!this.result.automatic?.length) Object.assign(this.result, automaticPopupEvidence(final));
+    const pending = automaticPopupEvidence(final).nuisancePending;
+    if (pending) this.result.nuisancePending = pending;
+    else delete this.result.nuisancePending;
     if (final) Object.assign(this.result, pageExtras({ tabs: final.tabs, frames: final.frames, ...(this.config.level === 'testing' ? { dialog: final.dialog } : {}) }));
     try {
       await this.rankAnswer();
@@ -2542,6 +2607,7 @@ export function mapPoint(offer, point) {
 export function pointAction(offer, found, config) {
   const control = found.control;
   const id = found.id;
+  if (presentation(control) !== 'ready') return { refusal: { kind: 'unavailable', capability: null }, control };
   const run = (action, offered) => ({ action, offered, control });
   if (id !== null && id !== undefined) {
     const own = offer.actions.filter(action => action.target !== undefined && String(action.target) === String(id));
@@ -2736,6 +2802,7 @@ export function checkActChoice(offer, choice, { revisionless = false } = {}) {
   if (spec.submit !== undefined && spec.submit !== false
     && !(spec.fills || ['fill', 'fill_supplied_text'].includes(action?.type))) return 'submit goes with typed text (text or fills).';
   if (spec.hover && (!action || action.target === undefined || kind)) return 'hover takes the actionId of an offered control.';
+  if (action?.type === 'reveal' && (spec.hover || kind === 'key')) return 'Reveal scrolls only; use its resulting observation before choosing a control action.';
   if (spec.file !== undefined && action?.type !== 'upload') return 'file goes with an upload action.';
   if (action?.type === 'upload' && spec.file === undefined) return `${action.id} is an upload: give the file.`;
   if (revisionless && action && (action.needsApproval || ['fill_secret', 'copy_secret'].includes(action.type))) {
@@ -2752,6 +2819,7 @@ function didLine(action) {
     case 'fill_supplied_text': return `fill ${label} with supplied ${action.suppliedName}`;
     case 'submit_field': return `press Enter in ${label}`;
     case 'click': return `click ${label}`;
+    case 'reveal': return `reveal ${label}`;
     case 'select': return `select ${JSON.stringify(String(action.optionLabel ?? action.value ?? ''))} in ${label}`;
     case 'navigate_allowed_url': return `open ${action.url}`;
     case 'open_tab': return `open task tab ${action.url}`;
@@ -2788,6 +2856,8 @@ export class BrowserRuntime {
     // user)" only for what the extension will ask about.
     this.asks = typeof asks === 'function' ? asks : () => APPROVAL_ASKS;
     this.active = null;
+    this.automaticEpoch = 0;
+    this.automaticRevisions = new Set();
     // Actions offered by observe(), keyed by revision, so act() can validate host choices.
     this.offers = new Map();
     // Values filled into password inputs on this runtime (sign_in): redacted from every later result too.
@@ -2861,11 +2931,12 @@ export class BrowserRuntime {
       // widens the digest.
       const question = session.question();
       const { offer, actions, listing } = this.#offerOn(observation, config, session.hints, question, focusHints ?? session.hints);
+      const publicPage = publicObservation(observation);
       const maxChars = Number.isInteger(options.digestChars) && options.digestChars > DIGEST_MAX_CHARS
         ? options.digestChars : DIGEST_MAX_CHARS;
       // Long blocks (a banner, a paragraph) are shown whole when the host asked for more: all of them with a larger
       // digestChars, the ones holding the focus words with a focus; otherwise they end in "…".
-      const built = buildDigest(observation, focus ?? question, {
+      const built = buildDigest(publicPage, focus ?? question, {
         maxChars, maxBlocks: Math.max(DIGEST_MAX_BLOCKS, Math.round(DIGEST_MAX_BLOCKS * maxChars / DIGEST_MAX_CHARS)),
         fullBlocks: maxChars > DIGEST_MAX_CHARS ? 'all' : focus ? 'matched' : null,
       });
@@ -2879,7 +2950,7 @@ export class BrowserRuntime {
       return redactSecrets({
         observation: { ...compactForDecision(observation), warnings, consent: observation.consent ?? null,
           ...linksDroppedOf(observation),
-          ...(observation.records ? { records: observation.records, recordLists: observation.recordLists,
+          ...(observation.records ? { records: publicPage.records, recordLists: publicPage.recordLists,
             recordsTruncated: observation.recordsTruncated === true,
             ...(observation.recordState ? { recordState: observation.recordState } : {}) } : {}),
           ...(observation.overlay ? { overlay: observation.overlay } : {}),
@@ -2995,6 +3066,14 @@ export class BrowserRuntime {
       const before = offer.observation;
       session.initial = before;
       session.result.observation = before;
+      if (offer.automaticEpoch !== this.automaticEpoch) {
+        const fresh = await session.observe();
+        setOutcome(session.result, 'stale');
+        session.why('automatic:changed_page');
+        session.result.observation = fresh;
+        session.result.offer = this.#offerAfter(session, config, fresh, offer.hints, offer.question);
+        return session.result;
+      }
       if (approval && !action.approvalId) {
         approvalOutcome(session, action, offer, approval);
         return session.result;
@@ -3067,9 +3146,14 @@ export class BrowserRuntime {
           // revision or a batch step, any plain control whose label and class are unchanged), after the guards judged
           // it again on that page. Otherwise stale. A point click is never re-resolved (its coordinates were read off
           // the stale page), nor an approved click (bound to the revision the user saw), nor a field submission.
-          if (error?.code !== 'stale' || point || next.approvalId) throw error;
+          if (error?.code !== 'stale' || point || next.approvalId || next.type === 'reveal') throw error;
           const fresh = await session.observe();
           session.visit(fresh);
+          if (automaticPopupEvidence(fresh).automatic?.length) {
+            setOutcome(session.result, 'stale');
+            session.why('automatic:changed_page');
+            return offerAgain(fresh);
+          }
           let again = staleControl(next, base, fresh);
           if (!again && next.type !== 'submit_field' && (loose || index > 0)) {
             again = this.#sameControlOn(next, base, fresh)?.action ?? null;
@@ -3088,6 +3172,11 @@ export class BrowserRuntime {
         }
         session.result.did.push(didLine(next));
         page = executed.observation;
+        if (index + 1 < plan.length && automaticPopupEvidence(page).automatic?.length) {
+          setOutcome(session.result, 'stale');
+          session.why('automatic:changed_page');
+          return offerAgain(page);
+        }
         if (!allowedOrigin(page.url, config.allowedOrigins) || executed.step.fill?.kept === false) break;
       }
       let after = executed.observation;
@@ -3097,6 +3186,9 @@ export class BrowserRuntime {
           // The field did not keep the value: not a step done, whatever the expectation says of the page.
           session.why('fill:not_kept');
           setOutcome(session.result, 'fill_not_kept');
+        } else if (action?.type === 'reveal') {
+          // Scrolling is preparation, never evidence that the requested task was completed.
+          setOutcome(session.result, executed.step.reveal?.revealed === false ? 'target_unavailable' : 'step_complete');
         } else if (errorPageOf(after)?.source === 'browser') {
           // The browser's own error page (nothing on it to read): error_page, as a run's landing on an HTTP error
           // page, before any expectation (its URL and fixed text would pass one falsely). The offer stays, so the host
@@ -3120,6 +3212,15 @@ export class BrowserRuntime {
       }
     } catch (error) {
       session.fail(error);
+      if (['stale', 'target_unavailable'].includes(error?.code)) {
+        try {
+          const fresh = await session.observe();
+          session.result.observation = fresh;
+          if (allowedOrigin(fresh.url, config.allowedOrigins)) {
+            session.result.offer = this.#offerAfter(session, config, fresh, offer.hints, offer.question);
+          }
+        } catch { /* The original recoverable refusal remains authoritative if reobservation fails. */ }
+      }
     } finally {
       await session.close();
       this.active = null;
@@ -3207,6 +3308,14 @@ export class BrowserRuntime {
         setOutcome(result, 'refused_action');
         result.needs.message = URL_SCHEME_TEXT;
         session.why('url:scheme');
+        return { result };
+      }
+      const destination = destinationKey(target.href);
+      const supplied = (config.allowedUrls ?? []).some(url => destinationKey(url, before.url) === destination);
+      if (unrevealedDestinations(before).has(destination) && !supplied && !this.exposedUrls?.has(destination)) {
+        setOutcome(result, 'refused_action');
+        result.needs.message = 'This destination belongs to a link that is not currently shown and reachable. Reveal it or use its visible controller, then choose from the resulting observation.';
+        session.why('url:unrevealed');
         return { result };
       }
       // An address no page of this request showed, the user did not list and the request's task or reason does not
@@ -3571,14 +3680,35 @@ export class BrowserRuntime {
 
   /** Mark the addresses written in a text (the request's task or reason, an observe's task) as shown. */
   noteSeenText(text) {
-    for (const url of textUrls(text)) this.noteSeen(url);
+    for (const url of textUrls(text)) {
+      this.noteSeen(url);
+      this.#noteExposed(url);
+    }
+  }
+
+  #noteExposed(href, base) {
+    const key = destinationKey(href, base);
+    if (!key) return;
+    const urls = this.exposedUrls ??= new Set();
+    urls.delete(key);
+    urls.add(key);
+    while (urls.size > SEEN_URLS) urls.delete(urls.values().next().value);
   }
 
   #remember(offer) {
     // Every address a page of this request showed (its URL, its controls' links and addresses printed in its text),
     // so a url act can tell a followed address from a constructed one (`why` url:unseen). Bounded; the oldest go first.
     const observation = offer.observation ?? {};
-    for (const href of [observation.url, ...(observation.controls ?? []).map(control => control?.href)]) this.noteSeen(href);
+    if (automaticPopupEvidence(observation).automatic?.length && !this.automaticRevisions.has(observation.revision)) {
+      this.automaticEpoch++;
+      this.automaticRevisions.add(observation.revision);
+      while (this.automaticRevisions.size > SEEN_URLS) this.automaticRevisions.delete(this.automaticRevisions.values().next().value);
+    }
+    offer.automaticEpoch = this.automaticEpoch;
+    for (const href of [observation.url, ...(observation.controls ?? []).filter(control => presentation(control) === 'ready').map(control => control?.href)]) {
+      this.noteSeen(href);
+      this.#noteExposed(href, observation.url);
+    }
     const texts = [observation.text, ...(Array.isArray(observation.blocks) ? observation.blocks.map(block => block?.text) : [])];
     let budget = TEXT_URLS_PER_PAGE;
     for (const text of texts) {
@@ -3586,6 +3716,13 @@ export class BrowserRuntime {
       const urls = textUrls(text, budget);
       budget -= urls.length;
       for (const url of urls) this.noteSeen(url);
+    }
+    // Extension text is not hit-tested evidence: even viewport text can sit behind a cover. Only legacy bridges
+    // retain text-only URL authority; modern pages establish it through ready controls or explicit user input.
+    const modern = Array.isArray(observation.unrevealedUrls)
+      || observation.controls?.some(control => control.actionability !== undefined);
+    if (!modern) for (const url of textUrls(observation.text)) {
+      this.#noteExposed(url, observation.url);
     }
     this.offers.delete(offer.revision);
     this.offers.set(offer.revision, offer);

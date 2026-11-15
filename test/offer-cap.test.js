@@ -281,11 +281,13 @@ test('flights fixture: about 90 controls, every one named, "Date grid", "Price g
   const lines = listedLabels(lean);
   for (const label of ['click button "Date grid"', 'click button "Price graph"', 'click button "Passengers 1"',
     'click button "unlabelled button 1 of 2 next to \\"Departure\\""', 'click button "unlabelled button 2 of 2 next to \\"Return\\""',
-    'click button "Learn more about tracked prices"', 'click button "Track prices from Marseille to London - Any dates"',
+    'click "Learn more about tracked prices"', 'click button "Track prices from Marseille to London - Any dates"',
     'click combobox "Round trip"']) {
     assert.ok(lines.includes(label), label);
   }
   assert.ok(!lines.some(line => / ""(?: |$)/.test(line)), 'no empty label is listed');
+  assert.ok(!actions.some(action => action.role === 'button' && action.label === 'Learn more about tracked prices'),
+    'an outer wrapper cannot borrow the independently actionable nested link');
 });
 
 test('flights fixture: over the interactive cap the listing keeps 80 controls plus page actions and warns with the count', async t => {
@@ -307,19 +309,20 @@ test('flights fixture: over the interactive cap the listing keeps 80 controls pl
 test('flights fixture: the control the instruction names near the end of the page is listed', async t => {
   const observation = await flights(t);
   const { lean } = listing(observation, { instruction: 'Click "Price calendar" and read the cheapest day' });
-  assert.ok(listedLabels(lean).includes('click button "Price calendar"'));
+  assert.ok(listedLabels(lean).includes('reveal button "Price calendar"'));
   assert.ok(lean.warnings[0].startsWith('controls_capped:'));
   const graph = listing(observation, { instruction: "Click 'Price graph' to show prices by departure date" });
   assert.ok(listedLabels(graph.lean).includes('click button "Price graph"'));
 });
 
-test('flights fixture: read-only lists links only, at most 40, unchanged in shape', async t => {
+test('flights fixture: read-only lists links and scroll-only reveal opportunities within its cap', async t => {
   const observation = await flights(t);
   const { actions, lean } = listing(observation, { level: 'read-only' });
-  assert.ok(actions.every(action => action.role === 'link' || ['scroll', 'wait'].includes(action.type)));
-  assert.ok(actions.length - 3 <= OFFER_CAPS['read-only']);
-  assert.equal(lean.actions.length, actions.length);
-  assert.equal(lean.warnings, undefined);
+  assert.ok(actions.every(action => action.role === 'link' || ['scroll', 'wait', 'reveal'].includes(action.type)));
+  assert.ok(lean.actions.length - 3 <= OFFER_CAPS['read-only']);
+  assert.ok(actions.filter(action => action.role !== 'link' && action.target).every(action => action.type === 'reveal'));
+  const dropped = actions.length - lean.actions.length;
+  assert.equal(lean.moreActions ?? 0, dropped);
 });
 
 // --------------------------------------------------------------------------------------------- caps and warnings

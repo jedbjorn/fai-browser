@@ -150,6 +150,20 @@ test('execute resolves on the observation; the screenshot arrives separately', a
   }
 });
 
+test('execute preserves a bounded reveal receipt through the companion protocol', async () => {
+  const { companion, poll, post, lease } = await setup();
+  try {
+    await lease();
+    const execution = companion.bridge.execute({ type: 'reveal', target: '1' }, 'doc:1', { capture: false });
+    const command = await poll();
+    await post('/results', { id: command.id, result: { observation: { revision: 'doc:2' },
+      reveal: { revealed: false, reason: 'covered', url: 'https://private.example/hidden' } } });
+    const result = await execution;
+    assert.deepEqual(result.reveal, { revealed: false, reason: 'covered' });
+    assert.equal(result.observation.revision, 'doc:2');
+  } finally { await companion.close(); }
+});
+
 test('capture command returns the screenshot from /results; extension errors reject as BridgeError', async () => {
   const { companion, poll, post, lease } = await setup();
   try {

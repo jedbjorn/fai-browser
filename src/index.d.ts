@@ -17,6 +17,10 @@ export interface Control {
   checked?: boolean;
   enabled?: boolean;
   visible?: boolean;
+  /** Extension-assessed presentation. Legacy/custom bridges may omit this field. */
+  actionability?: 'ready' | 'reveal' | 'blocked';
+  /** Bounded diagnostic code for the presentation assessment. */
+  actionabilityReason?: string;
   sensitive?: boolean;
   /**
    * The page script's risk class. `purchase`, `submit`, `delete`, `sign_in` and `consent_accept` need that capability
@@ -30,7 +34,7 @@ export interface Control {
   name?: string;
   bounds?: { x: number; y: number; width: number; height: number };
   options?: Array<{ value: string; label: string; disabled?: boolean }>;
-  /** Rendered but outside the viewport; still actionable (the page script scrolls it into view first). */
+  /** Outside the currently visible region. Explicit actionability determines whether reveal is offered. */
   offscreen?: boolean;
   /** Inside the detected consent dialog. */
   consent?: boolean;
@@ -98,7 +102,13 @@ export interface PageBlock {
   cut?: true;
 }
 
-export interface Observation {
+export type AutomaticPopupsPolicy = 'necessary-newsletter-v1';
+export interface AutomaticPopupEvidence {
+  automatic?: Array<{ operation: 'cookies_necessary' | 'newsletter_dismiss';
+    outcome: 'dismissed' | 'unchanged' | 'unavailable'; reason?: string; ms?: number }>;
+  nuisancePending?: Array<{ operation: 'cookies_necessary' | 'newsletter_dismiss'; reason: string }>;
+}
+export interface Observation extends AutomaticPopupEvidence {
   revision: string;
   documentId?: string;
   tabId?: number;
@@ -148,7 +158,7 @@ export interface CompactObservation {
   title: string;
   text: string;
   controls: Array<Pick<Control, 'id' | 'role' | 'label' | 'type' | 'href' | 'selectedValue' | 'filled' | 'checked'
-    | 'enabled' | 'options'>>;
+    | 'enabled' | 'options' | 'actionability' | 'actionabilityReason'>>;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -157,6 +167,7 @@ export interface CompactObservation {
 
 export type ActionType =
   | 'click'
+  | 'reveal'
   | 'fill_supplied_text'
   | 'select'
   | 'scroll'
@@ -305,6 +316,7 @@ export interface ExecuteResult {
   /** The settled post-action page. */
   observation: Observation;
   settle: Settle;
+  reveal?: { revealed: boolean; reason?: string };
   /** Resolves null when capture was false, an error object on capture failure; never rejects. */
   screenshot: Promise<ScreenshotOutcome>;
 }
@@ -353,6 +365,8 @@ export type Capability = 'navigate' | 'controls' | 'submit_safe' | 'submit' | 'd
   | 'purchase';
 /** The user's approval for a tab request, from the extension's lease message. */
 export interface Grant {
+  /** Narrow popup policy explicitly disclosed by the approving browser UI; absent on legacy grants. */
+  automaticPopups?: AutomaticPopupsPolicy;
   /** Immutable tab access approved by the user; omitted older grants mean single. */
   tabMode?: 'single' | 'multiple';
   level: Level;
@@ -379,6 +393,7 @@ export function checkOriginEntry(value: unknown): { entry: string; root?: string
 export function originCovered(origin: string, entries: readonly string[]): boolean;
 /** Trusted block on every receipt: what the agent asked for, what the user granted and what the run used. */
 export interface Permissions {
+  automaticPopups?: AutomaticPopupsPolicy;
   tabMode?: 'single' | 'multiple';
   requested: Level;
   /** Null when no user grant applies (pending request, or an SDK caller without a grant). */
@@ -488,7 +503,7 @@ export interface AuthorityOptions {
   /** The level the run asks for; clamped to `grant` (and to `full` without a grant: testing needs the user's grant). */
   mode?: Level;
   /** The user's grant for the tab (the daemon and the in-process companion pass the lease's). */
-  grant?: { level: Level; tabMode?: 'single' | 'multiple' };
+  grant?: { level: Level; tabMode?: 'single' | 'multiple'; automaticPopups?: AutomaticPopupsPolicy };
   /** Values for fill_supplied_text, by name. Never placed in offered actions. */
   suppliedText?: Record<string, string>;
 }
@@ -655,7 +670,7 @@ export interface StepObservation {
   controlCount: number;
 }
 
-export interface Step {
+export interface Step extends AutomaticPopupEvidence {
   i: number;
   action: StepAction;
   decision: StepDecision;
@@ -685,6 +700,8 @@ export interface Step {
    * fill_not_kept and makes `changed` false. The field's value is never recorded.
    */
   fill?: { kept: boolean; empty: boolean };
+  /** Scroll-only preparation outcome; false leaves the target unavailable with a fresh offer. */
+  reveal?: { revealed: boolean; reason?: string };
 }
 
 /** A digest block. Untrusted page content. */
@@ -803,7 +820,7 @@ export type OutcomeCode =
   | 'error_page'
   | 'timeout' | 'invalid_observation' | 'config' | 'failed';
 
-export interface RunResult {
+export interface RunResult extends AutomaticPopupEvidence {
   v: 2;
   /** Null only for daemon results decided without a run (select_tab, request_closed, config). */
   runId: string | null;
@@ -1017,7 +1034,7 @@ export interface PointRecord {
   control?: { ref: string; label: string; offered: boolean };
 }
 
-export interface AgentResult {
+export interface AgentResult extends AutomaticPopupEvidence {
   v: 2;
   runId: string | null;
   status: RunStatus;
@@ -1052,7 +1069,7 @@ export interface AgentResult {
     /** A point click: the screenshot pixels, the control ref it resolved to ("point" when unobserved), whether offered. */
     point?: { x: number; y: number; ref?: string; offered?: boolean };
     /** A fill the field did not keep (the run or act ended fill_not_kept). Runtime-written. */
-    fill?: 'not_kept' }>;
+    fill?: 'not_kept'; reveal?: { revealed: boolean; reason?: string } }>;
   cost: { decisions: number; inputTokens: number; outputTokens: number; elapsedMs: number };
   /**
    * A host act that landed on an approved page: the revision its next act may name and the actions offered there,

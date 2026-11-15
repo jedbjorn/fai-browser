@@ -3,7 +3,7 @@
 // Listed test requests may explicitly enable testing with Act. Toolbar approval offers the same choices.
 // It renders from chrome.storage.session (armedTabs, requests) and closes itself once its tab is no longer armed
 // (approved, denied, expired or closed). Everything an agent wrote is rendered with textContent only.
-import { LEVEL_TEXT, levelChoices, normalizePermissions, startTarget } from './permissions.js';
+import { AUTOMATIC_POPUPS_POLICY, AUTOMATIC_POPUPS_TEXT, LEVEL_TEXT, levelChoices, normalizePermissions, startTarget } from './permissions.js';
 import { PIN_HINT, actionShortcut, iconPinned, orShortcut } from './ui.js';
 
 const tabId = Number(new URLSearchParams(location.search).get('tab'));
@@ -69,7 +69,8 @@ function render() {
   document.getElementById('testing-choice').hidden = !canTest;
   if (!canTest) testing.checked = false;
   testing.disabled = approving;
-  help.textContent = 'Use: one task tab, reading and navigation only. Act: actions and up to eight task tabs.';
+  help.textContent = 'Use: one task tab for reading and navigation. Act: actions and up to eight task tabs. '
+    + AUTOMATIC_POPUPS_TEXT + '.';
   warning.hidden = !testing.checked;
   approve.textContent = 'Use';
   act.textContent = 'Act';
@@ -275,7 +276,7 @@ async function complete(arm, prepared, pattern, asked, before, access, level) {
     // The worker read the tab's own URL: the access it needs is the one asked for, or one the browser already holds.
     if (intent.pattern !== pattern) granted = await holds(intent.pattern);
     if (granted === true) say('Approving…');
-    let reply = await chrome.runtime.sendMessage({ type: 'arm_approve', tabId, ...intent, level, granted });
+    let reply = await chrome.runtime.sendMessage({ type: 'arm_approve', tabId, ...intent, level, granted, automaticPopups: AUTOMATIC_POPUPS_POLICY });
     if (reply?.code === 'stale_approval') {
       // The worker restarted after preparing: prepare again once and retry with the access the browser now holds (the
       // worker checks it, the request, the tab and its origin again).
@@ -283,7 +284,7 @@ async function complete(arm, prepared, pattern, asked, before, access, level) {
       intent = await prepare(arm);
       if (!intent) throw new Error('This request changed. Check it and approve again.');
       chrome.runtime.sendMessage({ type: 'arm_begin', tabId, token: intent.token }).catch(() => {});
-      reply = await chrome.runtime.sendMessage({ type: 'arm_approve', tabId, ...intent, level, granted: await holds(intent.pattern) });
+      reply = await chrome.runtime.sendMessage({ type: 'arm_approve', tabId, ...intent, level, granted: await holds(intent.pattern), automaticPopups: AUTOMATIC_POPUPS_POLICY });
     }
     if (reply?.error) throw new Error(reply.error);
     if (reply?.status !== 'active' || reply?.session?.requestId !== intent.requestId || reply?.session?.tabId !== tabId) {

@@ -275,8 +275,7 @@ and exit code.
   only be explicitly enabled with **Act** for testing requests on origins you listed under Advanced, Test sites
   (`http://localhost:3000`, exact origins, no wildcards). Secret-handle use still requires approval;
   filling a saved secret handle into password fields on sign-in forms is currently unsupported.
-- **Cookie dialogs:** Use cannot click their buttons; approve Act to let the agent click the offered reject button. An accept button is offered only when the effective mode is `full`;
-  sign-in controls and password fills are never offered below Test site.
+- **Cookies and newsletters:** New Use and Act approvals include necessary-only cookies and newsletter dismissal. FAI selects a clear reject/necessary-only button or closes an unsolicited newsletter modal, using the same paced clicks and visibility checks as links. Ambiguous choices go to the agent; Use grants no general button access. Accepting optional cookies still requires effective mode `full`. Sign-in controls and password fills are never offered below Test site.
 - **Guardrails you can tighten at any level.** `policy: {"forbid": [...], "note": "..."}` per run or
   in `config.json` adds refused labels, testing included; nothing removes one.
 - **Page text is untrusted.** Receipts separate trusted fields from page text; an injection guard
@@ -344,7 +343,7 @@ permissions take no port: approving `http://127.0.0.1:8080` grants `http://127.0
 
 ## Status and roadmap
 
-FAI Browser is an **early release (v0.9.0)**: the daemon, MCP server, skill, guardrails and benchmark
+FAI Browser is an **early release (v0.10.0)**: the daemon, MCP server, skill, guardrails and benchmark
 harness work and are tested, and interfaces may still change. Open items:
 
 - **Extension UX:** a side panel with a pending-request badge, live run view and real pause and

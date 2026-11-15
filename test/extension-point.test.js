@@ -341,6 +341,8 @@ test('on a high-DPI frame the tags are scaled with the image and the point maps 
   assert.ok(dx <= 4 && dy <= 4, `tag ${JSON.stringify(tag)} at scaled box ${JSON.stringify(box)}`);
 
   // The runtime maps a point of that image back to the page: the centre of Show plan in image pixels clicks it.
+  // The annotator's extension shim belongs to its offscreen document, not this ordinary page fixture.
+  await page.evaluate(() => { delete globalThis.chrome; });
   const bridge = new PageBridge(page, { level: 'reversible' });
   const runtime = new BrowserRuntime({ bridge });
   const observed = await runtime.observe({ mode: 'reversible', allowedOrigins: [ORIGIN] });

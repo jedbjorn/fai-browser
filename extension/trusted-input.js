@@ -121,7 +121,7 @@ async function trustedDetach() {
  * after the first step; a page whose key handlers are slow) no more keys go down and no text goes in: only the keyUps
  * that release what is held, after a beat, and the reply says `late` (the caller inserts the rest).
  */
-async function runTrustedSteps(tabId, steps, viewport, { deadline = null } = {}) {
+async function runTrustedSteps(tabId, steps, viewport, { deadline = null, authorized = () => true } = {}) {
   if (!trustedInputOn()) return { ok: false, dispatched: 0, reason: 'off' };
   if (!Array.isArray(steps) || steps.length > TRUSTED_MAX_STEPS) return { ok: false, dispatched: 0, reason: 'invalid' };
   const box = {
@@ -134,14 +134,37 @@ async function runTrustedSteps(tabId, steps, viewport, { deadline = null } = {})
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   let dispatched = 0;
   let late = false;
-  const held = new Set(); // keys down (by key value), so past the deadline only those come up
+  const held = new Map(); // key value -> release parameters, so revoked/late input releases only what it held
+  let heldMouse = null;
+  let attemptedMousePress = false;
+  const releaseHeld = async () => {
+    if (heldMouse) {
+      try {
+        await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { ...heldMouse, type: 'mouseReleased', buttons: 0 });
+      } catch { /* The tab/debugger may already be gone. Never retry the press. */ }
+      heldMouse = null;
+    }
+    for (const key of [...held.values()].reverse()) {
+      try { await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', key); }
+      catch { /* Release only; a failed cleanup must never replay a keydown. */ }
+    }
+    held.clear();
+  };
+  const revoked = async () => {
+    await releaseHeld();
+    return { ok: false, dispatched, cancelled: true, reason: 'cancelled' };
+  };
   try {
+    if (!authorized()) return await revoked();
     await trustedAttach(tabId);
+    if (!authorized()) return await revoked();
     const started = Date.now();
     for (const step of cleaned) {
+      if (!authorized()) return await revoked();
       if (!late && limit !== null && Date.now() - started > limit) {
         late = true;
         await sleep(TRUSTED_LATE_RELEASE_MS);
+        if (!authorized()) return await revoked();
       }
       if (step.until !== undefined) {
         if (!late) await sleep(Math.max(0, step.until - (Date.now() - started)));
@@ -152,18 +175,32 @@ async function runTrustedSteps(tabId, steps, viewport, { deadline = null } = {})
         continue;
       }
       const keyEvent = step.method === 'Input.dispatchKeyEvent';
-      if (late && !(keyEvent && step.params.type === 'keyUp' && held.has(step.params.key))) continue;
+      if (late && !(keyEvent && step.params.type === 'keyUp' && held.has(step.params.key))
+        && !(heldMouse && step.method === 'Input.dispatchMouseEvent' && step.params.type === 'mouseReleased')) continue;
+      if (step.method === 'Input.dispatchMouseEvent' && step.params.type === 'mousePressed') {
+        attemptedMousePress = true;
+        heldMouse = step.params;
+      }
+      if (keyEvent && step.params.type !== 'keyUp') {
+        const { text: _text, unmodifiedText: _unmodifiedText, commands: _commands, ...key } = step.params;
+        held.set(step.params.key, { ...key, type: 'keyUp' });
+      }
       await chrome.debugger.sendCommand({ tabId }, step.method, step.params);
       dispatched++;
+      if (step.method === 'Input.dispatchMouseEvent') {
+        if (step.params.type === 'mouseReleased') heldMouse = null;
+      }
       if (keyEvent) {
         if (step.params.type === 'keyUp') held.delete(step.params.key);
-        else held.add(step.params.key);
       }
     }
+    if (!authorized()) return await revoked();
     return { ok: true, dispatched, ...(late ? { late: true } : {}) };
   } catch (error) {
+    // A transport failure after a press must not leave a held button or invite a second synthetic activation.
+    await releaseHeld();
     await trustedDetach();
-    return { ok: false, dispatched, reason: String(error?.message || error).slice(0, 200) };
+    return { ok: false, dispatched, ...(attemptedMousePress ? { uncertain: true } : {}), reason: String(error?.message || error).slice(0, 200) };
   } finally {
     if (trustedAttached?.tabId === tabId) {
       clearTimeout(trustedAttached.timer);
@@ -180,13 +217,24 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (message?.kind !== 'fai-trusted-input') return false;
     // Only our own content script, in the top frame of the tab the user approved.
-    const leased = typeof session !== 'undefined' && session?.tabId;
+    const current = typeof session !== 'undefined' ? session : null;
+    const leased = current?.tabId;
     if (sender.id !== chrome.runtime.id || !sender.tab || sender.frameId !== 0 || !leased || sender.tab.id !== leased) {
       respond({ ok: false, dispatched: 0, reason: 'not_leased' });
       return false;
     }
-    runTrustedSteps(sender.tab.id, message.steps, message.viewport, { deadline: message.deadline })
-      .then(respond, () => respond({ ok: false, dispatched: 0 }));
+    const leaseId = current.leaseId;
+    // Capture the original automatic guard: deleting/replacing it after a timed-out page call cannot turn an old
+    // automatic press into ordinary input. Authority is checked again after attach and every asynchronous step.
+    const guard = current.automaticGuard ?? null;
+    const authorized = () => typeof session !== 'undefined' && session === current && current.status === 'active'
+      && current.tabId === leased && current.leaseId === leaseId && trustedInputOn()
+      && (current.automaticGuard ?? null) === guard
+      && (!guard || guard.leaseId === leaseId && guard.tabId === leased && Date.now() < guard.deadline
+        && (typeof cancelled === 'undefined' || !guard.commandId || !cancelled.has(guard.commandId)))
+      && (typeof automaticInputPermitted !== 'function' || automaticInputPermitted(current));
+    runTrustedSteps(sender.tab.id, message.steps, message.viewport, { deadline: message.deadline, authorized })
+      .then(respond, () => respond({ ok: false, dispatched: 0, cancelled: true, reason: 'cancelled' }));
     return true;
   });
   chrome.debugger?.onDetach?.addListener(source => {

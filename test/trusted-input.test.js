@@ -32,7 +32,8 @@ function load({ debuggerApi = true, setting = true } = {}) {
       onDetach: { addListener: () => {} },
     };
   }
-  const context = vm.createContext({ chrome, setTimeout, clearTimeout, console, session: { tabId: 7 } });
+  const context = vm.createContext({ chrome, setTimeout, clearTimeout, console,
+    session: { tabId: 7, leaseId: 'lease-1', status: 'active' }, cancelled: new Set() });
   vm.runInContext(SOURCE, context);
   const send = (message, sender = { id: EXTENSION_ID, tab: { id: 7 }, frameId: 0 }) => new Promise(resolve => {
     const async = listener(message, sender, value => resolve(value === undefined ? value : JSON.parse(JSON.stringify(value))));
@@ -137,6 +138,66 @@ test('without chrome.debugger (the regular build, Firefox) it is always off', as
   await new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(h.context.trustedInputOn(), false);
   assert.deepEqual(await h.send({ kind: 'fai-trusted-input', steps: CLICK, viewport: VIEWPORT }), { ok: false, dispatched: 0, reason: 'off' });
+});
+
+test('a failed mouse release attempts cleanup and marks the press uncertain instead of inviting replay', async () => {
+  const h = load();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  let failed = false;
+  h.context.chrome.debugger.sendCommand = async (target, method, params) => {
+    h.commands.push({ tabId: target.tabId, method, params });
+    if (params.type === 'mouseReleased' && !failed) { failed = true; throw new Error('Transport lost'); }
+  };
+  const reply = await h.send({ kind: 'fai-trusted-input', steps: CLICK.slice(3), viewport: VIEWPORT });
+  assert.equal(reply.ok, false);
+  assert.equal(reply.uncertain, true);
+  assert.equal(reply.dispatched, 1);
+  assert.deepEqual(h.commands.map(command => command.params.type), ['mousePressed', 'mouseReleased', 'mouseReleased']);
+  assert.equal(h.commands.at(-1).params.buttons, 0);
+});
+
+test('trusted replay rechecks the captured lease and automatic guard after a delayed debugger attachment', async () => {
+  for (const mutation of ['stop', 'deadline', 'guard_removed', 'guard_replaced', 'lease', 'session', 'cancel']) {
+    const h = load();
+    await new Promise(resolve => setTimeout(resolve, 5));
+    h.context.session.automaticGuard = { leaseId: 'lease-1', tabId: 7, commandId: 'automatic-1', deadline: Date.now() + 2000 };
+    let attach;
+    h.context.chrome.debugger.attach = () => new Promise(resolve => { attach = resolve; });
+    const reply = h.send({ kind: 'fai-trusted-input', steps: CLICK.slice(3), viewport: VIEWPORT });
+    assert.equal(typeof attach, 'function', mutation);
+    if (mutation === 'stop') h.context.session.status = 'stopped';
+    else if (mutation === 'deadline') h.context.session.automaticGuard.deadline = Date.now() - 1;
+    else if (mutation === 'guard_removed') delete h.context.session.automaticGuard;
+    else if (mutation === 'guard_replaced') h.context.session.automaticGuard = { ...h.context.session.automaticGuard };
+    else if (mutation === 'lease') h.context.session.leaseId = 'lease-2';
+    else if (mutation === 'session') h.context.session = { ...h.context.session };
+    else h.context.cancelled.add('automatic-1');
+    attach();
+    assert.deepEqual(await reply, { ok: false, dispatched: 0, cancelled: true, reason: 'cancelled' }, mutation);
+    assert.deepEqual(h.commands, [], mutation);
+  }
+});
+
+test('revoked trusted input releases only held mouse/key inputs and sends no subsequent presses', async () => {
+  for (const kind of ['mouse', 'key']) {
+    const h = load();
+    await new Promise(resolve => setTimeout(resolve, 5));
+    h.context.chrome.debugger.sendCommand = async (target, method, params) => {
+      h.commands.push({ tabId: target.tabId, method, params });
+      if (params.type === 'mousePressed' || params.type === 'keyDown') h.context.session.status = 'stopped';
+    };
+    const steps = kind === 'mouse' ? [...CLICK.slice(3), ...CLICK.slice(3)] : [
+      { m: 'key', type: 'keyDown', key: 'a', code: 'KeyA', keyCode: 65, text: 'a' }, { wait: 100 },
+      { m: 'key', type: 'keyUp', key: 'a', code: 'KeyA', keyCode: 65 },
+      { m: 'key', type: 'keyDown', key: 'b', code: 'KeyB', keyCode: 66, text: 'b' },
+    ];
+    const reply = await h.send({ kind: 'fai-trusted-input', steps, viewport: VIEWPORT });
+    assert.equal(reply.cancelled, true);
+    assert.equal(reply.dispatched, 1);
+    assert.deepEqual(h.commands.map(command => command.params.type), kind === 'mouse'
+      ? ['mousePressed', 'mouseReleased'] : ['keyDown', 'keyUp']);
+    if (kind === 'key') assert.equal(h.commands[1].params.key, 'a');
+  }
 });
 
 test('the debugger permission lives only in the trusted-input build', async () => {

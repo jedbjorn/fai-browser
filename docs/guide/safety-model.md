@@ -38,7 +38,7 @@ and nothing above your grant runs. Results report requested, granted and effecti
 
 Testing adds sign-in and payment fields only when the agent requested `testing`, every origin is listed under
 Advanced → Test sites, and you explicitly enable the test-only option with Act. Origin, policy, redaction and
-approval protections still apply. Cookie and popup buttons require Act; Use permits no such actions.
+approval protections still apply. Agent-selected cookie and popup buttons require Act. New approvals separately disclose necessary-only cookies and newsletter dismissal: FAI may take only those narrowly validated, paced actions under Use or Act; ambiguous cases return to the agent. This scope does not grant general button access.
 
 ## 3. Guardrails run three times
 

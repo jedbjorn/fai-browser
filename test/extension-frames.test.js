@@ -196,6 +196,61 @@ test('approved cross-origin frames in real Chromium: read, act, refuse, nest, pr
     assert.equal(await frame.evaluate(() => document.getElementById('s').textContent), 'Review state: reviewed');
   });
 
+  await t.test('parent coverage suppresses frame text and refuses a previously ready frame target', async () => {
+    const before = await bridge.observe();
+    const button = before.controls.find(control => control.label === 'Mark reviewed');
+    await page.evaluate(() => {
+      const cover = document.createElement('div'); cover.id = 'test-cover';
+      cover.style = 'position:fixed;inset:0;background:white;z-index:99999'; document.body.append(cover);
+    });
+    const code = await codeOf(bridge.execute({ type: 'click', target: button.id }, before.revision, { capture: false }));
+    assert.ok(['target_unavailable', 'stale'].includes(code), code);
+    const covered = await bridge.observe();
+    assert.equal(covered.controls.find(control => control.label === 'Mark reviewed').actionability, 'blocked');
+    assert.doesNotMatch(covered.text, /Tenant ID|Review state/);
+    assert.ok(!covered.blocks?.some(block => /Tenant ID|Review state/.test(block.text)));
+    await page.evaluate(() => document.querySelector('#test-cover').remove());
+  });
+
+  await t.test('offscreen approved frame target reveals its ancestors without activation', async () => {
+    await page.evaluate(() => document.querySelector('#blade').style.marginTop = '1200px');
+    const before = await bridge.observe();
+    const button = before.controls.find(control => control.label === 'Mark reviewed');
+    assert.equal(button.actionability, 'reveal');
+    const result = await bridge.execute({ type: 'reveal', target: button.id }, before.revision, { capture: false });
+    assert.equal(result.reveal.revealed, true);
+    assert.notEqual(result.observation.revision, before.revision);
+    assert.equal(result.observation.controls.find(control => control.label === 'Mark reviewed').actionability, 'ready');
+    await page.evaluate(() => { document.querySelector('#blade').style.marginTop = ''; scrollTo(0, 0); });
+  });
+
+  await t.test('a lost automatic frame reply spends one shared attempt and is never retried', async () => {
+    await bridge.observe();
+    const result = await worker.evaluate(async () => {
+      const original = chrome.scripting.executeScript.bind(chrome.scripting);
+      let calls = 0;
+      chrome.scripting.executeScript = async options => {
+        const reply = await original(options);
+        if (options.func?.name === 'pageCall' && options.args?.[0] === 'clearNuisances') {
+          calls++;
+          throw new Error('Simulated lost automatic frame reply after dispatch');
+        }
+        return reply;
+      };
+      try {
+        const result = await faiFrames.clearNuisances(session.tabId, { enabled: true, remaining: 1,
+          deadline: Date.now() + 2000, allow: ['navigate'], terms: ['hotels'], operations: ['cookies_necessary'] });
+        return { ...result, calls };
+      } finally { chrome.scripting.executeScript = original; }
+    });
+    assert.equal(result.calls, 1);
+    assert.equal(result.attempted, 1);
+    assert.equal(result.stopped, true);
+    assert.equal(result.automatic[0].operation, 'cookies_necessary');
+    assert.equal(result.automatic[0].outcome, 'unavailable');
+    assert.equal(result.automatic[0].reason, 'input_unavailable');
+  });
+
   await t.test('review #4: the frame document vanishing between the probe and the act is cross_origin, never a success', async () => {
     await page.goto(`${origins.top}/`);
     await page.waitForLoadState('load');

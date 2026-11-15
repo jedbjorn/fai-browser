@@ -61,6 +61,14 @@ async function open(t, frameBody, { frameTitle = 'Blade', top = null } = {}) {
   const frame = page.frames().find(item => item.url().startsWith(FRAME));
   await frame.waitForLoadState('load');
   await frame.addScriptTag({ path: PAGE_SCRIPT });
+  // Simulate only the worker's authenticated frame-point broker; the actual parent
+  // hit ownership is still checked by page.js in Chromium.
+  await page.exposeBinding('__framePointBridge', async (_source, point) => ({ ok: true,
+    valid: Boolean(await page.evaluate(point => __faiPage.framePoint([0], point), point)) }));
+  await frame.evaluate(() => {
+    globalThis.chrome = { runtime: { sendMessage: message => message.kind === 'fai.framePoint'
+      ? globalThis.__framePointBridge(message.point) : Promise.resolve({ ok: false }) } };
+  });
   return { page, frame };
 }
 

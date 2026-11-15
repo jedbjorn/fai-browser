@@ -28,6 +28,7 @@ import { automaticCheck, createUpdateChecker, runningUpdate, underTest, claimUpd
 import { gitReleaseSource, scrubbedEnv } from './update-git.js';
 import { SessionError, SESSION_POLL_MAX_MS, createSessionRegistry } from './sessions.js';
 import { cleanInviteText } from './wake.js';
+import { automaticPopupScope } from './automatic-popups.js';
 
 export const DAEMON_VERSION = readPackageVersion();
 export const SERVICE_NAME = 'fai-browser';
@@ -225,6 +226,7 @@ function permissionsOf(mode, record) {
   const scope = record.grant ? (record.grant.scope === 'domain' ? 'domain' : 'origin') : null;
   return { requested: mode, granted, effective, testing: effective === 'testing', scope,
     tabMode: record.grant?.tabMode ?? 'single',
+    ...automaticPopupScope(record.grant),
     // The browser that holds the tab, when several may be paired (issue #9).
     ...(record.lease?.browserId && record.browser?.name ? { browser: { ...record.browser } } : {}) };
 }
@@ -238,14 +240,14 @@ const LEVEL_RAISE_MESSAGE = 'A lease_level message can only lower the level; rai
  * keeps the old behaviour: reversible when the request asked for at least that, else read-only. Null for an
  * invalid level (the lease is refused).
  */
-export function grantFor(level, record, grantedAt, scope = 'origin', tabMode = 'single') {
+export function grantFor(level, record, grantedAt, scope = 'origin', tabMode = 'single', automaticPopups) {
   if (!['single', 'multiple'].includes(tabMode)) return null;
   if (level === undefined || level === null) {
     const fallback = levelRank(record.mode) >= MODE_RANK.reversible ? 'reversible' : 'read-only';
-    return { level: fallback, testing: false, grantedAt, scope, tabMode };
+    return { level: fallback, testing: false, grantedAt, scope, tabMode, ...automaticPopupScope({ automaticPopups }) };
   }
   if (!isLevel(level)) return null;
-  return { level, testing: level === 'testing', grantedAt, scope, tabMode };
+  return { level, testing: level === 'testing', grantedAt, scope, tabMode, ...automaticPopupScope({ automaticPopups }) };
 }
 
 function checkAllowedUrls(body, record) {
@@ -929,6 +931,7 @@ export function createDaemon(options = {}) {
     if (from.askedUrls?.length) to.askedUrls = [...from.askedUrls];
     if (from.lastTask) to.lastTask = { ...from.lastTask };
     if (from.seenUrls?.size) to.seenUrls = new Set([...from.seenUrls, ...(to.seenUrls ?? [])]);
+    if (from.exposedUrls?.size) to.exposedUrls = new Set([...from.exposedUrls, ...(to.exposedUrls ?? [])]);
   }
 
   /** The live request that replaced `record` as its successor (an ask while it was pending), following the chain; else null. */
@@ -1063,7 +1066,7 @@ export function createDaemon(options = {}) {
       && sameBrowser(record, event.browserId)
       && originCovered(event.origin, record.origins) && event.level !== undefined && event.level !== null) {
       const scope = leaseScope(event, record);
-      const grant = grantFor(event.level, record, iso(now()), scope, event.tabMode ?? 'single');
+      const grant = grantFor(event.level, record, iso(now()), scope, event.tabMode ?? 'single', event.automaticPopups);
       if (!grant) {
         return { error: { code: 'bad_request', message: `level must be one of ${LEVELS.join(', ')}` } };
       }
@@ -1197,7 +1200,7 @@ export function createDaemon(options = {}) {
     // The scope the user approved: `domain` (the request's domain roots, with Chrome's host permission granted in the
     // extension) or `origin` (the tab's exact origin in place of a root, as for any exact request).
     const scope = leaseScope(event, record);
-    const grant = grantFor(event.level, record, iso(now()), scope, event.tabMode ?? 'single');
+    const grant = grantFor(event.level, record, iso(now()), scope, event.tabMode ?? 'single', event.automaticPopups);
     if (!grant) {
       return { error: { code: 'bad_request', message: `level must be one of ${LEVELS.join(', ')}` } };
     }
@@ -1248,6 +1251,8 @@ export function createDaemon(options = {}) {
     // own task and reason text count too (an address the user gave there).
     record.seenUrls ??= new Set();
     record.runtime.seenUrls = record.seenUrls;
+    record.exposedUrls ??= new Set();
+    record.runtime.exposedUrls = record.exposedUrls;
     record.runtime.noteSeenText?.(record.reason);
     record.runtime.noteSeenText?.(record.instruction);
     record.bridge = hub.bridgeFor(leaseId);
@@ -2545,7 +2550,8 @@ export function createDaemon(options = {}) {
     try {
       const look = () => record.runtime.observe({
         mode: spec.mode,
-        grant: { level: record.grant?.level ?? 'read-only', tabMode: record.grant?.tabMode ?? 'single' },
+        grant: { level: record.grant?.level ?? 'read-only', tabMode: record.grant?.tabMode ?? 'single',
+          ...automaticPopupScope(record.grant) },
         allowedOrigins: coveredOrigins(record),
         allowedUrls: terms.allowedUrls,
         suppliedText: terms.suppliedText,

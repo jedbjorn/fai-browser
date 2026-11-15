@@ -303,7 +303,7 @@ test('controls under the cap: viewport first, then DOM order, off-screen links f
   assert.deepEqual(labels.slice(0, 40), Array.from({ length: 40 }, (_, i) => `Top link ${i + 1}`));
   assert.deepEqual(labels.slice(40), Array.from({ length: 60 }, (_, i) => `Lower link ${i + 1}`));
   assert.ok(observation.controls.slice(0, 40).every(c => c.offscreen === undefined && c.visible === true));
-  assert.ok(observation.controls.slice(40).every(c => c.offscreen === true && c.visible === true));
+  assert.ok(observation.controls.slice(40).every(c => c.offscreen === true && c.visible === false && c.actionability === 'reveal'));
   assert.deepEqual(observation.controls.map(c => c.id), Array.from({ length: 100 }, (_, i) => String(i + 1)));
 });
 
@@ -316,9 +316,16 @@ test('an instruction term pulls an off-screen match under the cap, right after t
   assert.equal(observation.controls[40].offscreen, true);
   assert.deepEqual(labels.slice(41, 44), ['Lower link 1', 'Lower link 2', 'Lower link 3']);
 
-  // The terms are remembered: the pre-dispatch check orders the same way, so the decision is not stale, and the
-  // off-screen target is scrolled into view and followed.
-  const result = await execute(page, { type: 'click', target: observation.controls[40].id }, observation.revision);
+  // Discovery grants scrolling only. A fresh observation supplies the subsequently reachable click target.
+  const premature = await execute(page, { type: 'click', target: observation.controls[40].id }, observation.revision);
+  assert.equal(premature.error?.code, 'target_unavailable');
+  const revealed = await execute(page, { type: 'reveal', target: observation.controls[40].id }, observation.revision);
+  assert.equal(revealed.error, undefined, JSON.stringify(revealed.error));
+  assert.equal(revealed.value.reveal.revealed, true);
+  const fresh = revealed.value.observation;
+  const ready = byLabel(fresh, 'Quarterly report archive');
+  assert.equal(ready.actionability, 'ready');
+  const result = await execute(page, { type: 'click', target: ready.id }, fresh.revision);
   assert.equal(result.error, undefined, JSON.stringify(result.error));
   assert.equal(result.value.expectNavigation, true);
   assert.equal(result.value.target.label, 'Quarterly report archive');
