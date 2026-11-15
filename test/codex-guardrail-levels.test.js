@@ -43,7 +43,7 @@ test.afterEach(() => {
   live.clear();
 });
 
-function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode = 'daemon', leaseOrigins = null, permissions } = {}) {
+function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode = 'daemon', leaseOrigins = null, permissions, hostGrants = [] } = {}) {
   const events = name => ({
     listeners: [],
     addListener(listener) { this.listeners.push(listener); },
@@ -52,6 +52,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     name,
   });
   const state = { ws, http };
+  const grantedHosts = new Set(hostGrants);
   const sent = []; // every extension->daemon message, from either transport: {via, type, ...}
   const sockets = [];
   const delays = [];
@@ -126,7 +127,9 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
   function answer(message) {
     if (message.type === 'hello') return { ok: true, data: { mode, daemonVersion: '0.2.0', endSession: false } };
     if (message.type === 'lease') {
-      return { ok: true, data: { leaseId: LEASE_ID, requestId: message.requestId, ...(leaseOrigins ? { origins: leaseOrigins } : {}) } };
+      return { ok: true, data: { leaseId: LEASE_ID, requestId: message.requestId,
+        grant: { level: message.level, tabMode: message.tabMode ?? 'single' },
+        ...(leaseOrigins ? { origins: leaseOrigins } : {}) } };
     }
     if (message.type === 'validate') return { ok: true, data: { valid: true } };
     return { ok: true, data: { ok: true } };
@@ -207,6 +210,11 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       onAlarm: alarms,
     },
     offscreen: { async hasDocument() { return true; }, async createDocument() {} },
+    permissions: {
+      async contains({ origins }) { return origins.every(origin => grantedHosts.has(origin)); },
+      async getAll() { return { permissions: [], origins: [...grantedHosts] }; },
+      async remove({ origins }) { for (const origin of origins) grantedHosts.delete(origin); return true; },
+    },
     tabs: {
       onCreated: events('onCreated'),
       onActivated: events('onActivated'),
@@ -512,7 +520,9 @@ test('forbid remains restrictive in page and runtime at testing', async t => {
 });
 
 async function startWorker({ level = 'testing', origins = [ORIGIN], listed = origins, tab = ORIGIN, leaseOrigins = origins } = {}) {
-  const h = harness({ permissions: { testingOrigins: listed }, leaseOrigins });
+  // The explicit Act/testing click obtained native access only for the requested exact hosts.
+  const hostGrants = origins.map(origin => { const url = new URL(origin); return `${url.protocol}//${url.hostname}/*`; });
+  const h = harness({ permissions: { testingOrigins: listed }, leaseOrigins, hostGrants });
   h.tab.url = tab + '/';
   await h.waitFor(m => m.type === 'hello');
   h.push({ type: 'requests', requests: [{ requestId: 'req_1', state: 'pending', origins, mode: 'testing' }] });
@@ -555,12 +565,14 @@ test('testing refuses unlisted tab and origins substituted in lease reply', asyn
   }
 });
 test('removing current origin drops testing to full; consent redirect to removed origin also drops', async () => {
-  const { h } = await startWorker();
+  const { h, reply } = await startWorker();
+  assert.equal(reply.status, 'active', JSON.stringify(reply));
   h.local.permissions = { testingOrigins: [] };
   h.emitStorage({ permissions: { newValue: h.local.permissions } }, 'local');
   assert.deepEqual(await workerAllow(h), CAPABILITIES.full);
   const consent = 'https://consent.example.com';
-  const { h: c } = await startWorker({ origins: [consent, ORIGIN], tab: consent });
+  const { h: c, reply: consentReply } = await startWorker({ origins: [consent, ORIGIN], tab: consent });
+  assert.equal(consentReply.status, 'active', JSON.stringify(consentReply));
   c.local.permissions = { testingOrigins: [consent] };
   c.emitStorage({ permissions: { newValue: c.local.permissions } }, 'local');
   c.tab.url = ORIGIN + '/';
@@ -568,7 +580,8 @@ test('removing current origin drops testing to full; consent redirect to removed
 });
 test('fixed: removing a requested non-current origin revokes testing immediately', async () => {
   const other = 'https://other.test';
-  const { h } = await startWorker({ origins: [ORIGIN, other] });
+  const { h, reply } = await startWorker({ origins: [ORIGIN, other] });
+  assert.equal(reply.status, 'active', JSON.stringify(reply));
   h.local.permissions = { testingOrigins: [ORIGIN] };
   h.emitStorage({ permissions: { newValue: h.local.permissions } }, 'local');
   assert.deepEqual(await workerAllow(h), CAPABILITIES.full);
