@@ -165,7 +165,7 @@ test('the timeout exits 2 with the last state and a relay next', async t => {
   assert.equal(result.state, 'timeout');
   assert.equal(result.lastState, 'paused');
   assert.equal(result.next.kind, 'relay');
-  assert.match(result.next.text, /still paused after 500ms.*click Resume/);
+  assert.match(result.next.text, /still paused after 500ms.*choose Use or Act to resume/);
   assert.ok(result.waitedMs >= 450 && result.waitedMs < 3000, `waited ${result.waitedMs} ms`);
 
   assert.match(result.next.text, /then call fai_browser_observe with requestId/);
@@ -367,7 +367,7 @@ test('a paused lease: next tells the agent to relay Resume and start the wait in
   for (const code of ['paused', 'tab_changed', 'origin_changed', 'child_tab', 'session_inactive', 'disconnected']) {
     const next = directNext({ status: 'needs_user', code }, { requestId: 'req_9' });
     assert.equal(next.kind, 'relay', code);
-    assert.match(next.text, /click Resume in the FAI Browser extension/);
+    assert.match(next.text, /choose Use or Act to resume in the FAI Browser extension/);
     assert.match(next.text, /call fai_browser_observe with requestId req_9\./);
     assert.ok(next.text.includes(`start \`${command}\` that way now, if one is not already running for this request, `
       + 'and end your turn'), next.text);

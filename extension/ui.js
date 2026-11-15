@@ -80,14 +80,17 @@ export const TESTING_WARNING = 'For your test sites only. The agent may log in, 
  * permission arrives (Chrome's prompt can close the popup first). Resolves `{ blocked }` when a remembered grant is
  * still being ended, else `{ domain, granted: Promise<boolean> }`.
  */
-export function askSiteAccess(scope, { requestId, level, intent = false, origins = [], tabMode = 'single' }) {
+export function askSiteAccess(scope, { requestId, level, intent = false, approve = false, origins = [], tabMode = 'single' }) {
   const domain = scope?.value() === 'domain';
   const kind = scope?.prompt()?.kind;
-  // The remembered grant is still being ended (the popup's endRemembered): approving now would skip Chrome's prompt.
-  if (domain && kind === 'again') return { blocked: true };
   let granted = Promise.resolve(false);
   // Firefox build only: the request's exact origins too, in the same prompt (see exactOriginPatterns).
   const exact = exactOriginPatterns(origins, { gecko: GECKO_BUILD || tabMode === 'multiple' });
+  const intentId = intent ? `open-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}` : null;
+  if (intent) {
+    chrome.runtime.sendMessage({ type: 'intent', intentId, requestId, level, approve,
+      scope: domain ? 'domain' : 'origin', patterns: [...(domain ? scope.patterns : []), ...exact] }).catch(() => {});
+  }
   if (tabMode === 'multiple' && exact.length) chrome.runtime.sendMessage({ type: 'track', patterns: exact }).catch(() => {});
   if (!domain && exact.length && chrome.permissions?.request) {
     expectOrigins(exact);
@@ -96,13 +99,14 @@ export function askSiteAccess(scope, { requestId, level, intent = false, origins
   if (domain && chrome.permissions?.request) {
     if (exact.length) expectOrigins(exact);
     granted = chrome.permissions.request({ origins: [...scope.patterns, ...exact] }).then(Boolean, () => false);
-    if (intent) {
-      chrome.runtime.sendMessage({ type: 'intent', requestId, level, patterns: scope.patterns }).catch(() => {});
-    }
     // The worker tracks what this extension requested (it never removes a site the user allowed by hand).
     if (kind !== 'granted') chrome.runtime.sendMessage({ type: 'track', patterns: scope.patterns }).catch(() => {});
   }
-  return { blocked: false, domain, granted };
+  if (intent) granted = granted.then(ok => {
+    if (!ok) chrome.runtime.sendMessage({ type: 'intent_cancel', intentId, requestId }).catch(() => {});
+    return ok;
+  });
+  return { blocked: false, domain, granted, intentId, requestId };
 }
 
 // Firefox ends activeTab at a tab's first navigation (Chrome keeps it until the tab leaves the origin), so in the

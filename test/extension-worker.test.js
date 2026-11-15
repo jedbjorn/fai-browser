@@ -41,7 +41,7 @@ test.afterEach(() => {
 function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode = 'daemon', leaseOrigins = null, permissions,
   hostGrants, local: extraLocal = {}, leaseError = null, opened = null, sessionStore = {}, daemonBudget = null,
   native = null, actionOpenPopup = null, lastWindow = undefined, normalWindows = [], tabCreateFails = false,
-  daemonVersion = '0.2.0', daemonUpdate = null, manifest = {}, leaseIdFor = null } = {}) {
+  daemonVersion = '0.2.0', daemonUpdate = null, manifest = {}, leaseIdFor = null, leaseGrant = null } = {}) {
   const reloads = []; // chrome.runtime.reload() calls (an update's reload of the unpacked extension)
   const nativeCalls = []; // chrome.runtime.sendNativeMessage(host, message) calls
   const events = name => ({
@@ -194,11 +194,11 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       if (leaseError) return { ok: false, error: { code: leaseError, message: 'Refused' } };
       const origins = typeof leaseOrigins === 'function' ? leaseOrigins(message) : leaseOrigins;
       const leaseId = typeof leaseIdFor === 'function' ? leaseIdFor(message) : LEASE_ID;
-      return { ok: true, data: { leaseId, requestId: message.requestId, grant: { tabMode: message.tabMode ?? 'single' }, ...(origins ? { origins } : {}) } };
+      return { ok: true, data: { leaseId, requestId: message.requestId, grant: leaseGrant ?? { tabMode: message.tabMode ?? 'single' }, ...(origins ? { origins } : {}) } };
     }
     if (message.type === 'validate') return { ok: true, data: { valid: true } };
     if (message.type === 'invite') {
-      return { ok: true, data: { leaseId: LEASE_ID, requestId: 'req_inv', grant: { level: message.level, tabMode: 'single' },
+      return { ok: true, data: { leaseId: LEASE_ID, requestId: 'req_inv', grant: leaseGrant ?? { level: message.level, tabMode: message.tabMode ?? 'single' },
         origins: [message.origin], invite: { inviteId: 'inv-abcd2345', state: 'open', wake: { state: 'queued' } } } };
     }
     if (message.type === 'agents') {
@@ -633,7 +633,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
 }
 
 async function started(options = {}) {
-  const h = harness(options);
+  const h = harness({ ...(['full', 'testing'].includes(options.level) ? { hostGrants: [`${ORIGIN}/*`] } : {}), ...options });
   await h.waitFor(m => m.type === 'hello');
   const level = options.level ? { level: options.level } : {};
   const reply = await h.send({ type: 'start', requestId: 'req_1', endpoint: ENDPOINT, secret: SECRET, ...level, ...(options.tabMode ? { tabMode: options.tabMode } : {}) });
@@ -658,7 +658,7 @@ test('a paired worker connects on startup with the auth subprotocol and says hel
   // `budget`: the per-request budget the daemon says is in effect (this fake daemon names none).
   assert.deepEqual(h.session.connection, { connected: true, transport: 'websocket', budget: null, paired: true, native: null,
     browserId: h.local.browserId });
-  assert.deepEqual(hello.settings, { budget: null, openRightAway: true, tabMode: 'single', approvals: ASKS },
+  assert.deepEqual(hello.settings, { budget: null, openRightAway: true, approvals: ASKS },
     'the hello reports the user\'s budget setting (none set) and that requested pages open right away (the default)');
   assert.deepEqual(h.alarmsCreated, [{ name: 'fai-reconnect', periodInMinutes: 0.5 }]);
 });
@@ -966,7 +966,7 @@ test('a child_tab pause names the child\'s origin only, also once it leaves abou
 
 const multiLease = { id: LEASE_ID, tabId: 7, requestId: 'req_1', tabMode: 'multiple' };
 async function multipleTask() {
-  return started({ hostGrants: [`${ORIGIN}/*`], local: { tabMode: 'multiple' }, tabMode: 'multiple' });
+  return started({ level: 'full', hostGrants: [`${ORIGIN}/*`], local: { tabMode: 'single' } });
 }
 async function taskOpen(h, url = `${ORIGIN}/next`, lease = multiLease) {
   const id = h.command('execute', { action: { type: 'open_tab', url }, expectedRevision: 'doc:1' }, { lease });
@@ -997,7 +997,7 @@ test('multiple-tab approval creates a tab in the task window and group, switches
 test('multiple tabs requires native site access and both immutable grants; origins and eight-tab limit hold', async () => {
   const denied = harness({ hostGrants: [], local: { tabMode: 'multiple' } });
   await denied.waitFor(m => m.type === 'hello');
-  const reply = await denied.send({ type: 'start', requestId: 'req_1', tabMode: 'multiple' });
+  const reply = await denied.send({ type: 'start', requestId: 'req_1', level: 'full', tabMode: 'multiple' });
   assert.match(reply.error, /site access/);
   assert.equal(denied.sent.some(m => m.type === 'lease'), false);
   const h = await multipleTask();
@@ -1041,14 +1041,15 @@ test('concurrent page children cannot exceed the lease cap or receive duplicate 
   assert.equal(h.groupOf.has(90) && h.groupOf.has(91), false, 'both children never join a full lease');
 });
 
-test('revoking site permission or switching to single stops further multiple-tab work', async () => {
+test('Act ignores the obsolete tab setting but still requires native site access', async () => {
   const h = await multipleTask();
   h.grants.clear();
   assert.equal((await taskOpen(h)).error.code, 'blocked_risky');
   assert.equal(h.tabsCreated.length, 0);
   h.emitStorage({ tabMode: { newValue: 'single' } }, 'local');
-  await h.waitFor(m => m.type === 'status' && m.status === 'paused');
-  assert.equal((await taskOpen(h)).error.code, 'paused');
+  assert.equal((await h.send({ type: 'connect' })).session.tabMode, 'multiple');
+  h.grants.add(`${ORIGIN}/*`);
+  assert.equal((await taskOpen(h)).error, undefined);
 });
 
 test('off-origin navigation is rejected without pausing; the user can pause', async () => {
@@ -1645,7 +1646,7 @@ test('testing is granted only when every requested origin is a listed testing en
   assert.match(refused.error, /Testing environments/);
   assert.equal(h.sent.some(m => m.type === 'lease'), false, 'no lease is asked for');
 
-  const ok = harness({ permissions: { testingOrigins: [TEST_ORIGIN, 'http://localhost:3000'] } });
+  const ok = harness({ hostGrants: [`${ORIGIN}/*`], permissions: { testingOrigins: [TEST_ORIGIN, 'http://localhost:3000'] } });
   await ok.waitFor(m => m.type === 'hello');
   await withRequest(ok, [TEST_ORIGIN]);
   const reply = await ok.send({ type: 'start', requestId: 'req_1', endpoint: ENDPOINT, secret: SECRET, level: 'testing' });
@@ -1657,7 +1658,7 @@ test('testing is granted only when every requested origin is a listed testing en
 });
 
 test('testing is refused without a known request, with an unlisted tab origin, or with malformed stored origins', async () => {
-  const unknown = harness({ permissions: { testingOrigins: [TEST_ORIGIN] } });
+  const unknown = harness({ hostGrants: [`${ORIGIN}/*`], permissions: { testingOrigins: [TEST_ORIGIN] } });
   await unknown.waitFor(m => m.type === 'hello');
   const noRequest = await unknown.send({ type: 'start', requestId: 'req_1', endpoint: ENDPOINT, secret: SECRET, level: 'testing' });
   assert.match(noRequest.error, /Testing environments/, 'the popup cannot vouch for a request the worker never saw');
@@ -1671,7 +1672,7 @@ test('testing is refused without a known request, with an unlisted tab origin, o
 });
 
 test('a lease bound to an origin that is not listed is given back instead of running in testing mode', async () => {
-  const h = harness({ permissions: { testingOrigins: [TEST_ORIGIN] }, leaseOrigins: [TEST_ORIGIN, 'https://prod.example.com'] });
+  const h = harness({ hostGrants: [`${ORIGIN}/*`], permissions: { testingOrigins: [TEST_ORIGIN] }, leaseOrigins: [TEST_ORIGIN, 'https://prod.example.com'] });
   await h.waitFor(m => m.type === 'hello');
   await withRequest(h, [TEST_ORIGIN]);
   const reply = await h.send({ type: 'start', requestId: 'req_1', endpoint: ENDPOINT, secret: SECRET, level: 'testing' });
@@ -1681,7 +1682,7 @@ test('a lease bound to an origin that is not listed is given back instead of run
 });
 
 test('removing the testing environment mid-session drops the grant to Full at once', async () => {
-  const h = harness({ permissions: { testingOrigins: [TEST_ORIGIN] } });
+  const h = harness({ hostGrants: [`${ORIGIN}/*`], permissions: { testingOrigins: [TEST_ORIGIN] } });
   await h.waitFor(m => m.type === 'hello');
   await withRequest(h, [TEST_ORIGIN]);
   await h.send({ type: 'start', requestId: 'req_1', endpoint: ENDPOINT, secret: SECRET, level: 'testing' });
@@ -1694,7 +1695,7 @@ test('removing the testing environment mid-session drops the grant to Full at on
 });
 
 test('a revoked testing session tells the daemon the lowered level once, and re-listing the origin does not restore it', async () => {
-  const h = harness({ permissions: { testingOrigins: [TEST_ORIGIN] } });
+  const h = harness({ hostGrants: [`${ORIGIN}/*`], permissions: { testingOrigins: [TEST_ORIGIN] } });
   await h.waitFor(m => m.type === 'hello');
   await withRequest(h, [TEST_ORIGIN]);
   await h.send({ type: 'start', requestId: 'req_1', endpoint: ENDPOINT, secret: SECRET, level: 'testing' });
@@ -1713,7 +1714,7 @@ test('a revoked testing session tells the daemon the lowered level once, and re-
 });
 
 test('a revocation found when the popup connects is reported too, and the hello carries the lowered level', async () => {
-  const h = harness({ permissions: { testingOrigins: [TEST_ORIGIN] } });
+  const h = harness({ hostGrants: [`${ORIGIN}/*`], permissions: { testingOrigins: [TEST_ORIGIN] } });
   await h.waitFor(m => m.type === 'hello');
   await withRequest(h, [TEST_ORIGIN]);
   await h.send({ type: 'start', requestId: 'req_1', endpoint: ENDPOINT, secret: SECRET, level: 'testing' });
@@ -1727,7 +1728,7 @@ test('a revocation found when the popup connects is reported too, and the hello 
 });
 
 test('connect re-reads the testing environments, so the popup sees Full before the worker\'s onChanged fires', async () => {
-  const h = harness({ permissions: { testingOrigins: [TEST_ORIGIN] } });
+  const h = harness({ hostGrants: [`${ORIGIN}/*`], permissions: { testingOrigins: [TEST_ORIGIN] } });
   await h.waitFor(m => m.type === 'hello');
   await withRequest(h, [TEST_ORIGIN]);
   await h.send({ type: 'start', requestId: 'req_1', endpoint: ENDPOINT, secret: SECRET, level: 'testing' });
@@ -1741,7 +1742,7 @@ const SITE_ROOT = 'https://*.example.com';
 const SITE_PATTERN = 'https://*.example.com/*';
 
 async function startedOnSite({ scope = 'domain', level, allow = true, local, origins = [SITE_ROOT], hostGrants = [] } = {}) {
-  const h = harness({ hostGrants, local, leaseOrigins: scope === 'domain' ? origins : [ORIGIN] });
+  const h = harness({ hostGrants: [...hostGrants, ...(['full', 'testing'].includes(level) ? [`${ORIGIN}/*`] : [])], local, leaseOrigins: scope === 'domain' ? origins : [ORIGIN] });
   await h.waitFor(m => m.type === 'hello');
   await sleep(10);
   // The popup reports the pattern it requests (track) and Chrome grants it; the worker start's reconcile has run.
@@ -1977,12 +1978,12 @@ async function armed({ origins = [SHOP], url = `${SHOP}/cart`, level = 'reversib
   return { h, reply };
 }
 
-test('open arms the tab: no popup there, ? badge, FAI ? group, no lease', async () => {
+test('open arms the tab: Use/Act popup, ? badge, FAI ? group, no lease', async () => {
   const { h, reply } = await armed();
   assert.equal(reply.error, undefined, JSON.stringify(reply.error));
   assert.deepEqual(clone(h.tabsCreated), [{ windowId: 2, url: `${SHOP}/cart`, active: true }]);
   assert.deepEqual(h.windowsCreated, []);
-  assert.equal(h.tabPopups.get(9), '');
+  assert.equal(h.tabPopups.get(9), 'popup.html');
   assert.equal(h.tabBadges.get(9), '?');
   await h.until(() => [...h.groups.values()].some(group => group.title === 'FAI ?'));
   assert.equal(h.sent.some(m => m.type === 'lease'), false);
@@ -2030,8 +2031,8 @@ test('a browser without tab groups still opens and arms a task tab in the existi
 
 // Issue #36: two quick icon clicks while the service is disconnected both wait for the reconnect; only the first
 // that finds the arm current approves (the second re-reads it after the wait).
-test('two icon clicks during a disconnect lease the tab once', async () => {
-  const { h } = await armed();
+test('two icon clicks during a disconnect never approve the remembered armed level', async () => {
+  const { h } = await armed({ level: 'full' });
   h.state.ws = 'fail';
   h.state.http = 'fail';
   h.socket.close();
@@ -2039,23 +2040,20 @@ test('two icon clicks during a disconnect lease the tab once', async () => {
   const click = { id: 9, windowId: 2, url: `${SHOP}/cart`, title: 'Cart' };
   h.chrome.action.onClicked.emit(click);
   h.chrome.action.onClicked.emit(click);
-  await new Promise(done => setTimeout(done, 200));
-  h.state.ws = 'open';
-  h.state.http = 'ok';
-  await h.until(() => h.sent.some(m => m.type === 'lease'), 15_000);
-  await new Promise(done => setTimeout(done, 500));
-  assert.equal(h.sent.filter(m => m.type === 'lease').length, 1, 'one lease');
+  await sleep(30);
+  assert.equal(h.sent.some(m => m.type === 'lease'), false);
+  assert.equal(h.tabPopups.get(9), 'popup.html');
 });
 
 // Issue #36: tab updates landing while the icon click approves never put the armed look back on the session's tab.
-test('tab updates during the icon approval leave the approved tab without the armed look', async () => {
+test('tab updates during explicit approval leave the approved tab without the armed look', async () => {
   const { h } = await armed();
-  h.chrome.action.onClicked.emit({ id: 9, windowId: 2, url: `${SHOP}/cart`, title: 'Cart' });
+  const approving = approveArm(h);
   for (let i = 0; i < 40 && !h.sent.some(m => m.type === 'lease'); i++) {
     h.chrome.tabs.onUpdated.emit(9, { title: `Cart ${i}` });
     await new Promise(done => setTimeout(done, 1));
   }
-  await h.until(() => h.sent.some(m => m.type === 'lease'));
+  assert.equal((await approving).status, 'active');
   h.chrome.tabs.onUpdated.emit(9, { status: 'complete' });
   await new Promise(done => setTimeout(done, 200));
   assert.equal(h.tabPopups.get(9), 'popup.html');
@@ -2085,21 +2083,22 @@ test('an ask decline keeps the request\'s armed tab; a deny of the request disar
   await h.until(() => h.session.armedTabs.length === 0);
 });
 
-test('the icon click on the armed tab leases it once at the armed level and restores the popup', async () => {
-  const { h } = await armed();
+test('the icon click only opens the popup; its explicit Act approval grants full with multiple tabs', async () => {
+  const { h } = await armed({ level: 'read-only' });
   h.chrome.action.onClicked.emit({ id: 9, windowId: 2, url: `${SHOP}/cart`, title: 'Cart' });
-  await h.until(() => h.sent.some(m => m.type === 'lease'));
-  const leases = h.sent.filter(m => m.type === 'lease');
-  assert.equal(leases.length, 1);
-  assert.deepEqual({ tabId: leases[0].tabId, level: leases[0].level }, { tabId: 9, level: 'reversible' });
+  await sleep(20);
+  assert.equal(h.sent.some(m => m.type === 'lease'), false);
   assert.equal(h.tabPopups.get(9), 'popup.html');
+  const reply = await approveArm(h, 'full');
+  assert.equal(reply.status, 'active', JSON.stringify(reply));
+  assert.deepEqual(h.sent.filter(m => m.type === 'lease').map(m => [m.tabId, m.level, m.tabMode]), [[9, 'full', 'multiple']]);
 });
 
 test('a click when the tab left the site, or the request is gone, leases nothing and restores the popup', async () => {
   const { h } = await armed();
   h.chrome.action.onClicked.emit({ id: 9, windowId: 2, url: 'https://elsewhere.example/', title: 'x' });
   await h.until(() => h.tabPopups.get(9) === 'popup.html');
-  assert.match(h.session.openNotice.message, /nothing was approved/);
+  assert.equal(h.sent.some(m => m.type === 'lease'), false);
   const second = await armed();
   second.h.push({ type: 'requests', requests: [] });
   await second.h.until(() => second.h.tabPopups.get(9) === 'popup.html');
@@ -2118,7 +2117,9 @@ test('closing the armed tab disarms it; a worker restart keeps the arm', async (
   restarted.push({ type: 'requests', requests: [{ requestId: 'req_1', state: 'pending', origins: [SHOP], mode: 'read-only' }] });
   await restarted.until(() => restarted.session.requests?.length === 1);
   restarted.chrome.action.onClicked.emit({ id: 9, windowId: 2, url: `${SHOP}/`, title: 'Shop' });
-  await restarted.until(() => restarted.sent.some(m => m.type === 'lease'));
+  await sleep(20);
+  assert.equal(restarted.sent.some(m => m.type === 'lease'), false, 'a stored arm never approves on an icon click');
+  assert.equal(restarted.tabPopups.get(9), 'popup.html');
 });
 
 // --- The approval window: popup.html?window=1, once per new pending request ------------------------------------------
@@ -2218,13 +2219,13 @@ test('an arm ends when its request does, and when another tab is leased for that
   await h.send({ type: 'open', requestId: 'req_1', level: 'read-only' });
   await h.until(() => h.session.armedTabs?.length === 2);
   const [first, second] = h.session.armedTabs.map(arm => arm.tabId);
-  h.chrome.action.onClicked.emit({ id: first, windowId: 2, url: `${SHOP}/cart`, title: 'Cart' });
+  assert.equal((await approveArm(h, 'read-only', first)).status, 'active');
   await h.until(() => h.sent.some(m => m.type === 'lease'));
   await h.until(() => h.tabPopups.get(second) === 'popup.html');
   assert.deepEqual(clone(h.session.armedTabs), []);
   const other = await armed();
   other.h.push({ type: 'requests', requests: [{ requestId: 'req_1', state: 'denied', origins: [SHOP] }] });
-  await other.h.until(() => other.h.tabPopups.get(9) === 'popup.html');
+  await other.h.until(() => other.h.session.armedTabs?.length === 0 && other.h.tabBadges.get(9) === null);
   assert.equal(other.h.tabBadges.get(9), null);
 });
 
@@ -2239,7 +2240,7 @@ test('open with "All of <root>": domain scope when Chrome holds the root, origin
     const reply = await h.send({ type: 'open', requestId: 'req_1', level: 'read-only', scope: 'domain' });
     assert.equal(reply.error, undefined, JSON.stringify(reply.error));
     assert.equal(h.session.armedTabs[0].scope, scope);
-    h.chrome.action.onClicked.emit({ id: 9, windowId: 2, url: 'https://www.example.com/', title: 'Home' });
+    assert.equal((await approveArm(h)).status, 'active');
     await h.until(() => h.sent.some(m => m.type === 'lease'));
     assert.equal(h.sent.find(m => m.type === 'lease').scope, scope);
   }
@@ -2255,19 +2256,17 @@ async function openedRightAway({ mode = 'reversible', local = {}, defaultLevel =
   return h;
 }
 
-test('"Open requested pages right away" is on by default: the page opens armed at the requested level, up to Interactive, whatever the default level', async () => {
-  const cases = [['read-only', 'full'], ['reversible', 'read-only'], ['interactive', 'read-only'], ['interactive', 'full']];
-  for (const [mode, defaultLevel] of cases) {
-    const h = await openedRightAway({ mode, defaultLevel });
+test('right-away pages of every requested mode await explicit Use or Act regardless of saved defaults', async () => {
+  for (const mode of ['read-only', 'reversible', 'interactive', 'full', 'testing']) {
+    const h = await openedRightAway({ mode, defaultLevel: 'full' });
     assert.deepEqual(clone(h.tabsCreated), [{ windowId: 2, url: `${SHOP}/cart`, active: true }]);
-    assert.deepEqual(h.approvalWindows, [], 'no approval window');
-    assert.equal(h.session.armedTabs[0].level, mode, `${mode} with default ${defaultLevel}`);
-    await h.until(() => h.tabPopups.get(9) === '');
-    assert.equal(h.sent.some(m => m.type === 'lease'), false, 'the icon click is still the approval');
-    // The icon click leases at that level: the receipt's permissions say what the user saw.
-    h.chrome.action.onClicked.emit({ id: 9, windowId: 2, url: `${SHOP}/cart`, title: 'Cart' });
-    await h.until(() => h.sent.some(m => m.type === 'lease'));
-    assert.equal(h.sent.find(m => m.type === 'lease').level, mode);
+    assert.deepEqual(h.approvalWindows, []);
+    assert.equal(h.session.armedTabs[0].level, 'read-only', mode);
+    assert.equal(h.tabPopups.get(9), 'popup.html');
+    h.chrome.action.onClicked.emit({ id: 9, windowId: 2, url: `${SHOP}/cart` });
+    await sleep(10);
+    assert.equal(h.sent.some(m => m.type === 'lease'), false, mode);
+    assert.equal((await approveArm(h, 'read-only')).session.level, 'read-only');
   }
 });
 
@@ -2286,16 +2285,7 @@ test('"Open requested pages right away": a prompt placement Chrome refuses (wind
   assert.deepEqual(asked, ['placed', 'browser']);
 });
 
-test('"Open requested pages right away": Full and Testing requests get the approval window, nothing opens by itself', async () => {
-  for (const mode of ['full', 'testing']) {
-    const h = harness({ hostGrants: [], leaseOrigins: [SHOP], permissions: { defaultLevel: 'full' } });
-    await h.waitFor(m => m.type === 'hello');
-    await withPending(h, [pendingRequest('req_1', { mode })]);
-    assert.deepEqual(h.tabsCreated, [], mode);
-    assert.equal(h.approvalWindows.length, 1, mode);
-    assert.deepEqual(h.promptWindows, [], mode);
-    assert.deepEqual(clone(h.session.armedTabs ?? []), []);
-  }
+test('right-away requests with no start page still get the approval window', async () => {
   // A request with no page to open still gets the approval window.
   const h = harness();
   await h.waitFor(m => m.type === 'hello');
@@ -2322,9 +2312,9 @@ test('the page opened by itself gets a prompt window next to it that names the l
   const promptId = h.session.armedTabs[0].promptWindowId;
   assert.equal(h.openPopup(promptId), true);
   assert.deepEqual(h.approvalWindows, []);
-  h.chrome.action.onClicked.emit({ id: 9, windowId: 2, url: `${SHOP}/cart`, title: 'Cart' });
+  assert.equal((await approveArm(h)).status, 'active');
   await h.until(() => h.windowsRemoved.includes(promptId));
-  assert.equal(h.sent.find(m => m.type === 'lease').level, 'reversible');
+  assert.equal(h.sent.find(m => m.type === 'lease').level, 'read-only');
   // Denied (the request leaves pending): the prompt closes and the tab is as it was.
   const denied = await openedRightAway();
   const deniedPrompt = denied.session.armedTabs[0].promptWindowId;
@@ -2348,7 +2338,7 @@ test('the page opened by itself gets a prompt window next to it that names the l
   await closed.until(() => closed.windowsRemoved.includes(closedPrompt));
 });
 
-test('the prompt window\'s level choice changes the level the icon click approves; Deny ends the request', async () => {
+test('a legacy arm level change grants nothing on an icon click; explicit Use and Deny still work', async () => {
   const h = await openedRightAway({ mode: 'reversible' });
   const changed = await h.send({ type: 'arm_level', tabId: 9, level: 'read-only' });
   assert.equal(changed.error, undefined, JSON.stringify(changed));
@@ -2357,8 +2347,7 @@ test('the prompt window\'s level choice changes the level the icon click approve
   assert.match(bad.error, /no longer waiting/);
   const unknown = await h.send({ type: 'arm_level', tabId: 99, level: 'full' });
   assert.match(unknown.error, /no longer waiting/);
-  h.chrome.action.onClicked.emit({ id: 9, windowId: 2, url: `${SHOP}/cart`, title: 'Cart' });
-  await h.until(() => h.sent.some(m => m.type === 'lease'));
+  assert.equal((await approveArm(h)).status, 'active');
   assert.equal(h.sent.find(m => m.type === 'lease').level, 'read-only');
   const denied = await openedRightAway();
   await denied.send({ type: 'deny', requestId: 'req_1' });
@@ -2372,7 +2361,7 @@ test('"Open <host>" from the popup also gets the prompt window', async () => {
 });
 
 test('"Approve on the FAI tab" leases the live session\'s tab at the new level; refused, it arms that tab instead', async () => {
-  const h = await started({ level: 'read-only' });
+  const h = await started({ level: 'read-only', hostGrants: [`${ORIGIN}/*`] });
   h.push({ type: 'requests', requests: [{ requestId: 'req_2', state: 'pending', origins: [ORIGIN], mode: 'full' }] });
   await h.until(() => h.session.requests?.length === 1);
   const reply = await h.send({ type: 'start', requestId: 'req_2', level: 'full', onSessionTab: true });
@@ -2385,7 +2374,7 @@ test('"Approve on the FAI tab" leases the live session\'s tab at the new level; 
   await h.until(() => h.session.requests?.some(item => item.requestId === 'req_3'));
   const refused = await h.send({ type: 'start', requestId: 'req_3', level: 'testing', onSessionTab: true });
   assert.match(refused.note, /Click the FAI Browser icon on the FAI tab/);
-  assert.equal(h.tabPopups.get(7), '');
+  assert.equal(h.tabPopups.get(7), 'popup.html');
   assert.deepEqual(clone(h.session.armedTabs.map(arm => [arm.tabId, arm.requestId])), [[7, 'req_3']]);
   // That arm ending leaves the FAI tab as it was: popup back, its own ON badge again.
   h.push({ type: 'requests', requests: [{ requestId: 'req_3', state: 'denied', origins: [ORIGIN] }] });
@@ -2470,10 +2459,9 @@ test('mark: the daemon ending the lease, or a worker restart, takes the mark bac
   assert.equal(restarted.tabBadge(7), null, 'and clears the per-tab text it left');
 });
 
-test('mark: an opened window\'s tab is marked too once the icon click approves it', async () => {
+test('mark: an opened window\'s tab is marked after explicit approval', async () => {
   const { h } = await armed();
-  h.chrome.action.onClicked.emit({ id: 9, windowId: 2, url: `${SHOP}/cart`, title: 'Cart' });
-  await h.until(() => h.sent.some(m => m.type === 'lease'));
+  assert.equal((await approveArm(h)).status, 'active');
   await h.until(() => h.groups.get(h.groupOf.get(9))?.title === 'FAI');
   assert.equal(h.groups.get(h.groupOf.get(9)).title, 'FAI');
   assert.equal(h.tabBadge(9), 'ON');
@@ -2542,7 +2530,7 @@ test('the hello carries the stored budget, and the daemon\'s reply says what is 
   const stored = { maxCalls: 120, maxMs: 2_400_000 };
   const h = harness({ local: { budget: stored }, daemonBudget: { ...stored, source: 'extension' } });
   const hello = await h.waitFor(m => m.type === 'hello');
-  assert.deepEqual(hello.settings, { budget: stored, openRightAway: true, tabMode: 'single', approvals: ASKS });
+  assert.deepEqual(hello.settings, { budget: stored, openRightAway: true, approvals: ASKS });
   await h.until(() => h.session.connection?.budget);
   assert.deepEqual(h.session.connection.budget, { ...stored, source: 'extension' });
   assert.deepEqual((await h.send({ type: 'connect' })).connection.budget, { ...stored, source: 'extension' });
@@ -2565,12 +2553,12 @@ test('budget bounds: 10000 calls is stored, reported and shown; 10001 (stored or
 test('a malformed stored budget is reported as none; a budget changed in the popup is sent as a settings message', async () => {
   const h = harness({ local: { budget: { maxCalls: 0, maxMs: 'x' } }, daemonBudget: { maxCalls: 50, maxMs: 1_200_000, source: 'default' } });
   const hello = await h.waitFor(m => m.type === 'hello');
-  assert.deepEqual(hello.settings, { budget: null, openRightAway: true, tabMode: 'single', approvals: ASKS });
+  assert.deepEqual(hello.settings, { budget: null, openRightAway: true, approvals: ASKS });
   await h.until(() => h.session.connection?.budget?.source === 'default');
   h.local.budget = { maxCalls: 8, maxMs: 300_000 };
   h.emitStorage({ budget: { newValue: { maxCalls: 8, maxMs: 300_000 } } }, 'local');
   const settings = await h.waitFor(m => m.type === 'settings');
-  assert.deepEqual(settings.settings, { budget: { maxCalls: 8, maxMs: 300_000 }, openRightAway: true, tabMode: 'single', approvals: ASKS });
+  assert.deepEqual(settings.settings, { budget: { maxCalls: 8, maxMs: 300_000 }, openRightAway: true, approvals: ASKS });
   assert.ok(settings.ref !== undefined, 'a reply type: the daemon answers with the budget in effect');
   await h.until(() => h.session.connection?.budget?.source === 'extension');
   assert.deepEqual(h.session.connection.budget, { maxCalls: 8, maxMs: 300_000, source: 'extension' });
@@ -2578,22 +2566,22 @@ test('a malformed stored budget is reported as none; a budget changed in the pop
   h.local.budget = null;
   h.emitStorage({ budget: { newValue: null } }, 'local');
   await h.until(() => h.sent.filter(m => m.type === 'settings').length === 2);
-  assert.deepEqual(h.sent.filter(m => m.type === 'settings')[1].settings, { budget: null, openRightAway: true, tabMode: 'single', approvals: ASKS });
+  assert.deepEqual(h.sent.filter(m => m.type === 'settings')[1].settings, { budget: null, openRightAway: true, approvals: ASKS });
   await h.until(() => h.session.connection?.budget?.source === 'default');
 });
 
 test('"Open requested pages right away" is reported in the hello (off only when the user turned it off) and on change', async () => {
   const off = harness({ local: { openRightAway: false } });
   const hello = await off.waitFor(m => m.type === 'hello');
-  assert.deepEqual(hello.settings, { budget: null, openRightAway: false, tabMode: 'single', approvals: ASKS });
+  assert.deepEqual(hello.settings, { budget: null, openRightAway: false, approvals: ASKS });
   await off.until(() => off.session.connection?.connected);
   off.local.openRightAway = true;
   off.emitStorage({ openRightAway: { newValue: true, oldValue: false } }, 'local');
   const settings = await off.waitFor(m => m.type === 'settings');
-  assert.deepEqual(settings.settings, { budget: null, openRightAway: true, tabMode: 'single', approvals: ASKS });
+  assert.deepEqual(settings.settings, { budget: null, openRightAway: true, approvals: ASKS });
   // Anything but an explicit false is on (an older install that never touched the setting).
   const legacy = harness({ local: { openRightAway: 'yes' } });
-  assert.deepEqual((await legacy.waitFor(m => m.type === 'hello')).settings, { budget: null, openRightAway: true, tabMode: 'single', approvals: ASKS });
+  assert.deepEqual((await legacy.waitFor(m => m.type === 'hello')).settings, { budget: null, openRightAway: true, approvals: ASKS });
 });
 
 // --- screenshot redaction -------------------------------------------------------------------------------------
@@ -3007,6 +2995,17 @@ test('offscreen clipboard_write: a textarea selected, copied, emptied and remove
 
 // The request modal grants optional host access in its own click, then names the original armed task tab.
 const MODAL_SENDER = { id: 'ext', url: 'chrome-extension://ext/arm.html?tab=9' };
+async function approveArm(h, level = 'read-only', tabId = 9) {
+  const arm = h.session.armedTabs.find(item => item.tabId === tabId);
+  assert.ok(Boolean(arm), 'the request has an armed tab');
+  const sender = { id: 'ext', url: `chrome-extension://ext/arm.html?tab=${tabId}` };
+  const base = { tabId, requestId: arm.requestId, at: arm.at };
+  const prepared = await h.send({ type: 'arm_prepare', ...base }, sender);
+  assert.ok(Boolean(prepared.approval), JSON.stringify(prepared));
+  for (const pattern of prepared.approval.patterns ?? [prepared.approval.pattern]) h.grant(pattern);
+  return h.send({ ...base, ...prepared.approval, type: 'arm_approve', level, granted: true }, sender);
+}
+
 async function modalPrepared(options) {
   const h = await openedRightAway(options);
   const arm = h.session.armedTabs[0];
@@ -3040,7 +3039,7 @@ test('modal denial, missing access, wrong sender, stale token, offsite and exces
     if (kind === 'token') message.token = 'stale';
     if (kind === 'offsite') h.openedTabs.get(9).url = 'https://unrequested.test/';
     if (kind === 'pending-url') h.openedTabs.get(9).pendingUrl = 'https://unrequested.test/';
-    if (kind === 'level') message.level = 'full';
+    if (kind === 'level') message.level = 'testing';
     if (kind === 'cancel') await h.send({ type: 'deny', requestId: message.requestId });
     const reply = await h.send(message, sender);
     assert.ok(reply.error, `${kind}: ${JSON.stringify(reply)}`);
@@ -3091,19 +3090,16 @@ test('canceling an unclicked modal preserves later manual grants; canceling an i
   }
 });
 
-test('modal approval preserves multiple-tab consent and refuses a setting revoked while browser permission was open', async () => {
-  for (const revoked of [false, true]) {
-    const { h, message } = await modalPrepared({ local: { tabMode: 'multiple' } });
+test('modal Act overrides a legacy single-tab setting and the stale arm level', async () => {
+  for (const legacySetting of ['single', 'multiple']) {
+    const { h, message } = await modalPrepared({ mode: 'read-only', local: { tabMode: legacySetting } });
     h.grant(message.pattern);
-    if (revoked) await h.chrome.storage.local.set({ tabMode: 'single' });
-    const reply = await h.send(message, MODAL_SENDER);
-    if (revoked) {
-      assert.match(reply.error, /Multiple task tabs/);
-      assert.equal(h.sent.some(m => m.type === 'lease'), false);
-    } else {
-      assert.equal(reply.session.tabMode, 'multiple');
-      assert.equal(h.sent.find(m => m.type === 'lease').tabMode, 'multiple');
-    }
+    await h.chrome.storage.local.set({ tabMode: 'single' });
+    const reply = await h.send({ ...message, level: 'full' }, MODAL_SENDER);
+    assert.equal(reply.status, 'active', JSON.stringify(reply));
+    assert.equal(reply.session.level, 'full');
+    assert.equal(reply.session.tabMode, 'multiple');
+    assert.equal(h.sent.find(m => m.type === 'lease').tabMode, 'multiple');
   }
 });
 
@@ -3258,7 +3254,7 @@ test('modal approval while the page never commits says it is still loading', asy
   h.grant(message.pattern);
   Object.assign(h.openedTabs.get(9), { url: '', pendingUrl: `${SHOP}/cart`, status: 'loading' });
   const answer = await h.send(message, MODAL_SENDER);
-  assert.equal(answer.error, 'The page is still loading. Approve again once it has loaded.');
+  assert.equal(answer.error, 'The page is still loading. Choose Use or Act once it has loaded.');
   assert.equal(h.sent.some(m => m.type === 'lease'), false);
 });
 
@@ -4103,7 +4099,7 @@ test('invite: Test site only on a listed test site; closing the invited tab revo
 });
 
 test('invite: Test site works on an origin listed under Test sites', async () => {
-  const h = harness({ permissions: { defaultLevel: 'full', testingOrigins: [ORIGIN] } });
+  const h = harness({ hostGrants: [`${ORIGIN}/*`], permissions: { defaultLevel: 'full', testingOrigins: [ORIGIN] } });
   await h.waitFor(m => m.type === 'hello');
   const reply = await h.send({ type: 'invite', tabId: 7, origin: ORIGIN, level: 'testing', sessionId: 'ses_1' }, POPUP);
   assert.equal(reply.status, 'active', JSON.stringify(reply));
@@ -4161,7 +4157,7 @@ test('#31: a command for a lease the worker does not hold is session_inactive, n
 });
 
 test('#31: an approval whose last check fails is given back as not_approved, never as the user\'s stop', async () => {
-  const h = harness({ permissions: { testingOrigins: [ORIGIN] }, leaseOrigins: [ORIGIN, 'https://prod.example.com'] });
+  const h = harness({ hostGrants: [`${ORIGIN}/*`], permissions: { testingOrigins: [ORIGIN] }, leaseOrigins: [ORIGIN, 'https://prod.example.com'] });
   await h.waitFor(m => m.type === 'hello');
   await withRequest(h, [ORIGIN]);
   const reply = await h.send({ type: 'start', requestId: 'req_1', endpoint: ENDPOINT, secret: SECRET, level: 'testing' });
@@ -4248,17 +4244,55 @@ test('#30: a personal tab opened from the task page before the session is never 
   assert.equal(view.session.tabId, 7, 'the commands never moved to it');
 });
 
-// Review item 11: the session's origin is the one checked for the child, never "null" from a tab still on about:blank.
-test('#30: a child that joins in front keeps the origin that was checked while its tab still reads about:blank', async () => {
+// A pending navigation can become a download: do not adopt the empty tab yet.
+test('#30: a child joins only once its document commits, keeping the approved origin', async () => {
   const h = await multipleTask();
   h.openedTabs.set(98, { url: 'about:blank', status: 'loading', active: true, windowId: 1 });
   h.chrome.tabs.onCreated.emit({ id: 98, openerTabId: 7, pendingUrl: `${ORIGIN}/child`, windowId: 1 });
   h.setActiveTab(98);
+  await sleep(100);
+  assert.equal(h.groupOf.has(98), false, 'a pending URL is not a document');
+  h.openedTabs.set(98, { url: `${ORIGIN}/child`, status: 'complete', active: true, windowId: 1 });
   await h.until(() => h.groupOf.get(98) === h.groupOf.get(7));
   await sleep(50);
   const view = await h.send({ type: 'connect' });
   assert.equal(view.session.tabId, 98);
   assert.equal(view.session.origin, ORIGIN);
+});
+
+test('multiple task tabs: a download child closes before committing; queued commands continue on the parent', async () => {
+  for (const activeAfter of [7, 88]) {
+    const h = await multipleTask();
+    const child = { id: 99, openerTabId: 7, url: 'about:blank', pendingUrl: `${ORIGIN}/download`, windowId: 1 };
+    h.openedTabs.set(99, child);
+    const get = h.chrome.tabs.get.bind(h.chrome.tabs);
+    h.chrome.tabs.get = async id => {
+      if (id === 99 && !h.openedTabs.has(id)) throw new Error('Tab closed');
+      return get(id);
+    };
+    h.setActiveTab(99);
+    h.chrome.tabs.onCreated.emit(child);
+    h.chrome.tabs.onActivated.emit({ tabId: 99, windowId: 1 });
+    const command = h.command('observe', {}, { lease: multiLease });
+    await sleep(50);
+    assert.equal(h.sent.some(m => m.type === 'result' && m.id === command), false, 'wait for the pending child');
+    h.openedTabs.delete(99);
+    h.setActiveTab(activeAfter);
+    h.chrome.tabs.onRemoved.emit(99);
+    h.chrome.tabs.onActivated.emit({ tabId: activeAfter, windowId: 1 });
+    const result = await h.waitFor(m => m.type === 'result' && m.id === command);
+    if (activeAfter === 7) {
+      assert.equal(result.error, undefined, JSON.stringify(result));
+      assert.equal(result.result.url, `${ORIGIN}/`);
+      assert.equal(result.result.tabs, undefined, 'no phantom download tab');
+      await sleep(100);
+      assert.equal(h.sent.some(m => m.type === 'status' && m.status === 'paused'), false);
+    } else {
+      const status = await h.waitFor(m => m.type === 'status' && m.status === 'paused');
+      assert.equal(status.reason, 'tab_changed', 'never ignore a switch to a personal tab');
+    }
+    assert.equal(h.groupOf.has(99), false, 'never adopt an empty download tab');
+  }
 });
 
 test('#30: another request\'s page opens behind the tab a live request works on, so that request keeps working', async () => {
@@ -4275,21 +4309,21 @@ test('#30: another request\'s page opens behind the tab a live request works on,
 
 test('#30: an approved ask updates the session in place: same lease, tabs and page; site access for the added origin', async () => {
   const PARTNER = 'https://partner.example.org';
-  const h = await started({ hostGrants: [`${ORIGIN}/*`], local: { tabMode: 'multiple' }, tabMode: 'multiple',
+  const h = await started({ level: 'full', hostGrants: [`${ORIGIN}/*`], local: { tabMode: 'multiple' }, tabMode: 'multiple',
     leaseOrigins: message => (message.ask ? [ORIGIN, PARTNER] : [ORIGIN]) });
   h.push({ type: 'requests', requests: [{ requestId: 'req_1', state: 'active', origins: [ORIGIN], mode: 'read-only',
-    ask: { level: 'reversible', origins: [PARTNER], at: new Date().toISOString() } }] });
+    ask: { level: 'full', origins: [PARTNER], at: new Date().toISOString() } }] });
   await h.until(() => h.session.requests?.[0]?.ask);
   assert.equal(h.badge, '?', 'an ask waits for the user like a request');
   h.grants.add(`${PARTNER}/*`);
-  const reply = await h.send({ type: 'start', requestId: 'req_1', level: 'reversible', ask: true, askId: 'a1b2c3', tabMode: 'multiple', onSessionTab: true });
+  const reply = await h.send({ type: 'start', requestId: 'req_1', level: 'full', ask: true, askId: 'a1b2c3', tabMode: 'multiple', onSessionTab: true });
   assert.equal(reply.error, undefined, JSON.stringify(reply));
   const lease = h.sent.filter(m => m.type === 'lease').at(-1);
   // The card's ask id goes with the approval: the daemon applies exactly that ask.
   assert.deepEqual({ ask: lease.ask, askId: lease.askId, tabId: lease.tabId, level: lease.level, tabMode: lease.tabMode },
-    { ask: true, askId: 'a1b2c3', tabId: 7, level: 'reversible', tabMode: 'multiple' });
+    { ask: true, askId: 'a1b2c3', tabId: 7, level: 'full', tabMode: 'multiple' });
   assert.deepEqual({ level: reply.session.level, tabMode: reply.session.tabMode, leaseId: reply.session.leaseId },
-    { level: 'reversible', tabMode: 'multiple', leaseId: LEASE_ID });
+    { level: 'full', tabMode: 'multiple', leaseId: LEASE_ID });
   // The added origin is reachable now: a navigation there is allowed, and the observation names it for the runtime.
   const id = h.command('observe', {}, { lease: multiLease, allowedOrigins: [ORIGIN, PARTNER] });
   const result = await h.waitFor(m => m.type === 'result' && m.id === id);
@@ -4301,4 +4335,163 @@ test('#30: an approved ask updates the session in place: same lease, tabs and pa
   // Declining sends the ask flag with the deny.
   await h.send({ type: 'deny', requestId: 'req_1', ask: true });
   assert.equal(h.sent.filter(m => m.type === 'deny').at(-1).ask, true);
+});
+
+// A new Use click changes an existing Act lease in place. Every asynchronous tab API
+// boundary must recheck that consent instead of relying on the session object's identity.
+test('Act to Use while tabs.create is pending removes the unapproved child and retains one task tab', async () => {
+  const h = await multipleTask();
+  const create = h.chrome.tabs.create;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let creating = false;
+  h.chrome.tabs.create = async options => { const tab = await create(options); creating = true; await gate; return tab; };
+  const opened = taskOpen(h);
+  await h.until(() => creating);
+  const use = await h.send({ type: 'start', requestId: 'req_1', level: 'read-only', onSessionTab: true });
+  assert.equal(use.session.level, 'read-only');
+  assert.equal(use.session.tabMode, 'single');
+  release();
+  assert.equal((await opened).error.code, 'blocked_risky');
+  assert.equal(h.openedTabs.size, 0, 'the unfinished task tab is removed');
+  assert.equal((await h.send({ type: 'connect' })).session.tabId, 7);
+  assert.deepEqual(await observeAllow(h, { level: 'full' }), ['navigate']);
+});
+
+test('Act to Use during a switch drops the old owned tabs and never activates its target', async () => {
+  const h = await multipleTask();
+  assert.equal((await taskOpen(h)).error, undefined);
+  const get = h.chrome.tabs.get;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let checking = false;
+  h.chrome.tabs.get = async id => {
+    const tab = await get(id);
+    if (id === 7 && !checking) { checking = true; await gate; }
+    return tab;
+  };
+  const id = h.command('execute', { action: { type: 'switch_tab', tab: 't0' }, expectedRevision: 'doc:1' }, { lease: multiLease });
+  await h.until(() => checking);
+  const use = await h.send({ type: 'start', requestId: 'req_1', level: 'read-only', onSessionTab: true });
+  assert.equal(use.session.tabId, 9);
+  assert.equal(use.session.tabMode, 'single');
+  release();
+  assert.ok(Boolean((await h.waitFor(m => m.type === 'result' && m.id === id)).error));
+  assert.equal((await h.chrome.tabs.query({ active: true, windowId: 1 }))[0].id, 9);
+  // The former home tab is no longer part of this Use request.
+  h.setActiveTab(7);
+  h.chrome.tabs.onActivated.emit({ tabId: 7, windowId: 1 });
+  assert.equal((await h.waitFor(m => m.type === 'status' && m.status === 'paused')).reason, 'tab_changed');
+});
+
+test('Act to Use during the final child lookup never adopts or groups the page-created child', async () => {
+  const h = await multipleTask();
+  const get = h.chrome.tabs.get;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let checking = false;
+  h.openedTabs.set(90, { url: `${ORIGIN}/child`, windowId: 1, status: 'complete' });
+  h.chrome.tabs.get = async id => {
+    const tab = await get(id);
+    if (id === 90 && !checking) { checking = true; await gate; }
+    return tab;
+  };
+  h.chrome.tabs.onCreated.emit({ id: 90, openerTabId: 7, url: `${ORIGIN}/child`, windowId: 1 });
+  await h.until(() => checking);
+  const use = await h.send({ type: 'start', requestId: 'req_1', level: 'read-only', onSessionTab: true });
+  assert.equal(use.session.tabMode, 'single');
+  release();
+  await sleep(30);
+  assert.equal(h.groupOf.has(90), false);
+  assert.equal((await h.send({ type: 'connect' })).session.tabId, 7);
+});
+
+// Native permission prompts may close the toolbar popup before its send('open')
+// continuation. The durable intent must complete the exact button the user clicked.
+test('a direct Use or Act intent completes after the popup closes and never creates a second task tab', async () => {
+  for (const [level, tabMode] of [['read-only', 'single'], ['full', 'multiple']]) {
+    const h = harness({ hostGrants: [], leaseOrigins: [SHOP], local: { openRightAway: false } });
+    await h.waitFor(m => m.type === 'hello');
+    await withPending(h, [pendingRequest('req_1')]);
+    const click = { requestId: 'req_1', level, scope: 'origin', approve: true };
+    const intent = await h.send({ type: 'intent', ...click, patterns: [`${SHOP}/*`] });
+    assert.equal(intent.error, undefined);
+    h.grant(`${SHOP}/*`);
+    await h.until(() => h.sent.some(m => m.type === 'lease'));
+    const reply = await h.send({ type: 'open', ...click });
+    assert.equal(reply.status, 'active', JSON.stringify(reply));
+    assert.deepEqual(h.sent.filter(m => m.type === 'lease').map(m => [m.level, m.tabMode]), [[level, tabMode]]);
+    assert.equal(h.tabsCreated.length, 1);
+    assert.equal(h.promptWindows.length, 0, 'one explicit click never asks for a second FAI approval');
+  }
+});
+
+test('a direct approval gives its lease back when the request is cancelled during binding', async () => {
+  const h = harness({ hostGrants: [`${SHOP}/*`], leaseOrigins: [SHOP], local: { openRightAway: false } });
+  await h.waitFor(m => m.type === 'hello');
+  await withPending(h, [pendingRequest('req_1')]);
+  const original = h.socket.send.bind(h.socket);
+  h.socket.send = text => {
+    if (JSON.parse(text).type === 'lease') h.push({ type: 'requests', requests: [pendingRequest('req_1', { state: 'denied' })] });
+    original(text);
+  };
+  const reply = await h.send({ type: 'open', requestId: 'req_1', level: 'full', scope: 'origin', approve: true });
+  assert.ok(Boolean(reply.error));
+  assert.ok(h.sent.some(m => m.type === 'status' && m.status === 'stopped' && m.reason === 'not_approved'));
+  assert.equal((await h.send({ type: 'connect' })).status, null);
+});
+
+test('a denied direct approval intent cannot be revived by a later unrelated site grant', async () => {
+  const h = harness({ hostGrants: [], leaseOrigins: [SHOP], local: { openRightAway: false } });
+  await h.waitFor(m => m.type === 'hello');
+  await withPending(h, [pendingRequest('req_1')]);
+  await h.send({ type: 'intent', intentId: 'click-1', requestId: 'req_1', level: 'full', scope: 'origin', approve: true,
+    patterns: [`${SHOP}/*`] });
+  await h.send({ type: 'intent_cancel', intentId: 'click-1', requestId: 'req_1' });
+  h.grant(`${SHOP}/*`);
+  await sleep(30);
+  assert.equal(h.tabsCreated.length, 0);
+  assert.equal(h.sent.some(m => m.type === 'lease'), false);
+});
+
+test('cancelling a stale direct approval intent never cancels the newer explicit Use choice', async () => {
+  const h = harness({ hostGrants: [], leaseOrigins: [SHOP], local: { openRightAway: false } });
+  await h.waitFor(m => m.type === 'hello');
+  await withPending(h, [pendingRequest('req_1')]);
+  for (const [intentId, level] of [['click-1', 'full'], ['click-2', 'read-only']]) {
+    await h.send({ type: 'intent', intentId, requestId: 'req_1', level, scope: 'origin', approve: true, patterns: [`${SHOP}/*`] });
+  }
+  await h.send({ type: 'intent_cancel', intentId: 'click-1', requestId: 'req_1' });
+  h.grant(`${SHOP}/*`);
+  await h.until(() => h.sent.some(m => m.type === 'lease'));
+  assert.deepEqual(h.sent.filter(m => m.type === 'lease').map(m => [m.level, m.tabMode]), [['read-only', 'single']]);
+});
+
+test('Act fails closed when an incompatible daemon cannot honor its multiple-tab grant', async () => {
+  for (const leaseGrant of [{}, { level: 'full', tabMode: 'single' }]) {
+    for (const invite of [false, true]) {
+      const h = harness({ hostGrants: [`${ORIGIN}/*`], leaseGrant });
+      await h.waitFor(m => m.type === 'hello');
+      const message = invite
+        ? { type: 'invite', tabId: 7, origin: ORIGIN, level: 'full', sessionId: 'ses_1' }
+        : { type: 'start', requestId: 'req_1', level: 'full' };
+      const reply = await h.send(message, { id: 'ext', url: 'chrome-extension://ext/popup.html' });
+      assert.ok(Boolean(reply.error), JSON.stringify(reply));
+      assert.equal((await h.send({ type: 'connect' })).status, null);
+      assert.ok(h.sent.some(m => m.type === 'status' && m.status === 'stopped' && m.reason === 'not_approved'));
+    }
+  }
+});
+
+test('reapproving a remembered Use domain as Act ends its remembered access on the same lease', async () => {
+  const { h } = await startedOnSite({ level: 'read-only', hostGrants: [`${ORIGIN}/*`],
+    local: { domainMemory: { remember: true }, rememberedSites: [{ root: 'example.com', until: Date.now() + 3600_000 }] } });
+  assert.equal(h.local.rememberedSites.length, 1);
+  const reply = await h.send({ type: 'start', requestId: 'req_1', level: 'full', scope: 'domain', onSessionTab: true });
+  assert.equal(reply.error, undefined, JSON.stringify(reply));
+  assert.equal(reply.session.leaseId, LEASE_ID, 'the existing lease is updated in place');
+  assert.equal(reply.session.tabMode, 'multiple');
+  assert.deepEqual(clone(h.local.rememberedSites), [], 'Act never inherits the remembered Use approval');
+  await h.send({ type: 'stop' });
+  await h.until(() => h.removed.includes(SITE_PATTERN));
 });

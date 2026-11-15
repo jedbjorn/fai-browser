@@ -1069,6 +1069,8 @@ export function createDaemon(options = {}) {
       }
       const origins = leaseOrigins(record.origins, event.origin, scope);
       record.grant = grant;
+      // The explicit user approval sets the default; per-call modes remain independently clamped.
+      if (event.level === 'full' || event.level === 'read-only' || event.level === 'testing') record.mode = grant.level;
       record.lease = { ...record.lease, origin: event.origin, origins };
       hub.setLeaseLevel?.(record.lease.leaseId, grant.level);
       hub.setLeaseTabMode?.(record.lease.leaseId, grant.tabMode);
@@ -1224,6 +1226,8 @@ export function createDaemon(options = {}) {
     if (browserId) record.browser = browserRef(event.browser ?? { id: browserId });
     delete record.browserNote;
     record.grant = grant;
+    // The explicit user approval sets the default; per-call modes remain independently clamped.
+    if (event.level === 'full' || event.level === 'read-only' || event.level === 'testing') record.mode = grant.level;
     record.lastCallAt = now();
     hub.bindLease({
       leaseId,
@@ -1679,7 +1683,7 @@ export function createDaemon(options = {}) {
     const extension = hub.extension();
     if (!extension.connected || settingsFor(browserOf(record))?.openRightAway !== true) return 'window';
     const hasPage = Boolean(record.url) || record.origins.some(entry => !isSiteEntry(entry));
-    if (!hasPage || levelRank(record.mode) > levelRank('interactive')) return 'window';
+    if (!hasPage) return 'window';
     const live = extension.session;
     if (live && ['active', 'paused'].includes(live.status) && live.origin && originCovered(live.origin, record.origins)) {
       return 'window';

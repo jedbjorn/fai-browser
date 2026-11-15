@@ -7,6 +7,14 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 
 ## 0.9.0 (2026-11-12)
 
+### Changed
+
+- **Two direct approvals: Use and Act.** Use permits reading and navigation in one task tab; Act permits guarded actions and up to eight task tabs. Request cards, modals, invites and resumes no longer need level dropdowns or a separate tab-access preference. Existing grants do not silently gain permissions; legacy API modes remain supported as explicit call limits. Testing remains an explicit option for listed test origins.
+
+### Fixed
+
+- **Downloads keep multiple-tab tasks running.** A pending child URL is no longer adopted before it commits a document. If a download closes that empty tab and the approved task tab is active again, queued commands continue there without a spurious Resume. Single-tab approvals and switches to personal tabs still pause.
+
 ### Added
 
 - **Windows, one command, Firefox only.** `irm https://raw.githubusercontent.com/jedbjorn/fai-browser/main/scripts/install.ps1 | iex` installs, per user and without administrator rights or Developer mode, a private Node.js (nodejs.org LTS, checksum checked), the latest release, a **FAI Browser** Start menu entry and the `fai-browser` command, then runs setup with `--yes --download-firefox`: pairing, the service, the coding agents it finds, and official Firefox (Mozilla's, downloaded, when none is installed) with the FAI profile and the signed add-on, paired. Running it again updates, also while FAI Browser is open (each release goes into its own folder; an older one is removed once nothing runs from it). `%LOCALAPPDATA%\fai-browser\uninstall.ps1` removes it all. Chromium-family browsers are not supported on Windows; setup there sets up Firefox only.

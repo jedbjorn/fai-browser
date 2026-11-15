@@ -10,7 +10,6 @@
 import { buildDigest, recordsOf, scoreBlocks } from './digest.js';
 import { ratingValue } from './facts.js';
 import { siteRoot } from './origins.js';
-import { LEVEL_NAMES } from './oversight.js';
 import { capOffer, relevanceHints } from './relevance.js';
 import { withResumeWait } from './resume.js';
 import { NOT_WEB_LINK_TEXT, OTHER_SITE_NEXT, OTHER_SITE_TEXT, otherSiteBrief } from './other-site.js';
@@ -267,7 +266,7 @@ const OUTCOMES = {
     status: 'needs_user',
     who: 'user',
     reason: 'The user has not approved the added level or site yet',
-    message: 'Ask the user to approve it on this task in the FAI Browser window (it is preselected). The task keeps '
+    message: 'Ask the user to choose Use or Act on this task in the FAI Browser window. The task keeps '
       + 'its tab and page.',
   },
   ask_declined: {
@@ -280,8 +279,8 @@ const OUTCOMES = {
     status: 'needs_user',
     who: 'user',
     reason: 'No tab has been selected for this request yet',
-    message: 'Not approved yet. Ask the user to click Open on the request in the FAI Browser window, then '
-      + 'Approve in the page request modal (grant browser site access if asked), or use the FAI Browser toolbar icon.',
+    message: 'Not approved yet. Ask the user to choose '
+      + 'Use or Act in the FAI Browser request window (grant browser site access if asked), or use the toolbar popup.',
   },
   request_closed: {
     status: 'needs_host',
@@ -339,7 +338,7 @@ export function outcomeOf(code) {
 // Fixed refusal texts of host-composed acts (src/runtime.js #compose): their stop names the remedy, never the generic
 // "FAI never purchases" line.
 export const ONE_TAB_TEXT = 'This request has one task tab, so it cannot open or switch tabs. If the task needs another '
-  + 'tab, ask the user to turn on Multiple task tabs (FAI popup, Advanced, Tab access), then Pause and Resume this task; '
+  + 'tab, ask the user to approve Act for this task in FAI Browser; Act includes multiple task tabs. '
   + 'or open the address in this tab with url.';
 export const URL_SCHEME_TEXT = 'Only an http(s) URL on the approved origins can be opened.';
 export const URL_REFUSED_TEXT = 'This URL names an action (sign-out, delete, payment and the like) that FAI Browser does '
@@ -364,16 +363,16 @@ export const HISTORY_OFF_SITE_TEXT = 'Nothing ran: there is no page to go to in 
   + '(the tab\'s history leads elsewhere, or nowhere). Observe and use the page\'s own links instead.';
 
 // Each pause says what paused it (issue #31): never "stopped" or "released", which only the user's Stop is.
-const RESUME_HINT = 'Ask the user to click Resume on this task in FAI Browser; next says how to continue.';
+const RESUME_HINT = 'Ask the user to choose Use or Act on this paused task in FAI Browser to resume; next says how to continue.';
 
 /**
  * `needs.message` overrides the daemon applies to results of runs on a tab request (design section 2.3). These are
  * runtime-written and trusted; they tell the agent how to continue with the lease.
  */
 export const LEASE_MESSAGES = Object.freeze({
-  paused: 'The user paused the tab. Ask them to click Resume in the FAI Browser extension when the task may continue; '
+  paused: 'The user paused the tab. Ask them to choose Use or Act in the FAI Browser extension when the task may continue; '
     + 'next says how to continue once they do.',
-  tab_changed: `Paused: another tab came to the front in the task tab's window, the task tab closed, or Tab access went back to One task tab. ${RESUME_HINT}`,
+  tab_changed: `Paused: another tab came to the front in the task tab's window, or the task tab closed. ${RESUME_HINT}`,
   origin_changed: `Paused: the tab left the approved sites. ${RESUME_HINT}`,
   child_tab: `Paused: the page opened a tab or window this task cannot follow. ${RESUME_HINT}`,
   session_inactive: `Paused: the browser extension no longer holds this tab (it restarted, or lost the task). ${RESUME_HINT}`,
@@ -1023,18 +1022,18 @@ function leanVerdict(verdict) {
 /** Approval instructions for an automatically opened task page or the request window. */
 export function approvalSteps(approval) {
   if (approval === 'page') {
-    return 'its task page opened in an existing browser window; click Approve in the page request modal (grant browser site access if asked), or use the FAI Browser toolbar icon';
+    return 'its task page opened in an existing browser window; choose Use or Act in the page request modal (grant browser site access if asked), or use the toolbar popup';
   }
   if (approval === 'toolbar') {
     // The last approval in the browser did not complete (the browser's site-access prompt never answered, the page had
     // not loaded, the popup closed): the toolbar icon on the task tab gets past it (daemon approvalOf).
-    return 'the last approval attempt in the browser did not complete, so click the FAI Browser toolbar icon on its task tab once that tab shows the site (allow browser site access if asked)';
+    return 'the last approval attempt in the browser did not complete, so open the FAI Browser toolbar popup on its task tab and choose Use or Act once the site loads (allow browser site access if asked)';
   }
   if (approval === 'declined') {
     // The user declined the browser's site-access prompt: their choice, so no instructions to push past it.
     return 'the user declined the browser\'s site-access prompt for it, so nothing was approved; only if they want to continue, they approve again (the page request modal or the FAI Browser toolbar icon) and allow site access';
   }
-  return 'click Open in the FAI Browser window, then Approve in the page request modal (grant browser site access if asked), or use the FAI Browser toolbar icon';
+  return 'choose Use or Act in the FAI Browser request window (grant browser site access if asked), or use the toolbar popup';
 }
 
 /** The select_tab needs.message for how the request is presented (see approvalSteps). */
@@ -1137,7 +1136,7 @@ function approvalPendingText(result, waitMs = null) {
     ? `fai_browser_act again with actionId ${pending.actionId} and revision "${pending.revision}"`
     : 'fai_browser_act again with the same actionId and revision';
   const level = typeof result.needs?.level === 'string'
-    ? ` Or ask for ${result.needs.level}: tell the user "approve ${LEVEL_NAMES[result.needs.level] ?? result.needs.level} for this task in FAI Browser; it is preselected", then fai_browser_open with the requestId and mode "${result.needs.level}".` : '';
+    ? ` Or ask for ${result.needs.level}: tell the user "click Act${result.needs.level === 'testing' ? ' with the test-only option' : ''} for this task in FAI Browser", then fai_browser_open with the requestId and mode "${result.needs.level}".` : '';
   const seconds = Number.isFinite(waitMs) && waitMs > 0 ? Math.round(waitMs / 1000) : null;
   const wait = seconds
     ? `; it returns at once if they already approved, else waits up to ${seconds} s (the approval stays open for 5 minutes: repeat the call if it returns pending again)`
@@ -1194,8 +1193,8 @@ function directNextStep(result, context = {}) {
     if (result.needs?.who === 'host') {
       return { kind: 'observe', text: `The grant already covers ${level}: call fai_browser_observe with mode "${level}", then choose.` };
     }
-    return { kind: 'relay', text: `Relay needs.message; tell the user "approve ${LEVEL_NAMES[level] ?? level} for this task `
-      + `in FAI Browser; it is preselected". Then call fai_browser_open with requestId ${ref} and mode "${level}" (same tab and page).` };
+    return { kind: 'relay', text: `Relay needs.message; tell the user "click Act${level === 'testing' ? ' with the test-only option' : ''} for this task `
+      + `in FAI Browser". Then call fai_browser_open with requestId ${ref} and mode "${level}" (same tab and page).` };
   }
   if (code === 'refused_action') return { kind: 'stop', text: `${refusalStopText(result)} Do not retry it.` };
   if (code === 'error_page') return { kind: 'stop', text: stopText(result).replace(/ and do not retry the same link\./, '; do not retry the same link.') };
@@ -1225,7 +1224,7 @@ function directNextStep(result, context = {}) {
   if (RESUME_CODES.has(code)) {
     // The lease is paused: the user's Resume in the extension makes it active again (wait --until active wakes a host).
     const guide = TAB_PAUSES.has(code) ? ' fai_browser_guide topic tabs explains this pause.' : '';
-    return { kind: 'relay', text: withResumeWait('Relay needs.message to the user (they click Resume in the FAI '
+    return { kind: 'relay', text: withResumeWait('Relay needs.message to the user (they choose Use or Act to resume in the FAI '
       + `Browser extension); once the tab is active again, call fai_browser_observe with requestId ${ref}.${guide}`, ref,
     resumeOf(context)) };
   }

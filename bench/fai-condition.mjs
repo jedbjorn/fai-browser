@@ -12,11 +12,10 @@
 //      the harness never reads that file.
 //   3. The extension popup (popup.html) keeps #endpoint and #secret (under Advanced; the secret is saved on change and
 //      never shown back) and a pending request card per request. The harness pairs the popup during setup, before the
-//      clock starts, as a user's extension would already be, then clicks the card's "Approve this tab" (#approve)
-//      after picking `level` (constructor option or approve(trigger, {level})) in the card's Allow select; a level
-//      the card does not offer (above the asked one, or Testing off the listed origins) is refused. Without a level
-//      the card's preset (the level the agent asked for) is approved. #status then matches APPROVED_RE. While a
-//      request is pending the badge text is "?", which the harness polls every 250 ms.
+//      clock starts, as a user's extension would already be, then clicks Use or Act for the requested `level`.
+//      Null chooses Use. Testing must be explicitly listed; legacy reversible/interactive corpus limits use the
+//      worker protocol so refusal tests never gain a full grant. #status then matches APPROVED_RE. While a request
+//      is pending the badge text is "?", which the harness polls every 250 ms.
 //   4. fai_browser_open / observe / act / wait return the lean direct result as readable text; the receipt fields
 //      (status, code, verification, requestId) are read from it.
 //   5. Daemon cleanup: processes whose environment carries this run's FAI_DAEMON_DIR are sent SIGTERM at the end,
@@ -259,9 +258,9 @@ async function killDaemons(daemonDir) {
   return killed;
 }
 
-// The popup script one approval runs: fill the pairing fields, then approve the pending request card at `level` (its
-// Allow select; null keeps the card's preset). Returns {clicked, via: 'card'|'message', level, label} ('message': no
-// card, a harness companion session started with the worker's start message), {clicked: false}, or {clicked: false, refused, status} when the level is not offered. Exported for test/bench-approval.test.js.
+// Test harness approval: normal approvals click Use or Act. Legacy capability-limit corpus cases
+// explicitly use the worker protocol so reversible/interactive refusals are never tested with a full grant.
+// Null chooses Use; testing must be explicitly offered. No personal browser is used by this harness.
 export function approveExpression({ level = null, endpoint, secret }) {
   return `(() => {
     const level = ${JSON.stringify(level ?? null)};
@@ -278,20 +277,25 @@ export function approveExpression({ level = null, endpoint, secret }) {
     const status = document.querySelector('#status');
     if (status) status.textContent = '';
     const visible = el => el && !el.hidden && !el.disabled && el.offsetParent !== null;
-    // Today's popup: a pending request card with its own Allow select and "Approve this tab" button.
     const card = [...document.querySelectorAll('.request-card')].find(el => visible(el.querySelector('.approve-request')));
     if (card) {
-      const select = card.querySelector('select.level-select');
-      if (level) {
-        if (!select || ![...select.options].some(option => option.value === level)) {
-          return { clicked: false, refused: true, status: 'level ' + level + ' is not offered on the request card' };
-        }
-        select.value = level;
-        select.dispatchEvent(new Event('change', { bubbles: true }));
+      const chosen = level ?? 'read-only';
+      if (['reversible', 'interactive'].includes(chosen)) {
+        chrome.runtime.sendMessage({ type: 'start', requestId: card.dataset.requestId, level: chosen }).then(reply => {
+          if (status) status.textContent = reply?.error ?? 'Selected tab is available to the agent.';
+        });
+        return { clicked: true, via: 'message', level: chosen, label: 'legacy capability limit' };
       }
-      const approve = card.querySelector('.approve-request');
+      const testing = card.querySelector('.request-level input[type="checkbox"]');
+      if (chosen === 'testing') {
+        if (!testing || !visible(testing)) return { clicked: false, refused: true, status: 'level testing is not offered on the request card' };
+        testing.checked = true;
+        testing.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      const approve = [...card.querySelectorAll('.approve-request')].find(button => button.dataset.level === (chosen === 'testing' ? 'full' : chosen));
+      if (!visible(approve)) return { clicked: false, refused: true, status: 'level ' + chosen + ' is not offered on the request card' };
       approve.click();
-      return { clicked: true, via: 'card', level: select?.value ?? null, label: approve.textContent.trim() };
+      return { clicked: true, via: 'card', level: chosen, label: approve.textContent.trim() };
     }
     // No card: a harness companion (bench/companion.js) has no requests. Start a session on the active tab with the
     // worker's own start message, as the removed Phase 1 button did, at \`level\` (read-only without one).
@@ -309,8 +313,7 @@ export function approveExpression({ level = null, endpoint, secret }) {
 
 // One browser + daemon per run. The harness opens the start page, then approves tab requests like a user would.
 export class FaiRun {
-  // `level`: the level the harness picks in the popup for every approval (a task's declared mode); null approves the
-  // card's preset, which is the level the agent asked for.
+  // `level`: the explicit approval/capability limit for the isolated harness; null clicks Use.
   // `extraEnv`: added to the isolated env (bench/live --fai-home sets FAI_HOME for a checkout without .env.local).
   // `autoApproveActions`: gated action kinds the harness may approve (secret/upload/purchase); empty by default.
   constructor({ server, origin, startUrl, scratch, chromiumPath, log, level = null, extraEnv = null,
@@ -353,8 +356,8 @@ export class FaiRun {
     await this.page.goto(this.startUrl);
     await this.page.bringToFront();
     this.cdp = await this.context.browser().newBrowserCDPSession();
-    // The harness already opened the task page. Keep tab approval in its popup instead of opening another task
-    // window and an armed-toolbar prompt; both are user settings, and the popup still enforces the requested level.
+    // The harness already opened the task page. Suppress a separate approval window and retain the legacy
+    // openRightAway setting for compatibility with older builds; current builds open their task tab automatically.
     await this.worker.evaluate(() => chrome.storage.local.set({ openRightAway: false, approvalWindow: false }));
     if (this.testingOrigin) {
       await this.worker.evaluate(async origin => {

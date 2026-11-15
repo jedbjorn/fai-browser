@@ -71,24 +71,12 @@
       <summary><span>Advanced</span><span class="chevron" aria-hidden="true"></span></summary>
       <div class="connection-body">
         <span class="section-label">Approvals</span>
-        <label for="default-level">Preselect up to</label>
-        <select id="default-level" class="level-select">
-          <option value="read-only">Read</option>
-          <option value="interactive">Use</option>
-          <option value="full">Act</option>
-        </select>
-        <p id="default-level-help" class="field-help">Cards preselect what the agent asked for, up to this level.</p>
-        <label for="tab-mode">Tab access</label>
-        <select id="tab-mode">
-          <option value="single">One task tab</option>
-          <option value="multiple">Multiple task tabs</option>
-        </select>
-        <p class="field-help">Applies when you approve a request. Multiple task tabs lets the agent open and follow up to eight tabs on the approved site, grouped together where supported. Browser site access is required. Use with agents you trust, at your own risk. Switching back to one pauses a multiple-tab task.</p>
+        <p class="field-help">Use reads one task tab. Act allows actions and up to eight task tabs on approved sites.</p>
         <label class="check-row" for="approval-window"><input id="approval-window" type="checkbox" checked> Show a window when an agent asks</label>
         <label class="check-row" for="open-right-away"><input id="open-right-away" type="checkbox" checked> Open requested pages right away</label>
-        <p class="field-help">Opening approves nothing: you still click the FAI Browser icon on the page.</p>
+        <p class="field-help">Opening approves nothing: you still choose Use or Act.</p>
         <label class="check-row" for="remember-domains"><input id="remember-domains" type="checkbox"> Remember whole-domain approvals for 24 hours</label>
-        <p class="field-help">Only Read and no-submit Use approvals; higher levels ask Chrome again.</p>
+        <p class="field-help">Only Use approvals. Act ends remembered access when its task finishes.</p>
         <ul id="remembered-list" class="testing-list" hidden></ul>
 
         <span class="section-label">Site access</span>
@@ -97,7 +85,7 @@
         <p class="field-help">Lets the extension read and capture pages on any site you approve a tab on, without a prompt per site. Agents still get only the task tabs and sites you approve, at the level you pick.</p>
 
         <span class="section-label">Test sites</span>
-        <p class="field-help">Exact origins where you may pick <strong>Test site</strong>. Origin and policy limits, redaction and approval protections still apply.</p>
+        <p class="field-help">Exact origins where you may explicitly enable testing with <strong>Act</strong>. Origin and policy limits, redaction and approval protections still apply.</p>
         <ul id="testing-list" class="testing-list"></ul>
         <p id="testing-empty" class="field-help">None listed.</p>
         <div class="testing-add">

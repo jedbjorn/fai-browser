@@ -113,30 +113,7 @@
     }
   }
 
-  // The approval click on an armed tab (the only tabs without a popup, so the only clicks that reach onClicked). It
-  // must ask synchronously, inside the click, for Firefox to count it as user input; compat.js is loaded first, so
-  // this listener runs before the worker's.
-  let clickAccess = null;
-  function askOnClick(tab) {
-    clickAccess = null;
-    const arm = cache.armedTabs.find(item => item?.tabId === tab?.id);
-    const request = arm ? cache.requests.find(item => item?.requestId === arm.requestId) : null;
-    let patterns = request ? requestPatterns(request) : [];
-    // Not loaded yet (the click woke the background): at least the clicked page's own origin.
-    if (!patterns.length && !cache.loaded && typeof tab?.url === 'string') {
-      let own = null;
-      try {
-        own = originPattern(new URL(tab.url).origin);
-      } catch {
-        own = null;
-      }
-      patterns = own ? [own] : [];
-    }
-    if (!patterns.length || !api.permissions?.request) return;
-    expect(patterns);
-    clickAccess = { tabId: tab.id, promise: api.permissions.request({ origins: patterns }).catch(() => false) };
-  }
-
+  // Native permission requests originate only in explicit Use/Act button gestures.
   async function track(added) {
     const saved = await api.storage.session?.get?.([EXPECTED_KEY]).catch(() => ({})) ?? {};
     const now = Date.now();
@@ -169,7 +146,6 @@
   }
 
   if (geckoBuild && api.action?.onClicked && api.storage?.session) {
-    api.action.onClicked.addListener(askOnClick);
     api.permissions?.onAdded?.addListener?.(added => { track(added?.origins ?? []).catch(() => {}); });
     api.storage.onChanged.addListener((changes, area) => {
       if (area !== 'session') return;
@@ -194,8 +170,6 @@
   globalThis.faiCompat = {
     originPattern,
     requestPatterns,
-    // The worker awaits this same toolbar gesture instead of opening a duplicate Firefox permission prompt.
-    approvalAccess(tabId) { return clickAccess?.tabId === tabId ? clickAccess.promise : null; },
     reconcile,
     EXPECTED_KEY,
     GRANTED_KEY,

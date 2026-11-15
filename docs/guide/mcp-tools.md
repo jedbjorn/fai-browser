@@ -23,9 +23,9 @@ uses and points need the revision of the result they came from. A spent or unkno
 
 ## Common values
 
-- **`mode`** (the level asked): `read-only` (Read), `reversible` (Use: buttons, fills), `interactive` (Use: also search,
+- **`mode`** (the level asked): `read-only` (Use: reading/navigation), `reversible` (legacy: buttons, fills), `interactive` (legacy: search,
   filter, sort, paging), `full` (Act: save, send, submit, delete, accept cookies), `testing` (Test site; only the user's
-  listed test origins). The user's approval caps it; results report `granted {level, asked}`.
+  listed test origins). Use grants read-only/single-tab; Act grants full/multiple-tab. Explicit lower modes still cap a call; results report `granted {level, asked}`.
 - **`origins`**: 1 to 10 exact origins like `https://app.example.com` (scheme + host [+ port], no path). `https://*.example.com`
   covers every https subdomain of one site, only for a task that really spans them.
 - **`expectation`**: at least one of `urlEquals`, `urlIncludes`, `urlMatches`, `textIncludes`, `textAbsent`, `titleEquals`,
@@ -97,13 +97,13 @@ same act picks up a click given meanwhile). Uploads always ask. See [approvals.m
 is one call too: `{"actionId": "a1", "text": "blue kettle", "submit": true}`. `suppliedText` still works for values the user
 gave: each value is offered in the fields it fits (`fill textbox "Email" with supplied email`; choose by label when several fit), and such a fill goes in a
 `fills` batch without `text` (`{"actionId": "a4"}`). The values stay with the request through a level raise or an added
-origin; do not pass them again. At Read, `warning: controls_need_reversible:<n>` counts the buttons and fields that need
-Use: ask for it at once when the task needs one.
+origin; do not pass them again. At Use, `warning: controls_need_reversible:<n>` counts the buttons and fields that need
+Act approval: ask for it at once when the task needs one.
 
-**Popups and new tabs.** With **One task tab** (the default; `granted: ...; task tabs: single`) a tab or window the page
+**Popups and new tabs.** With **Use** (one task tab; `granted: ...; task tabs: single`) a tab or window the page
 opens pauses the request (`child_tab`; `childOrigin` names its site when the browser shows it): the user handles it and
-clicks Resume. A link that would open a new tab on an approved site is offered as `open "..." in this tab`. With
-**Multiple task tabs** (the user turns it on, then approves or resumes), a tab the page opens on the granted origins (an
+chooses Use or Act to resume. A link that would open a new tab on an approved site is offered as `open "..." in this tab`. With
+**Act** (multiple task tabs, included in its approval), a tab the page opens on the granted origins (an
 OAuth popup) joins the request: the act reports its page and the result lists `tabs [{id, url, title, current?}]`;
 `act {tab}` switches and `openTab` opens one; anywhere else it still pauses as `child_tab`. The first page of a request
 with one task tab says so in a `notice:` line.
@@ -198,7 +198,7 @@ the JSON `error` object in their text block. See [the host research and design](
 | `choose` | Answer from `page.digest` if it answers the task; else `fai_browser_act` with one `actions[].id` and the given revision |
 | `observe` | The page changed or the action could not land: `fai_browser_observe`, then choose |
 | `answer` | Verified; report from `page.digest` |
-| `relay` | Tell the user `needs.message`. With `needs.level`: "approve <level> for this task in FAI Browser; it is preselected", then `fai_browser_open` with the same `requestId` and that `mode` (same tab, page and id; only a request still waiting for approval gets a successor, named in a `requestId <new> replaces <old>` line). A pause (`child_tab`, `tab_changed`, ...) waits for the user's Resume: end your turn when FAI wakes you, else `fai_browser_wait` |
+| `relay` | Tell the user `needs.message`. With `needs.level`: "click Act for this task in FAI Browser", then `fai_browser_open` with the same `requestId` and that `mode` (same tab, page and id; only a request still waiting for approval gets a successor, named in a `requestId <new> replaces <old>` line). A pause (`child_tab`, `tab_changed`, ...) waits for the user's approval to resume: end your turn when FAI wakes you, else `fai_browser_wait` |
 | `approve` | A `needsApproval` action waits for the user's click: relay `next.text`, then repeat the act unchanged (each call waits up to 60 s) |
 | `wait` | `fai_browser_wait` with the `requestId`; again while it says pending |
 | `stop` | Report `next.text` (`refused_action`, `error_page`); never retry a refused action |

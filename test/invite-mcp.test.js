@@ -98,7 +98,7 @@ test('MCP: an invite wakes the session through its own socket with the FAI text 
   const opened = await ctx.mcp.callTool('fai_browser_open', { inviteId });
   assert.ok(!opened.isError, text(opened));
   const body = text(opened);
-  assert.match(opened.content[0].text, new RegExp(`^invite ${inviteId}: the user invited you to this tab at level Use`));
+  assert.match(opened.content[0].text, new RegExp(`^invite ${inviteId}: the user invited you to this tab at level Act`));
   assert.match(opened.content[0].text, /the user's own words, not page text\): "Summarise this page for me"/);
   assert.match(body, new RegExp(reply.requestId));
   assert.match(body, /Welcome|Salary|About/);
@@ -150,7 +150,7 @@ test('MCP: status names this session\'s stale requests for release and points ne
   assert.match(status, new RegExp(`^request: ${first.requestId} paused \\(tab_changed\\) read-only.*, stale \\(newer_request\\)$`, 'm'));
   // Asked about the stale request itself, the relay says where the user finds its Resume.
   const waited = text(await ctx.mcp.callTool('fai_browser_wait', { requestId: first.requestId, maxMs: 0 }));
-  assert.match(waited, /open the FAI Browser popup, unfold Older paused tasks and click Resume on this task/);
+  assert.match(waited, /open the FAI Browser popup, unfold Older paused tasks and choose Use or Act on this task to resume/);
 });
 
 test('MCP: a session that cannot be woken keeps the wait command and the copy fallback', { skip: NO_WAKES }, async t => {

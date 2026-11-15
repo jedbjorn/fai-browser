@@ -5,12 +5,12 @@ content** is untrusted. The goal is that the worst a misled agent can do is boun
 explains the layers; [SECURITY.md](../../SECURITY.md) lists what is *not* protected. Rule details live in
 [REFERENCE.md](../REFERENCE.md#guardrails).
 
-## 1. One tab, approved per request
+## 1. Task tabs, approved per request
 
-The agent cannot pick a tab, and gets one you already had open only when you invite it from the popup (section 9). It asks (`fai_browser_open`) with exact **origins**, a one-line **reason** and a **level**. You
-see the request (site, level, reason, marked as the agent's words) and approve it with a click in the extension. That binds
-**one tab** to **that request**; nothing the agent sends can select another tab or window, and browser-internal pages are
-never used.
+The agent gets an existing personal tab only when you invite it from the popup (section 9). It asks (`fai_browser_open`)
+with exact **origins**, a one-line **reason** and a **mode**. You approve with **Use** for reading and navigation
+in one task tab, or **Act** for actions and up to eight task tabs. Neither button allows unrelated personal tabs
+or browser-internal pages. A child tab pauses a Use task; an Act task follows only task tabs on approved origins.
 
 - Origins are exact (`https://app.example.com`). For a task that spans subdomains of one site the agent may ask for a
   **domain root** (`https://*.example.com`); you see it as "all of example.com", and Chrome asks you to allow the site too.
@@ -26,21 +26,19 @@ never used.
   a credentials page in any frame restricts every frame and the page.
 - There is one active lease per browser. **Pause** and **Stop** are at the top of the popup while an agent holds a tab; a per-request call and time budget ends runaway agents (50 calls / 20 minutes by default, your setting is the ceiling).
 
-## 2. Levels you choose
+## 2. Two approval buttons
 
-The agent asks for a level; you grant the same or lower. The run is **clamped** to your choice, the result reports
-`granted`, and nothing the agent, a page or a config file sends can raise it.
+**Use** grants `read-only`: links, navigation, scrolling and waiting in one task tab. **Act** grants `full`:
+buttons, fields, searches, save, send, submit, delete and cookie acceptance, with multiple task tabs on approved sites.
+Both approve directly; there is no level dropdown, default-level setting or separate tab setting.
 
-| Level (UI) | API `mode` | Adds |
-|---|---|---|
-| Read | `read-only` | same-origin links, scroll, wait, allowed URLs |
-| Use | `reversible` | + buttons, selects, fills of values the user supplied |
-| Use | `interactive` | + search, filter, sort and paging submits (only on pages without password or payment fields) |
-| Act | `full` | + save, send, submit, delete, accept a cookie dialog that has no reject button |
-| Test site | `testing` | + sign-in, purchase, payment fields; only for exact origins you listed under Advanced, Test sites; the tab card reads "TEST SITE, no guardrails" |
+Your explicit click sets the grant. Existing approvals never silently become Act. Legacy API modes (`read-only`,
+`reversible`, `interactive`, `full`, `testing`) remain supported; an explicitly lower mode limits that call,
+and nothing above your grant runs. Results report requested, granted and effective levels.
 
-Cookie dialogs and popups: the agent clicks the offered reject or close button, from Use (at Read it asks for Use); an accept button is only offered at Act. Sign-in
-controls and password fills are never offered below Test site.
+Testing adds sign-in and payment fields only when the agent requested `testing`, every origin is listed under
+Advanced → Test sites, and you explicitly enable the test-only option with Act. Origin, policy, redaction and
+approval protections still apply. Cookie and popup buttons require Act; Use permits no such actions.
 
 ## 3. Guardrails run three times
 
@@ -61,7 +59,7 @@ password, token), secret handle uses, and submits above the granted level. They 
 hash, 60 seconds, no "always allow". [approvals.md](approvals.md).
 
 Never approvable, whatever you click: sign-in or password/card fields outside Test site, a label you forbade, a page outside the
-approved origins, anything at Read.
+approved origins, actions at Use.
 
 ## 5. Secrets are redacted
 
@@ -96,7 +94,7 @@ on local changes and on anything but a fast-forward to a release. Traces stay lo
 toolbar popup creates an invite: the extension's worker accepts the `invite` message only from `popup.html` itself
 (not the approval window, a web page or a content script), and the service accepts it only over the extension's
 paired channel; no agent, MCP or client API call can create one. The invite grants exactly the level you picked, on
-that tab's exact origin (never a domain root), in one tab; every guardrail, the Approve gate and the clamping apply
+that tab's exact origin (never a domain root), with one task tab for Use or multiple task tabs for Act; every guardrail, the Approve gate and the clamping apply
 unchanged. The popup sends the tab and origin it showed you, and nothing is shared if the tab changed since. Its id is
 single use and expires after 10 minutes, and closing the tab or leaving its site before an agent joined revokes it.
 What you type in "What should it do?" reaches the agent as your words, labelled as such; nothing from the page does.
@@ -106,7 +104,7 @@ session is listed to, and joinable by, that session alone; one made for no sessi
 can be joined by any registered agent session, never by a bare client token. Before the join nobody can read or act
 on the tab (`invite_not_joined`); after it every observe, act, run and release must come from the joining session
 (`not_owner`). Other clients see only the request's id and state, never its origin or the invite id. If the invite
-would end another agent's task in the same browser, the popup says so and needs a second tap.
+would end another agent's task in the same browser, the popup warns before the Use/Act click.
 
 To wake an idle agent, FAI's MCP server (the agent's own child process) writes one fixed FAI message to that agent's
 own channel: Claude Code's messaging socket, `codex queue` for its own thread, or FAI's own plugin inside OpenCode. The message names the invite or

@@ -83,7 +83,9 @@ export function createCompanion({
       return;
     }
     if (lease?.status === 'active') {
-      event.reply({ leaseId: lease.leaseId, requestId: null, ...publicLease(lease), origins: [...origins] });
+      if (isLevel(event.level)) hub.setLeaseLevel(lease.leaseId, event.level);
+      hub.setLeaseTabMode(lease.leaseId, event.tabMode ?? 'single');
+      event.reply({ leaseId: lease.leaseId, requestId: null, ...publicLease(lease), grant: { level: lease.level, tabMode: lease.tabMode }, origins: [...origins] });
       return;
     }
     const leaseId = randomBytes(16).toString('hex');
@@ -95,10 +97,11 @@ export function createCompanion({
       origin: event.origin,
       allowedOrigins: origins,
       level: isLevel(event.level) ? event.level : 'reversible',
+      tabMode: event.tabMode ?? 'single',
     });
     currentLeaseId = leaseId;
     // The approved origins, as the daemon sends them (the extension reads approved cross-origin frames by them).
-    event.reply({ leaseId, requestId: null, ...publicLease(bound), origins: [...origins] });
+    event.reply({ leaseId, requestId: null, ...publicLease(bound), grant: { level: bound.level, tabMode: bound.tabMode }, origins: [...origins] });
     notifyLease();
   }
 

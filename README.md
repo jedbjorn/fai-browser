@@ -237,7 +237,7 @@ node src/cli.js observe --request <requestId>
 node src/cli.js act --request <requestId> --action a3 --revision <revision> --expect-url-includes /members
 ```
 
-In the extension's **Advanced → Tab access**, **One task tab** is the default; a page-created tab or popup pauses the task. Choose **Multiple task tabs** before approving a request to let the agent open and switch among up to eight task tabs on the approved site. The browser asks for site access, the tabs share the task group where supported, and existing personal tabs stay outside the task. Switching back to one pauses a multiple-tab task. The chosen permission level still applies.
+Approve with **Use** to let the agent read and navigate in one task tab, or **Act** to allow actions and up to eight task tabs on approved sites. Each button approves directly; there is no level dropdown or separate tab setting. Act requests browser site access where needed. Task tabs share the task group where supported; personal tabs stay outside the task. A page-created tab pauses a Use task.
 
 **Or from your agent, through MCP:**
 
@@ -259,24 +259,23 @@ and exit code.
 
 ## Safety model
 
-- **One tab per request, approved by you.** Each request names exact origins (or, for a task across
-  subdomains, a domain root shown to you as "all of example.com", which Chrome also asks you to allow)
-  and a reason; the agent cannot select a tab.
-- **You pick the level, per tab.** The agent asks for a `mode`; the request card offers that level
-  and those below it, preselected to what was asked: **Read** (links, scroll, wait), **Use** (also
-  buttons, selects, fills of supplied text, and search, filter, sort and paging submits on pages
-  without password or payment fields) or **Act** (also save, send, submit, delete and accept cookies).
-  Your choice is a ceiling: the run is clamped to it and the receipt's `permissions` block says what
-  ran. Nothing the agent, the page, a `policy` or `config.json` sends can raise it.
+- **Task tabs, approved by you.** Each request names exact origins (or, for a task across
+  subdomains, a domain root shown as "all of example.com", which the browser also asks you to allow)
+  and a reason. Existing personal tabs are shared only when you invite the agent.
+- **Two approval buttons.** **Use** permits reading, links, navigation, scrolling and waiting in one task tab.
+  **Act** permits actions, including save, send, submit, delete and accept cookies, and up to eight task tabs
+  on approved sites. Both buttons approve directly. Your explicit click sets the grant; existing grants
+  are never silently raised. Legacy API modes remain supported as limits on individual calls.
+  The receipt’s `permissions` block reports what was requested, granted and effective.
 - **Payments require your approval.** With the agent driving and the Approve gate enabled,
   a payment action waits for your **Approve once** click. With the gate off, purchases are refused
   outside testing mode. Sign-in pages are handed
   back to you; agents may enter credentials only in your configured test environments.
 - **Testing mode is for your test environments only.** It permits sign-in and checkout and can
-  only be chosen in the popup (**Test site**) for origins you listed under Advanced, Test sites
+  only be explicitly enabled with **Act** for testing requests on origins you listed under Advanced, Test sites
   (`http://localhost:3000`, exact origins, no wildcards). Secret-handle use still requires approval;
   filling a saved secret handle into password fields on sign-in forms is currently unsupported.
-- **Cookie dialogs:** the agent clicks the offered reject button (from Use; at Read it asks for Use); an accept button is only offered at Act;
+- **Cookie dialogs:** Use cannot click their buttons; approve Act to let the agent click the offered reject button. An accept button is offered only when the effective mode is `full`;
   sign-in controls and password fills are never offered below Test site.
 - **Guardrails you can tighten at any level.** `policy: {"forbid": [...], "note": "..."}` per run or
   in `config.json` adds refused labels, testing included; nothing removes one.

@@ -79,7 +79,7 @@ Be aware of these; they are also in [SECURITY.md](../../SECURITY.md).
 - A value split across elements, drawn on a canvas or shown only in an image is never vaulted for handles.
 - `copy_secret` puts the value on the OS clipboard (after you approve); local programs, including the agent's shell, can read the clipboard until something else is copied. The approval card says so.
 - A page that reads a field you approved can send the value anywhere. Approve fills only on sites that should have the secret.
-- Redaction targets credentials, not personal data. A bank page is readable at Read level.
+- Redaction targets credentials, not personal data. A bank page is readable with Use approval.
 
 Audit your own pages: `node scripts/secret-sweep.mjs [--strict]` observes every fixture page and lists every placeholder.
 Found a miss? Report a live credential privately ([SECURITY.md](../../SECURITY.md)); a missed format with a fake value goes in a

@@ -196,9 +196,9 @@ export const PURCHASE_REFUSAL_TEXT = 'FAI never purchases outside testing mode. 
 /** The refusal text for a control the user reserved with a `forbid` addition. */
 export const FORBID_REFUSAL_TEXT = 'The user reserved this control for themselves. Tell the user what to do in the tab.';
 
-/** Display names of the levels, as the popup shows them (Use stands for reversible and interactive there). */
+/** Approval names; old restricted action grants retain an explicit limited label. */
 export const LEVEL_NAMES = Object.freeze({
-  'read-only': 'Read', reversible: 'Use (no submit)', interactive: 'Use', full: 'Act', testing: 'Test site',
+  'read-only': 'Use', reversible: 'Act (limited)', interactive: 'Act (limited)', full: 'Act', testing: 'Act (test site)',
 });
 
 /**
@@ -213,7 +213,7 @@ export function levelRefusalText({ granted, needed }) {
       + `with mode "${needed}".`;
   }
   const text = `The user approved ${LEVEL_NAMES[granted] ?? granted} for this tab; this task needs ${want}. Ask them to `
-    + `approve ${want} for this task in FAI Browser (it is preselected); the task keeps its tab and page.`;
+    + `click Act${needed === 'testing' ? ' with the test-only option' : ''} for this task in FAI Browser; the task keeps its tab and page.`;
   return needed === 'testing'
     ? `${text} Test site can be granted only on origins the user listed as test sites.`
     : text;

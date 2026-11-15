@@ -42,6 +42,7 @@ async function popup(t, { local = {}, requests = [], mode = 'daemon' } = {}) {
         session: { async get() { return { requests, connection }; } },
         onChanged: { addListener() {} },
       },
+      permissions: { async contains() { return true; }, async request() { return true; } },
       tabs: { async query() { return [{ id: 7, url: 'http://127.0.0.1:5000/start', title: 'QA' }]; } },
       runtime: {
         async sendMessage(message) {
@@ -59,24 +60,35 @@ async function popup(t, { local = {}, requests = [], mode = 'daemon' } = {}) {
 const request = mode => ({ requestId: 'req_qa', state: 'pending', origins: ['http://127.0.0.1:5000'], mode, reason: 'QA corpus', createdAt: new Date().toISOString() });
 const starts = page => page.evaluate(() => __sent.filter(message => message.type === 'start'));
 
-test('harness: approves the request card at the task level', async t => {
+test('harness: legacy capability-limit cases keep their exact grant without a removed dropdown', async t => {
   const page = await popup(t, { requests: [request('full')] });
-  assert.equal(await page.$eval('.request-card .level-select', node => node.value), 'full', 'preset: the asked level');
+  assert.equal(await page.locator('.request-card select').count(), 0, 'no level selector');
   const clicked = await page.evaluate(approveExpression({ level: 'interactive', ...PAIRING }));
-  assert.equal(clicked.via, 'card');
+  assert.equal(clicked.via, 'message');
   assert.equal(clicked.level, 'interactive');
   // `attemptId` names the click's approval_attempt (the worker bounds and logs it).
   const sent = await starts(page);
-  assert.deepEqual(sent.map(({ attemptId, ...rest }) => rest), [{ type: 'start', requestId: 'req_qa', level: 'interactive', tabMode: 'single' }]);
-  assert.match(sent[0].attemptId, /^a[0-9a-z]+$/);
+  assert.deepEqual(sent.map(({ attemptId, ...rest }) => rest), [{ type: 'start', requestId: 'req_qa', level: 'interactive' }]);
+  assert.equal(sent[0].attemptId, undefined, 'legacy harness uses the protocol directly');
   assert.equal(await page.evaluate(() => __local.secret), PAIRING.secret, 'the typed secret is saved');
 });
 
-test('harness: without a level the card preset (the asked level) is approved', async t => {
+test('harness: full clicks Act directly and requests multiple task tabs', async t => {
+  const page = await popup(t, { requests: [request('read-only')] });
+  const clicked = await page.evaluate(approveExpression({ level: 'full', ...PAIRING }));
+  assert.equal(clicked.via, 'card');
+  assert.equal(clicked.level, 'full');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'start'));
+  const sent = await starts(page);
+  assert.equal(sent[0].level, 'full');
+  assert.equal(sent[0].tabMode, 'multiple');
+});
+
+test('harness: without an explicit level it clicks Use', async t => {
   const page = await popup(t, { requests: [request('reversible')] });
   const clicked = await page.evaluate(approveExpression({ ...PAIRING }));
-  assert.equal(clicked.level, 'reversible');
-  assert.equal((await starts(page))[0].level, 'reversible');
+  assert.equal(clicked.level, 'read-only');
+  assert.equal((await starts(page))[0].level, 'read-only');
 });
 
 test('harness: a level the card does not offer is refused and nothing is approved', async t => {

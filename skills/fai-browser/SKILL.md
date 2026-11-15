@@ -22,7 +22,7 @@ Each result: `next`, `revision`, `page.digest` and `actions` (`a3  click "About"
 - Otherwise `fai_browser_act` with one `actions[].id` as `actionId`. `revision` (single-use) is needed only for `needsApproval` actions, secrets and points.
 - `fill "Search" (act with text)` takes `text`; `submit: true` then does `press Enter in` it. Several fields: `fills: [{actionId, text}]`; a `with supplied` fill takes no text. Never passwords or codes.
 - Other acts: `url` (granted origins), `nav` (`back`, `forward`, `reload`), `key` (Escape, Tab, arrows, Space, ...; Ctrl/Cmd+letter at `full`), `hover: true` with an `actionId` (menus).
-- **One task tab** (default): a page-opened tab pauses (`child_tab`) until the user's Resume. **Multiple task tabs** (the user's setting): `openTab: "<approved URL>"` opens, `tab: "t1"` switches; at most eight, never personal tabs.
+- **Use**: reading/navigation, one tab; a child pauses (`child_tab`). **Act**: actions, multiple task tabs: `openTab: "<approved URL>"` opens, `tab: "t1"` switches; at most eight, never personal tabs.
 - Give the act that finishes the task an `expectation`: `{"urlIncludes": "/members"}` or text only that page has. Only `status: "completed"` with `verification.passed: true` is verified.
 - Loading? `fai_browser_observe` with `waitFor` (`{"textAbsent": "Loading"}`).
 - `controls_need_reversible:<n>` warning: n buttons or fields need `reversible`; if needed, ask for it now.
@@ -35,7 +35,7 @@ Each result: `next`, `revision`, `page.digest` and `actions` (`a3  click "About"
 | `choose` | Answer from `page.digest` if it can; else act. |
 | `observe` | The page changed or the act did not land: `fai_browser_observe`, then choose. |
 | `answer` | Verified: report it. |
-| `relay` | Tell the user `needs.message`. With `needs.level`: "approve it in FAI Browser; its level is preselected", then `fai_browser_open` with the `requestId` and `mode` = `needs.level` (same tab and id; a still-pending one gets a successor: `requestId <new> replaces <old>`). Paused/pending: end your turn if FAI wakes you (ignore OpenCode's `_faiHostSession`), else (subagent, script) `fai_browser_wait`. |
+| `relay` | Tell the user `needs.message`. With `needs.level`: "click Act on the FAI Browser request", then `fai_browser_open` with the `requestId` and `mode` = `needs.level` (same tab and id; a still-pending one gets a successor: `requestId <new> replaces <old>`). Paused/pending: end your turn if FAI wakes you (ignore OpenCode's `_faiHostSession`), else (subagent, script) `fai_browser_wait`. |
 | `approve` | A `needsApproval` action waits for the user's Approve once: relay `next.text`, then repeat the act unchanged. |
 | `wait` | `fai_browser_wait` with the `requestId` (or `runId`); again while pending (not a repeat). |
 | `stop` | Report `next.text` (`refused_action`, `error_page`); no retry. |
@@ -55,7 +55,7 @@ Cookie dialog: act on the offered reject button (from `reversible`); accept only
 **Test sites** (`testing`): `logs: true` on observe returns console errors and failed requests; JavaScript dialogs are dismissed unless `dialog: "accept"` (prompt: `text`) armed the next answer.
 
 ## Hard rules
-Never log in, enter passwords or MFA codes outside testing mode. A purchase (`needsApproval`) runs only after the user's Approve once; if refused, the user does it. Ask for the lowest `mode`: `read-only` (links, scroll, navigation), `reversible` (buttons, fills, keys), `interactive` (searches, filters, paging), `full` (save, send, submit, delete, uploads). `testing` (no guardrails) only on the user's stated test environment. Submit, send, save or delete only when the user asked and granted the level.
+Never log in, enter passwords or MFA codes outside testing mode. A purchase (`needsApproval`) runs only after the user's Approve once; if refused, the user does it. Ask for the lowest `mode`: `read-only` (links, scroll, navigation), `reversible` (buttons, fills, keys), `interactive` (searches, filters, paging), `full` (save, send, submit, delete, uploads). `testing` only on the user's stated, listed test environment, explicitly enabled with Act. Legacy API modes remain call limits. Submit, send, save or delete only when the user asked and granted the level.
 
 ## Without MCP
 `fai-browser request-tab --origin <origin> --reason "…"`, `fai-browser wait <requestId> --until active`, then `fai-browser observe --request <id>` and `fai-browser act --request <id> --action a3 --expect-url-includes /path`. Each prints a JSON line with `next`; act exits 0 completed, 2 needs the user or host, 1 failed.

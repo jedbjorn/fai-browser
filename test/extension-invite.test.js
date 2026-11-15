@@ -37,16 +37,17 @@ test.before(async () => {
 test.after(() => browser?.close());
 
 // popup.html with a fake chrome API: `agents` answers the session list; `invite` answers an active invited request.
-async function popup(t, { sessions, wake = 'queued', search = '', requests = [] }) {
+async function popup(t, { sessions, wake = 'queued', search = '', requests = [], permissions = null, allowSite = true }) {
   const page = await browser.newPage({ viewport: { width: 400, height: 900 } });
   t.after(() => page.close());
+  page.setDefaultTimeout(3000);
   await page.route('https://popup.test/**', async route => {
     const file = new URL(route.request().url()).pathname.slice(1);
     const type = file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : 'text/html';
     route.fulfill({ contentType: type, body: await readFile(new URL(file, EXTENSION), 'utf8') });
   });
-  await page.addInitScript(([sessions, wake, requests]) => {
-    const local = { endpoint: 'http://127.0.0.1:4318', secret: 'x'.repeat(30) };
+  await page.addInitScript(([sessions, wake, requests, permissions, allowSite]) => {
+    const local = { endpoint: 'http://127.0.0.1:4318', secret: 'x'.repeat(30), ...(permissions ? { permissions } : {}) };
     globalThis.__sent = [];
     globalThis.__requests = requests;
     globalThis.__local = local;
@@ -63,7 +64,7 @@ async function popup(t, { sessions, wake = 'queued', search = '', requests = [] 
       tabs: { async query() { return [{ id: 7, url: 'https://shop.example/cart', title: 'Cart' }]; } },
       commands: { async getAll() { return [{ name: '_execute_action', shortcut: 'Ctrl+Shift+Y' }]; } },
       action: { async getUserSettings() { return { isOnToolbar: true }; } },
-      permissions: { async request() { return true; }, async contains() { return false; }, async remove() { return true; } },
+      permissions: { async request() { return allowSite; }, async contains() { return false; }, async remove() { return true; } },
       runtime: {
         getManifest: () => ({ version: '0.5.1' }),
         async sendMessage(message) {
@@ -82,39 +83,39 @@ async function popup(t, { sessions, wake = 'queued', search = '', requests = [] 
         },
       },
     };
-  }, [sessions, wake, requests]);
+  }, [sessions, wake, requests, permissions, allowSite]);
   await page.goto(`https://popup.test/popup.html${search}`);
   await page.waitForFunction(() => document.body.dataset.ready === '1');
   return page;
 }
 
-test('popup: one live session is one tap; the level defaults to Use and the text goes along', async t => {
+test('popup: one live session is one tap; Use explicitly grants read-only and the text goes along', async t => {
   const page = await popup(t, { sessions: [CLAUDE], wake: 'delivered' });
   await page.waitForSelector('#invite .invite-agent');
-  assert.equal(await page.textContent('#invite .invite-agent'), 'Invite Claude Code · fai-browser');
-  assert.equal(await page.getAttribute('.invite-level[aria-checked="true"]', 'data-level'), 'interactive', 'Use is interactive');
+  assert.deepEqual(await page.locator('#invite .invite-agent').allTextContents(), ['Use', 'Act']);
+  assert.match(await page.textContent('.invite-row-name'), /Claude Code · fai-browser/);
+  assert.equal(await page.locator('.invite-level').count(), 0);
   await page.fill('#invite .invite-text', 'Compare the two plans');
-  await page.click('#invite .invite-agent');
+  await page.click('#invite .invite-agent[data-level=read-only]');
   await page.waitForSelector('#invite .invite-status');
   const sent = await page.evaluate(() => __sent.filter(message => message.type === 'invite'));
-  assert.deepEqual(sent, [{ type: 'invite', sessionId: 'ses_1', level: 'interactive', text: 'Compare the two plans',
+  assert.deepEqual(sent, [{ type: 'invite', sessionId: 'ses_1', level: 'read-only', text: 'Compare the two plans',
     tabId: 7, origin: 'https://shop.example' }], 'the tab and origin the popup showed go along');
   assert.match(await page.textContent('#invite .invite-line'), /^Sent to Claude Code · fai-browser\. It should start in a moment\.$/);
   assert.match(await page.textContent('#invite .invite-copy-text'), /^If it does not start, tell it: join FAI invite inv-abcd2345$/,
     'sent is not received: the copy line stays, softly');
 });
 
-test('popup: several sessions are a one-tap list; a level chip is remembered; a failed wake shows the copy line', async t => {
+test('popup: several sessions are a one-tap list; Act approves directly; a failed wake shows the copy line', async t => {
   const page = await popup(t, { sessions: [CLAUDE, CODEX], wake: 'failed' });
   await page.waitForSelector('#invite .invite-row');
   const rows = await page.$$eval('#invite .invite-row', nodes => nodes.map(node => node.textContent));
   assert.equal(rows.length, 2);
   assert.match(rows[0], /Claude Code · fai-browser/);
   assert.match(rows[1], /Codex · shop.*not ready/);
-  await page.click('.invite-level[data-level="full"]');
-  assert.equal(await page.evaluate(() => __local.inviteLevel), 'full');
-  assert.equal(await page.$('.invite-level[data-level="testing"]'), null, 'Test site only on a listed test site');
-  await page.click('#invite .invite-row >> nth=0');
+  assert.equal(await page.locator('#invite input[type=checkbox]').count(), 0);
+  await page.click('#invite .invite-agent[data-session-id=ses_1][data-level=full]');
+  assert.equal(await page.evaluate(() => __local.inviteLevel), undefined, 'no saved level silently carries to the next invite');
   await page.waitForSelector('#invite .invite-copy');
   assert.equal(await page.textContent('#invite .invite-join'), 'join FAI invite inv-abcd2345');
   assert.match(await page.textContent('#invite .invite-line'), /Could not wake/);
@@ -125,30 +126,46 @@ test('popup: several sessions are a one-tap list; a level chip is remembered; a 
 test('popup: no session still invites (copy line); the approval window never offers Invite', async t => {
   const page = await popup(t, { sessions: [] });
   await page.waitForSelector('#invite .invite-agent');
-  assert.equal(await page.textContent('#invite .invite-agent'), 'Invite agent');
-  await page.click('#invite .invite-agent');
+  assert.deepEqual(await page.locator('#invite .invite-agent').allTextContents(), ['Use', 'Act']);
+  await page.click('#invite .invite-agent[data-level=read-only]');
   await page.waitForSelector('#invite .invite-copy');
   const windowed = await popup(t, { sessions: [CLAUDE], search: '?window=1' });
   await windowed.waitForTimeout(200);
   assert.equal(await windowed.$eval('#invite', node => node.hidden), true);
 });
 
-test('popup: an invite that would end another agent\'s task in this browser says so first and needs a second tap', async t => {
+test('popup: an invite warns about another agent task before either direct approval', async t => {
   const other = { requestId: 'req_other', state: 'active', origins: ['https://docs.example'], mode: 'read-only', reason: 'Docs',
     createdAt: new Date().toISOString(), lease: { tabId: 9 }, browser: { mine: true },
     owner: { sessionId: 'ses_2', host: 'codex', repo: 'shop' } };
   const page = await popup(t, { sessions: [CLAUDE], requests: [other], wake: 'delivered' });
   await page.waitForSelector('#invite .invite-supersede');
   assert.equal(await page.textContent('#invite .invite-supersede'), "This will end Codex · shop's current tab task.");
-  await page.click('#invite .invite-agent');
-  assert.equal(await page.textContent('#invite .invite-agent'), 'End that task and invite');
-  assert.match(await page.textContent('#invite .invite-supersede'), /Tap again to invite anyway/);
-  assert.deepEqual(await page.evaluate(() => __sent.filter(message => message.type === 'invite')), [], 'the first tap only warns');
-  await page.click('#invite .invite-agent');
+  assert.deepEqual(await page.evaluate(() => __sent.filter(message => message.type === 'invite')), []);
+  await page.click('#invite .invite-agent[data-level=read-only]');
   await page.waitForFunction(() => __sent.some(message => message.type === 'invite'));
-  // The same agent's own task is no conflict: it moves to the new tab with one tap.
+  assert.equal(await page.evaluate(() => __sent.filter(message => message.type === 'invite').length), 1);
   const own = await popup(t, { sessions: [CLAUDE], requests: [{ ...other, owner: { sessionId: 'ses_1', host: 'claude', repo: 'fai-browser' } }] });
   await own.waitForSelector('#invite .invite-agent');
-  assert.equal(await own.$('#invite .invite-supersede'), null);
+  assert.equal(await own.locator('#invite .invite-supersede').count(), 0);
 });
 
+test('popup: testing invites require the explicit checkbox and Act; Use stays read-only', async t => {
+  for (const level of ['read-only', 'full']) {
+    const page = await popup(t, { sessions: [CLAUDE], permissions: { testingOrigins: ['https://shop.example'] } });
+    await page.waitForSelector('#invite input[type=checkbox]');
+    assert.equal(await page.isChecked('#invite input[type=checkbox]'), false);
+    await page.check('#invite input[type=checkbox]');
+    await page.click(`#invite .invite-agent[data-level="${level}"]`);
+    await page.waitForFunction(() => __sent.some(message => message.type === 'invite'));
+    assert.equal(await page.evaluate(() => __sent.find(message => message.type === 'invite').level), level === 'full' ? 'testing' : 'read-only');
+  }
+});
+
+test('popup: denied browser site access cannot turn an Act invite into a single-tab grant', async t => {
+  const page = await popup(t, { sessions: [CLAUDE], allowSite: false });
+  await page.waitForSelector('#invite .invite-agent[data-level=full]');
+  await page.click('#invite .invite-agent[data-level=full]');
+  await page.waitForFunction(() => document.body.textContent.includes('Nothing was approved'));
+  assert.equal(await page.evaluate(() => __sent.some(message => message.type === 'invite')), false);
+});
