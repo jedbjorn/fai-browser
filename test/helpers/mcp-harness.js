@@ -4,8 +4,8 @@ import { resolve } from 'node:path';
 
 export const MCP_MAIN = resolve(import.meta.dirname, '..', '..', 'src', 'mcp-main.js');
 
-export function spawnMcp(env) {
-  const child = spawn(process.execPath, [MCP_MAIN], {
+export function spawnMcp(env, { bin = process.execPath, args = [MCP_MAIN] } = {}) {
+  const child = spawn(bin, args, {
     env,
     stdio: ['pipe', 'pipe', 'pipe'],
   });

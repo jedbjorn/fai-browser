@@ -1490,6 +1490,7 @@ class McpServer {
       connect: this.connect,
       clientName: clientNameFrom(this.env, this.clientInfo),
       host: this.host,
+      clientInfo: this.clientInfo,
       clientVersion: typeof this.clientInfo?.version === 'string' ? this.clientInfo.version : null,
       opencodeOwnerOf: requestId => this.opencodeOwner.get(requestId) ?? null,
       log: message => this.log(message),

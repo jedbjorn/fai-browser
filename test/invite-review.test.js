@@ -14,7 +14,7 @@ import { FaiBrowserClient } from '../src/client.js';
 import { createDaemon } from '../src/daemon.js';
 import { AgentSession } from '../src/mcp-session.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
-import { startFakeClaudeSocket } from './helpers/fake-agents.js';
+import { spawnClaudeMcp, startFakeClaudeSocket } from './helpers/fake-agents.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
 import { ORIGIN } from './runtime-fixtures.js';
 import { NO_CLAUDE_WAKES } from './helpers/platform.js';
@@ -101,8 +101,9 @@ async function realSetup(t, { socketPid = process.pid } = {}) {
   const daemon = createDaemon({ home, env: {}, port: 0, hub });
   await daemon.listen();
   const fake = await startFakeClaudeSocket(t, { pid: socketPid });
-  const mcp = spawnMcp({ PATH: process.env.PATH, HOME: home, FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port),
-    FAI_MCP_APPROVAL_WAIT_MS: '300', CLAUDE_CODE_MESSAGING_SOCKET: fake.path, CLAUDE_CODE_MESSAGING_TOKEN: fake.token });
+  const mcp = await spawnClaudeMcp(t, { PATH: process.env.PATH, HOME: home, FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port),
+    FAI_MCP_APPROVAL_WAIT_MS: '300', CLAUDE_CODE_MESSAGING_SOCKET: fake.path, CLAUDE_CODE_MESSAGING_TOKEN: fake.token,
+    CLAUDE_CODE_SESSION_ID: 'test-session' }, { bound: socketPid === process.pid });
   t.after(async () => {
     await mcp.close();
     await daemon.close();
@@ -132,6 +133,7 @@ test('review: an inherited messaging socket (named after another process) is not
   const ctx = await realSetup(t, { socketPid: 999999 });
   assert.equal(ctx.session.host, 'claude');
   assert.equal(ctx.session.wake, 'none', 'the socket of a Claude Code that did not start this server');
+  assert.equal(ctx.session.wakeReason, 'claude_channel_unbound');
   const opening = await ctx.mcp.callTool('fai_browser_open', { origins: [ORIGIN], reason: 'Check' });
   assert.match(text(opening), /--until active/);
 });
@@ -314,8 +316,9 @@ test('final: a failed Approve wake shows in the request (the popup\'s "tell it t
   const daemon = createDaemon({ home, env: {}, port: 0, hub });
   await daemon.listen();
   const fake = await startFakeClaudeSocket(t, { mode: 'refuse' });
-  const mcp = spawnMcp({ PATH: process.env.PATH, HOME: home, FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port),
-    FAI_MCP_APPROVAL_WAIT_MS: '300', CLAUDE_CODE_MESSAGING_SOCKET: fake.path, CLAUDE_CODE_MESSAGING_TOKEN: fake.token });
+  const mcp = await spawnClaudeMcp(t, { PATH: process.env.PATH, HOME: home, FAI_HOME: home, FAI_DAEMON_PORT: String(daemon.port),
+    FAI_MCP_APPROVAL_WAIT_MS: '300', CLAUDE_CODE_MESSAGING_SOCKET: fake.path, CLAUDE_CODE_MESSAGING_TOKEN: fake.token,
+    CLAUDE_CODE_SESSION_ID: 'test-session' });
   t.after(async () => {
     await mcp.close();
     await daemon.close();
