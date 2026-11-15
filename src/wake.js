@@ -17,8 +17,9 @@
 //   ("Tell your agent: join FAI invite <id>").
 import { execFile, execFileSync } from 'node:child_process';
 import { connect } from 'node:net';
-import { accessSync, constants as fsConstants } from 'node:fs';
-import { basename, delimiter, isAbsolute, join } from 'node:path';
+import { accessSync, constants as fsConstants, statSync } from 'node:fs';
+import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
+import { findOnPath } from './install.js';
 
 export const WAKE_CAPABILITIES = Object.freeze(['claude-socket', 'codex-queue', 'opencode-plugin', 'none']);
 export const WAKE_REASONS = Object.freeze(['ok', 'wakes_off', 'claude_no_messaging', 'claude_channel_unbound',
@@ -136,8 +137,38 @@ export function codexThreadId(meta) {
   return typeof id === 'string' && UUID.test(id) ? id : null;
 }
 
-/** The codex binary: FAI_CODEX_BIN, else `codex` found on PATH; null when there is none. */
-export function codexBinary(env = process.env) {
+/** On Windows only a real .exe is usable: never a command shim or the desktop app's private WindowsApps binary. */
+function windowsCodexExe(candidate) {
+  if (typeof candidate !== 'string' || !isAbsolute(candidate) || !/\.exe$/i.test(candidate)
+      || /(?:^|[\\/])WindowsApps(?:[\\/]|$)/i.test(candidate)) return null;
+  try {
+    return statSync(candidate).isFile() ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The Codex executable: explicit override, PATH, then Windows npm's platform package; null when absent. */
+export function codexBinary(env = process.env, { platform = process.platform, arch = process.arch } = {}) {
+  if (platform === 'win32') {
+    if (env.FAI_CODEX_BIN) return windowsCodexExe(env.FAI_CODEX_BIN);
+    const dirs = String(env.PATH ?? env.Path ?? '').split(';').filter(dir => isAbsolute(dir)
+      && !/(?:^|[\\/])WindowsApps(?:[\\/]|$)/i.test(dir));
+    const exe = findOnPath('codex', { env: { ...env, PATH: dirs.join(';'), PATHEXT: '.EXE' }, platform });
+    if (exe) return windowsCodexExe(exe);
+    const target = { x64: 'x86_64', arm64: 'aarch64' }[arch];
+    if (!target) return null;
+    for (const dir of dirs) {
+      // Global npm puts shims in its prefix; local npm puts them in node_modules/.bin.
+      const modules = basename(dir) === '.bin' ? dirname(dir) : join(dir, 'node_modules');
+      for (const root of [modules, join(modules, '@openai', 'codex', 'node_modules')]) {
+        const candidate = windowsCodexExe(join(root, '@openai', `codex-win32-${arch}`, 'vendor',
+          `${target}-pc-windows-msvc`, 'bin', 'codex.exe'));
+        if (candidate) return candidate;
+      }
+    }
+    return null;
+  }
   if (typeof env.FAI_CODEX_BIN === 'string' && env.FAI_CODEX_BIN) return env.FAI_CODEX_BIN;
   for (const dir of String(env.PATH ?? '').split(delimiter)) {
     // A relative PATH entry would resolve against whatever directory the MCP server runs in: never.

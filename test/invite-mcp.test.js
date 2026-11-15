@@ -176,7 +176,7 @@ test('MCP: a session that cannot be woken keeps the wait command and the copy fa
 test('MCP: Codex registers not ready, learns its thread from _meta, and is woken with codex queue', { skip: NO_CODEX_WAKES }, async t => {
   const codex = await fakeCodex(t);
   const ctx = await setup(t, { clientName: 'codex-mcp-client', socket: false,
-    env: { FAI_CODEX_BIN: codex.bin, FAKE_CODEX_LOG: join(codex.dir, 'argv.log'), FAKE_CODEX_MODE: 'ok',
+    env: { ...codex.env, FAI_CLIENT_TOKEN: '',
       CLAUDE_CODE_SESSION_ID: '' } });
   assert.equal(ctx.session.host, 'codex');
   assert.equal(ctx.session.wake, 'none');
@@ -205,7 +205,7 @@ test('MCP: Codex registers not ready, learns its thread from _meta, and is woken
 test('MCP: a Codex thread codex does not know is reported as a failed wake (the popup falls back)', { skip: NO_CODEX_WAKES }, async t => {
   const codex = await fakeCodex(t, { mode: 'unknown' });
   const ctx = await setup(t, { clientName: 'codex-mcp-client', socket: false,
-    env: { FAI_CODEX_BIN: codex.bin, FAKE_CODEX_LOG: join(codex.dir, 'argv.log'), FAKE_CODEX_MODE: 'unknown' } });
+    env: { ...codex.env, FAI_CLIENT_TOKEN: '' } });
   await ctx.mcp.callTool('fai_browser_status', {}, { meta: { threadId: '01a1c03e-0000-7000-8000-00000000dead' } });
   await until(async () => (await ctx.api('GET', '/v1/status')).body.sessions[0]?.wake === 'codex-queue', 'capability');
   const reply = await ctx.hub.emit({ type: 'invite', tabId: 7, origin: ORIGIN, level: 'reversible', sessionId: ctx.session.sessionId });

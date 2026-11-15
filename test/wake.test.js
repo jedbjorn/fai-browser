@@ -220,7 +220,7 @@ test('Codex: codex queue --thread <id> --message <text> as argv (no shell), outc
   resetCodexSupport();
   const fake = await fakeCodex(t);
   assert.equal(await codexSupportsQueue(fake.env), true);
-  const text = 'it\'s "quoted"; $(echo nope) `uname`';
+  const text = 'café 日本語\n100% "quoted"; $(echo nope) `uname` & echo nope';
   assert.deepEqual(await deliverCodexQueue({ threadId: '01a1c03e-9e28-72a2-8cdb-bb6ca9545521', text, env: fake.env }), { ok: true });
   const calls = await fake.calls();
   assert.deepEqual(calls.at(-1).argv, ['queue', '--thread', '01a1c03e-9e28-72a2-8cdb-bb6ca9545521', '--message', text], 'the text is one argv entry, unexpanded');

@@ -2,11 +2,12 @@
 // Code messaging socket (auth line + user line, in a temp dir) and a fake `codex` binary that records its argv. No real
 // session's socket or binary is ever used.
 import net from 'node:net';
-import { chmod, copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pipeOrSocket } from './pipe-or-socket.js';
 import { MCP_MAIN, spawnMcp } from './mcp-harness.js';
+import { WINDOWS } from './platform.js';
 
 export const TOKEN = 'fake-messaging-token-0123456789ab';
 
@@ -88,21 +89,28 @@ export async function startFakeClaudeSocket(t, { mode = 'accept', token = TOKEN,
 /** A fake `codex` that records its argv (one JSON line per call) and answers per FAKE_CODEX_MODE. */
 export async function fakeCodex(t, { mode = 'ok' } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'fai-fake-codex-'));
-  const bin = join(dir, 'codex');
+  const bin = join(dir, WINDOWS ? 'codex.exe' : 'codex');
+  const script = join(dir, 'fake.cjs');
   const log = join(dir, 'argv.log');
-  await writeFile(bin, `#!${process.execPath}
+  await writeFile(script, `
 const fs = require('fs');
-fs.appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ argv: process.argv.slice(2), fai: Object.keys(process.env).filter(k => k.startsWith('FAI_')) }) + '\\n');
-const args = process.argv.slice(2);
+// The MCP process inherits this preload too. Resolve aliases such as macOS /var -> /private/var.
+if (fs.realpathSync(process.execPath) !== fs.realpathSync(${JSON.stringify(bin)})) return;
+const args = process.argv.slice(1);
+// Node resolves its would-be entry script before preloading; restore the command name for this fake CLI.
+args[0] = require('path').basename(args[0]);
+fs.appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ argv: args, fai: Object.keys(process.env).filter(k => k.startsWith('FAI_')) }) + '\\n');
 if (args[0] === 'queue' && args[1] === '--help') { console.log('Usage: codex queue [OPTIONS] --thread <THREAD> --message <TEXT>'); process.exit(0); }
 const mode = process.env.FAKE_CODEX_MODE || 'ok';
 if (mode === 'unknown') { console.error('Error: no rollout found for thread ' + args[2]); process.exit(1); }
 if (mode === 'crash') { console.error('boom'); process.exit(3); }
 process.exit(0);
 `);
-  await chmod(bin, 0o755);
+  // A real executable, with a test-only preload that handles argv before Node tries to load `queue` as a script.
+  await copyFile(process.execPath, bin);
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const env = { PATH: '/usr/bin:/bin', FAI_CODEX_BIN: bin, FAKE_CODEX_LOG: log, FAKE_CODEX_MODE: mode, FAI_CLIENT_TOKEN: 'never-passed' };
+  const env = { PATH: '', FAI_CODEX_BIN: bin, FAKE_CODEX_LOG: log, FAKE_CODEX_MODE: mode, FAI_CLIENT_TOKEN: 'never-passed',
+    NODE_OPTIONS: `--require ${JSON.stringify(script.replaceAll('\\', '/'))}` };
   const calls = async () => {
     try {
       return (await readFile(log, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
