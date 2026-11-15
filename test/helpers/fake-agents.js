@@ -5,6 +5,7 @@ import net from 'node:net';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pipeOrSocket } from './pipe-or-socket.js';
 
 export const TOKEN = 'fake-messaging-token-0123456789ab';
 
@@ -15,8 +16,7 @@ export const TOKEN = 'fake-messaging-token-0123456789ab';
 // `pid`: the socket is named `<pid>.sock`, as Claude Code names it after its own pid; an MCP server accepts it only when
 // that pid is its parent (src/wake.js claudeSocket).
 export async function startFakeClaudeSocket(t, { mode = 'accept', token = TOKEN, pid = process.pid } = {}) {
-  const dir = await mkdtemp(join(tmpdir(), 'fai-fake-cc-'));
-  const path = join(dir, `${pid}.sock`);
+  const { path, dir } = await pipeOrSocket(t, `${pid}.sock`);
   const received = [];
   const connections = [];
   const server = net.createServer(socket => {

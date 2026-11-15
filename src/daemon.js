@@ -89,9 +89,9 @@ export const INVITE_TTL_MS = 10 * 60_000;
 export const INVITES_PER_MINUTE = 6;
 const INVITE_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
 const INVITE_KEEP_MS = 60 * 60_000;
-const SESSION_KEYS = new Set(['host', 'hostSessionId', 'repo', 'pid', 'startedAt', 'wake', 'client', 'previous']);
+const SESSION_KEYS = new Set(['host', 'hostSessionId', 'repo', 'pid', 'startedAt', 'wake', 'wakeReason', 'client', 'previous']);
 const CHALLENGE = /^[A-Za-z0-9_-]{16,64}$/;
-const SESSION_UPDATE_KEYS = new Set(['lastToolCallAt', 'hostSessionId', 'wake', 'maxMs']);
+const SESSION_UPDATE_KEYS = new Set(['lastToolCallAt', 'hostSessionId', 'wake', 'wakeReason', 'maxMs']);
 const WAIT_KEYS = new Set(['requestId', 'runId', 'maxMs', 'afterStep', 'while', 'ask']);
 // An agent's ask for more on a request it holds (POST /v1/requests/:id/ask): a higher level, more origins, or both.
 const ASK_KEYS = new Set(['mode', 'origins']);
@@ -1458,7 +1458,7 @@ export function createDaemon(options = {}) {
     sessions.sweep();
     replyTo(event, {
       sessions: sessions.views().map(item => ({ sessionId: item.sessionId, host: item.host, repo: item.repo,
-        startedAt: item.startedAt, lastActiveAt: item.lastActiveAt, wake: item.wake, ready: item.ready })),
+        startedAt: item.startedAt, lastActiveAt: item.lastActiveAt, wake: item.wake, wakeReason: item.wakeReason, ready: item.ready })),
       invites: [...invites.values()].filter(invite => invite.state === 'open' && (!event.browserId || invite.browserId === event.browserId))
         .map(inviteView),
     });

@@ -12,7 +12,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { httpJson } from './client.js';
 import {
   claudeSocket, codexSupportsQueue, codexThreadId, deliverWake, hostSessionId, opencodeChannel, opencodeSessionId,
-  opencodeVersionOk, repoName, wakeCapability, wakeText,
+  opencodeVersionOk, repoName, wakeCapability, wakeReason, wakeText,
 } from './wake.js';
 
 const POLL_MS = 25_000;
@@ -93,8 +93,16 @@ export class AgentSession {
 
   /** claude-socket, codex-queue, opencode-plugin or none, from the host, its environment and what is known so far. */
   get capability() {
-    return wakeCapability({ host: this.host, env: this.env, threadId: this.threadId, codexReady: this.codexReady,
-      ppid: this.ppid, opencodeSession: this.hostSessionId, opencodeVersion: this.opencodeVersion });
+    return wakeCapability(this.wakeOptions());
+  }
+
+  get wakeReason() {
+    return wakeReason(this.wakeOptions());
+  }
+
+  wakeOptions() {
+    return { host: this.host, env: this.env, threadId: this.threadId, codexReady: this.codexReady,
+      ppid: this.ppid, opencodeSession: this.hostSessionId, opencodeVersion: this.opencodeVersion };
   }
 
   /**
@@ -118,7 +126,8 @@ export class AgentSession {
       : this.host === 'opencode' && (!this.opencodeVersion || !opencodeChannel(this.env, { ppid: this.ppid }))
         ? 'no FAI plugin channel (install --host opencode, OpenCode 1.19 to 1.x, not --pure, the MCP server started by OpenCode itself)'
         : this.held ? 'waiting: the daemon runs another version' : null;
-    return { sessionId: this.sessionId, host: this.host, repo: this.repo, wake: this.capability, ...(note ? { note } : {}) };
+    return { sessionId: this.sessionId, host: this.host, repo: this.repo, wake: this.capability,
+      wakeReason: this.wakeReason, ...(note ? { note } : {}) };
   }
 
   start() {
@@ -178,7 +187,7 @@ export class AgentSession {
   // Send the thread id and the capability now (not at the next poll), so an invite right after works.
   pushUpdate() {
     if (!this.sessionId || !this.client || this.stopped) return;
-    const body = { hostSessionId: this.hostSessionId ?? undefined, wake: this.capability };
+    const body = { hostSessionId: this.hostSessionId ?? undefined, wake: this.capability, wakeReason: this.wakeReason };
     this.pendingUpdate = this.client.request('POST', `/v1/sessions/${encodeURIComponent(this.sessionId)}/update`,
       withoutUndefined(body), { timeoutMs: 5_000 }).catch(() => null);
   }
@@ -218,6 +227,7 @@ export class AgentSession {
       pid: this.pid,
       startedAt: this.startedAt,
       wake: this.capability,
+      wakeReason: this.wakeReason,
       client: this.clientName,
       previous: this.previous ?? undefined,
     }), { timeoutMs: 5_000, signal: this.abort.signal });
@@ -253,7 +263,7 @@ export class AgentSession {
       try {
         await this.ensureClient();
         if (!this.sessionId) await this.register();
-        const body = { maxMs: this.pollMs, wake: this.capability };
+        const body = { maxMs: this.pollMs, wake: this.capability, wakeReason: this.wakeReason };
         if (this.lastToolCallAt && this.lastToolCallAt !== this.sentToolCallAt) body.lastToolCallAt = this.lastToolCallAt;
         if (this.hostSessionId) body.hostSessionId = this.hostSessionId;
         const response = await this.client.request('POST', `/v1/sessions/${encodeURIComponent(this.sessionId)}/poll`, body,

@@ -8,6 +8,19 @@ import { askSiteAccess, element, TESTING_WARNING } from './ui.js';
 import { approvalTabMode, AUTOMATIC_POPUPS_POLICY, AUTOMATIC_POPUPS_TEXT } from './permissions.js';
 
 export const HOST_NAMES = Object.freeze({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', unknown: 'Agent' });
+export const WAKE_REASON_TEXT = Object.freeze({
+  ok: 'FAI can wake this agent.',
+  wakes_off: 'Automatic wakes are turned off (FAI_WAKE=0).',
+  claude_no_messaging: 'Start a Claude Code session with messaging enabled so FAI can wake it.',
+  claude_channel_unbound: 'Let Claude Code start FAI directly so FAI can wake this session.',
+  codex_not_found: 'Install the Codex command so FAI can wake Codex (ask your agent to help).',
+  codex_no_thread: 'Ask Codex to run any FAI command so FAI knows which conversation to wake.',
+  codex_no_queue: 'Update the Codex command to a version with queue support so FAI can wake it.',
+  opencode_no_plugin: 'Install the FAI OpenCode plugin and run any FAI command so FAI can wake this session.',
+  opencode_version: 'Use OpenCode 1.19 or later in the 1.x series so FAI can wake it.',
+  opencode_channel_unbound: 'Let OpenCode start FAI directly so FAI can wake this session.',
+  unknown_host: 'FAI cannot wake this agent host; paste the invite line into your agent.',
+});
 export const INVITE_LEVELS = Object.freeze([
   { level: 'read-only', name: 'Use' },
   { level: 'full', name: 'Act' },
@@ -230,9 +243,10 @@ export function mountInvite({ root, context, onState, say }) {
 
   // Started at (so two look-alike sessions of one repo can be told apart), last activity, and how it is reached.
   function hint(agent) {
-    if (['codex', 'opencode'].includes(agent.host) && !agent.ready) return `${startedLabel(agent)}not ready: ask it to run any FAI command`;
+    const reason = Object.hasOwn(WAKE_REASON_TEXT, agent.wakeReason) ? WAKE_REASON_TEXT[agent.wakeReason] : null;
+    if (!reason && ['codex', 'opencode'].includes(agent.host) && !agent.ready) return `${startedLabel(agent)}not ready: ask it to run any FAI command`;
     const when = since(agent.lastActiveAt);
-    return `${startedLabel(agent)}${[when, agent.wake === 'none' ? 'you paste a line' : ''].filter(Boolean).join(' · ')}`;
+    return `${startedLabel(agent)}${[when, reason ?? (agent.wake === 'none' ? 'you paste a line' : '')].filter(Boolean).join(' · ')}`;
   }
 
   function startedLabel(agent) {

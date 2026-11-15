@@ -98,6 +98,26 @@ test('registry: a session only receives and settles its own wakes; a wrong key o
   assert.equal(settled.body.wake.state, 'delivered');
 });
 
+test('wake reason crosses registration, poll, update, status and popup agents; arbitrary text is never exposed', async t => {
+  const ctx = await setup(t);
+  const session = await register(ctx, { wake: 'none', wakeReason: 'claude_no_messaging' });
+  assert.equal((await statusOf(ctx)).sessions[0].wakeReason, 'claude_no_messaging');
+  const listed = await ctx.api('GET', '/v1/sessions');
+  assert.equal(listed.body.sessions[0].wakeReason, 'claude_no_messaging');
+  const agents = await ctx.hub.emit({ type: 'agents', browserId: 'browser-1' });
+  assert.equal(agents.sessions[0].wakeReason, 'claude_no_messaging');
+  await poll(ctx, session, 0, { wakeReason: 'wakes_off' });
+  assert.equal((await statusOf(ctx)).sessions[0].wakeReason, 'wakes_off');
+  const update = body => ctx.api('POST', `/v1/sessions/${session.sessionId}/update`, body, { headers: session.headers });
+  assert.equal((await update({ wake: 'claude-socket', wakeReason: 'ok' })).body.session.wakeReason, 'ok');
+  const privateText = '/private/path?token=never-display-this';
+  await update({ wakeReason: privateText });
+  assert.equal((await statusOf(ctx)).sessions[0].wakeReason, 'ok', 'invalid updates leave the fixed reason alone');
+  const other = await register(ctx, { wakeReason: privateText });
+  assert.equal((await statusOf(ctx)).sessions.find(item => item.sessionId === other.sessionId).wakeReason, null);
+  assert.ok(!JSON.stringify(await statusOf(ctx)).includes(privateText));
+});
+
 test('registry: a dead pid or a session that stopped polling is dropped; its wakes fail', async () => {
   let t0 = 1_000_000;
   const alive = new Set([11, 12]);

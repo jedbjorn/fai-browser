@@ -4,6 +4,7 @@
 // stopped polling are dropped. Each entry has a random key only its MCP server knows: polls, reports and updates
 // need it, so a session only ever receives the wakes addressed to it. Views never carry the key.
 import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
+import { WAKE_REASONS } from './wake.js';
 
 export const SESSION_POLL_MAX_MS = 25_000;
 // A session that has not polled for this long (and has no poll open) is gone.
@@ -20,6 +21,7 @@ const TOMBSTONE_MS = 60 * 60_000;
 const WAKE_KEEP_MS = 10 * 60_000;
 const HOSTS = new Set(['claude', 'codex', 'opencode', 'unknown']);
 const CAPABILITIES = new Set(['claude-socket', 'codex-queue', 'opencode-plugin', 'none']);
+const REASONS = new Set(WAKE_REASONS);
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export class SessionError extends Error {
@@ -87,6 +89,7 @@ export function createSessionRegistry(options = {}) {
       // The newest sign of use: the last tool call, else registration.
       lastActiveAt: iso(Math.max(session.lastToolCallAt ?? 0, session.registeredAt)),
       wake: session.wake,
+      wakeReason: session.wakeReason,
       // A Codex or OpenCode session can be woken only once its session id is known (its first FAI tool call).
       ready: session.wake !== 'none' || !['codex', 'opencode'].includes(session.host) || Boolean(session.hostSessionId),
     };
@@ -136,6 +139,7 @@ export function createSessionRegistry(options = {}) {
       lastSeenAt: now(),
       lastToolCallAt: null,
       wake,
+      wakeReason: REASONS.has(body.wakeReason) ? body.wakeReason : null,
       client: typeof body.client === 'string' ? body.client.slice(0, 80) : null,
       waiter: null,
     };
@@ -173,6 +177,10 @@ export function createSessionRegistry(options = {}) {
     if (CAPABILITIES.has(body.wake) && body.wake !== session.wake) {
       session.wake = body.wake;
       log('session_wake', { sessionId: session.sessionId, wake: session.wake });
+      dirty = true;
+    }
+    if (REASONS.has(body.wakeReason) && body.wakeReason !== session.wakeReason) {
+      session.wakeReason = body.wakeReason;
       dirty = true;
     }
     if (dirty) changed();

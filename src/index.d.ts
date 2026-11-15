@@ -1502,6 +1502,9 @@ export interface DaemonStatus {
 }
 
 export type WakeCapability = 'claude-socket' | 'codex-queue' | 'opencode-plugin' | 'none';
+export type WakeReason = 'ok' | 'wakes_off' | 'claude_no_messaging' | 'claude_channel_unbound'
+  | 'codex_not_found' | 'codex_no_thread' | 'codex_no_queue' | 'opencode_no_plugin' | 'opencode_version'
+  | 'opencode_channel_unbound' | 'unknown_host';
 
 export interface AgentSessionView {
   sessionId: string;
@@ -1515,6 +1518,8 @@ export interface AgentSessionView {
   lastToolCallAt: string | null;
   lastActiveAt: string | null;
   wake: WakeCapability;
+  /** Fixed setup reason; null for an older MCP server that sends none. */
+  wakeReason: WakeReason | null;
   /** False for a Codex session whose thread id is not known yet (before its first FAI tool call). */
   ready: boolean;
 }

@@ -14,7 +14,7 @@ import { call, createFakeHub } from './helpers/fake-hub.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
 import { ORIGIN, link } from './runtime-fixtures.js';
 import { fakeCodex, startFakeClaudeSocket } from './helpers/fake-agents.js';
-import { NO_WAKES } from './helpers/platform.js';
+import { NO_CLAUDE_WAKES, NO_CODEX_WAKES } from './helpers/platform.js';
 
 const SECRET_TITLE = 'Payroll - TOP SECRET 5521';
 const SECRET_TEXT = 'Salary of Ada Lovelace: 98,765';
@@ -63,10 +63,11 @@ const text = result => result.content.map(block => block.text ?? '').join('\n');
 // The invite and its wake as the popup sees them (a client without the owner's session sees only id and state).
 const inviteOf = (ctx, requestId) => ctx.hub.published.at(-1)?.find(view => view.requestId === requestId)?.invite;
 
-test('MCP: registers after initialize as Claude Code with its socket; the repo is the folder name only', { skip: NO_WAKES }, async t => {
+test('MCP: registers after initialize as Claude Code with its socket; the repo is the folder name only', { skip: NO_CLAUDE_WAKES }, async t => {
   const ctx = await setup(t);
   assert.equal(ctx.session.host, 'claude');
   assert.equal(ctx.session.wake, 'claude-socket');
+  assert.equal(ctx.session.wakeReason, 'ok');
   assert.equal(ctx.session.repo, 'my-project');
   const status = await ctx.mcp.callTool('fai_browser_status', {});
   assert.match(text(status), new RegExp(`agent session: ${ctx.session.sessionId} \\(claude, wake claude-socket\\)`));
@@ -76,7 +77,7 @@ test('MCP: registers after initialize as Claude Code with its socket; the repo i
   await until(async () => (await ctx.api('GET', '/v1/status')).body.sessions.length === 0, 'stdio close to unregister');
 });
 
-test('MCP: an invite wakes the session through its own socket with the FAI text only; open {inviteId} returns the page', { skip: NO_WAKES }, async t => {
+test('MCP: an invite wakes the session through its own socket with the FAI text only; open {inviteId} returns the page', { skip: NO_CLAUDE_WAKES }, async t => {
   const ctx = await setup(t);
   const reply = await ctx.hub.emit({ type: 'invite', tabId: 7, origin: ORIGIN, title: SECRET_TITLE, level: 'reversible',
     sessionId: ctx.session.sessionId, text: 'Summarise this page for me', browserId: 'b1' });
@@ -108,7 +109,7 @@ test('MCP: an invite wakes the session through its own socket with the FAI text 
   assert.equal(ctx.fake.received.length, 1, 'one wake, one message');
 });
 
-test('MCP: Resume wakes the owner when it is idle; a call already waiting on the approval gets no wake', { skip: NO_WAKES }, async t => {
+test('MCP: Resume wakes the owner when it is idle; a call already waiting on the approval gets no wake', { skip: NO_CLAUDE_WAKES }, async t => {
   const ctx = await setup(t);
   // The call waits for approval itself: approving while it waits needs no wake.
   const opening = ctx.mcp.callTool('fai_browser_open', { origins: [ORIGIN], reason: 'Read the page', task: 'read' });
@@ -131,7 +132,7 @@ test('MCP: Resume wakes the owner when it is idle; a call already waiting on the
 
 // Issue #13: a paused request the agent moved on from is stale; status names it so the agent can release it, and its
 // next is about the new request, never "ask the user to resume" the old one.
-test('MCP: status names this session\'s stale requests for release and points next at the newer one', { skip: NO_WAKES }, async t => {
+test('MCP: status names this session\'s stale requests for release and points next at the newer one', { skip: NO_CLAUDE_WAKES }, async t => {
   const ctx = await setup(t);
   const opening = ctx.mcp.callTool('fai_browser_open', { origins: [ORIGIN], reason: 'Old task', task: 'read' });
   const first = await until(() => ctx.hub.published.at(-1)?.find(item => item.state === 'pending'), 'the first request');
@@ -153,10 +154,11 @@ test('MCP: status names this session\'s stale requests for release and points ne
   assert.match(waited, /open the FAI Browser popup, unfold Older paused tasks and choose Use or Act on this task to resume/);
 });
 
-test('MCP: a session that cannot be woken keeps the wait command and the copy fallback', { skip: NO_WAKES }, async t => {
+test('MCP: a session that cannot be woken keeps the wait command and the copy fallback', { skip: NO_CLAUDE_WAKES }, async t => {
   const ctx = await setup(t, { clientName: 'test-host' });
   assert.equal(ctx.session.host, 'unknown');
   assert.equal(ctx.session.wake, 'none', 'never the socket of an environment that is not its host\'s');
+  assert.equal(ctx.session.wakeReason, 'unknown_host');
   const reply = await ctx.hub.emit({ type: 'invite', tabId: 7, origin: ORIGIN, level: 'read-only', sessionId: ctx.session.sessionId });
   assert.equal(reply.invite.wake.state, 'none');
   await delay(200);
@@ -172,13 +174,14 @@ test('MCP: a session that cannot be woken keeps the wait command and the copy fa
   assert.match(text(result), /--until active/, 'no wake: the background wait command as before');
 });
 
-test('MCP: Codex registers not ready, learns its thread from _meta, and is woken with codex queue', { skip: NO_WAKES }, async t => {
+test('MCP: Codex registers not ready, learns its thread from _meta, and is woken with codex queue', { skip: NO_CODEX_WAKES }, async t => {
   const codex = await fakeCodex(t);
   const ctx = await setup(t, { clientName: 'codex-mcp-client', socket: false,
     env: { FAI_CODEX_BIN: codex.bin, FAKE_CODEX_LOG: join(codex.dir, 'argv.log'), FAKE_CODEX_MODE: 'ok',
       CLAUDE_CODE_SESSION_ID: '' } });
   assert.equal(ctx.session.host, 'codex');
   assert.equal(ctx.session.wake, 'none');
+  assert.equal(ctx.session.wakeReason, 'codex_no_thread');
   assert.equal(ctx.session.ready, false);
   const thread = '01a1c03e-9e28-72a2-8cdb-bb6ca9545521';
   await ctx.mcp.callTool('fai_browser_status', {}, { meta: { 'x-codex-turn-metadata': { thread_id: thread }, threadId: thread } });
@@ -187,6 +190,7 @@ test('MCP: Codex registers not ready, learns its thread from _meta, and is woken
     return session?.wake === 'codex-queue' ? session : null;
   }, 'the codex-queue capability');
   assert.equal(ready.ready, true);
+  assert.equal(ready.wakeReason, 'ok');
   const reply = await ctx.hub.emit({ type: 'invite', tabId: 7, origin: ORIGIN, title: SECRET_TITLE, level: 'reversible',
     sessionId: ready.sessionId, text: 'Check the form' });
   const queued = await until(async () => (await codex.calls()).find(entry => entry.argv[0] === 'queue' && entry.argv[1] === '--thread'),
@@ -199,7 +203,7 @@ test('MCP: Codex registers not ready, learns its thread from _meta, and is woken
     'the delivered report');
 });
 
-test('MCP: a Codex thread codex does not know is reported as a failed wake (the popup falls back)', { skip: NO_WAKES }, async t => {
+test('MCP: a Codex thread codex does not know is reported as a failed wake (the popup falls back)', { skip: NO_CODEX_WAKES }, async t => {
   const codex = await fakeCodex(t, { mode: 'unknown' });
   const ctx = await setup(t, { clientName: 'codex-mcp-client', socket: false,
     env: { FAI_CODEX_BIN: codex.bin, FAKE_CODEX_LOG: join(codex.dir, 'argv.log'), FAKE_CODEX_MODE: 'unknown' } });
