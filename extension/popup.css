@@ -148,7 +148,8 @@ body.arm-page[data-level="testing"] .level-select { border-color: var(--danger);
 .invite-agents { display: flex; flex-direction: column; gap: 6px; }
 .invite-row { display: flex; flex-direction: column; align-items: flex-start; width: 100%; padding: 8px 10px; border: 1px solid #cfc5b6; border-radius: 8px; background: white; color: var(--ink); text-align: left; }
 .invite-row:hover { border-color: var(--amber); background: #f8f0e4; }
-.invite-row-name { font-weight: 650; }
+.invite-row-name { margin: 0 0 8px; font-weight: 650; }
+.invite-row-actions { width: 100%; }
 .invite-row-meta { color: var(--muted); font-size: 11px; }
 .request-card.invite-status[data-state="invited"] { border-left-color: var(--green); }
 .invite-where { margin: 0; overflow: hidden; color: var(--muted); white-space: nowrap; text-overflow: ellipsis; font-size: 11px; }
