@@ -331,14 +331,13 @@ permissions take no port: approving `http://127.0.0.1:8080` grants `http://127.0
 |---|---|
 | [docs/REFERENCE.md](docs/REFERENCE.md) | Full manual: setup, daemon, environment variables, MCP tools, CLI flags, status table and exit codes, screenshots, traces, SDK, policies, guardrails, limits |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Components, tab requests and leases, MCP server, receipt v2 and the oversight ladder |
-| [RESULTS.md](docs/results/RESULTS.md) | Measured before/after across six host models, with method and limits |
-| [docs/TESTED.md](docs/TESTED.md) | Every page type, task and live site FAI Browser was tested on, and the actions each mode offers |
+| [RESULTS.md](https://github.com/jedbjorn/fai-browser/blob/0ee5ede8862f5692fedbe6ef5e05eb8906ee140a/docs/results/RESULTS.md) | Measured before/after across six host models, with method and limits |
+| [docs/TESTED.md](https://github.com/jedbjorn/fai-browser/blob/0ee5ede8862f5692fedbe6ef5e05eb8906ee140a/docs/TESTED.md) | Every page type, task and live site FAI Browser was tested on, and the actions each mode offers |
 | [bench/README.md](bench/README.md) | The agent comparison harness and how to reproduce it |
 | [skills/fai-browser/SKILL.md](skills/fai-browser/SKILL.md) | The host-facing guide to the tool loop and `next.kind` |
 | [tasks/](tasks/) | Task sub-skills: a host guide per task (`tasks/flights/SKILL.md`, `tasks/hotels/SKILL.md`), installed with the skill, plus reviewed task engine code |
-| [AGENTS.md](AGENTS.md) | Rules for agents using FAI Browser in this repository |
-| [PROPOSAL.md](docs/design/PROPOSAL.md) | Design, roadmap and every pass to date |
-| [OVERSIGHT-SPEC.md](docs/design/OVERSIGHT-SPEC.md) | The oversight and verification specification |
+| [PROPOSAL.md](https://github.com/jedbjorn/fai-browser/blob/0ee5ede8862f5692fedbe6ef5e05eb8906ee140a/docs/design/PROPOSAL.md) | Design, roadmap and every pass to date |
+| [OVERSIGHT-SPEC.md](https://github.com/jedbjorn/fai-browser/blob/0ee5ede8862f5692fedbe6ef5e05eb8906ee140a/docs/design/OVERSIGHT-SPEC.md) | The oversight and verification specification |
 | [docs/PUBLISHING.md](docs/PUBLISHING.md) | Publication hygiene: secret scan and results sanitizing |
 
 ## Status and roadmap

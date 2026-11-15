@@ -1,6 +1,6 @@
 # FAI Browser: architecture
 
-Status: the Phase 2 architecture (2026-10-04: a long-lived daemon, a WebSocket push channel to the extension, an MCP server and a skill), updated through 0.6 for Agent direct, several browsers, approved frames, invites and wakes and the self-updater. The host agent makes every choice. The runtime loop, settle policy and capture pipeline are unchanged from Phase 1. [PROPOSAL.md](docs/design/PROPOSAL.md) has the roadmap and decisions; [RESULTS.md](docs/results/RESULTS.md) has the benchmark history.
+Status: the Phase 2 architecture (2026-10-04: a long-lived daemon, a WebSocket push channel to the extension, an MCP server and a skill), updated through 0.6 for Agent direct, several browsers, approved frames, invites and wakes and the self-updater. The host agent makes every choice. The runtime loop, settle policy and capture pipeline are unchanged from Phase 1. [PROPOSAL.md](https://github.com/jedbjorn/fai-browser/blob/0ee5ede8862f5692fedbe6ef5e05eb8906ee140a/docs/design/PROPOSAL.md) has the roadmap and decisions; [RESULTS.md](https://github.com/jedbjorn/fai-browser/blob/0ee5ede8862f5692fedbe6ef5e05eb8906ee140a/docs/results/RESULTS.md) has the benchmark history.
 
 ## Product contract
 

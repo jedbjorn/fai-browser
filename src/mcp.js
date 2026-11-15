@@ -108,7 +108,7 @@ const TERMINAL_REQUEST_STATES = new Set(['denied', 'expired', 'cancelled', 'rele
 export const ALWAYS_LOAD_META = 'anthropic/alwaysLoad';
 
 // The common path on its own: a host that never loads the skill still drives the tab correctly and keeps every
-// safety rule from AGENTS.md. It is paid on every host request, so it stays short (test/mcp.test.js bounds both);
+// safety rule from skills/fai-browser/SKILL.md. It is paid on every host request, so it stays short (test/mcp.test.js bounds both);
 // the skill (skills/fai-browser/SKILL.md) is the full reference for the rare outcomes.
 export const INSTRUCTIONS = [
   'FAI Browser drives task tabs the user approves; you choose every action. Use it only when the user asks for '

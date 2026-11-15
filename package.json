@@ -49,11 +49,9 @@
     "THIRD_PARTY_NOTICES.md",
     "CHANGELOG.md",
     "SECURITY.md",
-    "AGENTS.md",
     "ARCHITECTURE.md",
     "docs/REFERENCE.md",
-    "docs/guide/",
-    "docs/design/"
+    "docs/guide/"
   ],
   "scripts": {
     "test": "node --test --test-concurrency=1 --test-timeout=600000 test/*.test.js",
