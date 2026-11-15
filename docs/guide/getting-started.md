@@ -47,7 +47,7 @@ exercised in CI yet: the CI runners already have both.
 - creates a pairing secret in your settings directory, mode 0600. You never see or copy it.
 - installs the **native messaging host** for every browser it finds, so the extension can pair by itself.
 - starts the local service (the "daemon") on `127.0.0.1:4318`.
-- asks whether to register FAI Browser with each coding agent on your `PATH` (Claude Code, Codex, OpenCode).
+- asks whether to register FAI Browser with each coding agent on your `PATH` (Claude Code, Codex, OpenCode), or a detected Windows desktop app. [Windows setup and manual steps](install.md#windows) cover Claude's Code tab, ChatGPT's Codex CLI requirement, and OpenCode's existing JSONC config.
 - ends with **Set up the FAI Browser profile for Firefox? [Y/n]** when Firefox is installed (otherwise it prints
   `node src/cli.js launch`, which can download Firefox from Mozilla). Say yes and skip step 2.
 
@@ -78,7 +78,7 @@ The extension should now say it is paired. If not, click **Pair with the FAI ser
 
 ## 3. Restart your agent
 
-Restart Claude Code, Codex or OpenCode so it loads the `fai-browser` MCP server and the skill. To register one later:
+Restart Claude Code, Codex or OpenCode so it loads the `fai-browser` MCP server and the skill. For desktop apps, use Claude's **Code tab**, Codex in ChatGPT, or OpenCode Desktop 1.19 to 1.x; ordinary Claude/ChatGPT chat is excluded. Check the popup's wake-reason sentence and run `fai_browser_status` once early in Codex or OpenCode. [Wake support and limits](../REFERENCE.md#invites-and-wakes). To register one later:
 
 ```sh
 node src/cli.js install --host claude     # or codex, opencode; add --scope user for all projects

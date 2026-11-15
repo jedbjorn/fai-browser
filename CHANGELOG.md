@@ -5,6 +5,21 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## Unreleased
+
+### Added
+
+- **Windows wake channels and desktop setup.** Claude Code CLI and the desktop Code tab use a bound named pipe; Codex CLI and Codex in ChatGPT use a real queue-capable `codex.exe` (the standalone CLI is required even for the app); OpenCode CLI/Desktop 1.19 to 1.x use FAI's authenticated named pipe plugin. Setup detects desktop installs without standalone commands on PATH, names successful registrations and asks you to restart. Existing OpenCode JSONC is preserved with a manual config/plugin step. Ordinary Claude and ChatGPT chat and OpenCode 2.x are excluded. Status and the popup show fixed wake reasons with setup fixes.
+
+### Fixed
+
+- **OpenCode Desktop binding on every OS.** The plugin exports `FAI_OPENCODE_PID`, so a Desktop sidecar without `OPENCODE_PID` binds to its own MCP child. Windows wake tests now run without channel skips; POSIX-only test skips remain where required.
+- **Windows archive setup retry.** Task guides install from flattened archives, including recovery from FAI's own partial old install, while preserving foreign files and symlinks.
+
+### Acceptance pending
+
+- **Release blocked:** Windows 10 app-level invite, Approve and Resume wake acceptance (#5b) awaits the FnB-attended session. Channel/fake-host proof does not establish that apps take a new turn. Windows 11 is not yet checked; the FnB will check parity separately. No version bump or release in this Sprint.
+
 ## 0.10.0 (2026-11-15)
 
 ### Changed

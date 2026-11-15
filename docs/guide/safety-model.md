@@ -111,8 +111,9 @@ own channel: Claude Code's messaging socket, `codex queue` for its own thread, o
 request id, the level and the tool to call, and never carries a page title, URL or page text. Each MCP server
 registers with the service under a random key only it holds, so it only receives the wakes addressed to it, and it
 never writes to another session's socket: the socket variables are inherited by everything Claude Code starts, so the
-server uses the socket only when it is named after its own parent process (Claude Code started it directly; through a
-wrapper such as npx or a shell script it fails closed to the copy line). The registry needs the client token, lists
+server uses a POSIX socket only when it is named after its own parent process. On Windows it requires a named pipe,
+Claude Code's client name and session id, and a live `claude.exe` parent image from a bounded direct `tasklist.exe`
+lookup (Claude Code started it directly; through a wrapper such as npx or a shell script it fails closed to the copy line). The registry needs the client token, lists
 sessions without keys or paths (the repository's folder name only). Every new connection of an MCP server's session
 loop, the first one and every one after the service shut down or a connection failed, first asks the service to prove
 it holds that token (an HMAC of a fresh nonce and the service's own port, in its open health answer); only then does
@@ -126,14 +127,18 @@ joining session's alone, also from disk after the request is gone.
 installs it only on that command (or setup's OpenCode registration), and only replaces a file there that carries its
 marker. The plugin runs inside OpenCode with OpenCode's own rights: it has no dependencies, never throws out of a hook,
 logs nothing of arguments, texts or its token, and turns itself off when it cannot open its socket safely. It listens
-on a private socket (a 0700 directory it owns, never a symlink; the socket 0600, named after OpenCode's pid) and
+on POSIX on a private socket (a 0700 directory it owns, never a symlink; the socket 0600, named after OpenCode's pid),
+or on Windows on a random `\\.\pipe\fai-browser-oc-<pid>-<random>` named pipe (no directory or chmod), and
 accepts a request only with the random token it minted at startup. It prompts only root sessions it saw call a FAI
 tool (a subagent's call counts for the conversation that started it, so a wake never lands in a task session), only
 with one text part that matches one of FAI's three wake templates exactly (ids, a level name, the tool, and for an
 invite your words as one quoted line of at most 500 characters), and with the agent and model of that session's last
 user message, so a session in `plan` is woken in `plan`, never in OpenCode's default agent; a session without such a
 message is not woken. It sends no tool or system field. The MCP server uses the socket only when OpenCode itself is its parent
-(socket name and `OPENCODE_PID` both name the parent pid). One OpenCode serves several sessions with one MCP server, so
+(channel name and plugin-exported `FAI_OPENCODE_PID` both name the parent pid; no `OPENCODE_PID` fallback).
+Another Windows user may be able to open the named pipe; the random 256-bit token, compared in constant time,
+remains the delivery gate. Codex wakes on Windows run only a real `.exe`, never a shim or a shell; text is argv.
+One OpenCode serves several sessions with one MCP server, so
 Approve and Resume wake exactly the session whose call made or joined that request, never a guess; an invite goes to
 the only session that used FAI in the last 10 minutes, and with two or more the popup shows the copy line instead.
 

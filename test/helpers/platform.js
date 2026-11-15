@@ -10,11 +10,6 @@ export const POSIX_PATHS = WINDOWS
   ? 'plans for Linux or macOS from POSIX path strings; node:path writes backslashes on Windows, where that plan is never made'
   : false;
 
-// Each channel unit lifts its own skip once its Windows implementation and fakes pass CI.
-export const NO_CLAUDE_WAKES = false;
-export const NO_CODEX_WAKES = false;
-export const NO_OPENCODE_WAKES = false;
-
 /** A fake program the test writes as a POSIX shell script (`#!/bin/sh`), which Windows cannot run. */
 export const SH_SHIMS = WINDOWS ? 'the test fakes a program with a #!/bin/sh script, which Windows cannot run' : false;
 

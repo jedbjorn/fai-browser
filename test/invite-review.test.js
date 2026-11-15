@@ -17,7 +17,6 @@ import { call, createFakeHub } from './helpers/fake-hub.js';
 import { spawnClaudeMcp, startFakeClaudeSocket } from './helpers/fake-agents.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
 import { ORIGIN } from './runtime-fixtures.js';
-import { NO_CLAUDE_WAKES } from './helpers/platform.js';
 
 const PACKAGE = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 
@@ -129,7 +128,7 @@ test('review: the parent pid is read live (an MCP server orphaned by its Claude 
   assert.equal(fixed.ppid, 4242);
 });
 
-test('review: an inherited messaging socket (named after another process) is not used: no wake, the wait command', { skip: NO_CLAUDE_WAKES }, async t => {
+test('review: an inherited messaging socket (named after another process) is not used: no wake, the wait command', async t => {
   const ctx = await realSetup(t, { socketPid: 999999 });
   assert.equal(ctx.session.host, 'claude');
   assert.equal(ctx.session.wake, 'none', 'the socket of a Claude Code that did not start this server');
@@ -138,7 +137,7 @@ test('review: an inherited messaging socket (named after another process) is not
   assert.match(text(opening), /--until active/);
 });
 
-test('review: a wake is promised only for this session\'s own request, and status never points at another\'s tab', { skip: NO_CLAUDE_WAKES }, async t => {
+test('review: a wake is promised only for this session\'s own request, and status never points at another\'s tab', async t => {
   const ctx = await realSetup(t);
   assert.equal(ctx.session.wake, 'claude-socket');
   // A request another client made (no session): this session is not its owner, so nobody would wake it.
@@ -310,7 +309,7 @@ test('final: the daemon hands out at most 4 wakes a poll; the rest come on the n
   registry.close();
 });
 
-test('final: a failed Approve wake shows in the request (the popup\'s "tell it to continue") and the MCP relay names the wait command again', { skip: NO_CLAUDE_WAKES }, async t => {
+test('final: a failed Approve wake shows in the request (the popup\'s "tell it to continue") and the MCP relay names the wait command again', async t => {
   const home = await mkdtemp(join(tmpdir(), 'fai-review-final-'));
   const hub = createFakeHub();
   const daemon = createDaemon({ home, env: {}, port: 0, hub });
