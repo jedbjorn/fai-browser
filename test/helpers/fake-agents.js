@@ -93,8 +93,9 @@ export async function fakeCodex(t, { mode = 'ok' } = {}) {
   const script = join(dir, 'fake.cjs');
   const log = join(dir, 'argv.log');
   await writeFile(script, `
-if (process.execPath !== ${JSON.stringify(bin)}) return;
 const fs = require('fs');
+// The MCP process inherits this preload too. Resolve aliases such as macOS /var -> /private/var.
+if (fs.realpathSync(process.execPath) !== fs.realpathSync(${JSON.stringify(bin)})) return;
 const args = process.argv.slice(1);
 // Node resolves its would-be entry script before preloading; restore the command name for this fake CLI.
 args[0] = require('path').basename(args[0]);
