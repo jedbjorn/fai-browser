@@ -47,7 +47,26 @@ Or ask your agent to call `fai_browser_status`. Reference: [REFERENCE.md: The da
 
 ## Invites and wakes
 
-See [REFERENCE.md: Invites and wakes](../REFERENCE.md#invites-and-wakes).
+See [REFERENCE.md: Invites and wakes](../REFERENCE.md#invites-and-wakes) for the per-app table. The popup shows a
+fixed sentence; `fai-browser status` / `fai_browser_status` also exposes its `wakeReason` code. `ok` means ready,
+not confirmation that the app took a new turn.
+
+| Wake reason | What to do |
+|---|---|
+| `wakes_off` | Remove `FAI_WAKE=0` from the host environment and restart it |
+| `claude_no_messaging` | Start Claude Code with messaging enabled, not `--bare`; ordinary Claude chat has no Code channel |
+| `claude_channel_unbound` | Reinstall the direct node MCP entry and let Claude start it. On Windows the Claude Code client name, session id, named pipe and live `claude.exe` parent must all bind; wrappers or a failed parent lookup use the copy line |
+| `codex_not_found` | Install `npm install -g @openai/codex`, then restart even if you use ChatGPT. Windows needs a real `codex.exe` on PATH or in npm's platform package, or an absolute `FAI_CODEX_BIN`; never point it at `.cmd`, `.bat`, `.ps1` or WindowsApps |
+| `codex_no_thread` | Ask Codex to call `fai_browser_status` once. If the app supplies no thread id, use the copy line |
+| `codex_no_queue` | Update the standalone Codex CLI to one with `queue` support |
+| `opencode_no_plugin` | Install FAI's plugin, restart OpenCode and run a FAI command. Existing `opencode.jsonc` is not auto-edited: setup prints a manual snippet and the exact plugin destination; merge the snippet and copy `src/opencode-plugin.js` there without replacing provider/model config |
+| `opencode_version` | Use OpenCode 1.19 or later in the 1.x series; 2.x uses a different plugin API |
+| `opencode_channel_unbound` | Let OpenCode start FAI directly. The plugin exports `FAI_OPENCODE_PID` and the MCP parent and channel name must match; `OPENCODE_PID` alone no longer binds |
+| `unknown_host` | This host has no supported wake channel. Use the copy line; ordinary Claude/ChatGPT chat is outside coding-session support |
+
+On Windows, **Registered apps** lists only successful registrations. **OpenCode needs one manual step** means an
+existing JSONC config was preserved, not that OpenCode auto-registration succeeded. Windows 10 app-level wake
+acceptance remains pending and release-blocking; Windows 11 is not yet checked.
 
 | Symptom | Cause and fix |
 |---|---|
@@ -58,7 +77,7 @@ See [REFERENCE.md: Invites and wakes](../REFERENCE.md#invites-and-wakes).
 | "Could not wake …" and a **Tell your agent: join FAI invite inv-…** line | The wake failed: copy the line into the agent. The reason is in brackets: `no_socket` (a `--bare` Claude Code session, or one older than 2.1.224; the token needs 2.1.228), `refused` (see the next row), `unknown_thread` (Codex does not know the thread: it was started with another `CODEX_HOME`, or ended), `no_codex` (no `codex` on the MCP server's `PATH`: set `FAI_CODEX_BIN`), `not_polling` (the agent session froze or ended) |
 | "Sent to …" but Claude Code does nothing | Its `crossSessionInbound` setting holds or refuses messages from other processes (a repository or managed setting can impose it), or the session bypasses permission prompts. FAI cannot tell: Claude Code's socket answers nothing either way, so "Sent" means written, not received. Claude Code shows a held message for you to accept; set `crossSessionInbound` to `accept` in your Claude Code settings, or tell the agent `join FAI invite inv-…` (the id is in the popup's invite card and in `fai_browser_status`). A session busy with a turn takes the invite when that turn ends |
 | The agent says the invite expired, was used or was revoked | An invite lives 10 minutes, is used once, and ends when the tab closes or leaves its site before an agent joined. Invite again from the popup |
-| After Resume the agent did not continue | Only the session that made the request is woken, and only Claude Code (with its messaging socket), Codex (after its first FAI call) and OpenCode 1.19 to 1.x (with FAI's plugin, after its first FAI call). Tell the agent to continue; it calls `fai_browser_observe` with the requestId |
+| After Resume the agent did not continue | Only the session that made the request is woken, and only Claude Code (with its messaging socket or Windows named pipe), Codex (with the standalone queue-capable CLI and after its first FAI call) and OpenCode 1.19 to 1.x (with FAI's plugin, after its first FAI call). Tell the agent to continue; it calls `fai_browser_observe` with the requestId |
 
 ## Pages and actions
 

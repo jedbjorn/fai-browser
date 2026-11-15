@@ -711,9 +711,29 @@ Loop stoppers: each `requestId` has a call budget (`maxCalls` act/observe calls 
 
 The user can bring a connected coding agent to a tab they already have open, and FAI wakes an idle agent when the user
 approves or resumes its tab. Claude Code, Codex and OpenCode (1.19 to 1.x, through FAI's plugin) can be woken; any
-other host gets the copy-text fallback. (Not on Windows yet: wakes there would need more than Unix domain sockets and
-an extensionless `codex`, and their tests are skipped on the Windows CI runner; approvals still work, the agent just
-is not woken.)
+other host gets the copy-text fallback. The channels work on Linux, macOS and native Windows. Windows channel tests
+run in CI; app-level invite, Approve and Resume acceptance on Windows 10 is still pending and blocks release of
+these Windows changes. Windows 11 is not yet checked.
+
+| App or CLI | Wake channel and setup |
+|---|---|
+| Claude Code CLI and Claude desktop app's **Code tab** | Claude messaging socket on POSIX, named pipe on Windows; messaging must be enabled and Claude must start FAI directly |
+| Codex CLI and Codex in the ChatGPT app | `codex queue` after the first FAI call supplies a thread id; the standalone Codex CLI is required even for the app |
+| OpenCode CLI and OpenCode Desktop, 1.19 to 1.x | FAI's plugin, loaded on restart, then a FAI tool call; supports Desktop's sidecar without `OPENCODE_PID` |
+| Ordinary Claude or ChatGPT chat, other MCP hosts, OpenCode 2.x | These coding-agent channels do not wake plain chat; use the copy line where available. OpenCode 2.x is unsupported |
+
+Windows setup also detects desktop apps without standalone agent commands on PATH. Restart the apps named in its
+closing line. Claude registration uses a PATH or downloaded Code CLI, never the Electron launcher; if neither can
+run, setup prints manual instructions. ChatGPT and the Codex CLI share `%USERPROFILE%\.codex\config.toml`;
+OpenCode uses `%USERPROFILE%\.config\opencode\opencode.json` plus `plugins\fai-browser.js`.
+Existing `opencode.jsonc` is preserved: setup prints the config snippet and plugin destination, says OpenCode needs
+one manual step, and does not claim it registered that app. See [Windows setup](guide/install.md#windows).
+
+**Wake reasons.** Status (`fai-browser status` or `fai_browser_status`) includes `wakeReason`, and the popup displays a
+fixed sentence for it. `ok` means the channel is ready, not proof that a host took a turn. The other fixed codes are
+`wakes_off`, `claude_no_messaging`, `claude_channel_unbound`, `codex_not_found`, `codex_no_thread`, `codex_no_queue`,
+`opencode_no_plugin`, `opencode_version`, `opencode_channel_unbound` and `unknown_host`. They contain no host text,
+paths, tokens or variable values. [Troubleshooting](guide/troubleshooting.md#invites-and-wakes) explains the fixes.
 
 **Agent sessions.** Every `fai-browser-mcp` process registers with the daemon right after `initialize` (it never starts
 the daemon: while none answers it retries every 2 to 30 s, and it registers again when a restarted daemon no longer
@@ -731,9 +751,9 @@ listed but never wakes it.
 
 | Capability | When | Delivery |
 |---|---|---|
-| `claude-socket` | Claude Code 2.1.224+ (the token since 2.1.228) gives the server `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN` (`--bare` sessions have none), and the socket is `<dir>/<pid>.sock` with the MCP server's parent pid: the variables are inherited by everything Claude Code starts, so a server started through a wrapper (npx, a shell) or by a Bash command fails closed to `none` | the MCP server writes `{"type":"auth","token":…}` and `{"type":"user","message":{"role":"user","content":<text>}}`, one line each, to that socket; an idle session takes a new turn |
-| `codex-queue` | Codex 0.149+, once a tool call named the thread (`_meta["x-codex-turn-metadata"].thread_id`, a UUID) and `codex queue --help` works (`codex` from an absolute `PATH` entry or `FAI_CODEX_BIN`) | `codex queue --thread <id> --message <text>`, argv only (no shell), 15 s timeout, `codex` from `PATH` or `FAI_CODEX_BIN`, no `FAI_*` variable passed on; a busy session runs it as its next turn with its own permissions |
-| `opencode-plugin` | OpenCode 1.19 to 1.x (`clientInfo.version`; 2.x has another plugin API and is refused), FAI's plugin installed (`install --host opencode`; not with `opencode --pure`), the MCP server started by OpenCode itself (`FAI_OPENCODE_WAKE_SOCKET` names `oc-<parent pid>.sock` and `OPENCODE_PID` is that same pid: a server started through a wrapper or by a bash tool fails closed), and after a FAI tool call the plugin tagged with its (root) session | the MCP server connects to the plugin's private socket and writes `{"type":"auth","token":…}` and `{"type":"wake","sessionID":"ses_…","text":<text>}`; the plugin checks the token, that the session called a FAI tool and that the text matches one of FAI's three wake templates exactly, reads the session's last user message and calls OpenCode's `client.session.promptAsync` with that one text part and that message's `agent` and `model` (with its variant; a session without one is refused, `prompt_failed`), then answers `{"ok":true}` once OpenCode accepted the prompt and reported no error before the turn started (it watches OpenCode's events for at most 2 s; a session already running a turn is not watched, since an error then belongs to that turn); a busy session runs it as its next turn |
+| `claude-socket` | Claude Code 2.1.224+ (the token since 2.1.228) gives the server `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN` (`--bare` sessions have none), and on POSIX the socket is `<dir>/<pid>.sock` with the MCP server's parent pid; on Windows it is a named pipe (`\\.\pipe\…` or `\\?\pipe\…`) and binding also requires Claude Code's client name, `CLAUDE_CODE_SESSION_ID`, and a live parent image of `claude.exe` (looked up directly with `tasklist.exe`, 3 s timeout): the variables are inherited by everything Claude Code starts, so a server started through a wrapper (npx, a shell) or by a Bash command fails closed to `none` | the MCP server writes `{"type":"auth","token":…}` and `{"type":"user","message":{"role":"user","content":<text>}}`, one line each, to that socket; an idle session takes a new turn |
+| `codex-queue` | Codex 0.149+, once a tool call named the thread (`_meta["x-codex-turn-metadata"].thread_id`, a UUID) and `codex queue --help` works (`codex` from an absolute `PATH` entry or `FAI_CODEX_BIN`; on Windows a real `codex.exe`, never a `.cmd`, `.bat`, `.ps1` or WindowsApps binary) | `codex queue --thread <id> --message <text>`, argv only (no shell), 15 s timeout, `codex` from `PATH` or `FAI_CODEX_BIN`, no `FAI_*` variable passed on; a busy session runs it as its next turn with its own permissions |
+| `opencode-plugin` | OpenCode 1.19 to 1.x (`clientInfo.version`; 2.x has another plugin API and is refused), FAI's plugin installed (`install --host opencode`; not with `opencode --pure`), the MCP server started by OpenCode itself (`FAI_OPENCODE_PID` equals the parent pid, and `FAI_OPENCODE_WAKE_SOCKET` names `oc-<parent pid>.sock` on POSIX or `\\.\pipe\fai-browser-oc-<parent pid>-<random>` on Windows: a server started through a wrapper or by a bash tool fails closed), and after a FAI tool call the plugin tagged with its (root) session | the MCP server connects to the plugin's private socket and writes `{"type":"auth","token":…}` and `{"type":"wake","sessionID":"ses_…","text":<text>}`; the plugin checks the token, that the session called a FAI tool and that the text matches one of FAI's three wake templates exactly, reads the session's last user message and calls OpenCode's `client.session.promptAsync` with that one text part and that message's `agent` and `model` (with its variant; a session without one is refused, `prompt_failed`), then answers `{"ok":true}` once OpenCode accepted the prompt and reported no error before the turn started (it watches OpenCode's events for at most 2 s; a session already running a turn is not watched, since an error then belongs to that turn); a busy session runs it as its next turn |
 | `none` | anything else (an unknown host, Claude Code without the socket, Codex or OpenCode before its first FAI call, OpenCode without the plugin or outside 1.19 to 1.x) | none: the popup shows the copy line |
 
 The socket format is the one Claude Code's own debug output prints; it is undocumented and may change. Claude Code's
@@ -743,14 +763,25 @@ an inbound message does: `hold` keeps it for the user to accept, `refuse` drops 
 session's own child, and never to another session's socket. A Codex session is listed as "not ready: ask it to run any
 FAI command" until its first tool call; the server instructions ask Codex to call `fai_browser_status` once early.
 
+**Codex on Windows.** Install the CLI with `npm install -g @openai/codex` (ask your agent to help), then restart the
+app. Lookup checks `FAI_CODEX_BIN`, a `codex.exe` on PATH, then npm's `@openai/codex-win32-<arch>` platform package
+beside the shim, including nested dependencies. Set `FAI_CODEX_BIN` to an absolute real `.exe` if needed. FAI never
+executes a command shim or the ChatGPT app's bundled WindowsApps binary for wakes, and passes text as argv without a
+shell, including non-ASCII, multiline text, `%` and quotes. No thread id gives `codex_no_thread` and the copy line;
+a CLI without queue support gives `codex_no_queue`.
+
 **OpenCode.** OpenCode's default TUI has no HTTP listener and gives an MCP server no session id, so FAI wakes it from
 inside: `install --host opencode` also installs FAI's plugin (`src/opencode-plugin.js`, copied to
 `.opencode/plugins/fai-browser.js`, or `~/.config/opencode/plugins/fai-browser.js` with `--scope user`). At startup the
-plugin creates `$XDG_RUNTIME_DIR/fai-browser/` (else `<tmpdir>/fai-browser-<uid>/`; mode 0700, owner checked, never a
+plugin exports `FAI_OPENCODE_PID = process.pid`, also for Desktop sidecars. On POSIX it creates
+`$XDG_RUNTIME_DIR/fai-browser/` (else `<tmpdir>/fai-browser-<uid>/`; mode 0700, owner checked, never a
 symlink), listens on `oc-<OpenCode's pid>.sock` there (mode 0600, removed on a clean exit; the plugin sets no signal handlers, so
 one left by a killed OpenCode is swept when the next plugin starts) and puts the socket path and a random
 32-byte token in `FAI_OPENCODE_WAKE_SOCKET` and `FAI_OPENCODE_WAKE_TOKEN`, which the MCP server OpenCode starts next
-inherits. Before each FAI tool call (`<server key>_fai_browser_…`) it drops any `_faiHostSession` the model wrote,
+inherits. On Windows it instead opens `\\.\pipe\fai-browser-oc-<pid>-<random>`: no directory, chmod or socket sweep.
+Another local Windows user may be able to open the pipe; access is gated by the random 256-bit token, compared in
+constant time, plus parent-pid/channel binding on the MCP side.
+Before each FAI tool call (`<server key>_fai_browser_…`) it drops any `_faiHostSession` the model wrote,
 finds the calling session's root (a subagent's task session, also a task inside a task, has a `parentID`: the call
 belongs to the conversation that started it; a root it cannot tell means no tag, so no wake), records that root and
 adds its id as `_faiHostSession` to the call's arguments; the MCP server removes that argument before validation for every host and

@@ -13,7 +13,6 @@ import { FaiBrowserWake } from '../src/opencode-plugin.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
 import { ORIGIN, link } from './runtime-fixtures.js';
-import { NO_OPENCODE_WAKES } from './helpers/platform.js';
 
 const STATE = Symbol.for('fai-browser.opencode-wake.v1');
 const SES_A = 'ses_aaaaaaaaaaaaaaaaaaaa';
@@ -84,7 +83,7 @@ const text = result => result.content.map(block => block.text ?? '').join('\n');
 const inviteOf = (ctx, requestId) => ctx.hub.published.at(-1)?.find(view => view.requestId === requestId)?.invite;
 const sessionNow = async ctx => (await ctx.api('GET', '/v1/status')).body.sessions[0];
 
-test('MCP (OpenCode Desktop sidecar, no OPENCODE_PID): not ready until a tagged FAI call; the tag never reaches the schema; an invite wakes that session', { skip: NO_OPENCODE_WAKES }, async t => {
+test('MCP (OpenCode Desktop sidecar, no OPENCODE_PID): not ready until a tagged FAI call; the tag never reaches the schema; an invite wakes that session', async t => {
   const ctx = await setup(t);
   assert.equal(ctx.session.host, 'opencode');
   assert.equal(ctx.session.wake, 'none');
@@ -109,7 +108,7 @@ test('MCP (OpenCode Desktop sidecar, no OPENCODE_PID): not ready until a tagged 
   await until(async () => inviteOf(ctx, reply.requestId)?.wake.state === 'delivered', 'the delivered report');
 });
 
-test('MCP (OpenCode): Approve wakes exactly the session that asked; with two sessions an invite falls back to the copy line', { skip: NO_OPENCODE_WAKES }, async t => {
+test('MCP (OpenCode): Approve wakes exactly the session that asked; with two sessions an invite falls back to the copy line', async t => {
   const ctx = await setup(t);
   await ctx.callAs(SES_A, 'fai_browser_status', {});
   const opened = await ctx.callAs(SES_B, 'fai_browser_open', { origins: [ORIGIN], reason: 'Read the page', task: 'read' });
@@ -131,7 +130,7 @@ test('MCP (OpenCode): Approve wakes exactly the session that asked; with two ses
   assert.equal(ctx.prompts.length, 1);
 });
 
-test('MCP (OpenCode): a request a subagent (a task inside a task) made wakes the root conversation, never the child', { skip: NO_OPENCODE_WAKES }, async t => {
+test('MCP (OpenCode): a request a subagent (a task inside a task) made wakes the root conversation, never the child', async t => {
   const child = 'ses_cccccccccccccccccccc';
   const grandchild = 'ses_dddddddddddddddddddd';
   const ctx = await setup(t, { parents: { [child]: SES_A, [grandchild]: child } });

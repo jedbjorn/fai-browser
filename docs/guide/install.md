@@ -152,9 +152,28 @@ irm https://raw.githubusercontent.com/jedbjorn/fai-browser/main/scripts/install.
    Start menu entry that runs `fai-browser launch`.
 4. **Setup** (`scripts/setup.mjs --yes --download-firefox`): the pairing secret in `%APPDATA%\fai-browser`, Firefox's
    pairing helper (`HKCU\Software\Mozilla\NativeMessagingHosts\fai_browser`), the FAI service, registration with
-   each coding agent it finds (Claude Code, Codex, OpenCode; an npm-installed `claude.cmd` works too), and the launch
+   each coding agent or desktop app it finds (Claude desktop Code tab, ChatGPT Codex, OpenCode Desktop, or their CLIs; an npm-installed `claude.cmd` works too), and the launch
    above: your official Firefox, or Mozilla's downloaded into `%LOCALAPPDATA%\fai-browser\browser\firefox` when none
    is installed, with the FAI profile and the signed add-on, paired.
+
+Setup ends with **Registered apps: … Restart …**. It detects desktop installs even without standalone CLIs on PATH:
+
+- **Claude Code tab:** uses the shared `.claude.json` via Claude's PATH or downloaded Code CLI. It never runs the
+  Electron launcher as a CLI or edits a live `.claude.json` directly. If no usable CLI exists, follow the printed
+  registration command with your agent's help.
+- **ChatGPT Codex:** uses `%USERPROFILE%\.codex\config.toml`. To enable wakes, install the separate CLI with
+  `npm install -g @openai/codex`, restart the app, and ask Codex to run `fai_browser_status`. FAI needs a real
+  `codex.exe` with queue support; a command shim alone and the app's WindowsApps binary are insufficient.
+- **OpenCode Desktop 1.19 to 1.x:** uses `%USERPROFILE%\.config\opencode\opencode.json` and
+  `plugins\fai-browser.js`. If `opencode.jsonc` exists, setup preserves it, prints the manual MCP snippet and exact
+  plugin destination, and closes with **OpenCode needs one manual step**. Merge the snippet yourself and copy
+  `src/opencode-plugin.js` from the installed FAI app to the printed destination with your agent's help; then restart
+  OpenCode and run a FAI command. Do not replace your provider/model settings. This refusal is not successful
+  automatic registration.
+
+Only coding sessions (Claude's Code tab and ChatGPT's Codex), not ordinary chat, use these channels.
+See [per-app wake support](../REFERENCE.md#invites-and-wakes). App-level Windows 10 wake acceptance is pending and
+blocks release of these changes; Windows 11 is not yet checked.
 
 Then restart your coding agent. Opening **FAI Browser** from the Start menu later starts the FAI service by itself
 (Firefox's pairing helper starts it outside Firefox's process job, so it keeps running); a second click while it is

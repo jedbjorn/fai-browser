@@ -197,13 +197,23 @@ irm https://raw.githubusercontent.com/jedbjorn/fai-browser/main/scripts/install.
 That is the whole setup. Per user, without administrator rights or Developer mode, it installs a private Node.js
 (checked against nodejs.org's checksums; a Node you already have is left alone) and the latest FAI Browser release under
 `%LOCALAPPDATA%\fai-browser`, then runs setup: the pairing secret, Firefox's pairing helper, the FAI service,
-registration with Claude Code, Codex and OpenCode when they are installed, and FAI Browser itself: your official
+registration with Claude Code, Codex and OpenCode (including detected desktop apps), and FAI Browser itself: your official
 Firefox, or Mozilla's downloaded into FAI's folder when you have none, with a separate FAI profile and the signed add-on,
 already paired. It adds a **FAI Browser** Start menu entry and the `fai-browser` command.
 
 1. When it says **FAI Browser is installed**, a Firefox window titled *FAI Browser is ready* is open.
 2. Restart your coding agent, then ask it to work in your browser. Its requests open in that window; you approve each.
 3. Later: open FAI Browser from the Start menu (it starts the FAI service by itself).
+
+Setup's closing line names the apps registered and asks you to restart them. Claude's **Code tab**, Codex in the
+ChatGPT app, and OpenCode Desktop 1.19 to 1.x use the same wake channels as their CLIs; ordinary Claude and ChatGPT
+chat are excluded. Codex wakes need the standalone Codex CLI (`npm install -g @openai/codex`), even for the app, and a
+first FAI call to name the thread. Existing OpenCode `opencode.jsonc` needs the printed manual config/plugin step;
+setup preserves it and says OpenCode was not auto-registered. The popup's fixed wake-reason sentence explains missing
+steps; the copy line remains available. [Per-app support and limits](docs/REFERENCE.md#invites-and-wakes).
+
+Windows channel tests are enabled. App-level Windows 10 wake acceptance is pending and blocks release of these
+changes; Windows 11 is not yet checked.
 
 Run the same command again to update. Remove everything with
 `powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\fai-browser\uninstall.ps1"`. Coding agents can follow

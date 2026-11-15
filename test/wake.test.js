@@ -9,7 +9,7 @@ import {
   detectHost, hostSessionId, repoName, resetCodexSupport, wakeCapability, wakeReason, wakeText, WAKE_REASONS,
 } from '../src/wake.js';
 import { fakeCodex, startFakeClaudeSocket } from './helpers/fake-agents.js';
-import { NO_CLAUDE_WAKES, NO_CODEX_WAKES, WINDOWS } from './helpers/platform.js';
+import { WINDOWS } from './helpers/platform.js';
 
 test('wake reasons: every setup failure is a fixed code; a bound capability is ok and opt-out wins', () => {
   const claude = { host: 'claude', ppid: 4242, platform: 'linux', env: {
@@ -163,7 +163,7 @@ test('wake texts are fixed FAI templates: ids, level and the user\'s own words o
   assert.equal(cleanInviteText('pay \u202enoitpircsbus\u202c now\u200b\u2066x\u2069\ufeff\u0085y\u009bz'), 'pay noitpircsbus nowx y z');
 });
 
-test('Claude socket: delivered writes the auth line then one user line', { skip: NO_CLAUDE_WAKES }, async t => {
+test('Claude socket: delivered writes the auth line then one user line', async t => {
   const fake = await startFakeClaudeSocket(t);
   const outcome = await deliverClaudeSocket({ path: fake.path, token: fake.token, text: 'hello from FAI' });
   assert.deepEqual(outcome, { ok: true });
@@ -171,7 +171,7 @@ test('Claude socket: delivered writes the auth line then one user line', { skip:
   assert.deepEqual(fake.received, [{ type: 'user', message: { role: 'user', content: 'hello from FAI' } }]);
 });
 
-test('Claude socket: a refusal line, no socket and a write that never lands each fail with a code', { skip: NO_CLAUDE_WAKES }, async t => {
+test('Claude socket: a refusal line, no socket and a write that never lands each fail with a code', async t => {
   const refusing = await startFakeClaudeSocket(t, { mode: 'refuse' });
   const refused = await deliverClaudeSocket({ path: refusing.path, token: refusing.token, text: 'x' });
   assert.equal(refused.ok, false);
@@ -196,7 +196,7 @@ test('Claude socket: a refusal line, no socket and a write that never lands each
   assert.ok(Date.now() - started < 3000);
 });
 
-test('deliverWake routes by capability and never throws', { skip: NO_CLAUDE_WAKES }, async t => {
+test('deliverWake routes by capability and never throws', async t => {
   const fake = await startFakeClaudeSocket(t, { pid: 4242 });
   const env = { CLAUDE_CODE_MESSAGING_SOCKET: fake.path, CLAUDE_CODE_MESSAGING_TOKEN: fake.token,
     CLAUDE_CODE_SESSION_ID: 'test-session' };
@@ -216,7 +216,7 @@ test('deliverWake routes by capability and never throws', { skip: NO_CLAUDE_WAKE
   assert.equal(rejected.code, 'no_socket', 'delivery rechecks the live image even after a successful binding');
 });
 
-test('Codex: codex queue --thread <id> --message <text> as argv (no shell), outcomes from the exit and stderr', { skip: NO_CODEX_WAKES }, async t => {
+test('Codex: codex queue --thread <id> --message <text> as argv (no shell), outcomes from the exit and stderr', async t => {
   resetCodexSupport();
   const fake = await fakeCodex(t);
   assert.equal(await codexSupportsQueue(fake.env), true);
@@ -248,7 +248,7 @@ test('Codex: codex queue --thread <id> --message <text> as argv (no shell), outc
   assert.equal(badThread.code, 'unknown_thread', 'a thread id that is not one never reaches argv');
 });
 
-test('Claude socket: whatever the session writes back is kept without the token', { skip: NO_CLAUDE_WAKES }, async t => {
+test('Claude socket: whatever the session writes back is kept without the token', async t => {
   const echo = await startFakeClaudeSocket(t, { mode: 'echo' });
   const sent = await deliverClaudeSocket({ path: echo.path, token: echo.token, text: 'hi' });
   assert.equal(sent.ok, true);
