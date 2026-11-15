@@ -204,6 +204,7 @@ export function mountInvite({ root, context, onState, say }) {
     for (const agent of agents.length ? agents : [null]) {
       const row = element('div', 'invite-row');
       row.append(element('p', 'invite-row-name', agent ? agentLabel(agent) : 'Invite agent'));
+      const actions = element('div', 'request-actions invite-row-actions');
       for (const item of INVITE_LEVELS) {
         const button = element('button', 'primary-button invite-agent', item.name);
         button.type = 'button';
@@ -211,9 +212,9 @@ export function mountInvite({ root, context, onState, say }) {
         if (agent) button.dataset.sessionId = agent.sessionId;
         button.disabled = busy;
         button.addEventListener('click', () => invite(agent, item.level));
-        row.append(button);
+        actions.append(button);
       }
-      row.append(element('p', 'field-help', agent ? hint(agent)
+      row.append(actions, element('p', 'field-help', agent ? hint(agent)
         : 'No agent session is running FAI Browser. You get a line to paste into your agent.'));
       list.append(row);
     }
