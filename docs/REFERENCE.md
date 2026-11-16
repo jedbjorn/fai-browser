@@ -927,6 +927,17 @@ open to any client-token holder, as before: the CLI and SDK drive MCP-made reque
 CLI). `fai_browser_status` lists only the invites this session may join, and its next is the join when one is for
 this session; its other nexts only ever name this session's own requests.
 
+**A FAI chat's automatic invite.** A [FAI chat](#fai-chats) turn may carry an invite FAI made, without a click, for
+the tab beside the chat panel ([The page beside the chat](#the-page-beside-the-chat)). It is addressed to that chat,
+is pending and grants nothing. Until the user's **Use** or **Act** grants the lease, the chat's session learns nothing
+about the tab: the invite in status (`fai_browser_status`), the join reply, and the pending request in status,
+`GET /v1/requests[/:id]` and `POST /v1/wait` all leave out the tab's origin and URL (no request view carries the page
+title), and the relay and approve lines built from those views do not name the site. Asking for more on that request
+(`POST /v1/requests/:id/ask`, `fai_browser_open` with its `requestId`) is refused with `invite_not_granted` (409)
+until then, because a successor request would carry the withheld origin. The popup does not list it as an invite;
+its request stays unlisted until the agent joins, then is listed as pending, so the approval window opens for it.
+After the grant every view shows the tab as for any request. Popup invites name their tab as before.
+
 **Registry safety.** The MCP server's session loop connects with `autoStart: false` and `takeover: false`: it never
 starts a daemon and never stops one of another version (after an update an old server would otherwise shut the new,
 idle daemon down); on `version_mismatch` it waits until the server's own tool call (which may replace the daemon as any
@@ -946,7 +957,10 @@ invite, so the daemon records it as the owner; a relay `next.text` says "FAI Bro
 requests whose view names this session as `owner`. An invite ends `expired` after 10 minutes (the tab is released), `revoked` when
 the tab closes or leaves its origin before an agent joined, `cancelled` by the user, or replaced by a new invite on the
 same tab; joining then fails with `invite_expired`, `invite_revoked`, `invite_cancelled` (or `invite_joined` when used),
-and the agent should ask the user to invite it again. A browser may make 6 invites a minute (`rate_limited`).
+and the agent should ask the user to invite it again. A browser may make 6 invites a minute (`rate_limited`). An invite
+is kept as long as its request record exists (an ended one is dropped only once its request is gone and an hour has
+passed since it ended), so an invited tab's owner rule, and an automatic invite's withholding, last as long as its
+request does.
 
 **Approve and Resume.** A request an MCP server created carries that session as its owner. When the user approves it,
 or resumes it after a pause, the daemon wakes the owner, which continues with `fai_browser_observe` without a
