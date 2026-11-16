@@ -32,6 +32,8 @@ export const CODEX_TIMEOUT_MS = 15_000;
 export const OPENCODE_TIMEOUT_MS = 8_000;
 // The longest user text an invite carries (the popup's "What should it do?").
 export const MAX_INVITE_TEXT = 500;
+// The longest message the user can send from the FAI chat panel.
+export const MAX_CHAT_TEXT = 4_000;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 // Codex thread ids are UUIDs (v7 today: 01a1c03e-9e28-72a2-8cdb-bb6ca9545521).
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -415,10 +417,27 @@ export function cleanInviteText(text) {
 }
 
 /**
+ * A message the user typed in the FAI chat panel, cleaned like cleanInviteText except that line breaks stay (they
+ * travel escaped inside the template's JSON string): '' when none. Longer than MAX_CHAT_TEXT is the caller's to refuse;
+ * the text is never clipped here.
+ */
+export function cleanChatText(text) {
+  if (typeof text !== 'string') return '';
+  return text
+    .replace(/\r\n?|[\u2028\u2029]/g, '\n')
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
+    // Every other control character becomes a space; runs of spaces within a line become one.
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]+/g, ' ')
+    .replace(/[^\S\n]+/g, ' ')
+    .trim();
+}
+
+/**
  * The wake text for each event. `kind`: invite (the user invited this session to a tab: join with inviteId), resume
  * (the user resumed a paused tab it holds), approved (the user approved its pending request), action_approved and
  * action_denied (the user decided an action's Approve once after the act that asked stopped waiting: actionId and
- * revision name it). Ids only, never a label, page text or URL.
+ * revision name it), chat (the user's message from the FAI chat panel, as one JSON string). Ids and the user's own
+ * words only, never a label, page text or URL.
  */
 export function wakeText({ kind, inviteId, requestId, level, userText, actionId, revision }) {
   const prefix = '[FAI Browser] ';
@@ -430,6 +449,10 @@ export function wakeText({ kind, inviteId, requestId, level, userText, actionId,
   if (kind === 'action_denied') {
     return `${prefix}The user denied action ${safeId(actionId)} on tab request ${safeId(requestId)}. Do not retry it; `
       + 'tell the user.';
+  }
+  if (kind === 'chat') {
+    return `${prefix}The user sent you a message from the FAI chat panel (the user's own words): `
+      + JSON.stringify(cleanChatText(userText).slice(0, MAX_CHAT_TEXT));
   }
   if (kind === 'invite') {
     const words = cleanInviteText(userText);

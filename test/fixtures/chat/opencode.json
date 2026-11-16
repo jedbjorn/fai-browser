@@ -1,0 +1,846 @@
+{
+ "version": "1.19.5",
+ "sessionID": "ses_fixture0000000000000001",
+ "messages": [
+  {
+   "info": {
+    "role": "user",
+    "time": {
+     "created": 1794122212611
+    },
+    "agent": "build",
+    "model": {
+     "providerID": "ollama-cloud",
+     "modelID": "deepseek-v4.1-flash"
+    },
+    "summary": {
+     "diffs": []
+    },
+    "id": "msg_1ba04650300110yfixture01",
+    "sessionID": "ses_fixture0000000000000001"
+   },
+   "parts": [
+    {
+     "type": "text",
+     "text": "Open the pricing page on example.com and list the plans.",
+     "id": "prt_1ba04650300110yfixture01",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba04650300110yfixture01"
+    },
+    {
+     "id": "prt_synth0001",
+     "sessionID": "ses_fixture0000000000000001",
+     "type": "text",
+     "text": "Called the Read tool with the following input (fixture, never shown).",
+     "synthetic": true,
+     "messageID": "msg_1ba04650300110yfixture01"
+    },
+    {
+     "id": "prt_ignored001",
+     "sessionID": "ses_fixture0000000000000001",
+     "type": "text",
+     "text": "Ignored part (never shown).",
+     "ignored": true,
+     "messageID": "msg_1ba04650300110yfixture01"
+    }
+   ]
+  },
+  {
+   "info": {
+    "parentID": "msg_1ba04650300110ylugvNwfOX28",
+    "role": "assistant",
+    "mode": "build",
+    "agent": "build",
+    "path": {
+     "cwd": "fixture",
+     "root": "fixture"
+    },
+    "cost": 0.002003442,
+    "tokens": {
+     "total": 14596,
+     "input": 12669,
+     "output": 163,
+     "reasoning": 0,
+     "cache": {
+      "write": 0,
+      "read": 1764
+     }
+    },
+    "modelID": "deepseek-v4.1-flash",
+    "providerID": "ollama-cloud",
+    "time": {
+     "created": 1794122212621,
+     "completed": 1794122213521
+    },
+    "finish": "tool-calls",
+    "id": "msg_1ba04650d001JuNKfixture02",
+    "sessionID": "ses_fixture0000000000000001"
+   },
+   "parts": [
+    {
+     "type": "step-start",
+     "id": "prt_1ba04697a00132qDQGE6bPDFce",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba04650d001JuNKfixture02"
+    },
+    {
+     "type": "reasoning",
+     "text": "Fixture reasoning (never shown).",
+     "time": {
+      "start": 1794122213756,
+      "end": 1794122213856
+     },
+     "id": "prt_1ba04697c0015NsLJYh9FBEigI",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba04650d001JuNKfixture02"
+    },
+    {
+     "type": "text",
+     "text": "Opening the pricing page.",
+     "time": {
+      "start": 1794122213857,
+      "end": 1794122214057
+     },
+     "id": "prt_1ba0469e1001fk7pSMPlgSHsHo",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba04650d001JuNKfixture02"
+    },
+    {
+     "type": "tool",
+     "tool": "bash",
+     "callID": "call_jrfidzmq",
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "fixture"
+      },
+      "output": "fixture tool output (never shown)",
+      "title": "fixture",
+      "metadata": {},
+      "time": {
+       "start": 1794122212621,
+       "end": 1794122212626
+      }
+     },
+     "id": "prt_1ba046a53001ZBuUyBOicPZytt",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba04650d001JuNKfixture02"
+    },
+    {
+     "type": "tool",
+     "tool": "bash",
+     "callID": "call_bvjkmb9h",
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "fixture"
+      },
+      "output": "fixture tool output (never shown)",
+      "title": "fixture",
+      "metadata": {},
+      "time": {
+       "start": 1794122212621,
+       "end": 1794122212626
+      }
+     },
+     "id": "prt_1ba046a590010AmX6HB3Iixlf5",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba04650d001JuNKfixture02"
+    },
+    {
+     "reason": "tool-calls",
+     "type": "step-finish",
+     "tokens": {
+      "total": 14596,
+      "input": 12669,
+      "output": 163,
+      "reasoning": 0,
+      "cache": {
+       "write": 0,
+       "read": 1764
+      }
+     },
+     "cost": 0.002003442,
+     "id": "prt_1ba046aab001MBGBW6cE4ia00H",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba04650d001JuNKfixture02"
+    }
+   ]
+  },
+  {
+   "info": {
+    "parentID": "msg_1ba04650300110ylugvNwfOX28",
+    "role": "assistant",
+    "mode": "build",
+    "agent": "build",
+    "path": {
+     "cwd": "fixture",
+     "root": "fixture"
+    },
+    "cost": 0.000376098,
+    "tokens": {
+     "total": 15379,
+     "input": 478,
+     "output": 435,
+     "reasoning": 0,
+     "cache": {
+      "write": 0,
+      "read": 14466
+     }
+    },
+    "modelID": "deepseek-v4.1-flash",
+    "providerID": "ollama-cloud",
+    "time": {
+     "created": 1794122214063,
+     "completed": 1794122214963
+    },
+    "finish": "tool-calls",
+    "id": "msg_1ba046aaf0016H4zfixture03",
+    "sessionID": "ses_fixture0000000000000001"
+   },
+   "parts": [
+    {
+     "type": "step-start",
+     "id": "prt_1ba046da4001qI1zi1koLNwSK0",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba046aaf0016H4zfixture03"
+    },
+    {
+     "type": "reasoning",
+     "text": "Fixture reasoning (never shown).",
+     "time": {
+      "start": 1794122214821,
+      "end": 1794122215645
+     },
+     "id": "prt_1ba046da5001VfaSp3Ndb6z6Eu",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba046aaf0016H4zfixture03"
+    },
+    {
+     "type": "tool",
+     "tool": "todowrite",
+     "callID": "call_ra1w1nxa",
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "fixture"
+      },
+      "output": "fixture tool output (never shown)",
+      "title": "fixture",
+      "metadata": {},
+      "time": {
+       "start": 1794122214063,
+       "end": 1794122214068
+      }
+     },
+     "id": "prt_1ba0470df001QKWZeCavArG9Xh",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba046aaf0016H4zfixture03"
+    },
+    {
+     "type": "tool",
+     "tool": "bash",
+     "callID": "call_foj2gxli",
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "fixture"
+      },
+      "output": "fixture tool output (never shown)",
+      "title": "fixture",
+      "metadata": {},
+      "time": {
+       "start": 1794122214063,
+       "end": 1794122214068
+      }
+     },
+     "id": "prt_1ba0470e40014E5WctcCKjB86P",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba046aaf0016H4zfixture03"
+    },
+    {
+     "type": "tool",
+     "tool": "bash",
+     "callID": "call_z0y0e2xn",
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "fixture"
+      },
+      "output": "fixture tool output (never shown)",
+      "title": "fixture",
+      "metadata": {},
+      "time": {
+       "start": 1794122214063,
+       "end": 1794122214068
+      }
+     },
+     "id": "prt_1ba0470e9001l2uWjMY20F7R5i",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba046aaf0016H4zfixture03"
+    },
+    {
+     "reason": "tool-calls",
+     "type": "step-finish",
+     "tokens": {
+      "total": 15379,
+      "input": 478,
+      "output": 435,
+      "reasoning": 0,
+      "cache": {
+       "write": 0,
+       "read": 14466
+      }
+     },
+     "cost": 0.000376098,
+     "id": "prt_1ba04722d0011asDDC0JPlTQGd",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba046aaf0016H4zfixture03"
+    }
+   ]
+  },
+  {
+   "info": {
+    "parentID": "msg_1ba04650300110ylugvNwfOX28",
+    "role": "assistant",
+    "mode": "build",
+    "agent": "build",
+    "path": {
+     "cwd": "fixture",
+     "root": "fixture"
+    },
+    "cost": 0.002003442,
+    "tokens": {
+     "total": 14596,
+     "input": 12669,
+     "output": 163,
+     "reasoning": 0,
+     "cache": {
+      "write": 0,
+      "read": 1764
+     }
+    },
+    "modelID": "deepseek-v4.1-flash",
+    "providerID": "ollama-cloud",
+    "time": {
+     "created": 1794122215985,
+     "completed": 1794122216885
+    },
+    "finish": "tool-calls",
+    "id": "msg_1ba047231001eJS9fixture04",
+    "sessionID": "ses_fixture0000000000000001"
+   },
+   "parts": [
+    {
+     "type": "step-start",
+     "id": "prt_1ba04697a00132qDQGE6bPDFce",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba047231001eJS9fixture04"
+    },
+    {
+     "type": "reasoning",
+     "text": "Fixture reasoning (never shown).",
+     "time": {
+      "start": 1794122213756,
+      "end": 1794122213856
+     },
+     "id": "prt_1ba04697c0015NsLJYh9FBEigI",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba047231001eJS9fixture04"
+    },
+    {
+     "type": "text",
+     "text": "Three plans: Starter, Team and Enterprise.",
+     "time": {
+      "start": 1794122213857,
+      "end": 1794122214057
+     },
+     "id": "prt_1ba0469e1001fk7pSMPlgSHsHo",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba047231001eJS9fixture04"
+    },
+    {
+     "type": "tool",
+     "tool": "bash",
+     "callID": "call_jrfidzmq",
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "fixture"
+      },
+      "output": "fixture tool output (never shown)",
+      "title": "fixture",
+      "metadata": {},
+      "time": {
+       "start": 1794122215985,
+       "end": 1794122215990
+      }
+     },
+     "id": "prt_1ba046a53001ZBuUyBOicPZytt",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba047231001eJS9fixture04"
+    },
+    {
+     "type": "tool",
+     "tool": "bash",
+     "callID": "call_bvjkmb9h",
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "fixture"
+      },
+      "output": "fixture tool output (never shown)",
+      "title": "fixture",
+      "metadata": {},
+      "time": {
+       "start": 1794122215985,
+       "end": 1794122215990
+      }
+     },
+     "id": "prt_1ba046a590010AmX6HB3Iixlf5",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba047231001eJS9fixture04"
+    },
+    {
+     "reason": "tool-calls",
+     "type": "step-finish",
+     "tokens": {
+      "total": 14596,
+      "input": 12669,
+      "output": 163,
+      "reasoning": 0,
+      "cache": {
+       "write": 0,
+       "read": 1764
+      }
+     },
+     "cost": 0.002003442,
+     "id": "prt_1ba046aab001MBGBW6cE4ia00H",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba047231001eJS9fixture04"
+    }
+   ]
+  },
+  {
+   "info": {
+    "role": "user",
+    "time": {
+     "created": 1794122300000
+    },
+    "agent": "build",
+    "model": {
+     "providerID": "ollama-cloud",
+     "modelID": "deepseek-v4.1-flash"
+    },
+    "summary": {
+     "diffs": []
+    },
+    "id": "msg_1ba048330001aaaafixture05",
+    "sessionID": "ses_fixture0000000000000001"
+   },
+   "parts": [
+    {
+     "type": "text",
+     "text": "[FAI Browser] The user approved tab request req_fixture3 at level Use. Call fai_browser_observe with requestId req_fixture3 and continue the task.",
+     "id": "prt_1ba048330001aaaafixture05",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba048330001aaaafixture05"
+    }
+   ]
+  },
+  {
+   "info": {
+    "parentID": "msg_1ba04650300110ylugvNwfOX28",
+    "role": "assistant",
+    "mode": "build",
+    "agent": "build",
+    "path": {
+     "cwd": "fixture",
+     "root": "fixture"
+    },
+    "cost": 0.002003442,
+    "tokens": {
+     "total": 14596,
+     "input": 12669,
+     "output": 163,
+     "reasoning": 0,
+     "cache": {
+      "write": 0,
+      "read": 1764
+     }
+    },
+    "modelID": "deepseek-v4.1-flash",
+    "providerID": "ollama-cloud",
+    "time": {
+     "created": 1794122300100,
+     "completed": 1794122301000
+    },
+    "finish": "tool-calls",
+    "id": "msg_1ba048340001aaaafixture06",
+    "sessionID": "ses_fixture0000000000000001"
+   },
+   "parts": [
+    {
+     "type": "step-start",
+     "id": "prt_1ba04697a00132qDQGE6bPDFce",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba048340001aaaafixture06"
+    },
+    {
+     "type": "reasoning",
+     "text": "Fixture reasoning (never shown).",
+     "time": {
+      "start": 1794122213756,
+      "end": 1794122213856
+     },
+     "id": "prt_1ba04697c0015NsLJYh9FBEigI",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba048340001aaaafixture06"
+    },
+    {
+     "type": "text",
+     "text": "Continuing in the approved tab.",
+     "time": {
+      "start": 1794122213857,
+      "end": 1794122214057
+     },
+     "id": "prt_1ba0469e1001fk7pSMPlgSHsHo",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba048340001aaaafixture06"
+    },
+    {
+     "type": "tool",
+     "tool": "bash",
+     "callID": "call_jrfidzmq",
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "fixture"
+      },
+      "output": "fixture tool output (never shown)",
+      "title": "fixture",
+      "metadata": {},
+      "time": {
+       "start": 1794122300100,
+       "end": 1794122300105
+      }
+     },
+     "id": "prt_1ba046a53001ZBuUyBOicPZytt",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba048340001aaaafixture06"
+    },
+    {
+     "type": "tool",
+     "tool": "bash",
+     "callID": "call_bvjkmb9h",
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "fixture"
+      },
+      "output": "fixture tool output (never shown)",
+      "title": "fixture",
+      "metadata": {},
+      "time": {
+       "start": 1794122300100,
+       "end": 1794122300105
+      }
+     },
+     "id": "prt_1ba046a590010AmX6HB3Iixlf5",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba048340001aaaafixture06"
+    },
+    {
+     "reason": "tool-calls",
+     "type": "step-finish",
+     "tokens": {
+      "total": 14596,
+      "input": 12669,
+      "output": 163,
+      "reasoning": 0,
+      "cache": {
+       "write": 0,
+       "read": 1764
+      }
+     },
+     "cost": 0.002003442,
+     "id": "prt_1ba046aab001MBGBW6cE4ia00H",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba048340001aaaafixture06"
+    }
+   ]
+  }
+ ],
+ "append": [
+  {
+   "info": {
+    "role": "user",
+    "time": {
+     "created": 1794122400000
+    },
+    "agent": "build",
+    "model": {
+     "providerID": "ollama-cloud",
+     "modelID": "deepseek-v4.1-flash"
+    },
+    "summary": {
+     "diffs": []
+    },
+    "id": "msg_1ba049000001bbbbfixture07",
+    "sessionID": "ses_fixture0000000000000001"
+   },
+   "parts": [
+    {
+     "type": "text",
+     "text": "[FAI Browser] The user sent you a message from the FAI chat panel (the user's own words): \"Now the invoices page.\\nThanks.\"",
+     "id": "prt_1ba049000001bbbbfixture07",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba049000001bbbbfixture07"
+    }
+   ]
+  },
+  {
+   "info": {
+    "parentID": "msg_1ba04650300110ylugvNwfOX28",
+    "role": "assistant",
+    "mode": "build",
+    "agent": "build",
+    "path": {
+     "cwd": "fixture",
+     "root": "fixture"
+    },
+    "cost": 0.002003442,
+    "tokens": {
+     "total": 14596,
+     "input": 12669,
+     "output": 163,
+     "reasoning": 0,
+     "cache": {
+      "write": 0,
+      "read": 1764
+     }
+    },
+    "modelID": "deepseek-v4.1-flash",
+    "providerID": "ollama-cloud",
+    "time": {
+     "created": 1794122400100,
+     "completed": 1794122401000
+    },
+    "finish": "tool-calls",
+    "id": "msg_1ba049010001bbbbfixture08",
+    "sessionID": "ses_fixture0000000000000001"
+   },
+   "parts": [
+    {
+     "type": "step-start",
+     "id": "prt_1ba04697a00132qDQGE6bPDFce",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba049010001bbbbfixture08"
+    },
+    {
+     "type": "reasoning",
+     "text": "Fixture reasoning (never shown).",
+     "time": {
+      "start": 1794122213756,
+      "end": 1794122213856
+     },
+     "id": "prt_1ba04697c0015NsLJYh9FBEigI",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba049010001bbbbfixture08"
+    },
+    {
+     "type": "text",
+     "text": "Checking the invoices page.",
+     "time": {
+      "start": 1794122213857,
+      "end": 1794122214057
+     },
+     "id": "prt_1ba0469e1001fk7pSMPlgSHsHo",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba049010001bbbbfixture08"
+    },
+    {
+     "type": "tool",
+     "tool": "bash",
+     "callID": "call_jrfidzmq",
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "fixture"
+      },
+      "output": "fixture tool output (never shown)",
+      "title": "fixture",
+      "metadata": {},
+      "time": {
+       "start": 1794122400100,
+       "end": 1794122400105
+      }
+     },
+     "id": "prt_1ba046a53001ZBuUyBOicPZytt",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba049010001bbbbfixture08"
+    },
+    {
+     "type": "tool",
+     "tool": "bash",
+     "callID": "call_bvjkmb9h",
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "fixture"
+      },
+      "output": "fixture tool output (never shown)",
+      "title": "fixture",
+      "metadata": {},
+      "time": {
+       "start": 1794122400100,
+       "end": 1794122400105
+      }
+     },
+     "id": "prt_1ba046a590010AmX6HB3Iixlf5",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba049010001bbbbfixture08"
+    },
+    {
+     "reason": "tool-calls",
+     "type": "step-finish",
+     "tokens": {
+      "total": 14596,
+      "input": 12669,
+      "output": 163,
+      "reasoning": 0,
+      "cache": {
+       "write": 0,
+       "read": 1764
+      }
+     },
+     "cost": 0.002003442,
+     "id": "prt_1ba046aab001MBGBW6cE4ia00H",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba049010001bbbbfixture08"
+    }
+   ]
+  },
+  {
+   "info": {
+    "parentID": "msg_1ba04650300110ylugvNwfOX28",
+    "role": "assistant",
+    "mode": "build",
+    "agent": "build",
+    "path": {
+     "cwd": "fixture",
+     "root": "fixture"
+    },
+    "cost": 0.002003442,
+    "tokens": {
+     "total": 14596,
+     "input": 12669,
+     "output": 163,
+     "reasoning": 0,
+     "cache": {
+      "write": 0,
+      "read": 1764
+     }
+    },
+    "modelID": "deepseek-v4.1-flash",
+    "providerID": "ollama-cloud",
+    "time": {
+     "created": 1794122401000
+    },
+    "finish": "tool-calls",
+    "id": "msg_1ba049020001bbbbfixture09",
+    "sessionID": "ses_fixture0000000000000001"
+   },
+   "parts": [
+    {
+     "type": "step-start",
+     "id": "prt_1ba04697a00132qDQGE6bPDFce",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba049020001bbbbfixture09"
+    },
+    {
+     "type": "reasoning",
+     "text": "Fixture reasoning (never shown).",
+     "time": {
+      "start": 1794122213756,
+      "end": 1794122213856
+     },
+     "id": "prt_1ba04697c0015NsLJYh9FBEigI",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba049020001bbbbfixture09"
+    },
+    {
+     "type": "text",
+     "text": "Half-written answer (not shown until complete).",
+     "time": {
+      "start": 1794122213857,
+      "end": 1794122214057
+     },
+     "id": "prt_1ba0469e1001fk7pSMPlgSHsHo",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba049020001bbbbfixture09"
+    },
+    {
+     "type": "tool",
+     "tool": "bash",
+     "callID": "call_jrfidzmq",
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "fixture"
+      },
+      "output": "fixture tool output (never shown)",
+      "title": "fixture",
+      "metadata": {},
+      "time": {
+       "start": 1794122401000,
+       "end": 1794122401005
+      }
+     },
+     "id": "prt_1ba046a53001ZBuUyBOicPZytt",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba049020001bbbbfixture09"
+    },
+    {
+     "type": "tool",
+     "tool": "bash",
+     "callID": "call_bvjkmb9h",
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "fixture"
+      },
+      "output": "fixture tool output (never shown)",
+      "title": "fixture",
+      "metadata": {},
+      "time": {
+       "start": 1794122401000,
+       "end": 1794122401005
+      }
+     },
+     "id": "prt_1ba046a590010AmX6HB3Iixlf5",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba049020001bbbbfixture09"
+    },
+    {
+     "reason": "tool-calls",
+     "type": "step-finish",
+     "tokens": {
+      "total": 14596,
+      "input": 12669,
+      "output": 163,
+      "reasoning": 0,
+      "cache": {
+       "write": 0,
+       "read": 1764
+      }
+     },
+     "cost": 0.002003442,
+     "id": "prt_1ba046aab001MBGBW6cE4ia00H",
+     "sessionID": "ses_fixture0000000000000001",
+     "messageID": "msg_1ba049020001bbbbfixture09"
+    }
+   ]
+  }
+ ]
+}

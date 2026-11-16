@@ -114,6 +114,9 @@ const HTTP_ROUTES = {
   '/invite': 'invite',
   '/invite-cancel': 'invite_cancel',
   '/agents': 'agents',
+  '/chat': 'chat',
+  '/chat-close': 'chat_close',
+  '/chat-send': 'chat_send',
   '/commands': 'commands',
 };
 const REPLY_HTTP_STATUS = {
@@ -1179,6 +1182,26 @@ export function createHub({
       case 'agents': {
         // The popup's Invite list: the live agent sessions (host, repo name, last activity, whether it can be woken).
         if (!emit({ type: 'agents', browserId, reply })) reply({ sessions: [], invites: [] });
+        return;
+      }
+      case 'chat':
+      case 'chat_close':
+      case 'chat_send': {
+        // The FAI chat panel (spec #80): read a live session's conversation (and keep watching it), stop watching, or
+        // send the session the user's message. The daemon cleans the text and refuses one that is too long; here it is
+        // only bounded.
+        if (typeof message.sessionId !== 'string' || !message.sessionId || message.sessionId.length > 64) {
+          reply({ error: { code: 'bad_request', message: 'sessionId is required' } });
+          return;
+        }
+        if (message.type === 'chat_send' && (typeof message.text !== 'string' || message.text.length > 16_000)) {
+          reply({ error: { code: message.text?.length > 16_000 ? 'too_long' : 'bad_request', message: 'text must be a message of at most 4000 characters' } });
+          return;
+        }
+        const event = { type: message.type, sessionId: message.sessionId, browserId, reply,
+          ...(message.type === 'chat' ? { after: Number.isSafeInteger(message.after) && message.after > 0 ? message.after : 0 } : {}),
+          ...(message.type === 'chat_send' ? { text: message.text } : {}) };
+        if (!emit(event)) reply({ error: { code: 'unsupported', message: 'Update the FAI service to chat with agents.' } });
         return;
       }
       case 'lease_level': {

@@ -27,7 +27,7 @@ import { spawn } from 'node:child_process';
 import { automaticCheck, createUpdateChecker, runningUpdate, underTest, claimUpdateLock, writeInstallState } from './update.js';
 import { gitReleaseSource, scrubbedEnv } from './update-git.js';
 import { SessionError, SESSION_POLL_MAX_MS, createSessionRegistry } from './sessions.js';
-import { cleanInviteText } from './wake.js';
+import { MAX_CHAT_TEXT, cleanChatText, cleanInviteText } from './wake.js';
 import { automaticPopupScope } from './automatic-popups.js';
 
 export const DAEMON_VERSION = readPackageVersion();
@@ -94,6 +94,10 @@ const EARLY_DECISION_MS = 30_000;
 const SESSION_KEYS = new Set(['host', 'hostSessionId', 'repo', 'pid', 'startedAt', 'wake', 'wakeReason', 'client', 'previous']);
 const CHALLENGE = /^[A-Za-z0-9_-]{16,64}$/;
 const SESSION_UPDATE_KEYS = new Set(['lastToolCallAt', 'hostSessionId', 'wake', 'wakeReason', 'maxMs']);
+// The MCP server's read of its own conversation for the chat panel (POST /v1/sessions/:id/chat).
+const SESSION_CHAT_KEYS = new Set(['messages', 'busy', 'cursor', 'error']);
+// The chat panel may send a session this many messages a minute.
+export const CHAT_SENDS_PER_MINUTE = 10;
 const WAIT_KEYS = new Set(['requestId', 'runId', 'maxMs', 'afterStep', 'while', 'ask']);
 // An agent's ask for more on a request it holds (POST /v1/requests/:id/ask): a higher level, more origins, or both.
 const ASK_KEYS = new Set(['mode', 'origins']);
@@ -1530,6 +1534,52 @@ export function createDaemon(options = {}) {
   }
 
   /**
+   * The FAI chat panel reads a live session's conversation (spec #80): each `chat` event starts or extends the watch
+   * (src/sessions.js watchChat; it ends 30 s after the last one, or on chat_close) and answers what the session's MCP
+   * server posted so far, newer than `after`, with the panel's chat wakes. A session that is gone is `ended`.
+   */
+  function onChatEvent(event) {
+    sessions.sweep();
+    const sessionId = typeof event.sessionId === 'string' ? event.sessionId : null;
+    const view = sessionId ? sessions.view(sessionId) : null;
+    if (!view) {
+      return replyTo(event, { chat: { sessionId, host: null, repo: null, ended: true, busy: false, readable: false,
+        error: null, reset: false, messages: [], sends: [] } });
+    }
+    sessions.watchChat(sessionId);
+    const read = sessions.chatView(sessionId, event.after);
+    return replyTo(event, { chat: { sessionId, host: view.host, repo: view.repo, ended: false, ...read,
+      sends: sessions.wakesOf(sessionId, 'chat').map(({ wakeId, state, error }) => ({ wakeId, state, error })) } });
+  }
+
+  function onChatCloseEvent(event) {
+    sessions.unwatchChat(typeof event.sessionId === 'string' ? event.sessionId : null);
+    return replyTo(event, { closed: true });
+  }
+
+  /**
+   * The user's message from the chat panel: cleaned (line breaks kept), refused when empty or over MAX_CHAT_TEXT,
+   * and queued as a `chat` wake on the session's own channel. Its state shows in the next `chat` answer's sends.
+   */
+  function onChatSendEvent(event) {
+    const fail = (code, message) => replyTo(event, { error: { code, message } });
+    const sessionId = typeof event.sessionId === 'string' ? event.sessionId : null;
+    const view = sessionId ? sessions.view(sessionId) : null;
+    if (!view) return fail('unknown_session', 'This agent session has ended.');
+    const text = cleanChatText(event.text);
+    if (!text) return fail('empty', 'Type a message first.');
+    if (text.length > MAX_CHAT_TEXT) return fail('too_long', `A message can be at most ${MAX_CHAT_TEXT} characters.`);
+    if (view.wake === 'none' || !view.ready) return fail('cannot_wake', 'FAI cannot send messages to this agent session.');
+    const t = now();
+    if (sessions.wakesOf(sessionId, 'chat').filter(wake => t - wake.createdMs < 60_000).length >= CHAT_SENDS_PER_MINUTE) {
+      return fail('rate_limited', 'Too many messages in a minute; wait a moment.');
+    }
+    const wake = sessions.queueWake(sessionId, { kind: 'chat', userText: text });
+    if (!wake) return fail('cannot_wake', 'FAI cannot send messages to this agent session.');
+    return replyTo(event, { wake: { wakeId: wake.wakeId, state: wake.state, error: wake.error } });
+  }
+
+  /**
    * An agent joins an invite (POST /v1/invites/:id/join, the client token, from fai_browser_open {inviteId}): single
    * use, within its life, while its tab is still held. The joining session (if it says which) owns the request from
    * now on and is the one woken on Resume.
@@ -1929,6 +1979,12 @@ export function createDaemon(options = {}) {
           return onInviteCancelEvent(event);
         case 'agents':
           return onAgentsEvent(event);
+        case 'chat':
+          return onChatEvent(event);
+        case 'chat_close':
+          return onChatCloseEvent(event);
+        case 'chat_send':
+          return onChatSendEvent(event);
         case 'usage':
           return saveKnownBrowsers(event.browsers);
         case 'approval':
@@ -2909,6 +2965,8 @@ export function createDaemon(options = {}) {
     ['POST', /^\/v1\/sessions\/([^/]+)\/poll$/, 'sessions.poll', false, true],
     ['POST', /^\/v1\/sessions\/([^/]+)\/update$/, 'sessions.update', false, true],
     ['POST', /^\/v1\/sessions\/([^/]+)\/wakes\/([^/]+)$/, 'sessions.report', false, true],
+    // The chat panel's read of a watched session, posted by that session's own MCP server.
+    ['POST', /^\/v1\/sessions\/([^/]+)\/chat$/, 'sessions.chat', false, true],
     ['DELETE', /^\/v1\/sessions\/([^/]+)$/, 'sessions.delete', false, true],
     // An agent joins the invite the user made in the popup. There is no route that creates one.
     ['POST', /^\/v1\/invites\/([^/]+)\/join$/, 'invites.join'],
@@ -3006,6 +3064,11 @@ export function createDaemon(options = {}) {
       case 'sessions.report': {
         const session = sessionFrom(req, { id: route.param });
         return { body: { wake: sessionCall(() => sessions.report(session, route.param2, body)) } };
+      }
+      case 'sessions.chat': {
+        const session = sessionFrom(req, { id: route.param });
+        checkKeys(body, SESSION_CHAT_KEYS);
+        return { body: sessionCall(() => sessions.postChat(session, body)) };
       }
       case 'sessions.delete': {
         const session = sessionFrom(req, { id: route.param });

@@ -1,6 +1,7 @@
 // The MCP server's entry in the daemon's agent-session registry (src/sessions.js) and its wake channel: register after
 // initialize, hold one long-poll for wakes (the heartbeat), write each wake to the host's own channel (src/wake.js),
-// report the outcome, and unregister when stdio closes.
+// report the outcome, and unregister when stdio closes. While the FAI chat panel watches this session, the poll also
+// asks it to read its own host's conversation (src/chat.js) and post what is new back to the daemon (spec #80).
 //
 // It never starts a daemon and never stops one: it connects with `autoStart: false, takeover: false`, so a newer
 // daemon (after an update) is left alone; on a version mismatch it waits until this server's own tool call has
@@ -10,6 +11,7 @@
 // and invites move to the new id.
 import { createHmac, randomBytes } from 'node:crypto';
 import { httpJson } from './client.js';
+import { createChatReader, fitPost } from './chat.js';
 import {
   claudeSocket, codexSupportsQueue, codexThreadId, deliverWake, hostSessionId, opencodeChannel, opencodeSessionId,
   opencodeVersionOk, repoName, wakeCapability, wakeReason, wakeText,
@@ -36,12 +38,12 @@ export class AgentSession {
    * request, or one that saw it become active). `deliver`: the delivery function (tests); `onOutcome(wake, outcome)`: told how each wake went (the server stops
    * promising wakes after a failure); `pollMs`, `backoffMs`, `ppid`: test overrides. OpenCode: `clientVersion` (from
    * initialize, the plugin's version gate) and `opencodeOwnerOf(requestId)` (the OpenCode session whose call created or
-   * joined that request, or null).
+   * joined that request, or null). `chatReader`: the conversation reader (tests; src/chat.js createChatReader).
    */
   constructor({ env, home, connect, clientName, host, log = () => {}, waiting = () => false,
     onOutcome = () => {}, clientVersion = null, clientInfo = null, opencodeOwnerOf = () => null, now = Date.now,
     deliver = deliverWake, pollMs = POLL_MS, backoffMs = BACKOFF_MIN_MS, cwd = process.cwd(), pid = process.pid,
-    ppid = undefined }) {
+    ppid = undefined, chatReader = null }) {
     this.env = env;
     this.home = home;
     this.connect = connect;
@@ -86,6 +88,10 @@ export class AgentSession {
     this.registered = [];
     this.handled = new Set();
     this.recentWakes = [];
+    // The chat panel's reader of this host's own conversation, and whether a read is running (one at a time).
+    this.chatReader = chatReader ?? createChatReader({ host, env, version: clientInfo?.version ?? clientVersion,
+      opencode: () => opencodeChannel(this.env, { ppid: this.ppid }) });
+    this.chatReading = false;
   }
 
   get ppid() {
@@ -277,6 +283,7 @@ export class AgentSession {
           .filter(wake => typeof wake?.wakeId === 'string' && !this.handled.has(wake.wakeId));
         for (const wake of wakes.slice(0, WAKES_PER_POLL)) this.handle(wake);
         for (const wake of wakes.slice(WAKES_PER_POLL)) this.refuse(wake, 'More wakes in one poll than FAI takes.');
+        if (response?.chatRead && typeof response.chatRead === 'object') this.readChat(response.chatRead.cursor);
         if (response?.closed) {
           // The daemon is shutting down: whatever answers on this port next proves itself before it gets anything.
           this.dropClient();
@@ -363,12 +370,15 @@ export class AgentSession {
           userText: wake.userText, actionId: wake.actionId, revision: wake.revision });
         const capability = this.capability;
         // OpenCode: Approve and Resume go to the session whose call made (or joined) that request, never a guess; an
-        // invite to the only session that used FAI lately.
+        // invite or a chat message to the only session that used FAI lately (the one the chat panel reads).
+        const toRecent = wake.kind === 'invite' || wake.kind === 'chat';
         const opencodeSession = capability !== 'opencode-plugin' ? null
-          : wake.kind === 'invite' ? this.opencodeInviteTarget() : this.opencodeOwnerOf(wake.requestId) ?? null;
+          : toRecent ? this.opencodeInviteTarget() : this.opencodeOwnerOf(wake.requestId) ?? null;
         const delivered = capability === 'opencode-plugin' && !opencodeSession
-          ? (wake.kind === 'invite'
-            ? { ok: false, code: 'ambiguous_session', message: 'Several OpenCode sessions use FAI here: paste the line into the one you mean' }
+          ? (toRecent
+            ? { ok: false, code: 'ambiguous_session', message: wake.kind === 'chat'
+              ? 'Several OpenCode sessions use FAI here: FAI cannot tell which one the message is for'
+              : 'Several OpenCode sessions use FAI here: paste the line into the one you mean' }
             : { ok: false, code: 'unknown_session', message: 'No OpenCode session of this server made this request' })
           : await this.deliver({ capability, text, env: this.env, threadId: this.threadId, opencodeSession,
             ppid: this.ppid, clientInfo: this.clientInfo });
@@ -384,6 +394,44 @@ export class AgentSession {
           outcome, { timeoutMs: 5_000 }).catch(() => null);
       }
     })().catch(error => this.log(`wake failed: ${error?.message ?? error}`));
+    this.deliveries.add(task);
+    task.finally(() => this.deliveries.delete(task));
+  }
+
+  /**
+   * The host session the chat panel reads and writes: Claude Code's own session, the Codex thread of this server's
+   * calls, or the only OpenCode session that used FAI lately (with several, none: `ambiguous`).
+   */
+  chatTarget() {
+    if (this.host === 'codex') return { target: this.threadId };
+    if (this.host !== 'opencode') return { target: this.hostSessionId };
+    const target = this.opencodeInviteTarget();
+    return target || !this.hostSessionId ? { target } : { target: null, ambiguous: true };
+  }
+
+  /**
+   * Read what is new in this host's conversation after `cursor` and post it to the daemon, which asked for it on the
+   * poll because a panel watches. One read at a time; nothing about the conversation is logged.
+   */
+  readChat(cursor) {
+    if (this.chatReading || this.stopped) return;
+    this.chatReading = true;
+    const sessionId = this.sessionId;
+    const client = this.client;
+    const task = (async () => {
+      const { target, ambiguous } = this.chatTarget();
+      const read = ambiguous ? { error: { code: 'ambiguous_session', version: '' } }
+        : await this.chatReader.read({ target, cursor: typeof cursor === 'string' ? cursor : null });
+      const body = read.error ? { error: { code: read.error.code, version: read.error.version } }
+        : { messages: fitPost(read.messages), busy: read.busy, cursor: read.cursor };
+      // Posted only over the connection the read was asked on (a daemon that proved it holds the client token).
+      if (client && sessionId && this.client === client) {
+        await client.request('POST', `/v1/sessions/${encodeURIComponent(sessionId)}/chat`, body, { timeoutMs: 5_000 })
+          .catch(() => null);
+      }
+    })().catch(() => this.log('chat read failed')).finally(() => {
+      this.chatReading = false;
+    });
     this.deliveries.add(task);
     task.finally(() => this.deliveries.delete(task));
   }
