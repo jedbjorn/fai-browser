@@ -60,6 +60,7 @@ h1 { margin: 1px 0 0; font-size: 17px; line-height: 1.15; font-weight: 630; }
 .setup-card { margin-bottom: 12px; padding: 13px 15px 15px; border: 1px solid #e8d7ba; border-radius: 12px; background: #f8f0e4; }
 .setup-card .card-label { color: var(--amber-dark); }
 .setup-text { margin: 6px 0 11px; color: #654b28; font-size: 12px; }
+.setup-card .primary-button + .secondary-button { margin-top: 8px; }
 .connection-line { display: flex; align-items: center; gap: 6px; margin: 0; padding: 12px 1px 0; border-top: 1px solid var(--line); color: var(--green); font-size: 12px; font-weight: 600; }
 .connection-check { font-weight: 700; }
 .connection-line + .advanced { border-top: 0; }
@@ -148,7 +149,8 @@ body.arm-page[data-level="testing"] .level-select { border-color: var(--danger);
 .invite-agents { display: flex; flex-direction: column; gap: 6px; }
 .invite-row { display: flex; flex-direction: column; align-items: flex-start; width: 100%; padding: 8px 10px; border: 1px solid #cfc5b6; border-radius: 8px; background: white; color: var(--ink); text-align: left; }
 .invite-row:hover { border-color: var(--amber); background: #f8f0e4; }
-.invite-row-name { font-weight: 650; }
+.invite-row-name { margin: 0 0 8px; font-weight: 650; }
+.invite-row-actions { width: 100%; }
 .invite-row-meta { color: var(--muted); font-size: 11px; }
 .request-card.invite-status[data-state="invited"] { border-left-color: var(--green); }
 .invite-where { margin: 0; overflow: hidden; color: var(--muted); white-space: nowrap; text-overflow: ellipsis; font-size: 11px; }
