@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDaemon } from '../src/daemon.js';
 import { chatInviteText, wakeText } from '../src/wake.js';
+import { controlText } from '../src/mcp.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { ORIGIN } from './runtime-fixtures.js';
 
@@ -158,7 +159,8 @@ test('ownership: a request opened in turn 1 is the chat\'s and usable in turn 2;
   assert.equal(owned.body.owner.sessionId, two.sessionId, 'the request moved to the next turn\'s session');
   const invited = await ctx.api('GET', `/v1/requests/${joined.body.requestId}`, undefined, { headers: two.headers });
   assert.equal(invited.body.owner.sessionId, two.sessionId);
-  assert.deepEqual(invited.body.origins, [ORIGIN], 'the invited tab in full, for the chat');
+  assert.deepEqual([invited.body.state, 'origins' in invited.body], ['pending', false],
+    'the invited tab for the chat, without its origin before the grant (flag #22)');
   const other = ctx.sessionOf(await ctx.register(undefined, { repo: 'other' }));
   const hidden = await ctx.api('GET', `/v1/requests/${joined.body.requestId}`, undefined, { headers: other.headers });
   assert.equal(hidden.body.invited, true, 'another agent sees only that it is an invited tab');
@@ -228,6 +230,131 @@ test('the page beside the chat: a pending invite named in the turn, unlisted unt
   }
   for (const entry of await ctx.calls()) assert.ok(!ctx.turnText(entry).includes(ORIGIN));
 });
+
+test('the page beside the chat: the agent learns no origin, URL or level before the Use/Act grant (flag #22)', async t => {
+  const ctx = await setup(t);
+  const sent = await ctx.chat('send', { provider: 'claude', text: 'what is on this page?',
+    currentTab: { tabId: 7, origin: ORIGIN } });
+  const first = await ctx.turn(1);
+  const mine = ctx.sessionOf(await ctx.register(first.token));
+  const as = { headers: mine.headers };
+  const leaks = value => JSON.stringify(value).includes(ORIGIN);
+  // Before the join: status names the invite (id, automatic, tab id) and nothing about the page.
+  const pre = (await ctx.api('GET', '/v1/status', undefined, as)).body;
+  assert.deepEqual(pre.invites.map(invite => [invite.inviteId, invite.automatic, 'origin' in invite]),
+    [[sent.invite.inviteId, true, false]]);
+  assert.ok(!leaks(pre.invites), JSON.stringify(pre.invites));
+  const line = controlText({ invites: pre.invites });
+  assert.equal(line, `invite: ${sent.invite.inviteId} for this FAI chat, the tab beside its panel (the user chooses Use `
+    + `or Act after you join), expires ${pre.invites[0].expiresAt}`);
+  // The join reply: pending, no level, no origin, and its request without origins or URL.
+  const joined = await ctx.api('POST', `/v1/invites/${sent.invite.inviteId}/join`, {}, as);
+  assert.equal(joined.status, 200);
+  assert.deepEqual([joined.body.state, joined.body.level, 'origin' in joined.body, 'origins' in joined.body.request,
+    'url' in joined.body.request], ['pending', null, false, false, false]);
+  assert.ok(!leaks(joined.body), JSON.stringify(joined.body));
+  const requestId = joined.body.requestId;
+  // After the join, before the click: every view the agent can read (status, list, get, wait) leaves the page out.
+  const post = (await ctx.api('GET', '/v1/status', undefined, as)).body;
+  assert.deepEqual(post.requests.map(view => [view.requestId, view.state]), [[requestId, 'pending']]);
+  assert.ok(!leaks(post.requests), JSON.stringify(post.requests));
+  assert.ok(!controlText({ requests: post.requests }).includes(ORIGIN));
+  assert.ok(!leaks((await ctx.api('GET', '/v1/requests', undefined, as)).body));
+  assert.ok(!leaks((await ctx.api('GET', `/v1/requests/${requestId}`, undefined, as)).body));
+  const waited = await ctx.api('POST', '/v1/wait', { requestId, maxMs: 50 }, as);
+  assert.deepEqual([waited.body.state, leaks(waited.body)], ['pending', false]);
+  // Asking for more before the grant would make a successor carrying the origin: refused.
+  const asked = await ctx.api('POST', `/v1/requests/${requestId}/ask`, { origins: [ORIGIN] }, as);
+  assert.deepEqual([asked.status, asked.body.error.code], [409, 'invite_not_granted']);
+  // The extension's approval window still shows the site.
+  assert.deepEqual(ctx.hub.published.at(-1).find(view => view.requestId === requestId).origins, [ORIGIN]);
+  // Granted: the agent sees the tab's origin.
+  await ctx.lease(requestId, { tabId: 7, level: 'read-only' });
+  assert.deepEqual((await ctx.api('GET', `/v1/requests/${requestId}`, undefined, as)).body.origins, [ORIGIN]);
+
+  // A popup invite keeps today's view: its level and origin, in status, its line and the join reply.
+  const popup = await ctx.hub.emit({ type: 'invite', tabId: 9, origin: ORIGIN, level: 'read-only', tabMode: 'single',
+    text: '', sessionId: mine.sessionId, browserId: BROWSER });
+  const listed = (await ctx.api('GET', '/v1/status', undefined, as)).body.invites;
+  const invite = listed.find(item => item.inviteId === popup.invite.inviteId);
+  assert.deepEqual([invite.origin, invite.automatic], [ORIGIN, undefined]);
+  assert.ok(controlText({ invites: [invite] }).includes(`for this session, level read-only, ${ORIGIN}, expires`));
+  const joinedPopup = await ctx.api('POST', `/v1/invites/${popup.invite.inviteId}/join`, {}, as);
+  assert.deepEqual([joinedPopup.body.origin, joinedPopup.body.request.origins], [ORIGIN, [ORIGIN]]);
+  await ctx.release();
+  await ctx.idle(sent.chatId);
+});
+
+// Simulated time for the sweep: `clock.skew` minutes ahead, one minute at a time; each session polls each minute, as a
+// live MCP server does (a silent one goes stale after 90 s).
+const MIN = 60_000;
+async function stepClock(ctx, clock, minutes, sessions) {
+  for (let m = Math.round(clock.skew / MIN) + 1; m <= minutes; m += 1) {
+    clock.skew = m * MIN;
+    for (const session of sessions) {
+      const polled = await ctx.api('POST', `/v1/sessions/${session.sessionId}/poll`, { maxMs: 0 },
+        { headers: session.headers });
+      assert.equal(polled.status, 200, JSON.stringify(polled.body));
+    }
+    await delay(30);
+  }
+}
+
+for (const ending of ['expired', 'denied']) {
+  test(`the page beside the chat: a never-granted tab (${ending}) stays withheld after the invite's keep time (flag #22)`,
+    async t => {
+      const clock = { skew: 0 };
+      const ctx = await setup(t, { sweepIntervalMs: 10, now: () => Date.now() + clock.skew });
+      const sent = await ctx.chat('send', { provider: 'claude', text: 'what is on this page?',
+        currentTab: { tabId: 7, origin: ORIGIN } });
+      const mine = ctx.sessionOf(await ctx.register((await ctx.turn(1)).token));
+      const as = { headers: mine.headers };
+      const leaks = value => JSON.stringify(value).includes(ORIGIN);
+      const joined = await ctx.api('POST', `/v1/invites/${sent.invite.inviteId}/join`, {}, as);
+      const requestId = joined.body.requestId;
+      if (ending === 'denied') {
+        await stepClock(ctx, clock, 5, [mine]);
+        await ctx.hub.emit({ type: 'deny', requestId, browserId: BROWSER });
+      }
+      // Past the pending request's 10 min, then past INVITE_KEEP_MS (60 min) from the join; the record is kept 60 min
+      // from its end, so it still answers.
+      await stepClock(ctx, clock, 61, [mine]);
+      await delay(50);
+      const got = await ctx.api('GET', `/v1/requests/${requestId}`, undefined, as);
+      assert.deepEqual([got.status, got.body.state, got.body.lease], [200, ending, null]);
+      assert.ok(!leaks(got.body), JSON.stringify(got.body));
+      assert.ok(!leaks((await ctx.api('POST', '/v1/wait', { requestId, maxMs: 0 }, as)).body));
+      assert.ok(!leaks((await ctx.api('GET', '/v1/requests', undefined, as)).body));
+      const other = ctx.sessionOf(await ctx.register(undefined, { repo: 'other' }));
+      const hidden = await ctx.api('GET', `/v1/requests/${requestId}`, undefined, { headers: other.headers });
+      assert.deepEqual([hidden.body.invited, leaks(hidden.body)], [true, false], 'another agent: only an invited tab');
+      await ctx.release();
+      await ctx.idle(sent.chatId);
+    });
+}
+
+test('invites: an invited tab stays its owner\'s after the invite\'s keep time while the lease is in use (flag #23)',
+  async t => {
+    const clock = { skew: 0 };
+    const ctx = await setup(t, { sweepIntervalMs: 10, now: () => Date.now() + clock.skew });
+    const owner = ctx.sessionOf(await ctx.register(undefined, { repo: 'owner' }));
+    const other = ctx.sessionOf(await ctx.register(undefined, { repo: 'other' }));
+    const popup = await ctx.hub.emit({ type: 'invite', tabId: 9, origin: ORIGIN, level: 'read-only', tabMode: 'single',
+      text: '', sessionId: owner.sessionId, browserId: BROWSER });
+    const requestId = (await ctx.api('POST', `/v1/invites/${popup.invite.inviteId}/join`, {}, { headers: owner.headers }))
+      .body.requestId;
+    // The owner uses the tab every 5 min (under the lease's idle expiry) up to 65 min after the join.
+    for (let minute = 5; minute <= 65; minute += 5) {
+      await stepClock(ctx, clock, minute, [owner, other]);
+      const kept = await ctx.api('POST', '/v1/wait', { requestId, maxMs: 0 }, { headers: owner.headers });
+      assert.equal(kept.body.state, 'active', `the owner's lease at +${minute} min`);
+    }
+    await delay(50);
+    const seen = await ctx.api('GET', `/v1/requests/${requestId}`, undefined, { headers: other.headers });
+    assert.deepEqual([seen.body.invited, 'origins' in seen.body], [true, false], 'another agent: only an invited tab');
+    const used = await ctx.api('POST', '/v1/observe', { requestId }, { headers: other.headers });
+    assert.deepEqual([used.status, used.body.error?.code], [403, 'not_owner']);
+  });
 
 test('wakes as turns: all five kinds, one turn each, in order, after the running turn; the text is the template', async t => {
   const ctx = await setup(t);

@@ -579,8 +579,14 @@ export function controlText(structured) {
         + `wake ${agent.wake}${agent.note ? `: ${agent.note}` : ''})`);
     }
   }
-  // Invites from the user's FAI popup: for this session, or for any agent (join only that one when the user says so).
+  // Invites from the user's FAI popup: for this session, or for any agent (join only that one when the user says so). A
+  // FAI chat's automatic invite names no tab and no level: the user chooses Use or Act after the join (flag #22).
   for (const invite of result.invites ?? []) {
+    if (invite.automatic) {
+      lines.push(`invite: ${invite.inviteId} for this FAI chat, the tab beside its panel (the user chooses Use or Act `
+        + `after you join), expires ${invite.expiresAt}`);
+      continue;
+    }
     lines.push(`invite: ${invite.inviteId} ${invite.session ? 'for this session' : 'for any agent (join it only if the user asks you to)'}, `
       + `level ${invite.level}, ${invite.origin}, expires ${invite.expiresAt}`);
   }
