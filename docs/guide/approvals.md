@@ -46,6 +46,7 @@ Some actions are offered to the agent marked `needsApproval` ("asks the user"):
 | secret | Create, reveal, show, copy or rotate an API key, token, password, recovery codes; the eye toggle next to a secret field | from Act, including testing |
 | submit / delete above the level | A submit the granted level does not allow | legacy action grants may ask; Use requires Act approval first |
 | secret handle | `fill_secret`, `copy_secret` | always, whatever the settings |
+| committing Enter | An Enter the agent declares `commits: true`: sending a message, submitting an application, booking | always, whatever the settings (Test site: runs without asking) |
 
 When the agent acts on one, the call **blocks** and a small **"Approve this action?"** window opens with a red `!` badge. It shows:
 
@@ -54,7 +55,8 @@ When the agent acts on one, the call **blocks** and a small **"Approve this acti
 - the control's label in quotes, marked as page text,
 - the total the page shows, if one was detected (purchases),
 - **"Agent says: ..."**, the reason the agent gave, marked as unchecked,
-- for secret handles: "Paste secret:3 (openai key from platform.openai.com) into 'API key' on vercel.com", plus a warning when the secret came from another site.
+- for secret handles: "Paste secret:3 (openai key from platform.openai.com) into 'API key' on vercel.com", plus a warning when the secret came from another site,
+- for a committing Enter: `Press Enter in "Message" on chat.example.com?` and "Agent says this commits you."
 
 Neither button has focus, so a stray keypress cannot approve it.
 
@@ -65,6 +67,11 @@ Neither button has focus, so a stray keypress cannot approve it.
 - **No answer:** the act returns `needs_user` / `approval_pending` after the wait (at most 60 s per call, so hosts that time
   a tool call out at 120 s never cut it off); the agent repeats the same act, and the approval stays open for 5 minutes. An
   approval you give in the meantime is picked up at once.
+- **A committing Enter** asks once: every Enter the agent sends says whether it commits you (`commits`). With `true` (a
+  message, a post, an application, a booking, a payment, agreeing to terms, deleting, publishing, transferring) it waits for
+  your Approve once, and only that field's Enter can use it; with `false` (a search, a filter) it runs as before. The
+  approval never lets an Enter run that your level refuses. An agent that says `false` for something that committed you is
+  told to tell you.
 - **Uploads** always ask: the card names the file, its size and the site that receives it. On a **Test site**, accepting a
   JavaScript dialog whose text names a delete or purchase asks too, with the dialog's text on the card.
 

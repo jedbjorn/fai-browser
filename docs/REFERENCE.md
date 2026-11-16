@@ -224,6 +224,32 @@ the page script classifies what its form submit amounts to (a search field or a 
 or payment field `sign_in` or `purchase`) and checks it again before it dispatches the key and
 submits the form.
 
+**Enter declares commits.** Every act that presses Enter (`key: "Enter"` with a field's `actionId`, an
+offered `press Enter in` action, and `submit: true` after `text` or `fills`) carries a required
+`commits` boolean, on every surface (`fai_browser_act`, `POST /v1/act`, `fai-browser act --commits
+true|false`, the SDK's `ActChoice`). Any other act refuses the flag. `true` when the Enter commits the
+user to something: a purchase or payment, agreeing to terms, sending a message or post, submitting an
+application or form on their behalf, a booking or registration, deleting, publishing, or transferring.
+`false` for search, filter, navigation, and entering text that only stays on the page.
+
+- **Missing**: refused before anything runs (no fill, no key; `invalid_params`, daemon 400, the CLI's
+  failed result), with the text `Enter needs commits: true if it commits the user (purchase, payment,
+  agreeing to terms, sending a message, submitting an application, booking or registration, deleting,
+  publishing, transferring), else false. Send the act again with commits.` The revision stays usable.
+- **`false`**: the Enter runs under the gate above, unchanged. The result warns `enter_non_committing`
+  (glossed `Enter sent as non-committing. If it committed the user, say so to the user now.`).
+- **`true`**: the Enter's level and form class are checked first, exactly as for `false` (a sign-in or
+  purchase form keeps its class and its rules: refused below `testing`, never asked as a commit), then
+  the user is asked once, **on the page the Enter runs on** (after the act's own fills), through the
+  [Approve gate](#approve-gate) kind `enter_commit`, and the Enter runs only after **Approve once**. The
+  flag never lets an Enter run that the level refuses, and never asks for a level. Pending is
+  `approval_pending` with `needs.approval {class: "submit", kind: "enter_commit", actionId, revision}`:
+  the field's `press Enter in` action on that page's revision, which the next act runs with `commits:
+  true` once approved (`next.text` says so). Deny is `refused_action` (`why: approval:denied`). A
+  bridge that cannot ask refuses it (`refused_action`, "FAI Browser could not ask the user to approve
+  this committing Enter. Tell the user; they can press Enter in the tab themselves."). At `testing` it
+  runs without asking, as purchases do there, and `why` notes `commits:declared`.
+
 The daemon makes no provider calls (no warm-ups, model-based action guards or answer ranking). Built-in
 origin, permission, action and field restrictions, forbidden labels, approval and budgets apply to every
 act. A purchase is offered as `needsApproval` ("asks the user") from `full` and runs only after the
@@ -267,7 +293,8 @@ an offered action, and the page script checks each again at dispatch.
   (at most 5000 characters) is typed through `extension/input.js` like any fill. `submit: true` then
   presses Enter in that field as its `press Enter in` action (`submit_field`): the form submit's own
   class decides (`interactive` for a search, `full` for any other form; sign-in and purchase forms are
-  refused), checked on the page the fill left. `fills: [{actionId, text}]` (at most 20) types several
+  refused), checked on the page the fill left. Every Enter carries `commits` ([Enter declares
+  commits](#agent-direct)). `fills: [{actionId, text}]` (at most 20) types several
   fields in one call in order, each on the page the previous one left (a field that changed label or
   class there ends the batch `stale`), then `submit` in the last. A `fill "<label>" with supplied <name>`
   action goes in the batch without `text` (or with exactly the supplied value, which changes nothing): it
@@ -699,7 +726,7 @@ Options: `--scope user` (Claude: prints `claude mcp remove --scope user fai-brow
 
 The Claude Code entry is `{"mcpServers":{"fai-browser":{"type":"stdio","command":"/abs/node","args":["/abs/src/mcp-main.js"]}}}`. Claude Code defers MCP tools behind tool search by default, which costs one extra model round trip the first time a session uses them. The server marks the tools of its loop with `_meta: {"anthropic/alwaysLoad": true}`, which Claude Code honours per tool (`fai_browser_open`, `fai_browser_act` and `fai_browser_observe`), so the loop is in the first request without any config and the rarely used tools stay behind tool search. `--always-load` adds `"alwaysLoad": true` to the entry: all eight schemas (about 2.8k tokens, cached, of which about 0.6k are the five rarely used tools) go into every request, and Claude Code waits for such a server at startup (up to about 5 s) instead of connecting it in the background. Use it only when choose/wait/observe paths are frequent enough that their tool-search turn matters. Both were checked against Claude Code 2.1.289: its stdio server schema accepts `alwaysLoad` ("all tools from this server are always included in the prompt and never deferred behind tool search"; `"alwaysLoad": false` defers all eight, overriding the `_meta`) and `claude mcp add-json` keeps it. In project scope a rerun with or without `--always-load` updates the entry, with a backup; in user scope the printed command removes and re-adds it. Codex (0.160) and OpenCode (1.18) have no per-server loading option, so their entries are unchanged and `--always-load` is refused for them; Codex's first-use schema load stays. The Codex block also sets `startup_timeout_sec = 20`, `tool_timeout_sec = 120` and `default_tools_approval_mode = "approve"`, which `codex exec` needs because it cannot answer approval prompts.
 
-`fai-browser-mcp` (`src/mcp-main.js`) is a stdio MCP server (spec 2025-11-25; also answers 2025-06-18 and 2025-03-26 clients) with eight tools: `fai_browser_open`, `fai_browser_act`, `fai_browser_observe`, `fai_browser_wait`, `fai_browser_status`, `fai_browser_release`, `fai_browser_evidence` and `fai_browser_guide`, described in [Agent direct](#agent-direct); its server instructions (about 1.85k chars, bounded by `test/agent-direct.test.js`) cover that loop, the navigation rule (follow the page's links, never a guessed address), asking for more on the same request and pauses, and point at the skill ([skills/fai-browser/SKILL.md](../skills/fai-browser/SKILL.md), the full guide) or `fai_browser_guide` for anything beyond a single read ([The guide tool](#the-guide-tool)).
+`fai-browser-mcp` (`src/mcp-main.js`) is a stdio MCP server (spec 2025-11-25; also answers 2025-06-18 and 2025-03-26 clients) with eight tools: `fai_browser_open`, `fai_browser_act`, `fai_browser_observe`, `fai_browser_wait`, `fai_browser_status`, `fai_browser_release`, `fai_browser_evidence` and `fai_browser_guide`, described in [Agent direct](#agent-direct); its server instructions (about 1.95k chars, bounded by `test/agent-direct.test.js`) cover that loop, the navigation rule (follow the page's links, never a guessed address), asking for more on the same request and pauses, and point at the skill ([skills/fai-browser/SKILL.md](../skills/fai-browser/SKILL.md), the full guide) or `fai_browser_guide` for anything beyond a single read ([The guide tool](#the-guide-tool)).
 
 **Task guides.** The skill is installed with the task sub-skills' guides, `tasks/<name>/SKILL.md` under the skill directory (today `tasks/flights/SKILL.md`: flight search, and `tasks/hotels/SKILL.md`: hotel search; in the repository `skills/fai-browser/tasks` links to [tasks/](../tasks/)), and its first lines point a host at them for such a task. A task's code, `tasks/<name>/index.js` (its question vocabulary), is reviewed code listed statically in `tasks/index.js`; it is never loaded from `FAI_HOME` or any user path.
 
@@ -1180,6 +1207,8 @@ Never approvable: a label the user forbade (`policy`, `config.json`), a page out
 - **No click in time**: `needs_user` / `approval_pending`, `next.kind: approve`: "Tell the user to approve '<label>' (page text) in the FAI Browser window (Approve once), then call fai_browser_act again with actionId a7 and revision "…"; it returns at once if they already approved, else waits up to 60 s (the approval stays open for 5 minutes: repeat the call if it returns pending again)." (`needs.approval {class, actionId, revision}`; for a submit or delete also "Or ask for full: ..."). One act waits at most 60 s (`GATE_MAX_WAIT_MS`); the revision stays usable, the approval stays open 5 minutes, and an approval given meanwhile is picked up by the next act at once.
 
 **Uploads and dialog accepts** ask too: an [upload](#uploads) always (the card names the file, its size and the site), and on a Test site accepting a JavaScript dialog whose text names a delete or purchase ([dialogs](#dev-logs-and-javascript-dialogs); the card shows the dialog's text).
+
+**A committing Enter** (`commits: true`, [Agent direct](#agent-direct) "Enter declares commits") asks with kind `enter_commit` on the field, class `submit`, from `reversible` up and **always**, whatever the three settings say (the agent asked to be checked). It is asked when the Enter is about to run, on that page's revision, after its level and form class allowed it. The worker's `approvalInfo` check is that the target is a filled text field still offering Enter as an ordinary or search submit (never a sign-in, payment or forbidden form); the bindings (tab, lease, revision, target, label hash, single use, 60 s) are those of any approval, and the id runs only that field's Enter (a click cannot spend it, nor it a click). page.js rechecks the field, its label hash and its form's class at dispatch: the approval never stands in for the level or a credential ask. The window and card read `Press Enter in "<label>" on <site>?` (the label is page text; the site is the tab's host from the browser), `Agent says this commits you.`, and the act's `reason` as the unchecked **"Agent says: …"** line.
 
 **Settings** (popup, Permissions, Approve gate; `chrome.storage.local.approvals`, never `config.json`): **Ask before purchases**, **Ask before credential actions**, **Ask before actions above the level**, all on. Off means the old behaviour: purchases refused outside testing, credential actions run at their level, actions above the level refused with a level request. The worker reports the three switches (booleans only) to the daemon in its `hello` and `settings` messages (`settings.approvals {purchase, secret, level}`), so an offer marks "(asks the user)" only what the extension will ask about: an action whose ask is off is listed as it will run (a credential action as an ordinary click) or not at all (a refused purchase or submit). Until an extension reports them, all count as on. Secret handle uses (below) ask whatever these say.
 

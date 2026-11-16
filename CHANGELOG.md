@@ -7,6 +7,10 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 
 ## Unreleased
 
+### Changed
+
+- **Enter declares commits.** Every act that presses Enter (`submit: true`, `key: "Enter"`, a `press Enter in` action) now needs a `commits` boolean on every surface (MCP `fai_browser_act`, `POST /v1/act`, CLI `act --commits true|false`, SDK). Without it the act is refused before anything runs, with a message that says how to resend. `commits: false` runs under the same gate as before and warns `enter_non_committing`; `commits: true` asks the user once (Approve once, approval kind `enter_commit`, always asked whatever the settings; a Test site runs it without asking, `why: commits:declared`) and never lets an Enter run that the level refuses.
+
 ### Added
 
 - **Windows wake channels and desktop setup.** Claude Code CLI and the desktop Code tab use a bound named pipe; Codex CLI and Codex in ChatGPT use a real queue-capable `codex.exe` (the standalone CLI is required even for the app); OpenCode CLI/Desktop 1.19 to 1.x use FAI's authenticated named pipe plugin. Setup detects desktop installs without standalone commands on PATH, names successful registrations and asks you to restart. Existing OpenCode JSONC is preserved with a manual config/plugin step. Ordinary Claude and ChatGPT chat and OpenCode 2.x are excluded. Status and the popup show fixed wake reasons with setup fixes.
