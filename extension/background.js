@@ -4804,6 +4804,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       const { type: _type, currentTab: _forged, ...body } = message;
       return await sendChatMessage(body);
     } else if (PANEL_MESSAGES.has(message.type)) {
+      // The panel's other messages, forwarded unchanged (chat_send has its own branch above: the tab beside the chat).
       if (!fromChatPanel(sender)) throw new Error('Unsupported control');
       if (!connected) throw new ExtensionError('not_connected', 'Connect to the FAI service first.');
       const { type, ...body } = message;
