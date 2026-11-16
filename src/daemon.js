@@ -1275,8 +1275,8 @@ export function createDaemon(options = {}) {
    */
   function wakeOwner(record, kind, ids = {}) {
     if (!record.ownerSession) return null;
-    const wake = sessions.queueWake(record.ownerSession, { kind, requestId: record.requestId, level: record.grant?.level,
-      ...ids });
+    const wake = sessions.queueWake(record.ownerSession, { kind, requestId: record.requestId,
+      level: record.grant?.level, ...ids });
     record.ownerWakeId = wake?.wakeId ?? null;
     return wake;
   }
@@ -1291,8 +1291,12 @@ export function createDaemon(options = {}) {
     if (typeof entryId !== 'string') return;
     const t = now();
     record.actionApprovals ??= new Map();
-    for (const [id, item] of record.actionApprovals) if (t - item.at > APPROVAL_PENDING_MS) record.actionApprovals.delete(id);
-    const asked = raw.code === 'approval_pending' ? raw.needs?.approval : null;
+    for (const [id, item] of record.actionApprovals) {
+      if (t - item.at > APPROVAL_PENDING_MS) record.actionApprovals.delete(id);
+    }
+    // Only an ask the agent can act on again by id (a Test site dialog accept has none: nothing to wake it for).
+    const pending = raw.code === 'approval_pending' ? raw.needs?.approval : null;
+    const asked = typeof pending?.actionId === 'string' && typeof pending.revision === 'string' ? pending : null;
     const known = record.actionApprovals.get(entryId);
     if (!asked) {
       if (known) known.settled = true;
@@ -1300,7 +1304,8 @@ export function createDaemon(options = {}) {
     }
     if (!known) {
       record.actionApprovals.set(entryId, { entryId, actionId: asked.actionId, revision: asked.revision,
-        class: asked.class ?? null, kind: asked.kind ?? null, leaseId: record.lease?.leaseId ?? null, at: t, settled: false });
+        class: asked.class ?? null, kind: asked.kind ?? null, leaseId: record.lease?.leaseId ?? null, at: t,
+        settled: false });
     }
     // A decision that reached the daemon before this act's pending answer did.
     const early = earlyDecisions.get(entryId);
@@ -1312,9 +1317,9 @@ export function createDaemon(options = {}) {
 
   /**
    * Approve once or Deny given while no act waited for it (the extension's action_decision over its authenticated
-   * connection): for an entry an act of this daemon recorded, on the same lease and browser, the request's owner session
-   * gets one wake (action_approved or action_denied, ids only). A second decision, or one for an entry an act already
-   * picked up, wakes nobody. One for an entry not recorded yet waits a short while for its act to finish.
+   * connection): for an entry an act of this daemon recorded, on the same lease and browser, the request's owner
+   * session gets one wake (action_approved or action_denied, ids only). A second decision, or one for an entry an act
+   * already picked up, wakes nobody. One for an entry not recorded yet waits a short while for its act to finish.
    */
   function onActionDecision(event) {
     for (const record of requests.values()) {
@@ -1332,7 +1337,8 @@ export function createDaemon(options = {}) {
     const t = now();
     for (const [id, early] of earlyDecisions) if (t - early.at > EARLY_DECISION_MS) earlyDecisions.delete(id);
     if (earlyDecisions.size >= 100) return;
-    earlyDecisions.set(event.entryId, { entryId: event.entryId, decision: event.decision, browserId: event.browserId, at: t });
+    earlyDecisions.set(event.entryId, { entryId: event.entryId, decision: event.decision, browserId: event.browserId,
+      at: t });
   }
 
   // The last Approve or Resume wake of a request's owner, for the popup: a failed one shows "tell your agent".

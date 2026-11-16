@@ -37,10 +37,13 @@ const LEVEL = String.raw`(?:Read|Use|Act(?: \(limited\)| \(test site\))?|Test si
 const NEXT_TOOL = String.raw`fai_browser_observe`;
 const PREFIX = String.raw`^\[FAI Browser\] `;
 const APPROVED = new RegExp(String.raw`${PREFIX}The user approved tab request ${ID} at level ${LEVEL}\. Call ${NEXT_TOOL} with requestId ${ID} and continue the task\.$`);
-// An action the user decided after the act that asked stopped waiting: the action id and the request id each appear twice.
-const ACTION_APPROVED = new RegExp(String.raw`${PREFIX}The user approved action ${ID} on tab request ${ID}\. Call fai_browser_act `
-  + String.raw`with requestId ${ID}, actionId ${ID} and revision "${ID}" \(and the same commits value for an Enter\) to run it\.$`);
-const ACTION_DENIED = new RegExp(String.raw`${PREFIX}The user denied action ${ID} on tab request ${ID}\. Do not retry it; tell the user\.$`);
+// An action the user decided after the act that asked stopped waiting: the action id and the request id each appear
+// twice.
+const ACTION_APPROVED = new RegExp(String.raw`${PREFIX}The user approved action ${ID} on tab request ${ID}\. `
+  + String.raw`Call fai_browser_act with requestId ${ID}, actionId ${ID} and revision "${ID}" `
+  + String.raw`\(and the same commits value for an Enter\) to run it\.$`);
+const ACTION_DENIED = new RegExp(String.raw`${PREFIX}The user denied action ${ID} on tab request ${ID}\. `
+  + String.raw`Do not retry it; tell the user\.$`);
 const RESUMED = new RegExp(String.raw`${PREFIX}The user resumed tab request ${ID}: the tab is active again\. Call ${NEXT_TOOL} with requestId ${ID} and continue the task\.$`);
 const INVITED = new RegExp(String.raw`${PREFIX}The user invited you to work in a browser tab they have open \(invite ${ID}, level ${LEVEL}\)\. `
   + String.raw`Call fai_browser_open with \{"inviteId": "${ID}"\} `

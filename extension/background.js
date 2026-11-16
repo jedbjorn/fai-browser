@@ -3030,7 +3030,8 @@ async function waitTabComplete(tabId, ms) {
 // reads the control from the page itself (page.js approvalInfo: label, label hash, gate class, a detected total),
 // opens the toolbar popup or a small top-right fallback window, shows a badge and waits for the user's click. Approve once
 // mints a random single-use approvalId bound to the tab, lease, document, revision, target, class and label hash, valid
-// for 60 s (5 min when no act waited for the click: the agent is woken to use it); Deny refuses. The execute that follows carries the id: only an id this worker minted, unused, unexpired and
+// for 60 s (5 min when no act waited for the click: the agent is woken to use it); Deny refuses. The execute that
+// follows carries the id: only an id this worker minted, unused, unexpired and
 // bound to that very dispatch lets page.js run the control (it rechecks the label and class itself). The daemon only
 // ever relays ids; it cannot mint one. Settings (chrome.storage.local `approvals`, never config.json): ask before
 // purchases, credential actions and actions above the granted level; all on. There is no "always allow".
@@ -3220,7 +3221,8 @@ async function approveCommand(command) {
 }
 
 // The user's click in the approval window or on the popup card. An act waiting for it gets the answer (no wake; the
-// approval is usable for 60 s). Otherwise the daemon is told, to wake the agent, and an approval stays usable for 5 min.
+// approval is usable for 60 s). Otherwise the daemon is told, to wake the agent, and an approval stays usable for
+// 5 min.
 function decideApproval(id, decision) {
   const entry = approvals.get(id);
   if (!entry || entry.status !== 'pending' || Date.now() > entry.expiresAt) throw new Error('This action is no longer waiting for approval.');
@@ -3240,7 +3242,8 @@ function decideApproval(id, decision) {
 }
 
 // The approval an execute carries, checked against what the user approved: minted here, approved, unused, within its
-// use window (60 s, or 5 min), for this tab, lease, revision and target. Spent before the dispatch. Returns what page.js rechecks.
+// use window (60 s, or 5 min), for this tab, lease, revision and target. Spent before the dispatch. Returns what
+// page.js rechecks.
 function takeApproval(action, expectedRevision, tab) {
   const entry = [...approvals.values()].find(item => item.approvalId !== null && item.approvalId === action.approvalId);
   if (!entry || entry.status !== 'approved') throw new ExtensionError('blocked_risky', 'This action has no approval from the user');
