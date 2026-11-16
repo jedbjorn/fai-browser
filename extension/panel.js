@@ -263,24 +263,30 @@ function errorLine(error, provider) {
 async function sendChat(text) {
   const opened = state.opened;
   const chat = state.chat;
+  const target = chat?.chatId ?? null;
   const provider = chat?.provider ?? state.newProvider;
   const model = state.newModel || null;
-  const files = state.files.map(item => item.file);
+  const items = [...state.files];
+  const files = items.map(item => item.file);
   const here = () => state.opened === opened;
   state.sending = true;
   state.composerError = null;
   render();
   try {
-    const fileIds = [];
-    for (const file of files) {
-      const data = await readFile(file);
-      const reply = await chatApi.file(chat?.chatId ?? null, { name: file.name, mime: file.type, size: file.size, data });
-      fileIds.push(reply.fileId);
-    }
+    const fileIds = await uploadFiles(items, target);
     const body = chat ? { chatId: chat.chatId, text, files: fileIds } : { provider, model, text, files: fileIds };
     const sent = { id: `local-${Date.now()}`, role: 'user', text, at: new Date().toISOString(), local: true,
       files: files.map(file => ({ name: file.name, size: file.size, type: file.type })) };
-    const reply = await chatApi.send(body);
+    let reply;
+    try {
+      reply = await chatApi.send(body);
+    } catch (error) {
+      // A file the service no longer holds (aged out, or the service restarted): upload the draft's files again, once.
+      if (error.code !== 'unknown_file' || !items.length) throw error;
+      for (const item of items) item.fileId = null;
+      body.files = await uploadFiles(items, target);
+      reply = await chatApi.send(body);
+    }
     loadChats().then(renderDrawer);
     if (!here()) return;
     if (!chat) {
@@ -299,6 +305,23 @@ async function sendChat(text) {
   if (!here()) return;
   await readChat();
   if (here() && !ui.text.disabled) ui.text.focus();
+}
+
+// The service holds a waiting file for one chat (or for a new chat: null) and only so many at once, so a draft's file
+// keeps the id it got and a resend of that draft to the same chat reuses it; only a file without one is uploaded.
+async function uploadFiles(items, target) {
+  const fileIds = [];
+  for (const item of items) {
+    if (!item.fileId || item.fileFor !== target) {
+      const { file } = item;
+      const data = await readFile(file);
+      const reply = await chatApi.file(target, { name: file.name, mime: file.type, size: file.size, data });
+      item.fileId = reply.fileId;
+      item.fileFor = target;
+    }
+    fileIds.push(item.fileId);
+  }
+  return fileIds;
 }
 
 // A chat wake still being delivered when agent_send answered: its outcome arrives in agent_chat's `sends`.

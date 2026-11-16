@@ -331,6 +331,26 @@ test('a file over 25 MB is refused before it is sent', async t => {
   assert.equal(await page.locator('#chips li').count(), 0);
 });
 
+test('a resent draft reuses the files already uploaded, and uploads again only when the service no longer has them', async t => {
+  const page = await open(t, { sendError: { code: 'chat_too_many', message: 'Too many chats are running.' } });
+  await page.setInputFiles('#file-input', [{ name: 'shot.png', mimeType: 'image/png', buffer: PNG }]);
+  await page.fill('#text', 'What is in this screenshot?');
+  await page.click('#send');
+  await page.waitForSelector('#composer-error:not([hidden])');
+  await page.click('#send');
+  await page.waitForFunction(() => globalThis.__sent.filter(message => message.type === 'chat_send').length === 2);
+  await page.waitForSelector('#send:not([disabled])');
+  assert.equal((await sent(page, 'chat_file')).length, 1, 'one upload for two refused sends');
+  assert.deepEqual((await sent(page, 'chat_send')).map(message => message.files), [['file_1'], ['file_1']]);
+  // The service lost the file: chat_send answers unknown_file, and the draft's file goes up again once.
+  await page.evaluate(() => { globalThis.__scenario.sendError = null; globalThis.__fake.forgetFiles(); });
+  await page.click('#send');
+  await page.waitForSelector('#messages .message-files');
+  assert.equal((await sent(page, 'chat_file')).length, 2);
+  assert.deepEqual((await sent(page, 'chat_send')).map(message => message.files).slice(2), [['file_1'], ['file_2']]);
+  assert.equal(await page.isVisible('#composer-error'), false);
+});
+
 test('a message goes to the chat it was written in, even when another chat is opened while its file uploads', async t => {
   const page = await open(t, { delays: { chat_file: 600 }, stuck: true });
   await page.setInputFiles('#file-input', [{ name: 'shot.png', mimeType: 'image/png', buffer: PNG }]);

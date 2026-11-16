@@ -22,6 +22,8 @@ export function installFakeChrome(scenario) {
     push(chatId, message) { (s.transcripts[chatId] ??= []).push(message); },
     finish(chatId) { const chat = s.chats.find(item => item.chatId === chatId); if (chat) chat.running = false; },
     agent(sessionId, change) { Object.assign(s.agentReads[sessionId] ??= { messages: [] }, change); },
+    // The service drops waiting files (aged out, or restarted): chat_send then answers unknown_file.
+    forgetFiles() { files.clear(); },
   };
   const chatView = chat => ({ chatId: chat.chatId, title: chat.title, provider: chat.provider, model: chat.model ?? null,
     ...(chat.reportedModel ? { reportedModel: chat.reportedModel } : {}), running: Boolean(chat.running) });
@@ -57,11 +59,12 @@ export function installFakeChrome(scenario) {
         return { chat: chatView(chat), messages: all.slice(after), cursor: all.length };
       }
       case 'chat_file': {
-        const fileId = `file_${files.size + 1}`;
+        const fileId = `file_${sent.filter(item => item.type === 'chat_file').length}`;
         files.set(fileId, { name: message.name, size: message.size, type: message.mime });
         return { fileId };
       }
       case 'chat_send': {
+        if ((message.files ?? []).some(id => !files.has(id))) return fail('A file is no longer waiting to be sent. Attach it again.', 'unknown_file');
         if (s.sendError) return fail(s.sendError.message ?? 'Refused', s.sendError.code);
         let chat = s.chats.find(item => item.chatId === message.chatId);
         if (!chat) {
@@ -69,7 +72,8 @@ export function installFakeChrome(scenario) {
             model: message.model ?? null, lastActiveAt: now(), running: false };
           s.chats.push(chat);
         }
-        const fileMeta = (message.files ?? []).map(id => files.get(id)).filter(Boolean);
+        const fileMeta = (message.files ?? []).map(id => files.get(id));
+        for (const id of message.files ?? []) files.delete(id);
         (s.transcripts[chat.chatId] ??= []).push({ id: `m${Date.now()}`, role: 'user', text: clean(message.text), at: now(), files: fileMeta });
         chat.running = true;
         chat.lastActiveAt = now();
