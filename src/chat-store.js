@@ -1,7 +1,7 @@
 // FAI chats on disk (spec #84, "Stored chats and resuming"): FAI-Local-Chats/chats/<chatId>/chat.jsonl and the chat's
 // files folder beside it. The transcript's first line is a header {type: 'header', provider, model, reportedModel,
 // conversationId, title, startedAt}; every other line is one message {id, role: user|agent|fai, text, at, files} (a
-// `fai` line may add `code` and `providerError`). Writes to one chat run one after another; the header is rewritten
+// `fai` line may add `code` and `providerText`). Writes to one chat run one after another; the header is rewritten
 // by a rename, never in place.
 import { randomBytes } from 'node:crypto';
 import { appendFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -130,7 +130,7 @@ export function createChatStore({ root, now = Date.now }) {
       });
     },
 
-    /** Append one message; resolves the record. `extra`: code and providerError on a `fai` line. */
+    /** Append one message; resolves the record. `extra`: code and providerText on a `fai` line. */
     append(chatId, { role, text, files = [], ...extra }) {
       if (!ROLES.has(role)) throw new Error(`Unknown role ${role}`);
       return serial(chatId, async () => {

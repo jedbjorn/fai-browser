@@ -192,7 +192,7 @@ test('availability: missing, too old, signed out; OpenCode by found and version 
   // OpenCode's status command cannot tell signed in from out: found and supported is available.
   const fine = await setup(t, { control: { opencode: { version: '1.19.5' } } });
   assert.deepEqual(await fine.runner.availability('opencode'),
-    { provider: 'opencode', name: 'OpenCode', available: true, version: '1.19.5' });
+    { provider: 'opencode', name: 'OpenCode', available: true, code: null, version: '1.19.5' });
   assert.ok(!(await fine.calls()).length, 'no turn ran for the checks');
 });
 
@@ -207,18 +207,18 @@ test('a program that fails a turn: chat_turn_failed with the exit status and its
   const failed = claudeRecords.at(-1);
   assert.equal(failed.code, 'chat_turn_failed');
   assert.equal(failed.text, 'Claude ended the turn with exit status 1.');
-  assert.equal(failed.providerError, error.slice(0, 1000), 'the program\'s own words, clipped, as text (never parsed as HTML)');
+  assert.equal(failed.providerText, error.slice(0, 1000), 'the program\'s own words, clipped, as text (never parsed as HTML)');
 
   const codex = await ctx.runner.send({ provider: 'codex', text: 'hi' });
   await codex.done;
-  assert.equal((await ctx.store.read(codex.chatId)).records.at(-1).providerError, 'model not supported');
+  assert.equal((await ctx.store.read(codex.chatId)).records.at(-1).providerText, 'model not supported');
 
   // A program that writes nothing to stdout (Codex when its sandbox cannot start): its stderr is its error.
   const opencode = await ctx.runner.send({ provider: 'opencode', model: 'p/m', text: 'hi' });
   await opencode.done;
   const last = (await ctx.store.read(opencode.chatId)).records.at(-1);
   assert.equal(last.text, 'OpenCode ended the turn with exit status 1.');
-  assert.equal(last.providerError, 'boom on stderr');
+  assert.equal(last.providerText, 'boom on stderr');
   assert.equal(clipProviderError('a\u0000b\u001bc  '), 'abc');
 });
 

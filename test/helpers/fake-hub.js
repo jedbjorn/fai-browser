@@ -118,7 +118,8 @@ export function createFakeHub({ bridgeOptions = {} } = {}) {
       return new Promise(resolve => {
         const withReply = { ...event, reply: value => resolve(value) };
         for (const listener of [...listeners]) listener(withReply);
-        if (!['lease', 'deny', 'hello', 'lease_level', 'settings', 'driver', 'update', 'invite', 'invite_cancel', 'agents', 'agent_chat', 'agent_send', 'chat'].includes(event.type)) resolve(undefined);
+        if (!['lease', 'deny', 'hello', 'lease_level', 'settings', 'driver', 'update', 'invite', 'invite_cancel', 'agents', 'agent_chat', 'agent_send',
+          'chat_providers', 'chat_list', 'chat_history', 'chat_send', 'chat_stop', 'chat_delete'].includes(event.type)) resolve(undefined);
       });
     },
     /** The extension lowered the level of a lease on its own (lease_level). */

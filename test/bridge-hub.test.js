@@ -518,23 +518,24 @@ test('settings carry "Open requested pages right away" only when reported as a b
   assert.deepEqual(sanitizeSettings({ budget: null }), { budget: null });
 });
 
-test('chat messages (the panel\'s FAI chats) reach the daemon as {op, args} and get its reply, over WebSocket and HTTP', async t => {
+test('chat_* messages (the panel\'s FAI chats) reach the daemon with their own fields and get its reply, over WebSocket and HTTP', async t => {
   const setup = await daemon(t);
   setup.hub.onEvent(event => {
-    if (event.type !== 'chat') return;
-    if (event.op === 'fail') event.reply({ error: { code: 'chat_no_model', message: 'Choose a model.' } });
-    else event.reply({ op: event.op, args: event.args, browser: Boolean(event.browserId) });
+    if (!event.type.startsWith('chat_')) return;
+    if (event.args.fail) event.reply({ error: { code: 'chat_no_model', message: 'Choose a model.' } });
+    else event.reply({ type: event.type, args: event.args, browser: Boolean(event.browserId) });
   });
   const ext = await setup.extension();
   await ext.hello();
-  assert.deepEqual(await ext.request('chat', { op: 'list', args: { offset: 0 } }),
-    { v: 3, type: 'reply', ref: '2', ok: true, data: { op: 'list', args: { offset: 0 }, browser: true } });
-  const refused = await ext.request('chat', { op: 'fail' });
+  for (const type of ['chat_providers', 'chat_list', 'chat_history', 'chat_send', 'chat_stop', 'chat_delete']) {
+    const reply = await ext.request(type, { chatId: 'c1', after: 3 });
+    assert.equal(reply.ok, true, type);
+    assert.deepEqual(reply.data, { type, args: { chatId: 'c1', after: 3 }, browser: true }, 'v, type and ref are not arguments');
+  }
+  const refused = await ext.request('chat_send', { fail: true });
   assert.equal(refused.ok, false);
   assert.deepEqual(refused.error, { code: 'chat_no_model', message: 'Choose a model.' });
-  assert.equal((await ext.request('chat', { args: {} })).error.code, 'bad_request', 'op is required');
-  assert.deepEqual((await ext.request('chat', { op: 'get', args: [1] })).data.args, {}, 'args is an object or nothing');
-  const http = await setup.post('/chat', { v: 3, op: 'providers' });
+  const http = await setup.post('/chat-list', { v: 3, offset: 50 });
   assert.equal(http.status, 200);
-  assert.deepEqual(http.body, { op: 'providers', args: {}, browser: true });
+  assert.deepEqual(http.body, { type: 'chat_list', args: { offset: 50 }, browser: true });
 });

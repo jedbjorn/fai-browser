@@ -2035,7 +2035,12 @@ export function createDaemon(options = {}) {
           return onApprovalEvent(event);
         case 'action_decision':
           return onActionDecision(event);
-        case 'chat':
+        case 'chat_providers':
+        case 'chat_list':
+        case 'chat_history':
+        case 'chat_send':
+        case 'chat_stop':
+        case 'chat_delete':
           return onChatEvent(event);
         default:
           return undefined;
@@ -2048,15 +2053,20 @@ export function createDaemon(options = {}) {
   }
 
   // --- FAI chats (spec #84) -----------------------------------------------------------------------------------
-  // The panel's `chat` message: {op, args}. Every reply is a value or {error: {code, message}}. Ops: providers, send
-  // ({provider, model, text} or {chatId, text}), stop, list ({offset, limit}), get ({chatId, after}), delete.
+  // The panel's FAI chat messages (Sprint 3 panel <-> daemon contract, Planner messages #158 and #164):
+  //   chat_providers {} -> {providers: [{provider, name, available, code, line?, version}], defaultProvider}
+  //   chat_list {offset, limit <= 50} -> {chats: [chat view + lastActiveAt], next}
+  //   chat_history {chatId, after} -> {chat: chat view, messages: [after id], cursor}
+  //   chat_send {provider, model?, text} or {chatId, text} -> {chatId, turnId}
+  //   chat_stop {chatId} -> {stopped}; chat_delete {chatId} -> {deleted}
+  // A chat view is {chatId, title, provider, model, reportedModel, startedAt, running}. Refusals: {error: {code, message}}.
 
   const chatIdOf = args => {
     if (!validChatId(args.chatId)) throw new ChatError('unknown_chat', 'No such chat.');
     return args.chatId;
   };
   const countOf = (value, fallback, max) => {
-    if (value === undefined) return fallback;
+    if (value === undefined || value === null) return fallback;
     if (!Number.isInteger(value) || value < 0 || value > max) throw new ChatError('bad_request', 'Bad paging values.');
     return value;
   };
@@ -2065,46 +2075,53 @@ export function createDaemon(options = {}) {
     if (typeof value !== 'string' || value.length > max) throw new ChatError('bad_request', `${name} must be a short string.`);
     return value;
   };
+  const chatView = header => ({ chatId: header.chatId, title: header.title, provider: header.provider, model: header.model,
+    reportedModel: header.reportedModel, startedAt: header.startedAt, running: chats.running(header.chatId) });
 
-  async function chatOp(op, args) {
-    switch (op) {
-      case 'providers':
-        return { providers: await chats.providers() };
-      case 'send': {
-        const { chatId, turnId } = await chats.send({ chatId: args.chatId === undefined ? null : chatIdOf(args),
-          provider: stringOf(args.provider, 'provider', 20), model: stringOf(args.model, 'model', 200),
-          text: stringOf(args.text, 'text', 20_000) });
+  async function chatOp(type, args) {
+    switch (type) {
+      case 'chat_providers': {
+        const providers = await chats.providers();
+        return { providers, defaultProvider: providers.find(item => item.available)?.provider ?? null };
+      }
+      case 'chat_send': {
+        const { chatId, turnId } = await chats.send({ chatId: args.chatId === undefined || args.chatId === null ? null
+          : chatIdOf(args), provider: stringOf(args.provider, 'provider', 20), model: stringOf(args.model, 'model', 200),
+        text: stringOf(args.text, 'text', 20_000) });
         return { chatId, turnId };
       }
-      case 'stop':
+      case 'chat_stop':
         return { stopped: await chats.stop(chatIdOf(args)) };
-      case 'list': {
-        const listed = await chatStore.list({ offset: countOf(args.offset, 0, 1_000_000),
-          limit: Math.max(1, countOf(args.limit, PAGE_SIZE, PAGE_SIZE)) });
-        return { ...listed, chats: listed.chats.map(chat => ({ ...chat, running: chats.running(chat.chatId) })) };
+      case 'chat_list': {
+        const offset = countOf(args.offset, 0, 1_000_000);
+        const listed = await chatStore.list({ offset, limit: Math.max(1, countOf(args.limit, PAGE_SIZE, PAGE_SIZE)) });
+        const end = offset + listed.chats.length;
+        return { chats: listed.chats.map(chat => ({ ...chatView(chat), lastActiveAt: chat.lastActiveAt })),
+          next: end < listed.total ? end : null };
       }
-      case 'get': {
-        const found = await chatStore.read(chatIdOf(args), { after: countOf(args.after, 0, Number.MAX_SAFE_INTEGER) });
+      case 'chat_history': {
+        const after = countOf(args.after, 0, Number.MAX_SAFE_INTEGER);
+        const found = await chatStore.read(chatIdOf(args), { after });
         if (!found) throw new ChatError('unknown_chat', 'No such chat.');
-        return { ...found, running: chats.running(found.chat.chatId) };
+        return { chat: chatView(found.chat), messages: found.records, cursor: found.records.at(-1)?.id ?? after };
       }
-      case 'delete': {
+      case 'chat_delete': {
         const chatId = chatIdOf(args);
         await chats.stop(chatId);
         return { deleted: await chatStore.remove(chatId) };
       }
       default:
-        throw new ChatError('bad_request', 'Unknown chat operation.');
+        throw new ChatError('bad_request', 'Unknown chat message.');
     }
   }
 
   async function onChatEvent(event) {
     const args = event.args && typeof event.args === 'object' && !Array.isArray(event.args) ? event.args : {};
     try {
-      replyTo(event, await chatOp(event.op, args));
+      replyTo(event, await chatOp(event.type, args));
     } catch (error) {
       if (error instanceof ChatError) return replyTo(event, { error: { code: error.code, message: error.message } });
-      log('chat_error', { op: String(event.op).slice(0, 20), message: String(error?.message ?? error).slice(0, 200) });
+      log('chat_error', { type: event.type, message: String(error?.message ?? error).slice(0, 200) });
       replyTo(event, { error: { code: 'internal', message: 'Daemon error' } });
     }
     return undefined;

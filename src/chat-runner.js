@@ -127,10 +127,10 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
 
   /**
    * Whether `provider` can run a turn now: found, a supported version, and (Claude, Codex) signed in by its own
-   * status command. Resolves {provider, name, available, version} or, when not, {..., code, line}.
+   * status command. Resolves {provider, name, available: true, code: null, version} or, when not, {..., code, line}.
    */
   async function availability(provider) {
-    const answer = { provider, name: PROVIDER_NAMES[provider], available: false, version: null };
+    const answer = { provider, name: PROVIDER_NAMES[provider], available: false, code: null, version: null };
     const refused = code => ({ ...answer, code, line: CHAT_CODES[code](provider) });
     const program = programFor(provider);
     if (!program) return refused('chat_not_installed');
@@ -188,13 +188,13 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
     else if (code !== 0 || turn.ended === false) {
       const status = code ?? 'unknown';
       line = { code: 'chat_turn_failed', status,
-        providerError: clipProviderError(turn.providerError || turn.stderr) || null };
+        providerText: clipProviderError(turn.providerText || turn.stderr) || null };
     }
     try {
       await turn.writes;
       if (line) {
         await store.append(chatId, { role: 'fai', text: CHAT_CODES[line.code](provider, line.status), code: line.code,
-          ...(line.providerError ? { providerError: line.providerError } : {}) });
+          ...(line.providerText ? { providerText: line.providerText } : {}) });
       }
     } catch (error) {
       log('chat_transcript_error', { chatId, message: String(error?.message ?? error).slice(0, 200) });
@@ -213,7 +213,7 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
       } else if (event.type === 'model') {
         turn.writes = turn.writes.then(() => store.updateHeader(turn.chatId, { reportedModel: event.name }));
       } else if (event.type === 'error') {
-        turn.providerError = event.message;
+        turn.providerText = event.message;
       } else if (event.type === 'end') {
         turn.ended = event.ok;
       }
@@ -272,7 +272,7 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
       resolveDone = resolve;
     });
     const turn = { chatId, provider, turnId: randomBytes(8).toString('hex'), token, tokenDigest: digest(token),
-      claimed: false, child: null, stopReason: null, ended: null, providerError: '', stderr: '',
+      claimed: false, child: null, stopReason: null, ended: null, providerText: '', stderr: '',
       writes: Promise.resolve(), done, resolveDone };
     turns.set(chatId, turn);
     return turn;
