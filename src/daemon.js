@@ -27,7 +27,7 @@ import { spawn } from 'node:child_process';
 import { automaticCheck, createUpdateChecker, runningUpdate, underTest, claimUpdateLock, writeInstallState } from './update.js';
 import { gitReleaseSource, scrubbedEnv } from './update-git.js';
 import { SessionError, SESSION_POLL_MAX_MS, createSessionRegistry } from './sessions.js';
-import { cleanInviteText } from './wake.js';
+import { MAX_CHAT_TEXT, cleanChatText, cleanInviteText } from './wake.js';
 import { automaticPopupScope } from './automatic-popups.js';
 
 export const DAEMON_VERSION = readPackageVersion();
@@ -94,6 +94,13 @@ const EARLY_DECISION_MS = 30_000;
 const SESSION_KEYS = new Set(['host', 'hostSessionId', 'repo', 'pid', 'startedAt', 'wake', 'wakeReason', 'client', 'previous']);
 const CHALLENGE = /^[A-Za-z0-9_-]{16,64}$/;
 const SESSION_UPDATE_KEYS = new Set(['lastToolCallAt', 'hostSessionId', 'wake', 'wakeReason', 'maxMs']);
+// The MCP server's read of its own conversation for the chat panel (POST /v1/sessions/:id/chat).
+const SESSION_CHAT_KEYS = new Set(['messages', 'busy', 'cursor', 'error']);
+// The chat panel may send a session this many messages a minute. agent_send waits this long for the delivery (the
+// extension stops waiting for any answer at 10 s); a new watch waits this long for the first read.
+export const CHAT_SENDS_PER_MINUTE = 10;
+export const CHAT_SEND_WAIT_MS = 8_000;
+export const CHAT_FIRST_READ_MS = 3_000;
 const WAIT_KEYS = new Set(['requestId', 'runId', 'maxMs', 'afterStep', 'while', 'ask']);
 // An agent's ask for more on a request it holds (POST /v1/requests/:id/ask): a higher level, more origins, or both.
 const ASK_KEYS = new Set(['mode', 'origins']);
@@ -1529,6 +1536,75 @@ export function createDaemon(options = {}) {
     });
   }
 
+  // Wait up to `ms` for `predicate`, checking every 100 ms (chat posts and wake reports need no other signal).
+  async function settled(predicate, ms) {
+    const deadline = Date.now() + ms;
+    while (!predicate() && !shuttingDown && Date.now() < deadline) await delay(100);
+    return predicate();
+  }
+
+  /**
+   * The FAI chat panel reads a live session's conversation (spec #80; Sprint 3 panel contract `agent_chat`): each read
+   * starts or extends the watch (src/sessions.js watchChat; it ends 30 s after the last one) and answers what the
+   * session's MCP server posted, newer than `after`: {messages, busy, cursor, readable: true | {code, host, version},
+   * ended}. cursor is the `after` for the next read. Extra fields: reset (the panel's `after` is no longer kept: replace
+   * the list) and sends (the panel's chat wakes, for a delivery that outlived agent_send's answer). A new watch waits
+   * up to CHAT_FIRST_READ_MS for the first read. A session that is gone is `ended`.
+   */
+  async function onAgentChatEvent(event) {
+    sessions.sweep();
+    const sessionId = typeof event.sessionId === 'string' ? event.sessionId : null;
+    const after = Number.isSafeInteger(event.after) && event.after > 0 ? event.after : 0;
+    if (!sessionId || !sessions.view(sessionId)) {
+      return replyTo(event, { messages: [], busy: false, cursor: after, readable: true, ended: true, reset: false, sends: [] });
+    }
+    const fresh = !sessions.chatView(sessionId);
+    sessions.watchChat(sessionId);
+    if (fresh) {
+      await settled(() => { const view = sessions.chatView(sessionId); return !view || view.readable || view.error; },
+        options.chatFirstReadMs ?? CHAT_FIRST_READ_MS);
+    }
+    const read = sessions.chatView(sessionId, after);
+    if (!read) return replyTo(event, { messages: [], busy: false, cursor: after, readable: true, ended: true, reset: false, sends: [] });
+    return replyTo(event, {
+      messages: read.messages,
+      busy: read.busy,
+      cursor: read.messages.length ? read.messages.at(-1).seq : after,
+      readable: read.error ?? true,
+      ended: false,
+      reset: read.reset,
+      sends: sessions.wakesOf(sessionId, 'chat').map(({ wakeId, state, error }) => ({ wakeId, state, error })),
+    });
+  }
+
+  /**
+   * The user's message from the chat panel (`agent_send`): cleaned (line breaks kept), refused when empty or over
+   * MAX_CHAT_TEXT, and queued as a `chat` wake on the session's own channel. Answers {ok: true, wakeId} once the session
+   * delivered it, the wake's error when it failed, and {ok: true, wakeId, state} when it is still on its way after
+   * CHAT_SEND_WAIT_MS (the extension stops waiting at 10 s); agent_chat's sends then carry its outcome.
+   */
+  async function onAgentSendEvent(event) {
+    const fail = (code, message) => replyTo(event, { error: { code, message } });
+    const sessionId = typeof event.sessionId === 'string' ? event.sessionId : null;
+    const view = sessionId ? sessions.view(sessionId) : null;
+    if (!view) return fail('unknown_session', 'This agent session has ended.');
+    const text = cleanChatText(event.text);
+    if (!text) return fail('empty', 'Type a message first.');
+    if (text.length > MAX_CHAT_TEXT) return fail('too_long', `A message can be at most ${MAX_CHAT_TEXT} characters.`);
+    if (view.wake === 'none' || !view.ready) return fail('cannot_wake', 'FAI cannot send messages to this agent session.');
+    const t = now();
+    if (sessions.wakesOf(sessionId, 'chat').filter(wake => t - wake.createdMs < 60_000).length >= CHAT_SENDS_PER_MINUTE) {
+      return fail('rate_limited', 'Too many messages in a minute; wait a moment.');
+    }
+    const queued = sessions.queueWake(sessionId, { kind: 'chat', userText: text });
+    if (!queued) return fail('cannot_wake', 'FAI cannot send messages to this agent session.');
+    const done = wake => ['delivered', 'failed', 'skipped'].includes(wake?.state);
+    await settled(() => done(sessions.wake(queued.wakeId)), options.chatSendWaitMs ?? CHAT_SEND_WAIT_MS);
+    const wake = sessions.wake(queued.wakeId);
+    if (wake?.state === 'failed') return fail(wake.error?.code ?? 'wake_failed', wake.error?.message ?? 'The message was not delivered.');
+    return replyTo(event, { ok: true, wakeId: queued.wakeId, ...(done(wake) ? {} : { state: wake?.state ?? 'queued' }) });
+  }
+
   /**
    * An agent joins an invite (POST /v1/invites/:id/join, the client token, from fai_browser_open {inviteId}): single
    * use, within its life, while its tab is still held. The joining session (if it says which) owns the request from
@@ -1929,6 +2005,16 @@ export function createDaemon(options = {}) {
           return onInviteCancelEvent(event);
         case 'agents':
           return onAgentsEvent(event);
+        case 'agent_chat':
+          return onAgentChatEvent(event).catch(error => {
+            log('hub_event_error', { type: event.type, message: String(error?.message ?? error).slice(0, 200) });
+            replyTo(event, { error: { code: 'internal', message: 'Daemon error' } });
+          });
+        case 'agent_send':
+          return onAgentSendEvent(event).catch(error => {
+            log('hub_event_error', { type: event.type, message: String(error?.message ?? error).slice(0, 200) });
+            replyTo(event, { error: { code: 'internal', message: 'Daemon error' } });
+          });
         case 'usage':
           return saveKnownBrowsers(event.browsers);
         case 'approval':
@@ -2909,6 +2995,8 @@ export function createDaemon(options = {}) {
     ['POST', /^\/v1\/sessions\/([^/]+)\/poll$/, 'sessions.poll', false, true],
     ['POST', /^\/v1\/sessions\/([^/]+)\/update$/, 'sessions.update', false, true],
     ['POST', /^\/v1\/sessions\/([^/]+)\/wakes\/([^/]+)$/, 'sessions.report', false, true],
+    // The chat panel's read of a watched session, posted by that session's own MCP server.
+    ['POST', /^\/v1\/sessions\/([^/]+)\/chat$/, 'sessions.chat', false, true],
     ['DELETE', /^\/v1\/sessions\/([^/]+)$/, 'sessions.delete', false, true],
     // An agent joins the invite the user made in the popup. There is no route that creates one.
     ['POST', /^\/v1\/invites\/([^/]+)\/join$/, 'invites.join'],
@@ -3006,6 +3094,11 @@ export function createDaemon(options = {}) {
       case 'sessions.report': {
         const session = sessionFrom(req, { id: route.param });
         return { body: { wake: sessionCall(() => sessions.report(session, route.param2, body)) } };
+      }
+      case 'sessions.chat': {
+        const session = sessionFrom(req, { id: route.param });
+        checkKeys(body, SESSION_CHAT_KEYS);
+        return { body: sessionCall(() => sessions.postChat(session, body)) };
       }
       case 'sessions.delete': {
         const session = sessionFrom(req, { id: route.param });

@@ -13,10 +13,14 @@
 //   conversation that started it) and adds that id as `_faiHostSession` to the call's arguments (the MCP server removes
 //   it before anything else reads them), so FAI knows which conversation asked for which tab.
 // - A connection that presents the token may ask it to prompt one of those sessions with a text that matches one of
-//   FAI's wake templates exactly. The turn runs with the agent and model of the session's last user message
-//   (without them OpenCode would use its default agent: a session in `plan` must stay in `plan`); a session without
-//   one is refused. It answers {"ok":true} once OpenCode accepted the prompt and reported no error before the turn
-//   started (waiting at most 2 s; a busy session queues it and is not watched): accepted, not answered.
+//   FAI's wake templates exactly (the chat panel's among them: the user's words as one JSON string). The turn runs
+//   with the agent and model of the session's last user message (without them OpenCode would use its default agent:
+//   a session in `plan` must stay in `plan`); a session without one is refused. It answers {"ok":true} once OpenCode
+//   accepted the prompt and reported no error before the turn started (waiting at most 2 s; a busy session queues it
+//   and is not watched): accepted, not answered.
+// - It may also ask it to `read` one of those sessions for the FAI chat panel: the user's and the agent's text parts of
+//   the newest messages after a message id (never synthetic or ignored parts, reasoning, tools or files), stopping
+//   before an assistant message that is not complete, and whether the session is busy.
 // - The socket is removed on a clean exit. It installs no signal handlers (that would change OpenCode's own exit on
 //   SIGTERM or SIGINT): a socket left by a killed OpenCode is swept at the next plugin start.
 // It never logs arguments, texts or the token, and never throws out of a hook. FAI_WAKE=0 or opencode --pure: off.
@@ -49,9 +53,16 @@ const INVITED = new RegExp(String.raw`${PREFIX}The user invited you to work in a
   + String.raw`Call fai_browser_open with \{"inviteId": "${ID}"\} `
   + String.raw`to get the page, then follow its next\.\n(?:The user typed no task: read the page, then ask them what to do\.|`
   + String.raw`What the user typed in the FAI popup \(the user's own words\): ("(?:[^"\\\u0000-\u001f]|\\.)*"))$`);
-const MAX_TEXT = 2000;
+// The chat panel's message (src/wake.js wakeText kind chat): the user's own words, line breaks kept inside the string.
+const CHAT = new RegExp(String.raw`${PREFIX}The user sent you a message from the FAI chat panel \(the user's own words\): `
+  + String.raw`("(?:[^"\\\u0000-\u001f]|\\.)*")$`);
+const MAX_TEXT = 8500;
 const MAX_WORDS = 500;
-const MAX_READ = 8 * 1024;
+const MAX_CHAT_WORDS = 4000;
+const MAX_READ = 32 * 1024;
+// A read answers the newest READ_LIMIT messages at most, each text clipped to READ_TEXT characters.
+const READ_LIMIT = 200;
+const READ_TEXT = 8000;
 const IDLE_MS = 3_000;
 // How long an accepted prompt is watched for OpenCode's own error before the answer.
 const SETTLE_MS = 2_000;
@@ -110,6 +121,17 @@ function wakeTextOk(text) {
   match = ACTION_APPROVED.exec(text);
   if (match) return match[1] === match[4] && match[2] === match[3];
   if (ACTION_DENIED.test(text)) return true;
+  match = CHAT.exec(text);
+  if (match) {
+    try {
+      const words = JSON.parse(match[1]);
+      // Line breaks are the only control characters the chat's cleaning keeps.
+      return typeof words === 'string' && words.length > 0 && words.length <= MAX_CHAT_WORDS
+        && !/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029]/.test(words);
+    } catch {
+      return false;
+    }
+  }
   match = INVITED.exec(text);
   if (!match || match[1] !== match[2]) return false;
   if (match[3] === undefined) return true;
@@ -253,6 +275,51 @@ async function answerWake(state, auth, wake) {
   return outcome;
 }
 
+// The text of a message's own parts: never synthetic or ignored ones (OpenCode's notes about files and tools).
+function partsText(parts) {
+  return (Array.isArray(parts) ? parts : [])
+    .filter(part => part?.type === 'text' && typeof part.text === 'string' && !part.synthetic && !part.ignored)
+    .map(part => part.text).join('\n\n').trim();
+}
+
+// The chat panel's read of a session that used FAI: its user and agent messages after message id `after` (all of the
+// newest READ_LIMIT when `after` is not among them), oldest first, and whether a turn runs. An assistant message that
+// is not complete yet ends the read while its turn can run (it is the newest, or the session is busy): it shows once
+// OpenCode finished it, and the cursor stays before it.
+async function answerRead(state, auth, request) {
+  if (auth?.type !== 'auth' || !sameToken(auth.token, state.token)) return { ok: false, code: 'bad_token', message: 'Wrong token.' };
+  const sessionID = request.sessionID;
+  const seen = typeof sessionID === 'string' && SESSION.test(sessionID) ? state.sessions.get(sessionID) : undefined;
+  if (!seen) return { ok: false, code: 'not_fai_session', message: 'That session has not used FAI Browser.' };
+  const client = state.clients.get(seen.directory) ?? seen.client;
+  const result = await client.session.messages({ path: { id: sessionID }, query: { limit: READ_LIMIT } });
+  if (result?.error || !Array.isArray(result?.data)) return { ok: false, code: 'read_failed', message: 'OpenCode did not list the messages.' };
+  const list = result.data.filter(item => typeof item?.info?.id === 'string')
+    .sort((a, b) => Number(a.info.time?.created ?? 0) - Number(b.info.time?.created ?? 0));
+  const after = typeof request.after === 'string' ? list.findIndex(item => item.info.id === request.after) : -1;
+  const messages = [];
+  let cursor = after >= 0 ? request.after : null;
+  const running = state.busy.has(sessionID);
+  let busy = running;
+  const newer = list.slice(after + 1);
+  for (const [index, item] of newer.entries()) {
+    const { info } = item;
+    // An unfinished assistant message waits only while its turn can still run: it is the newest, or the session is
+    // busy. An older one (a turn OpenCode cut off) is shown as far as it got and never holds the read back.
+    if (info.role === 'assistant' && !info.time?.completed && (running || index === newer.length - 1)) {
+      busy = true;
+      break;
+    }
+    cursor = info.id;
+    if (info.role !== 'user' && info.role !== 'assistant') continue;
+    const text = partsText(item.parts);
+    if (!text) continue;
+    messages.push({ id: info.id, role: info.role === 'user' ? 'user' : 'agent', text: text.slice(0, READ_TEXT),
+      at: Number(info.time?.created ?? 0) || null });
+  }
+  return { ok: true, messages, busy, cursor };
+}
+
 function serve(state, connection) {
   let buffer = '';
   let done = false;
@@ -294,8 +361,10 @@ function serve(state, connection) {
     if (lines.length < 2) return;
     busy = true;
     connection.setTimeout(0);
-    answerWake(state, lines[0], lines[1])
-      .catch(() => ({ ok: false, code: 'prompt_failed', message: 'OpenCode did not take the prompt.' }))
+    const read = lines[1]?.type === 'read';
+    (read ? answerRead(state, lines[0], lines[1]) : answerWake(state, lines[0], lines[1]))
+      .catch(() => (read ? { ok: false, code: 'read_failed', message: 'OpenCode did not list the messages.' }
+        : { ok: false, code: 'prompt_failed', message: 'OpenCode did not take the prompt.' }))
       .then(finish);
   });
 }

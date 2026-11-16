@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import {
-  claudeSocket, cleanInviteText, codexSupportsQueue, codexThreadId, deliverClaudeSocket, deliverCodexQueue, deliverWake,
+  MAX_CHAT_TEXT, claudeSocket, cleanChatText, cleanInviteText, codexSupportsQueue, codexThreadId, deliverClaudeSocket, deliverCodexQueue, deliverWake,
   detectHost, hostSessionId, repoName, resetCodexSupport, wakeCapability, wakeReason, wakeText, WAKE_REASONS,
 } from '../src/wake.js';
 import { fakeCodex, startFakeClaudeSocket } from './helpers/fake-agents.js';
@@ -178,6 +178,34 @@ test('action decision wake texts: the spec #79 templates exactly, ids only, neve
   assert.match(hostile, /revision "unknown"/);
   assert.doesNotMatch(hostile, /Place order|https?:|shop\.test|ignore/);
   assert.equal(approved.split('\n').length, 1);
+});
+
+test('chat wake text: the spec #80 template, the user\'s words as one JSON string with line breaks kept', () => {
+  const text = wakeText({ kind: 'chat', userText: 'Use the other\r\naccount page.\n\n  Then "stop" \\ now', requestId: 'req_1',
+    inviteId: 'inv-1', level: 'full' });
+  assert.equal(text, '[FAI Browser] The user sent you a message from the FAI chat panel (the user\'s own words): '
+    + '"Use the other\\naccount page.\\n\\n Then \\"stop\\" \\\\ now"');
+  assert.equal(text.split('\n').length, 1, 'one line: the breaks travel escaped');
+  // Cleaning: zero-width and bidi characters go, other controls become spaces, runs of spaces one, breaks stay.
+  assert.equal(cleanChatText('pay \u202enoitpircsbus\u202c now\u200b\u2066x\u2069\ufeff\u0085y\u009bz'), 'pay noitpircsbus nowx y z');
+  assert.equal(cleanChatText('a\tb\u0000c\rd\u2028e\u2029f'), 'a b c\nd\ne\nf');
+  assert.equal(cleanChatText('  \n x \n  '), 'x');
+  assert.equal(cleanChatText(7), '');
+  // Never longer than MAX_CHAT_TEXT in the template (the daemon refuses longer before it gets here).
+  const words = JSON.parse(wakeText({ kind: 'chat', userText: 'y'.repeat(MAX_CHAT_TEXT + 10) }).split('own words): ')[1]);
+  assert.equal(words.length, MAX_CHAT_TEXT);
+});
+
+test('chat wake text over the Claude socket and codex queue: the template exactly, as one message', async t => {
+  const text = wakeText({ kind: 'chat', userText: 'line one\nline "two" $(echo nope)' });
+  const fake = await startFakeClaudeSocket(t);
+  assert.deepEqual(await deliverClaudeSocket({ path: fake.path, token: fake.token, text }), { ok: true });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.deepEqual(fake.received, [{ type: 'user', message: { role: 'user', content: text } }]);
+  resetCodexSupport();
+  const codex = await fakeCodex(t);
+  assert.deepEqual(await deliverCodexQueue({ threadId: '01a1c03e-9e28-72a2-8cdb-bb6ca9545521', text, env: codex.env }), { ok: true });
+  assert.deepEqual((await codex.calls()).at(-1).argv, ['queue', '--thread', '01a1c03e-9e28-72a2-8cdb-bb6ca9545521', '--message', text]);
 });
 
 test('Claude socket: delivered writes the auth line then one user line', async t => {

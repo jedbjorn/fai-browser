@@ -3,7 +3,12 @@
 // heartbeat), reports each wake's outcome, and unregisters when its stdio closes. Entries whose process is gone or that
 // stopped polling are dropped. Each entry has a random key only its MCP server knows: polls, reports and updates
 // need it, so a session only ever receives the wakes addressed to it. Views never carry the key.
+//
+// The FAI chat panel (spec #80) watches one session at a time per panel: while it is watched, the session's long poll
+// also asks its MCP server to read its own conversation (chatRead, with the last cursor), and the messages it posts
+// back are kept here, in memory only, the newest CHAT_KEEP of them, until the watch ends. They never reach a log.
 import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
+import { CHAT_KEEP, clipText } from './chat.js';
 import { WAKE_REASONS } from './wake.js';
 
 export const SESSION_POLL_MAX_MS = 25_000;
@@ -18,6 +23,11 @@ export const WAKES_PER_POLL = 4;
 export const MAX_SESSIONS_PER_PID = 2;
 // A dropped session's key is remembered this long, so the same MCP server can come back as itself (`previous`).
 const TOMBSTONE_MS = 60 * 60_000;
+// A watch ends this long after the panel's last read (it reads about every 2 s while open).
+export const CHAT_WATCH_MS = 30_000;
+const CHAT_ROLES = new Set(['user', 'agent', 'fai']);
+const CHAT_ERRORS = new Set(['unreadable', 'not_ready', 'ambiguous_session']);
+const CHAT_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const WAKE_KEEP_MS = 10 * 60_000;
 const HOSTS = new Set(['claude', 'codex', 'opencode', 'unknown']);
 const CAPABILITIES = new Set(['claude-socket', 'codex-queue', 'opencode-plugin', 'none']);
@@ -63,7 +73,10 @@ export function createSessionRegistry(options = {}) {
   const staleMs = options.staleMs ?? SESSION_STALE_MS;
   const pickupMs = options.pickupMs ?? WAKE_PICKUP_MS;
   const reportMs = options.reportMs ?? WAKE_REPORT_MS;
+  const chatWatchMs = options.chatWatchMs ?? CHAT_WATCH_MS;
   const sessions = new Map();
+  // Every kept chat message's number, across watches: a panel's `after` from an earlier watch is never mistaken.
+  let chatSeq = 0;
   const wakes = new Map();
   // Dropped or unregistered sessions: {keyDigest, at} by session id (see `previous` in register).
   const tombstones = new Map();
@@ -142,6 +155,8 @@ export function createSessionRegistry(options = {}) {
       wakeReason: REASONS.has(body.wakeReason) ? body.wakeReason : null,
       client: typeof body.client === 'string' ? body.client.slice(0, 80) : null,
       waiter: null,
+      // The chat panel's watch of this session (watchChat), or null.
+      chat: null,
     };
     const key = randomBytes(24).toString('base64url');
     session.keyDigest = digest(key);
@@ -212,13 +227,16 @@ export function createSessionRegistry(options = {}) {
         wake.sentAt = now();
       }
       if (list.length) changed();
+      // A panel read since the last one: the MCP server reads what is new after the cursor it posted last.
+      const chatRead = session.chat?.want ? { cursor: session.chat.cursor } : null;
+      if (chatRead) session.chat.want = false;
       // Fields only: the MCP server writes the wake text itself from its fixed template (src/wake.js wakeText).
       return { wakes: list.map(wake => ({ wakeId: wake.wakeId, kind: wake.kind, requestId: wake.requestId ?? null,
         inviteId: wake.inviteId ?? null, level: wake.level ?? null, at: iso(wake.createdAt),
         ...(wake.actionId ? { actionId: wake.actionId, revision: wake.revision } : {}),
-        ...(wake.userText ? { userText: wake.userText } : {}) })) };
+        ...(wake.userText ? { userText: wake.userText } : {}) })), ...(chatRead ? { chatRead } : {}) };
     };
-    if (pendingFor(session).length || maxMs <= 0) return Promise.resolve(deliver());
+    if (pendingFor(session).length || session.chat?.want || maxMs <= 0) return Promise.resolve(deliver());
     return new Promise(resolvePoll => {
       const waiter = {
         resolve: value => {
@@ -241,9 +259,18 @@ export function createSessionRegistry(options = {}) {
     });
   }
 
+  // Answer a held poll now (a wake or a chat read is waiting).
+  function answerPoll(session) {
+    if (!session.waiter) return;
+    const waiter = session.waiter;
+    session.waiter = null;
+    clearTimeout(waiter.timer);
+    waiter.resolve(waiter.deliver());
+  }
+
   /**
-   * Queue a wake for `sessionId`: `kind` (invite, resume, approved, action_approved, action_denied), the ids (an
-   * action decision: its actionId and revision), the level and, for an invite, the user's own words from the popup.
+   * Queue a wake for `sessionId`: `kind` (invite, resume, approved, action_approved, action_denied, chat), the ids (an
+   * action decision: its actionId and revision), the level and, for an invite or a chat message, the user's own words.
    * Returns the wake view, or null when the session is unknown or cannot be woken (its capability is none): the caller
    * then shows the copy fallback.
    */
@@ -256,14 +283,88 @@ export function createSessionRegistry(options = {}) {
       createdAt: now(), sentAt: null, settledAt: null };
     wakes.set(wake.wakeId, wake);
     log('wake_queued', { sessionId, kind, requestId, inviteId });
-    if (session.waiter) {
-      const waiter = session.waiter;
-      session.waiter = null;
-      clearTimeout(waiter.timer);
-      waiter.resolve(waiter.deliver());
-    }
+    answerPoll(session);
     changed();
     return wakeView(wake);
+  }
+
+  /** This session's wakes of `kind` still kept (settled ones for WAKE_KEEP_MS), oldest first. */
+  function wakesOf(sessionId, kind) {
+    return [...wakes.values()].filter(wake => wake.sessionId === sessionId && wake.kind === kind)
+      .sort((a, b) => a.createdAt - b.createdAt).map(wake => ({ ...wakeView(wake), createdMs: wake.createdAt }));
+  }
+
+  /**
+   * A panel reads `sessionId`'s chat: the watch starts (or goes on for CHAT_WATCH_MS more) and the session's poll asks
+   * its MCP server for what is new. False when the session is unknown.
+   */
+  function watchChat(sessionId) {
+    const session = typeof sessionId === 'string' ? sessions.get(sessionId) : null;
+    if (!session) return false;
+    if (!session.chat) {
+      session.chat = { messages: [], ids: new Set(), cursor: null, busy: false, readable: false, error: null,
+        want: false, polledAt: 0 };
+      log('chat_watch', { sessionId });
+    }
+    session.chat.polledAt = now();
+    session.chat.want = true;
+    answerPoll(session);
+    return true;
+  }
+
+  /** The panel closed: the watch ends now and its messages are dropped. */
+  function unwatchChat(sessionId, reason = 'closed') {
+    const session = typeof sessionId === 'string' ? sessions.get(sessionId) : null;
+    if (!session?.chat) return false;
+    session.chat = null;
+    log('chat_unwatch', { sessionId, reason });
+    return true;
+  }
+
+  /**
+   * The MCP server's read of its own conversation: {messages, busy, cursor} or {error: {code, version}}. Taken only
+   * while a panel watches (409 not_watched otherwise); messages already kept (same id) are not added twice.
+   */
+  function postChat(session, body = {}) {
+    const chat = session.chat;
+    if (!chat) throw new SessionError(409, 'not_watched', 'No chat panel watches this session');
+    session.lastSeenAt = now();
+    if (body.error && typeof body.error === 'object') {
+      chat.error = { code: CHAT_ERRORS.has(body.error.code) ? body.error.code : 'unreadable', host: session.host,
+        version: typeof body.error.version === 'string' ? body.error.version.replace(/[^0-9A-Za-z .+-]/g, '').slice(0, 32) : 'unknown version' };
+      chat.readable = false;
+      return { taken: 0 };
+    }
+    let taken = 0;
+    for (const item of Array.isArray(body.messages) ? body.messages.slice(-CHAT_KEEP) : []) {
+      if (!item || !CHAT_ROLES.has(item.role) || typeof item.text !== 'string' || !CHAT_ID.test(String(item.id ?? ''))
+        || chat.ids.has(item.id)) continue;
+      const at = Date.parse(item.at ?? '');
+      chat.ids.add(item.id);
+      chat.messages.push({ seq: ++chatSeq, id: item.id, role: item.role, text: clipText(item.text),
+        at: Number.isFinite(at) ? iso(at) : null });
+      taken += 1;
+    }
+    while (chat.messages.length > CHAT_KEEP) chat.ids.delete(chat.messages.shift().id);
+    chat.busy = body.busy === true;
+    if (typeof body.cursor === 'string' && body.cursor.length <= 256) chat.cursor = body.cursor;
+    chat.readable = true;
+    chat.error = null;
+    return { taken };
+  }
+
+  /**
+   * What a panel shows of `sessionId`'s chat: the kept messages newer than `after` (its highest seq), busy, readable and
+   * the read error. reset: `after` is no longer kept (dropped from the window, or from an earlier watch), so the panel
+   * replaces its list with these messages. null when nobody watches it.
+   */
+  function chatView(sessionId, after = 0) {
+    const chat = typeof sessionId === 'string' ? sessions.get(sessionId)?.chat : null;
+    if (!chat) return null;
+    const since = Number.isSafeInteger(after) && after > 0 ? after : 0;
+    const reset = since > 0 && chat.readable && !chat.messages.some(item => item.seq === since);
+    return { busy: chat.busy, readable: chat.readable, error: chat.error ? { ...chat.error } : null, reset,
+      messages: chat.messages.filter(item => reset || item.seq > since).map(item => ({ ...item })) };
   }
 
   /** The MCP server's word on a wake it was given: delivered, or failed with a code. */
@@ -323,6 +424,9 @@ export function createSessionRegistry(options = {}) {
         dirty = true;
       }
     }
+    for (const session of sessions.values()) {
+      if (session.chat && t - session.chat.polledAt >= chatWatchMs) unwatchChat(session.sessionId, 'idle');
+    }
     for (const [id, stone] of [...tombstones]) if (t - stone.at >= TOMBSTONE_MS) tombstones.delete(id);
     for (const wake of [...wakes.values()]) {
       if (wake.state === 'queued' && t - wake.createdAt >= pickupMs) {
@@ -352,6 +456,11 @@ export function createSessionRegistry(options = {}) {
     update,
     poll,
     queueWake,
+    wakesOf,
+    watchChat,
+    unwatchChat,
+    postChat,
+    chatView,
     report,
     unregister,
     sweep,
