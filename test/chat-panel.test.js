@@ -556,6 +556,23 @@ for (const [name, scenario] of Object.entries(scenarios())) {
   });
 }
 
+// The FnB's design ruling (decision #45): the dropdowns sit at the right of the title's row, in one row even at 320 px.
+test('header: the dropdowns sit at the right of the title row, without wrapping', async t => {
+  const page = await open(t, {}, { width: 320 });
+  await page.waitForSelector('[aria-label="Model for this chat"]');
+  const boxes = await page.evaluate(() => {
+    const box = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
+    return { header: box('.header'), title: box('#title'), provider: box('[aria-label="Provider for this chat"]'),
+      model: box('[aria-label="Model for this chat"]') };
+  });
+  for (const control of [boxes.provider, boxes.model]) {
+    assert.ok(control.top < boxes.title.bottom && control.bottom > boxes.title.top, 'in the title row');
+    assert.ok(control.left >= boxes.title.right, 'right of the title');
+  }
+  assert.equal(boxes.provider.top, boxes.model.top, 'one row');
+  assert.ok(boxes.header.right - boxes.model.right <= 12, 'right-aligned');
+});
+
 test('keyboard: every control in the conversation, drawer and settings is reached by Tab, with a focus mark', async t => {
   const page = await open(t, {});
   await openFromDrawer(page, 'chat_a');

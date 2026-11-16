@@ -22,7 +22,7 @@ const $ = id => document.getElementById(id);
 const ui = {
   drawer: $('drawer'), scrim: $('scrim'), toggle: $('drawer-toggle'), drawerClose: $('drawer-close'), newChat: $('new-chat'),
   chatList: $('chat-list'), chatsEmpty: $('chats-empty'), moreChats: $('more-chats'), agentList: $('agent-list'),
-  agentsEmpty: $('agents-empty'), openSettings: $('open-settings'), title: $('title'), meta: $('meta'),
+  agentsEmpty: $('agents-empty'), openSettings: $('open-settings'), title: $('title'), meta: $('meta'), headerControls: $('header-controls'),
   header: document.querySelector('.header'), conversation: $('conversation'), scroller: $('scroller'), empty: $('empty'), messages: $('messages'),
   browsing: $('browsing'), notice: $('notice'), composer: $('composer'), chips: $('chips'), composerError: $('composer-error'),
   attach: $('attach'), attachHint: $('attach-hint'), fileInput: $('file-input'), text: $('text'), send: $('send'), stop: $('stop'),
@@ -765,20 +765,22 @@ function ensureModels(provider) {
     });
 }
 
+// The chat's dropdowns sit at the right of the title's row; plain text about the chat stays under the title.
 function renderHeader() {
   const meta = [];
+  const controls = [];
   if (state.settingsOpen) {
     ui.title.textContent = 'Settings';
   } else if (state.view === 'new') {
     ui.title.textContent = 'New chat';
     ensureModels(state.newProvider);
     const providers = availableProviders(state.providers).map(id => [id, providerName(id)]);
-    meta.push(metaSelect('Provider for this chat', providers, state.newProvider, value => {
+    controls.push(metaSelect('Provider for this chat', providers, state.newProvider, value => {
       state.newProvider = value;
       state.newModel = state.settings.models[value] ?? '';
       render();
     }));
-    meta.push(metaSelect('Model for this chat', modelOptions(state.newProvider, state.newModel), state.newModel, value => {
+    controls.push(metaSelect('Model for this chat', modelOptions(state.newProvider, state.newModel), state.newModel, value => {
       state.newModel = value;
     }));
   } else if (state.view === 'chat' && state.chat) {
@@ -786,7 +788,7 @@ function renderHeader() {
     ensureModels(state.chat.provider);
     meta.push(element('span', 'meta-text', providerName(state.chat.provider)));
     // A chat keeps its provider; its model can change and applies from the next turn (spec #84).
-    meta.push(metaSelect('Model for this chat', modelOptions(state.chat.provider, state.chat.model, state.chat.reportedModel), state.chat.model ?? '', value => {
+    controls.push(metaSelect('Model for this chat', modelOptions(state.chat.provider, state.chat.model, state.chat.reportedModel), state.chat.model ?? '', value => {
       const chat = state.chat;
       chat.model = value || null;
       chatApi.setModel(chat.chatId, value || null).catch(error => setNotice(error.message));
@@ -798,6 +800,8 @@ function renderHeader() {
     ui.title.textContent = 'FAI Chat';
   }
   ui.meta.replaceChildren(...meta);
+  ui.meta.hidden = !meta.length;
+  ui.headerControls.replaceChildren(...controls);
 }
 
 function messageNode(message, provider) {
