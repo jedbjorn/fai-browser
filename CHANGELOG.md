@@ -5,7 +5,7 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
-## Unreleased
+## 0.11.0 (2026-11-16)
 
 ### Added
 
@@ -16,9 +16,9 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 - **OpenCode Desktop binding on every OS.** The plugin exports `FAI_OPENCODE_PID`, so a Desktop sidecar without `OPENCODE_PID` binds to its own MCP child. Windows wake tests now run without channel skips; POSIX-only test skips remain where required.
 - **Windows archive setup retry.** Task guides install from flattened archives, including recovery from FAI's own partial old install, while preserving foreign files and symlinks.
 
-### Acceptance pending
+### Verification
 
-- **Release blocked:** Windows 10 app-level wake acceptance (#5b) ran live. Claude's Code tab (Sonnet 5.5) and ChatGPT's Codex mode (GPT-6.1 Terra) each took a new turn on their own for an invite, an Approve and a Resume. OpenCode Desktop 1.19.5 failed: its provider refuses the free Big Pickle model on that version ("no longer supports free models"), so it cannot take a turn, and its wake reason stays `opencode_no_plugin`. OpenCode 2.x is unsupported. The same plugin wake passed on the OpenCode CLI 1.19.5. Release waits for a ruling on OpenCode Desktop. Windows 11 is not yet checked; the FnB will check parity separately. No version bump or release in this Sprint.
+- **Windows 10 live wakes.** Claude's Code tab and ChatGPT's Codex mode each took a new turn on their own for an invite, an Approve and a Resume. The OpenCode CLI 1.19.5 passed the same three wakes through FAI's plugin. OpenCode Desktop 1.19.5 is unverified: its provider refuses free models on that version, so it cannot take a turn. OpenCode 2.x is unsupported. Windows 11 is not yet checked.
 
 ## 0.10.0 (2026-11-15)
 

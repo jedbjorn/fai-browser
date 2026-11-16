@@ -172,8 +172,9 @@ Setup ends with **Registered apps: … Restart …**. It detects desktop install
   automatic registration.
 
 Only coding sessions (Claude's Code tab and ChatGPT's Codex), not ordinary chat, use these channels.
-See [per-app wake support](../REFERENCE.md#invites-and-wakes). App-level Windows 10 wake acceptance is pending and
-blocks release of these changes; Windows 11 is not yet checked.
+See [per-app wake support](../REFERENCE.md#invites-and-wakes). On Windows 10, live wakes passed for Claude's Code tab,
+Codex in the ChatGPT app and the OpenCode CLI 1.19.5; OpenCode Desktop's live wake is unverified, and Windows 11 is not
+yet checked.
 
 Then restart your coding agent. Opening **FAI Browser** from the Start menu later starts the FAI service by itself
 (Firefox's pairing helper starts it outside Firefox's process job, so it keeps running); a second click while it is
