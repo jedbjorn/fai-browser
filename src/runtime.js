@@ -2671,6 +2671,16 @@ export function pointAction(offer, found, config) {
 export const APPROVAL_DENIED_TEXT = 'The user denied this action in the FAI Browser window. Tell the user; do not retry it.';
 export const APPROVAL_PENDING_MS = 5 * 60_000;
 
+/**
+ * The extension's approval entry an act's ask was about (its answer's entryId), on the result as a non-enumerable
+ * `approvalEntryId`: never serialized, never shown to the host. The daemon records a pending one and wakes the owner
+ * session on a late decision (src/daemon.js noteActApproval).
+ */
+function markApprovalEntry(result, answer) {
+  if (typeof answer?.entryId !== 'string') return;
+  Object.defineProperty(result, 'approvalEntryId', { value: answer.entryId, enumerable: false, configurable: true });
+}
+
 function approvalOutcome(session, action, offer, approval) {
   const result = session.result;
   const cls = action.needsApproval;
@@ -3109,6 +3119,7 @@ export class BrowserRuntime {
       }
     }
     const session = this.#open(config, null);
+    markApprovalEntry(session.result, approval);
     // Waiting for the user's Approve click is not the agent's time: the receipt says how long it took, and the MCP
     // server does not charge it to the request's time budget.
     if (approvalMs) session.result.approvalMs = approvalMs;
@@ -3197,6 +3208,7 @@ export class BrowserRuntime {
           if (config.level === 'testing') session.why('commits:declared');
           else {
             const answer = await this.#askEnterCommit(session, offer, page, next, options);
+            markApprovalEntry(session.result, answer);
             if (answer.decision !== 'approved' || typeof answer.approvalId !== 'string') {
               // Pending: the page the Enter would run on, offered again; its "press Enter in" action is what runs once
               // approved. Anything else ends here without an offer, as the Approve gate's other outcomes do.

@@ -131,6 +131,7 @@ const HTTP_PATHS = {
   invite_cancel: '/invite-cancel',
   agents: '/agents',
   approval: '/approval',
+  action_decision: '/action-decision',
 };
 const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
@@ -1719,6 +1720,21 @@ function reportApproval({ requestId = null, surface, step, reason = null, origin
 function flushApprovals() {
   if (!connected || !pairing) return;
   for (const event of approvalQueue.splice(0)) ignore(send('approval', event));
+  for (const decision of decisionQueue.splice(0)) ignore(send('action_decision', decision));
+}
+
+// An action decided (Approve once or Deny) after the act that asked stopped waiting: the daemon wakes the agent
+// session that owns the request (docs/REFERENCE.md "Invites and wakes"). The entry id and the decision only; the
+// daemon acts on it only for an entry its own act recorded as pending. Waits for the next hello while not connected.
+const decisionQueue = [];
+function reportDecision(entryId, decision) {
+  const message = { entryId, decision };
+  if (connected && pairing) {
+    ignore(send('action_decision', message));
+    return;
+  }
+  decisionQueue.push(message);
+  if (decisionQueue.length > MAX_APPROVALS) decisionQueue.shift();
 }
 
 // A failure that repeats without a new click (the modal preparing its approval again on every render) is logged once
@@ -3014,13 +3030,17 @@ async function waitTabComplete(tabId, ms) {
 // reads the control from the page itself (page.js approvalInfo: label, label hash, gate class, a detected total),
 // opens the toolbar popup or a small top-right fallback window, shows a badge and waits for the user's click. Approve once
 // mints a random single-use approvalId bound to the tab, lease, document, revision, target, class and label hash, valid
-// for 60 s; Deny refuses. The execute that follows carries the id: only an id this worker minted, unused, unexpired and
+// for 60 s (5 min when no act waited for the click: the agent is woken to use it); Deny refuses. The execute that
+// follows carries the id: only an id this worker minted, unused, unexpired and
 // bound to that very dispatch lets page.js run the control (it rechecks the label and class itself). The daemon only
 // ever relays ids; it cannot mint one. Settings (chrome.storage.local `approvals`, never config.json): ask before
 // purchases, credential actions and actions above the granted level; all on. There is no "always allow".
 const APPROVAL_CLASSES = ['purchase', 'secret', 'delete', 'submit'];
 const APPROVAL_PENDING_MS = 5 * 60_000;
 const APPROVAL_USE_MS = 60_000;
+// An approval decided while no act waited for it: the agent learns of it through a wake (a queued Codex turn or a busy
+// session may start late), so it stays usable this long from the decision.
+const APPROVAL_WAKE_USE_MS = 5 * 60_000;
 const APPROVAL_MAX_WAIT_MS = 120_000;
 const APPROVAL_PROMPT_PAGE = 'approve.html';
 const APPROVAL_PROMPT_SIZE = { width: 440, height: 420 };
@@ -3080,8 +3100,8 @@ function settleApproval(entry, answer) {
   entry.waiters.clear();
 }
 
-// Drops approvals past their time (pending: 5 min; approved and unused: 60 s), and with `leaseId` every approval of
-// that lease (its session ended).
+// Drops approvals past their time (pending: 5 min; approved and unused: 60 s, or 5 min when no act waited), and with
+// `leaseId` every approval of that lease (its session ended).
 function expireApprovals(leaseId = null) {
   const now = Date.now();
   for (const entry of [...approvals.values()]) {
@@ -3161,8 +3181,10 @@ async function approveCommand(command) {
   const key = [tab.id, session.leaseId, info.revision, target ?? '', cls, info.labelHash, kind ?? 'click', handle ?? '',
     upload ? `${upload.name}:${upload.size}` : '', inFrame ? info.frameOrigin : ''].join('|');
   let entry = [...approvals.values()].find(item => item.key === key);
-  if (entry?.status === 'approved') return { decision: 'approved', approvalId: entry.approvalId };
-  if (entry?.status === 'denied') return { decision: 'denied' };
+  // Every answer about an entry names it (entryId, never the approvalId's stand-in): the daemon records a pending one
+  // and learns when an act picked a decided one up.
+  if (entry?.status === 'approved') return { decision: 'approved', approvalId: entry.approvalId, entryId: entry.id };
+  if (entry?.status === 'denied') return { decision: 'denied', entryId: entry.id };
   if (!entry) {
     if (approvals.size >= MAX_APPROVALS) return { decision: 'refused', reason: 'too_many' };
     const now = Date.now();
@@ -3193,30 +3215,35 @@ async function approveCommand(command) {
       entry.waiters.delete(done);
       resolve(answer);
     };
-    const timer = setTimeout(() => done({ decision: 'pending', expiresAt: entry.expiresAt }), room);
+    const timer = setTimeout(() => done({ decision: 'pending', expiresAt: entry.expiresAt, entryId: entry.id }), room);
     entry.waiters.add(done);
   });
 }
 
-// The user's click in the approval window or on the popup card.
+// The user's click in the approval window or on the popup card. An act waiting for it gets the answer (no wake; the
+// approval is usable for 60 s). Otherwise the daemon is told, to wake the agent, and an approval stays usable for
+// 5 min.
 function decideApproval(id, decision) {
   const entry = approvals.get(id);
   if (!entry || entry.status !== 'pending' || Date.now() > entry.expiresAt) throw new Error('This action is no longer waiting for approval.');
+  const waited = entry.waiters.size > 0;
   if (decision === 'approve') {
     entry.status = 'approved';
     entry.approvalId = randomId();
-    entry.useBy = Date.now() + APPROVAL_USE_MS;
-    settleApproval(entry, { decision: 'approved', approvalId: entry.approvalId });
+    entry.useBy = Date.now() + (waited ? APPROVAL_USE_MS : APPROVAL_WAKE_USE_MS);
+    settleApproval(entry, { decision: 'approved', approvalId: entry.approvalId, entryId: entry.id });
   } else {
     entry.status = 'denied';
-    settleApproval(entry, { decision: 'denied' });
+    settleApproval(entry, { decision: 'denied', entryId: entry.id });
   }
+  if (!waited) reportDecision(entry.id, entry.status);
   closeApprovalWindow(entry);
   publishApprovals();
 }
 
 // The approval an execute carries, checked against what the user approved: minted here, approved, unused, within its
-// 60 s, for this tab, lease, revision and target. Spent before the dispatch. Returns what page.js rechecks.
+// use window (60 s, or 5 min), for this tab, lease, revision and target. Spent before the dispatch. Returns what
+// page.js rechecks.
 function takeApproval(action, expectedRevision, tab) {
   const entry = [...approvals.values()].find(item => item.approvalId !== null && item.approvalId === action.approvalId);
   if (!entry || entry.status !== 'approved') throw new ExtensionError('blocked_risky', 'This action has no approval from the user');

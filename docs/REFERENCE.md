@@ -737,7 +737,8 @@ Loop stoppers: each `requestId` has a call budget (`maxCalls` act/observe calls 
 ## Invites and wakes
 
 The user can bring a connected coding agent to a tab they already have open, and FAI wakes an idle agent when the user
-approves or resumes its tab. Claude Code, Codex and OpenCode (1.19 to 1.x, through FAI's plugin) can be woken; any
+approves or resumes its tab, or decides an action it asked about after its act stopped waiting
+([action approvals](#action-approvals)). Claude Code, Codex and OpenCode (1.19 to 1.x, through FAI's plugin) can be woken; any
 other host gets the copy-text fallback. The channels work on Linux, macOS and native Windows. Windows channel tests
 run in CI. In live acceptance on Windows 10, the Claude desktop app's Code tab and Codex in the ChatGPT app each
 started a new turn by themselves for an invite, an Approve and a Resume. OpenCode Desktop 1.19.5 could not be
@@ -783,7 +784,7 @@ listed but never wakes it.
 |---|---|---|
 | `claude-socket` | Claude Code 2.1.224+ (the token since 2.1.228) gives the server `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN` (`--bare` sessions have none), and on POSIX the socket is `<dir>/<pid>.sock` with the MCP server's parent pid; on Windows it is a named pipe (`\\.\pipe\…` or `\\?\pipe\…`) and binding also requires Claude Code's client name, `CLAUDE_CODE_SESSION_ID`, and a live parent image of `claude.exe` (looked up directly with `tasklist.exe`, 3 s timeout): the variables are inherited by everything Claude Code starts, so a server started through a wrapper (npx, a shell) or by a Bash command fails closed to `none` | the MCP server writes `{"type":"auth","token":…}` and `{"type":"user","message":{"role":"user","content":<text>}}`, one line each, to that socket; an idle session takes a new turn |
 | `codex-queue` | Codex 0.149+, once a tool call named the thread (`_meta["x-codex-turn-metadata"].thread_id`, a UUID) and `codex queue --help` works (`codex` from an absolute `PATH` entry or `FAI_CODEX_BIN`; on Windows a real `codex.exe`, never a `.cmd`, `.bat`, `.ps1` or WindowsApps binary) | `codex queue --thread <id> --message <text>`, argv only (no shell), 15 s timeout, `codex` from `PATH` or `FAI_CODEX_BIN`, no `FAI_*` variable passed on; a busy session runs it as its next turn with its own permissions |
-| `opencode-plugin` | OpenCode 1.19 to 1.x (`clientInfo.version`; 2.x has another plugin API and is refused), FAI's plugin installed (`install --host opencode`; not with `opencode --pure`), the MCP server started by OpenCode itself (`FAI_OPENCODE_PID` equals the parent pid, and `FAI_OPENCODE_WAKE_SOCKET` names `oc-<parent pid>.sock` on POSIX or `\\.\pipe\fai-browser-oc-<parent pid>-<random>` on Windows: a server started through a wrapper or by a bash tool fails closed), and after a FAI tool call the plugin tagged with its (root) session | the MCP server connects to the plugin's private socket and writes `{"type":"auth","token":…}` and `{"type":"wake","sessionID":"ses_…","text":<text>}`; the plugin checks the token, that the session called a FAI tool and that the text matches one of FAI's three wake templates exactly, reads the session's last user message and calls OpenCode's `client.session.promptAsync` with that one text part and that message's `agent` and `model` (with its variant; a session without one is refused, `prompt_failed`), then answers `{"ok":true}` once OpenCode accepted the prompt and reported no error before the turn started (it watches OpenCode's events for at most 2 s; a session already running a turn is not watched, since an error then belongs to that turn); a busy session runs it as its next turn |
+| `opencode-plugin` | OpenCode 1.19 to 1.x (`clientInfo.version`; 2.x has another plugin API and is refused), FAI's plugin installed (`install --host opencode`; not with `opencode --pure`), the MCP server started by OpenCode itself (`FAI_OPENCODE_PID` equals the parent pid, and `FAI_OPENCODE_WAKE_SOCKET` names `oc-<parent pid>.sock` on POSIX or `\\.\pipe\fai-browser-oc-<parent pid>-<random>` on Windows: a server started through a wrapper or by a bash tool fails closed), and after a FAI tool call the plugin tagged with its (root) session | the MCP server connects to the plugin's private socket and writes `{"type":"auth","token":…}` and `{"type":"wake","sessionID":"ses_…","text":<text>}`; the plugin checks the token, that the session called a FAI tool and that the text matches one of FAI's wake templates exactly, reads the session's last user message and calls OpenCode's `client.session.promptAsync` with that one text part and that message's `agent` and `model` (with its variant; a session without one is refused, `prompt_failed`), then answers `{"ok":true}` once OpenCode accepted the prompt and reported no error before the turn started (it watches OpenCode's events for at most 2 s; a session already running a turn is not watched, since an error then belongs to that turn); a busy session runs it as its next turn |
 | `none` | anything else (an unknown host, Claude Code without the socket, Codex or OpenCode before its first FAI call, OpenCode without the plugin or outside 1.19 to 1.x) | none: the popup shows the copy line |
 
 The socket format is the one Claude Code's own debug output prints; it is undocumented and may change. Claude Code's
@@ -827,19 +828,48 @@ line under it, as for Claude Code. OpenCode lists as
 "not ready: ask it to run any FAI command" until its first tagged call; the server instructions ask it to call
 `fai_browser_status` once early. `FAI_WAKE=0` in OpenCode's environment also turns the plugin off.
 
-**Wake texts.** The daemon queues fields only (`kind`, `requestId`, `inviteId`, `level`, the user's invite text); the
-MCP server writes the text from fixed templates in `src/wake.js`, prefixed `[FAI Browser]`: an invite ("The user
-invited you … Call fai_browser_open with {"inviteId": "inv-…"}", then the user's words on one labelled line), an
-approval ("The user approved tab request req_… at level …") or a resume ("The user resumed tab request req_…"), each
-naming the tool to call next. A wake never contains a page title, URL, origin
-or page text. It reports `delivered` (written to the channel: Claude Code's socket answers nothing, not even to a wrong
+**Wake texts.** The daemon queues fields only (`kind`, `requestId`, `inviteId`, `level`, the user's invite text, and
+for an action decision `actionId` and `revision`); the MCP server writes the text from fixed templates in
+`src/wake.js`, prefixed `[FAI Browser]`: an invite ("The user invited you … Call fai_browser_open with
+{"inviteId": "inv-…"}", then the user's words on one labelled line), an approval ("The user approved tab request req_…
+at level …"), a resume ("The user resumed tab request req_…"), or an action decision (below), each naming the tool to
+call next. A wake never contains a page title, URL, origin, control label or page text; an id that is not one is
+written as `unknown`. It reports `delivered` (written to the channel: Claude Code's socket answers nothing, not even to a wrong
 token or a message `crossSessionInbound` holds or refuses, checked on 2.1.319, so this means sent, not received, and the
 popup says "Sent to …"; anything the socket does write back is kept as the wake's `detail`; for Codex, `codex queue`
 exited 0; for OpenCode, OpenCode accepted the prompt), `failed` (`no_socket`, `connect_failed`, `refused`, `timeout`,
 `unknown_thread`, `no_codex`, `codex_failed`; OpenCode adds `unknown_session` and `ambiguous_session`, and a `refused`
 carries the plugin's reason in its message: a wrong token, a session that never used FAI, a text that is not a FAI
-wake, or OpenCode not queuing the turn) or `skipped` (a call already waiting on that request returns the page itself); a wake no
-poll picks up fails after 10 s (`not_polling`), one never reported after 25 s (`no_report`).
+wake, or OpenCode not queuing the turn) or `skipped` (a call already waiting on that request returns the page itself;
+tab approvals and resumes only); a wake no poll picks up fails after 10 s (`not_polling`), one never reported after
+25 s (`no_report`).
+
+#### Action approvals
+
+An act on an action that asks the user ([Approve gate](#approve-gate), a committing Enter included) waits at most 60 s
+per call. When the user clicks **Approve once** or **Deny** after that wait ended (`approval_pending`), FAI wakes the
+session that made the request, so an agent that ended its turn continues on its own:
+
+- Approved: `[FAI Browser] The user approved action <actionId> on tab request <requestId>. Call fai_browser_act with
+  requestId <requestId>, actionId <actionId> and revision "<revision>" (and the same commits value for an Enter) to run
+  it.`
+- Denied: `[FAI Browser] The user denied action <actionId> on tab request <requestId>. Do not retry it; tell the user.`
+
+The `actionId` and `revision` are the ones the pending result named in `needs.approval` (for an Enter, the field's
+"press Enter in" action on the page it runs on). How it works: the extension's `pending` answer names its approval
+entry, and the daemon records `{entryId, actionId, revision, class, kind}` on the request (never in a result). A click
+an act is still waiting for settles that act as before and wakes nobody. Otherwise the extension sends
+`action_decision {entryId, decision}` over its paired, authenticated connection, and the
+daemon queues one `action_approved` or `action_denied` wake to the request's owner session, on the channels above, for
+an entry one of its own acts recorded, on the same lease and browser. One wake per entry: a second decision message,
+or one for an entry a later act already picked up, wakes nobody; the MCP server never skips one as `skipped`. A
+request with no owner session (the CLI, the SDK) or a session that cannot be woken gets no wake; a failed one shows
+"Could not wake … Tell it to continue." in the popup, as for a tab approval. Failed wakes are not retried.
+
+An approval given while no act waited stays usable for **5 minutes from the click** (instead of 60 s), so a queued
+Codex turn or a busy session that starts late can still use it. It stays single-use and bound to the tab, lease,
+revision, target, class and label hash: if the page changed, the act fails `stale`, and the agent observes and asks
+again.
 
 **Waiting for the user.** A pending or paused relay (`next.kind: "relay"`) says one of two things. To a session FAI can
 wake: tell the user and end your turn; a caller that cannot end its turn and be woken (a subagent, whose wake goes to
@@ -1202,9 +1232,9 @@ Never approvable: a label the user forbade (`policy`, `config.json`), a page out
 
 **The exchange.** `fai_browser_act` on a `needsApproval` action sends an `approve` command to the extension and blocks, with progress notifications, up to `FAI_MCP_APPROVAL_WAIT_MS` (default 60 s, at most 60 s per call; daemon `POST /v1/act` `approvalWaitMs`, at most 120 s). The worker reads the control from the page itself (`approvalInfo`: label, label hash, class, a detected total), refuses a class the page script does not see (`class_mismatch`), and shows a small **"Approve this action?"** window, a red `!` badge and a card in the popup: the site and tab title (from the browser), what kind of action it is, the control's label in quotes marked as page text, the total the page shows and **"Agent says: …"** (the act's optional `reason`, marked as not checked). Neither button has focus. Answers:
 
-- **Approve once**: the worker mints a random single-use `approvalId` (`crypto.randomUUID`) bound to the tab, lease, revision, target, class and label hash (SHA-256 of the label, first 128 bits as hex, computed in plain JavaScript so plain-http pages can be approved too), valid 60 s; the act runs the click with it at once (no model guard second-guesses it, and it is never re-resolved on another revision). The worker spends the id before dispatch and page.js rechecks the target's class and label hash itself. A new revision voids it (`stale`), and an id the worker did not mint (a daemon cannot) is refused (`blocked_risky`).
+- **Approve once**: the worker mints a random single-use `approvalId` (`crypto.randomUUID`) bound to the tab, lease, revision, target, class and label hash (SHA-256 of the label, first 128 bits as hex, computed in plain JavaScript so plain-http pages can be approved too), valid 60 s (5 minutes from the click when no act was waiting for it: [action approvals](#action-approvals)); the act runs the click with it at once (no model guard second-guesses it, and it is never re-resolved on another revision). The worker spends the id before dispatch and page.js rechecks the target's class and label hash itself. A new revision voids it (`stale`), and an id the worker did not mint (a daemon cannot) is refused (`blocked_risky`).
 - **Deny**: `refused_action`, `why: approval:denied`, `next.kind: stop` ("The user denied this action in the FAI Browser window. Tell the user; do not retry it.").
-- **No click in time**: `needs_user` / `approval_pending`, `next.kind: approve`: "Tell the user to approve '<label>' (page text) in the FAI Browser window (Approve once), then call fai_browser_act again with actionId a7 and revision "…"; it returns at once if they already approved, else waits up to 60 s (the approval stays open for 5 minutes: repeat the call if it returns pending again)." (`needs.approval {class, actionId, revision}`; for a submit or delete also "Or ask for full: ..."). One act waits at most 60 s (`GATE_MAX_WAIT_MS`); the revision stays usable, the approval stays open 5 minutes, and an approval given meanwhile is picked up by the next act at once.
+- **No click in time**: `needs_user` / `approval_pending`, `next.kind: approve`: "Tell the user to approve '<label>' (page text) in the FAI Browser window (Approve once), then call fai_browser_act again with actionId a7 and revision "…"; it returns at once if they already approved, else waits up to 60 s (the approval stays open for 5 minutes: repeat the call if it returns pending again)." (`needs.approval {class, actionId, revision}`; for a submit or delete also "Or ask for full: ..."). One act waits at most 60 s (`GATE_MAX_WAIT_MS`); the revision stays usable, the approval stays open 5 minutes, and an approval given meanwhile is picked up by the next act at once. A decision given after the wait ended wakes the agent that asked ([action approvals](#action-approvals)).
 
 **Uploads and dialog accepts** ask too: an [upload](#uploads) always (the card names the file, its size and the site), and on a Test site accepting a JavaScript dialog whose text names a delete or purchase ([dialogs](#dev-logs-and-javascript-dialogs); the card shows the dialog's text).
 

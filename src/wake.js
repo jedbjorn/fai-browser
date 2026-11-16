@@ -416,10 +416,21 @@ export function cleanInviteText(text) {
 
 /**
  * The wake text for each event. `kind`: invite (the user invited this session to a tab: join with inviteId), resume
- * (the user resumed a paused tab it holds), approved (the user approved its pending request).
+ * (the user resumed a paused tab it holds), approved (the user approved its pending request), action_approved and
+ * action_denied (the user decided an action's Approve once after the act that asked stopped waiting: actionId and
+ * revision name it). Ids only, never a label, page text or URL.
  */
-export function wakeText({ kind, inviteId, requestId, level, userText }) {
+export function wakeText({ kind, inviteId, requestId, level, userText, actionId, revision }) {
   const prefix = '[FAI Browser] ';
+  if (kind === 'action_approved') {
+    return `${prefix}The user approved action ${safeId(actionId)} on tab request ${safeId(requestId)}. Call `
+      + `fai_browser_act with requestId ${safeId(requestId)}, actionId ${safeId(actionId)} and revision `
+      + `"${safeId(revision)}" (and the same commits value for an Enter) to run it.`;
+  }
+  if (kind === 'action_denied') {
+    return `${prefix}The user denied action ${safeId(actionId)} on tab request ${safeId(requestId)}. Do not retry it; `
+      + 'tell the user.';
+  }
   if (kind === 'invite') {
     const words = cleanInviteText(userText);
     return `${prefix}The user invited you to work in a browser tab they have open (invite ${safeId(inviteId)}, level `

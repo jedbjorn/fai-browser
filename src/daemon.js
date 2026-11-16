@@ -6,7 +6,7 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { BrowserRuntime, actionLabels, checkActChoice, redactionMeta } from './runtime.js';
+import { APPROVAL_PENDING_MS, BrowserRuntime, actionLabels, checkActChoice, redactionMeta } from './runtime.js';
 import { checkDeclarative, validateExpectation } from './expectation.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { agentResult, applyLeaseMessage, approvalSteps, createResult, isKnownCode, outcomeResult, setOutcome } from './result.js';
@@ -89,6 +89,8 @@ export const INVITE_TTL_MS = 10 * 60_000;
 export const INVITES_PER_MINUTE = 6;
 const INVITE_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
 const INVITE_KEEP_MS = 60 * 60_000;
+// How long a decision for an approval entry no act recorded yet waits for that act's pending answer.
+const EARLY_DECISION_MS = 30_000;
 const SESSION_KEYS = new Set(['host', 'hostSessionId', 'repo', 'pid', 'startedAt', 'wake', 'wakeReason', 'client', 'previous']);
 const CHALLENGE = /^[A-Za-z0-9_-]{16,64}$/;
 const SESSION_UPDATE_KEYS = new Set(['lastToolCallAt', 'hostSessionId', 'wake', 'wakeReason', 'maxMs']);
@@ -430,6 +432,8 @@ export function createDaemon(options = {}) {
   let publishedStale = '';
   // Invites by id ({inviteId, requestId, sessionId, state, ...}); see onInviteEvent.
   const invites = new Map();
+  // Action decisions that arrived before the act's pending answer recorded their entry (onActionDecision).
+  const earlyDecisions = new Map();
   // The live coding-agent sessions (one per MCP server process) and their wakes (src/sessions.js).
   const sessions = options.sessions ?? createSessionRegistry({ now, log, isAlive: options.isAlive,
     onChange: () => changed() });
@@ -1269,11 +1273,72 @@ export function createDaemon(options = {}) {
    * a fixed FAI text to the host's own channel), so it continues without a background wait command. A session that
    * cannot be woken, or one gone, gets nothing: its next text told it to wait or to ask the user.
    */
-  function wakeOwner(record, kind) {
+  function wakeOwner(record, kind, ids = {}) {
     if (!record.ownerSession) return null;
-    const wake = sessions.queueWake(record.ownerSession, { kind, requestId: record.requestId, level: record.grant?.level });
+    const wake = sessions.queueWake(record.ownerSession, { kind, requestId: record.requestId,
+      level: record.grant?.level, ...ids });
     record.ownerWakeId = wake?.wakeId ?? null;
     return wake;
+  }
+
+  /**
+   * An act that asked the Approve gate and ended approval_pending: the extension's approval entry (the result's
+   * non-enumerable approvalEntryId) is recorded on its request with what the act asked about. Any other ending of an
+   * act that named the entry (it picked the decision up) settles it, so a late decision message wakes nobody.
+   */
+  function noteActApproval(record, raw) {
+    const entryId = raw?.approvalEntryId;
+    if (typeof entryId !== 'string') return;
+    const t = now();
+    record.actionApprovals ??= new Map();
+    for (const [id, item] of record.actionApprovals) {
+      if (t - item.at > APPROVAL_PENDING_MS) record.actionApprovals.delete(id);
+    }
+    // Only an ask the agent can act on again by id (a Test site dialog accept has none: nothing to wake it for).
+    const pending = raw.code === 'approval_pending' ? raw.needs?.approval : null;
+    const asked = typeof pending?.actionId === 'string' && typeof pending.revision === 'string' ? pending : null;
+    const known = record.actionApprovals.get(entryId);
+    if (!asked) {
+      if (known) known.settled = true;
+      return;
+    }
+    if (!known) {
+      record.actionApprovals.set(entryId, { entryId, actionId: asked.actionId, revision: asked.revision,
+        class: asked.class ?? null, kind: asked.kind ?? null, leaseId: record.lease?.leaseId ?? null, at: t,
+        settled: false });
+    }
+    // A decision that reached the daemon before this act's pending answer did.
+    const early = earlyDecisions.get(entryId);
+    if (early) {
+      earlyDecisions.delete(entryId);
+      onActionDecision(early);
+    }
+  }
+
+  /**
+   * Approve once or Deny given while no act waited for it (the extension's action_decision over its authenticated
+   * connection): for an entry an act of this daemon recorded, on the same lease and browser, the request's owner
+   * session gets one wake (action_approved or action_denied, ids only). A second decision, or one for an entry an act
+   * already picked up, wakes nobody. One for an entry not recorded yet waits a short while for its act to finish.
+   */
+  function onActionDecision(event) {
+    for (const record of requests.values()) {
+      const item = record.actionApprovals?.get(event.entryId);
+      if (!item) continue;
+      if (item.settled || now() - item.at > APPROVAL_PENDING_MS || record.state !== 'active'
+        || record.lease?.leaseId !== item.leaseId || !sameBrowser(record, event.browserId)) return;
+      item.settled = true;
+      const kind = event.decision === 'approved' ? 'action_approved' : 'action_denied';
+      const wake = wakeOwner(record, kind, { actionId: item.actionId, revision: item.revision });
+      log('action_decision', { requestId: record.requestId, decision: event.decision, wake: wake ? 'queued' : 'none' });
+      changed();
+      return;
+    }
+    const t = now();
+    for (const [id, early] of earlyDecisions) if (t - early.at > EARLY_DECISION_MS) earlyDecisions.delete(id);
+    if (earlyDecisions.size >= 100) return;
+    earlyDecisions.set(event.entryId, { entryId: event.entryId, decision: event.decision, browserId: event.browserId,
+      at: t });
   }
 
   // The last Approve or Resume wake of a request's owner, for the popup: a failed one shows "tell your agent".
@@ -1868,6 +1933,8 @@ export function createDaemon(options = {}) {
           return saveKnownBrowsers(event.browsers);
         case 'approval':
           return onApprovalEvent(event);
+        case 'action_decision':
+          return onActionDecision(event);
         default:
           return undefined;
       }
@@ -1993,6 +2060,7 @@ export function createDaemon(options = {}) {
   }
 
   async function finishRun(run, record, raw, spec) {
+    if (run.operation === 'act') noteActApproval(record, raw);
     // An act that reached the page ends any run of tab_not_ready answers (settledLease counts them in a row).
     if (!LEASE_CODES.has(raw?.code) && raw?.code !== 'tab_not_ready') record.notReady = 0;
     if (LEASE_CODES.has(raw?.code)) {

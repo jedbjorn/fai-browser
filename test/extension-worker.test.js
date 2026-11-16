@@ -27,6 +27,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
  * options.http: 'ok' (default) or 'fail' (every fetch rejects).
  * options.paired: start with a saved pairing (default true).
  * options.timeScale: multiplies worker timer delays (to run backoff quickly); delays are recorded unscaled.
+ * options.clock: `{ offset }` (ms): the worker's Date.now() runs that far ahead of the real clock (timers do not).
  */
 const live = new Set();
 test.afterEach(() => {
@@ -41,7 +42,7 @@ test.afterEach(() => {
 function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode = 'daemon', leaseOrigins = null, permissions,
   hostGrants, local: extraLocal = {}, leaseError = null, opened = null, sessionStore = {}, daemonBudget = null,
   native = null, actionOpenPopup = null, lastWindow = undefined, normalWindows = [], tabCreateFails = false,
-  daemonVersion = '0.2.0', daemonUpdate = null, manifest = {}, leaseIdFor = null, leaseGrant = null } = {}) {
+  daemonVersion = '0.2.0', daemonUpdate = null, manifest = {}, leaseIdFor = null, leaseGrant = null, clock = null } = {}) {
   const reloads = []; // chrome.runtime.reload() calls (an update's reload of the unpacked extension)
   const nativeCalls = []; // chrome.runtime.sendNativeMessage(host, message) calls
   const events = name => ({
@@ -492,6 +493,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     },
     // Fixed jitter: Math.random() = 0.5 makes the ±20 % factor exactly 1.
     Math: Object.create(Math, { random: { value: () => 0.5 } }),
+    ...(clock ? { Date: class extends Date { static now() { return Date.now() + clock.offset; } } } : {}),
   });
   vm.runInNewContext(pslData, context);
   vm.runInNewContext(framesSource, context);
@@ -2687,10 +2689,11 @@ test('redaction: an execute screenshot carries the boxes; an annotation that ski
 
 const APPROVE_PAGE = { id: 'ext', url: 'chrome-extension://ext/approve.html?id=x' };
 
-// Sends an approve command and returns { id, entry } once the approval window shows the request.
-async function asked(h, args = {}) {
+// Sends an approve command and returns { id, entry } once the approval window shows the request. `deadline` on the
+// worker's clock (a harness clock runs ahead of the real one).
+async function asked(h, args = {}, deadline = Date.now() + 30_000) {
   const id = h.command('approve', { target: '1', expectedRevision: 'doc:1', cls: 'secret', waitMs: 5000, note: 'Agent line', ...args },
-    { deadline: Date.now() + 30_000 });
+    { deadline });
   await h.until(() => (h.session.approvals ?? []).length > 0);
   return { id, entry: h.session.approvals.at(-1) };
 }
@@ -2835,6 +2838,90 @@ test('approve: Deny answers denied; no click within the wait answers pending and
   assert.match(answer.approvalId, /^[0-9a-f-]{36}$/);
 });
 
+test('approval wake: a click while the act waits answers it (60 s to use, nothing to the daemon); one after it stopped waiting goes to the daemon once', async () => {
+  const clock = { offset: 0 };
+  const h = await started({ level: 'full', clock });
+  // The worker's clock runs ahead: commands carry a deadline on its clock.
+  const command = (method, args) => h.command(method, args, { deadline: Date.now() + clock.offset + 30_000 });
+  const decisions = () => h.sent.filter(m => m.type === 'action_decision');
+  // Waited: the act gets the answer, with the entry it was about; the daemon is told nothing; 60 s to use it.
+  let { id, entry } = await asked(h);
+  await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  let reply = (await h.waitFor(m => m.type === 'result' && m.id === id)).result;
+  assert.equal(reply.decision, 'approved');
+  assert.equal(reply.entryId, entry.id);
+  clock.offset = 61_000;
+  const late = command('execute', { action: { type: 'click', target: '1', approvalId: reply.approvalId }, expectedRevision: 'doc:1', level: 'full' });
+  const expired = await h.waitFor(m => m.type === 'result' && m.id === late);
+  assert.equal(expired.error.code, 'blocked_risky');
+  assert.match(expired.error.message, /expired/);
+  assert.deepEqual(decisions(), [], 'an act waited: no wake');
+  // Not waited: pending names the entry; Approve once then goes to the daemon (entry id and decision only).
+  ({ id, entry } = await asked(h, { waitMs: 20 }, Date.now() + clock.offset + 30_000));
+  reply = (await h.waitFor(m => m.type === 'result' && m.id === id)).result;
+  assert.equal(reply.decision, 'pending');
+  assert.equal(reply.entryId, entry.id);
+  await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  await h.until(() => decisions().length === 1);
+  const sent = decisions()[0];
+  assert.deepEqual([sent.entryId, sent.decision], [entry.id, 'approved']);
+  assert.deepEqual(Object.keys(sent).filter(key => !['via', 'type', 'v', 'entryId', 'decision'].includes(key)), [],
+    'no label, origin, title or approval id');
+  // Deny with no act waiting: denied goes to the daemon too.
+  h.bumpRevision();
+  ({ id, entry } = await asked(h, { expectedRevision: 'doc:2', waitMs: 20 }, Date.now() + clock.offset + 30_000));
+  await h.waitFor(m => m.type === 'result' && m.id === id);
+  await h.send({ type: 'approval_decision', id: entry.id, decision: 'deny' }, APPROVE_PAGE);
+  await h.until(() => decisions().length === 2);
+  assert.deepEqual([decisions()[1].entryId, decisions()[1].decision], [entry.id, 'denied']);
+});
+
+test('approval wake: an approval decided while no act waited is usable for 5 minutes from the decision, single-use and still bound', async () => {
+  const clock = { offset: 0 };
+  const h = await started({ level: 'full', clock });
+  const command = (method, args) => h.command(method, args, { deadline: Date.now() + clock.offset + 30_000 });
+  const lateApproval = async (revision = 'doc:1') => {
+    const { id, entry } = await asked(h, { expectedRevision: revision, waitMs: 20 }, Date.now() + clock.offset + 30_000);
+    assert.equal((await h.waitFor(m => m.type === 'result' && m.id === id)).result.decision, 'pending');
+    await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+    return entry;
+  };
+  const execute = async (approvalId, revision = 'doc:1') => {
+    const run = command('execute', { action: { type: 'click', target: '1', approvalId }, expectedRevision: revision, level: 'full' });
+    return h.waitFor(m => m.type === 'result' && m.id === run);
+  };
+  // 4 minutes after the decision: the woken agent's act asks again, gets the id at once, and the click runs.
+  let entry = await lateApproval();
+  clock.offset += 4 * 60_000;
+  const again = command('approve', { target: '1', expectedRevision: 'doc:1', cls: 'secret', waitMs: 5000 });
+  const picked = (await h.waitFor(m => m.type === 'result' && m.id === again)).result;
+  assert.deepEqual([picked.decision, picked.entryId], ['approved', entry.id]);
+  const ran = await execute(picked.approvalId);
+  assert.equal(ran.error, undefined, JSON.stringify(ran.error));
+  // Single use.
+  assert.equal((await execute(picked.approvalId)).error.code, 'blocked_risky');
+  // 6 minutes after the decision: refused, nothing reaches the page (the click above moved it to doc:2).
+  const executes = () => h.pageArgs.filter(c => c.method === 'execute').length;
+  const before = executes();
+  entry = await lateApproval('doc:2');
+  const repeat = command('approve', { target: '1', expectedRevision: 'doc:2', cls: 'secret', waitMs: 5000 });
+  const kept = (await h.waitFor(m => m.type === 'result' && m.id === repeat)).result;
+  assert.deepEqual([kept.decision, kept.entryId], ['approved', entry.id]);
+  clock.offset += 6 * 60_000;
+  const refused = await execute(kept.approvalId, 'doc:2');
+  assert.equal(refused.error.code, 'blocked_risky');
+  assert.match(refused.error.message, /no approval|expired/);
+  assert.equal(executes(), before);
+  // Still bound to the revision the user saw: the page moved, the approval is stale.
+  entry = await lateApproval('doc:2');
+  const bound = command('approve', { target: '1', expectedRevision: 'doc:2', cls: 'secret', waitMs: 5000 });
+  const id = (await h.waitFor(m => m.type === 'result' && m.id === bound)).result.approvalId;
+  clock.offset += 60_000;
+  h.bumpRevision();
+  assert.equal((await execute(id, 'doc:3')).error.code, 'stale');
+  assert.equal(executes(), before);
+});
+
 test('approve: never at read-only, purchases only from full, off when the user turned the setting off, class from the page', async () => {
   const readOnly = await started();
   const ro = readOnly.command('approve', { target: '1', expectedRevision: 'doc:1', cls: 'secret', waitMs: 10 });
@@ -2895,7 +2982,8 @@ test('enter_commit: a committing Enter is always asked (asks off too), shows its
   denying.approvalInfo = messageField;
   const third = await asked(denying, { cls: 'submit', kind: 'enter_commit' });
   await denying.send({ type: 'approval_decision', id: third.entry.id, decision: 'deny' }, APPROVE_PAGE);
-  assert.deepEqual((await denying.waitFor(m => m.type === 'result' && m.id === third.id)).result, { decision: 'denied' });
+  assert.deepEqual((await denying.waitFor(m => m.type === 'result' && m.id === third.id)).result,
+    { decision: 'denied', entryId: third.entry.id }, 'the answer names the entry it was about');
 });
 
 // --- secret handles --------------------------------------------------------------------------------------------

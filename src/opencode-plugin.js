@@ -1,6 +1,7 @@
 // fai-browser-opencode-plugin v1
 // FAI Browser's OpenCode plugin (OpenCode 1.19+, below 2): lets FAI wake an idle OpenCode session when the user
-// approves or resumes its browser tab, or invites it to one (docs/REFERENCE.md "Invites and wakes").
+// approves or resumes its browser tab, decides an action it asked about, or invites it to one (docs/REFERENCE.md
+// "Invites and wakes").
 // Installed by `fai-browser install --host opencode`; re-run that command to update it. Self-contained on purpose
 // (Node/Bun builtins only): it is copied into .opencode/plugins/ and runs inside OpenCode with OpenCode's rights.
 //
@@ -12,7 +13,7 @@
 //   conversation that started it) and adds that id as `_faiHostSession` to the call's arguments (the MCP server removes
 //   it before anything else reads them), so FAI knows which conversation asked for which tab.
 // - A connection that presents the token may ask it to prompt one of those sessions with a text that matches one of
-//   FAI's three wake templates exactly. The turn runs with the agent and model of the session's last user message
+//   FAI's wake templates exactly. The turn runs with the agent and model of the session's last user message
 //   (without them OpenCode would use its default agent: a session in `plan` must stay in `plan`); a session without
 //   one is refused. It answers {"ok":true} once OpenCode accepted the prompt and reported no error before the turn
 //   started (waiting at most 2 s; a busy session queues it and is not watched): accepted, not answered.
@@ -36,6 +37,13 @@ const LEVEL = String.raw`(?:Read|Use|Act(?: \(limited\)| \(test site\))?|Test si
 const NEXT_TOOL = String.raw`fai_browser_observe`;
 const PREFIX = String.raw`^\[FAI Browser\] `;
 const APPROVED = new RegExp(String.raw`${PREFIX}The user approved tab request ${ID} at level ${LEVEL}\. Call ${NEXT_TOOL} with requestId ${ID} and continue the task\.$`);
+// An action the user decided after the act that asked stopped waiting: the action id and the request id each appear
+// twice.
+const ACTION_APPROVED = new RegExp(String.raw`${PREFIX}The user approved action ${ID} on tab request ${ID}\. `
+  + String.raw`Call fai_browser_act with requestId ${ID}, actionId ${ID} and revision "${ID}" `
+  + String.raw`\(and the same commits value for an Enter\) to run it\.$`);
+const ACTION_DENIED = new RegExp(String.raw`${PREFIX}The user denied action ${ID} on tab request ${ID}\. `
+  + String.raw`Do not retry it; tell the user\.$`);
 const RESUMED = new RegExp(String.raw`${PREFIX}The user resumed tab request ${ID}: the tab is active again\. Call ${NEXT_TOOL} with requestId ${ID} and continue the task\.$`);
 const INVITED = new RegExp(String.raw`${PREFIX}The user invited you to work in a browser tab they have open \(invite ${ID}, level ${LEVEL}\)\. `
   + String.raw`Call fai_browser_open with \{"inviteId": "${ID}"\} `
@@ -99,6 +107,9 @@ function wakeTextOk(text) {
   if (typeof text !== 'string' || text.length > MAX_TEXT) return false;
   let match = APPROVED.exec(text) ?? RESUMED.exec(text);
   if (match) return match[1] === match[2];
+  match = ACTION_APPROVED.exec(text);
+  if (match) return match[1] === match[4] && match[2] === match[3];
+  if (ACTION_DENIED.test(text)) return true;
   match = INVITED.exec(text);
   if (!match || match[1] !== match[2]) return false;
   if (match[3] === undefined) return true;
