@@ -31,6 +31,11 @@ const PAGES = {
   '/contact': { title: 'Contact', text: 'Write to us', controls: [field('Message', 'submit', { submitHref: `${ORIGIN}/sent` })] },
   '/contact-filled': { title: 'Contact', text: 'Write to us', controls: [field('Message', 'submit', { filled: true, submitHref: `${ORIGIN}/sent` })] },
   '/sent': { title: 'Sent', text: 'message sent', controls: [] },
+  // A filled field whose form the page script classes purchase (a payment form) or sign_in (a password form).
+  '/pay': { title: 'Pay', text: 'Payment', controls: [field('Name on card', 'purchase', { filled: true, submitHref: `${ORIGIN}/paid` })] },
+  '/paid': { title: 'Paid', text: 'payment done', controls: [] },
+  '/login': { title: 'Sign in', text: 'Sign in', controls: [field('Username', 'sign_in', { filled: true, submitHref: `${ORIGIN}/home` })] },
+  '/home': { title: 'Home', text: 'signed in', controls: [] },
 };
 
 function runtimeOn(path, { approve } = {}) {
@@ -222,6 +227,46 @@ test('commits true: the user\'s time to decide is not charged to the act\'s time
   assert.equal(result.status, 'completed', result.reason);
   assert.ok(result.approvalMs >= 1200, String(result.approvalMs));
   assert.equal(bridge.executions[0].action.approvalId, 'slow');
+});
+
+// --- AC 3, purchase and sign_in rows (Planner ruling on message #94, reading A) ------------------------------------
+
+test('AC3 purchase/sign_in: at full a commits true Enter is refused exactly as today, never asked as enter_commit', async () => {
+  for (const [path, cls] of [['/pay', 'purchase'], ['/login', 'sign_in']]) {
+    const outcomes = [];
+    for (const commits of [true, false]) {
+      const { bridge, runtime } = runtimeOn(path, { approve: async () => ({ decision: 'approved', approvalId: 'never' }) });
+      const { observation, actions } = await runtime.observe({ mode: 'full' });
+      assert.equal(byType(actions, 'submit_field'), undefined, `${path}: no Enter is offered at full`);
+      const fill = byType(actions, 'fill');
+      assert.ok(fill, `${path}: the field itself is offered for text`);
+      const result = await runtime.act({ key: 'Enter', actionId: fill.id, commits }, { revision: observation.revision });
+      assert.equal(bridge.executions.length, 0, `${path} ${commits}: no key dispatched`);
+      assert.equal(bridge.asked.length, 0, `${path} ${commits}: never asked`);
+      assert.equal(result.needs.approval, undefined, `${path} ${commits}: no enter_commit pending row`);
+      outcomes.push({ code: result.code, level: result.needs.level ?? null, message: result.needs.message ?? null,
+        why: result.verdict.why.filter(code => code !== 'commits:declared') });
+    }
+    assert.equal(outcomes[0].code, 'refused_action', `${cls}: ${JSON.stringify(outcomes[0])}`);
+    assert.ok(outcomes[0].why.some(code => code.includes(cls)), `${cls}: refused as ${cls}: ${JSON.stringify(outcomes[0].why)}`);
+    assert.deepEqual(outcomes[0], outcomes[1], `${cls}: commits true is refused exactly as false (as before the flag)`);
+  }
+});
+
+test('AC3 purchase/sign_in: at testing a commits true Enter runs without asking; the receipt notes commits:declared', async () => {
+  for (const [path, landing] of [['/pay', '/paid'], ['/login', '/home']]) {
+    const { bridge, runtime } = runtimeOn(path, { approve: async () => ({ decision: 'pending' }) });
+    const { observation, actions } = await runtime.observe({ mode: 'testing', grant: { level: 'testing' } });
+    const enter = byType(actions, 'submit_field');
+    assert.ok(enter, `${path}: the Enter is offered at testing`);
+    const result = await runtime.act({ actionId: enter.id, commits: true }, { revision: observation.revision,
+      expectation: { urlIncludes: landing } });
+    assert.equal(result.status, 'completed', `${path}: ${result.reason}`);
+    assert.equal(bridge.asked.length, 0, `${path}: never asked`);
+    assert.deepEqual(bridge.executions.map(entry => entry.action.type), ['submit_field'], path);
+    assert.equal(bridge.executions[0].action.approvalId, undefined, path);
+    assert.ok(result.verdict.why.includes('commits:declared'), `${path}: ${JSON.stringify(result.verdict.why)}`);
+  }
 });
 
 // --- AC 4: commits never raises a level ----------------------------------------------------------------------------
