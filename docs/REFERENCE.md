@@ -1232,6 +1232,10 @@ newer program or another model may read more or less:
 | Codex | PNG, JPEG, GIF, WebP (images only) | PDF, text and Office files: with the shell off it has no route for them |
 | OpenCode | PNG, JPEG, WebP, TXT, MD, CSV, JSON | PDF and GIF on that model (it has no PDF input; its provider refused GIF); DOCX, XLSX, PPTX (OpenCode: "Cannot read binary file") |
 
+**OpenCode keeps a refused file.** When OpenCode or its model refuses an attached file (a GIF's `invalid image input`,
+say), the file stays in OpenCode's own session, so every later message in that chat fails the same way. Start a new
+chat. This is OpenCode's behaviour today, and may change.
+
 #### Stored chats and resuming
 
 The transcript's first line is a header: provider, model, the model the program reported, the provider's conversation
@@ -1272,6 +1276,12 @@ the usual 10 minutes, or when a later turn makes a fresh one for the same tab. A
 tab or a private window gets no invite: the agent asks for a site with an ordinary tab request, which opens a new tab.
 Only the panel's own `chat_send` can make this invite (the worker accepts it from the panel page only); no client API
 route creates one.
+
+**Firefox.** The add-on has no `tabs` permission, so the sidebar can read the address of the tab beside it only while
+it has access to that tab: after you clicked the FAI Browser icon on it since its last navigation (as when you open
+the panel from the popup's **Chat**: the first message gets the invite), or for a site the add-on already has access
+to. After the tab navigates, or when you switch to another tab, a turn carries no invite, and the agent asks for a
+site with an ordinary tab request. On Chrome and Brave, `activeTab` keeps that access until the tab leaves its site.
 
 #### Wakes become turns
 
@@ -1721,7 +1731,7 @@ One active tab lease per browser; approving another request in the same browser 
 **compat.js** ([extension/compat.js](../extension/compat.js)) loads first in the Firefox event page and only fills in what is missing, so the rest of the extension keeps calling `chrome.*` (Firefox's `chrome` namespace returns promises in MV3):
 
 - `chrome.offscreen`: Firefox's background is a page with a DOM, so the offscreen document is a hidden `<iframe src="offscreen.html">` in it. The same `offscreen.js` runs there and answers the same `annotate` message, so screenshot drawing, action-id tags and [secret boxes](#secret-redaction) are one code path in both browsers.
-- Exact-origin keeper. Chrome keeps `activeTab` until the tab leaves its origin; Firefox drops it at any navigation, after which the worker could neither read the tab's URL nor run `page.js`, and paused the lease (`origin_changed`). In the Firefox build an explicit **Use** or **Act** click in the popup or request modal asks, inside that click, for the request's exact origins as host permissions (`https://host/*`, port dropped; domain roots keep their own prompt). Firefox shows its permission prompt once per new site. The keeper records each pattern Firefox reports added after such a click (`chrome.storage.local.compatGrantedOrigins`) and removes it once no pending, active or paused request in `chrome.storage.session.requests` needs it; a site the user allowed by hand is never recorded, so never removed. An Act or direct-open approval requires this site access; declining it grants no session. Opening the toolbar alone neither requests site access nor approves a task.
+- Exact-origin keeper. Chrome keeps `activeTab` until the tab leaves its origin; Firefox drops it at any navigation, after which the worker could neither read the tab's URL nor run `page.js`, and paused the lease (`origin_changed`). In the Firefox build an explicit **Use** or **Act** click in the popup or request modal asks, inside that click, for the request's exact origins as host permissions (`https://host/*`, port dropped; domain roots keep their own prompt). Firefox shows its permission prompt once per new site. The keeper records each pattern Firefox reports added after such a click (`chrome.storage.local.compatGrantedOrigins`) and removes it once no pending, active or paused request in `chrome.storage.session.requests` needs it; a site the user allowed by hand is never recorded, so never removed. An Act or direct-open approval requires this site access; declining it grants no session. Answer Firefox's prompt within 45 s: after that the attempt is given up and a late answer approves nothing ("This approval waited too long for the browser's site-access prompt and was given up: nothing was approved. Choose Use or Act again."). Opening the toolbar alone neither requests site access nor approves a task.
 - Feature-detected as in Chrome: `tabGroups` (the tab mark; without it the badge and title remain), `action.getUserSettings` (the pin hint), `storage.local.setAccessLevel` (absent in Firefox, where `storage.local` is also readable by the add-on's own content scripts; `page.js` runs isolated from the page, so a page still cannot read it). The same in both: `storage.session`, `scripting.executeScript` with `func`/`args` (Firefox returns no `documentId`, so the injection retry targets the tab), `action.setPopup`/`onClicked`, `windows.create({type: 'popup'})`, `commands` (`_execute_action`, Ctrl+Shift+Y), `alarms`, `runtime.sendNativeMessage`.
 
 `chrome.tabs.group` names the tab's own window (`createProperties.windowId`): Firefox otherwise moved the tab into the last focused window, the prompt popup, and closing the prompt then closed the leased tab. Chrome already grouped the tab in its own window.
