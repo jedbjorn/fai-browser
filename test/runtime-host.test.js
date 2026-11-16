@@ -197,7 +197,7 @@ test('act never re-resolves Enter after the fill succeeded', async () => {
   const { observation, actions } = await runtime.observe({ mode: 'interactive', suppliedText: { query: 'project update' } });
   bridge.failNext.push(null, bridgeError('stale', 'Stale observation'));
   const fill = actions.find(action => action.type === 'fill_supplied_text');
-  const result = await runtime.act({ actionId: fill.id, submit: true }, { revision: observation.revision });
+  const result = await runtime.act({ actionId: fill.id, submit: true, commits: false }, { revision: observation.revision });
   assert.equal(result.code, 'stale', result.reason);
   assert.equal(bridge.executions.length, 2, 'the fill ran once and Enter was not retried');
   assert.deepEqual(bridge.executions.map(entry => entry.action.type), ['fill_supplied_text', 'submit_field']);

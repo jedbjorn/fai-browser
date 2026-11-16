@@ -347,10 +347,11 @@ export interface BrowserBridge {
     signal?: AbortSignal): Promise<{ id: string | null; control: Control }>;
   /**
    * Optional (the Approve gate): asks the user to approve one click on `target` of `revision` in the extension and
-   * waits up to `waitMs`. Without it a host-driven offer marks nothing needsApproval.
+   * waits up to `waitMs`. Without it a host-driven offer marks nothing needsApproval, and a committing Enter
+   * (`commits: true`, kind `enter_commit` on the field) is refused.
    */
   approve?(details: { target?: string; revision: string; cls: ApprovalClass; note?: string; waitMs: number;
-    kind?: 'fill_secret' | 'copy_secret'; handle?: string },
+    kind?: 'fill_secret' | 'copy_secret' | 'enter_commit'; handle?: string },
     options?: { level?: Level }, signal?: AbortSignal): Promise<ApprovalAnswer>;
 }
 
@@ -544,6 +545,14 @@ export interface ActChoice {
   point?: { x: number; y: number };
   text?: string;
   submit?: boolean;
+  /**
+   * Required with every Enter (`key: 'Enter'`, a `submit_field` action, `submit: true`), refused on any other act:
+   * true when the Enter commits the user (a purchase or payment, agreeing to terms, sending a message or post,
+   * submitting an application or form for them, a booking or registration, deleting, publishing, transferring), and
+   * the user approves it once first (approval kind `enter_commit`; a Test site runs it, why `commits:declared`); false
+   * for search, filter, navigation or text that only stays on the page (the receipt warns `enter_non_committing`).
+   */
+  commits?: boolean;
   fills?: Array<{ actionId: string; text?: string }>;
   hover?: boolean;
   /** Escape, Tab, Shift+Tab, arrows, Home, End, PageUp, PageDown, Space, Enter (a filled field's submit); Ctrl/Cmd+letter at full. */
@@ -779,8 +788,11 @@ export interface Needs {
    * testing, which stop.
    */
   level?: Level;
-  /** approval_pending only: the class, and the action id and revision to act on again once the user approves. */
-  approval?: { class: ApprovalClass; actionId: string; revision: string; expiresInMs?: number };
+  /**
+   * approval_pending only: the class, and the action id and revision to act on again once the user approves; `kind`
+   * `enter_commit` for a committing Enter (act again with `commits: true`).
+   */
+  approval?: { class: ApprovalClass; kind?: 'enter_commit'; actionId: string; revision: string; expiresInMs?: number };
 }
 
 /** One earlier page state: its URL and the blocks most relevant to the question. Untrusted text. */
@@ -1440,6 +1452,8 @@ export interface ActBody {
   point?: { x: number; y: number };
   text?: string;
   submit?: boolean;
+  /** Required with every Enter (ActChoice.commits). */
+  commits?: boolean;
   fills?: Array<{ actionId: string; text?: string }>;
   hover?: boolean;
   key?: string;

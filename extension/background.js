@@ -2886,7 +2886,7 @@ function validateAction(action) {
     throw new ExtensionError('cross_origin', 'Navigation outside selected origin');
   }
   // An approved action (the Approve gate): bound to a target, never a point (copy_secret names a handle instead).
-  if (action.approvalId !== undefined && (!['click', 'fill_secret', 'copy_secret', 'upload'].includes(action.type) || action.point !== undefined
+  if (action.approvalId !== undefined && (!['click', 'fill_secret', 'copy_secret', 'upload', 'submit_field'].includes(action.type) || action.point !== undefined
     || (action.type !== 'copy_secret' && action.target === undefined)
     || typeof action.approvalId !== 'string' || action.approvalId.length > 64)) {
     throw new ExtensionError('unsupported', 'Invalid approved click');
@@ -3119,7 +3119,12 @@ async function approveCommand(command) {
   // Accepting a JavaScript dialog whose text is gated (Test site): no control, the dialog's own text is what the
   // user approves.
   const dialogUse = kind === 'dialog';
-  if ((kind !== undefined && kind !== null && !secretUse && !dialogUse && !uploadUse) || (secretUse && (cls !== 'secret' || typeof handle !== 'string' || !/^\d{1,4}$/.test(handle)))) {
+  // A committing Enter (the agent sent commits: true): Enter in a filled text field, class submit, always asked,
+  // whatever the settings (the agent asked to be checked). Its level was checked before the ask and is checked again
+  // at dispatch: the approval never stands in for it.
+  const enterUse = kind === 'enter_commit';
+  if (enterUse && cls !== 'submit') throw new ExtensionError('unsupported', 'Invalid approval request');
+  if ((kind !== undefined && kind !== null && !secretUse && !dialogUse && !uploadUse && !enterUse) || (secretUse && (cls !== 'secret' || typeof handle !== 'string' || !/^\d{1,4}$/.test(handle)))) {
     throw new ExtensionError('unsupported', 'Invalid approval request');
   }
   const targetless = kind === 'copy_secret' || dialogUse;
@@ -3136,7 +3141,7 @@ async function approveCommand(command) {
   if (dialogUse && (grantedLevel() !== 'testing' || !DIALOG_GATED.test(session.lastDialog?.text ?? ''))) {
     return { decision: 'refused', reason: 'class_mismatch' };
   }
-  if (!secretUse && !dialogUse && !uploadUse && !approvalSettings[approvalSetting(cls)]) return { decision: 'off' };
+  if (!secretUse && !dialogUse && !uploadUse && !enterUse && !approvalSettings[approvalSetting(cls)]) return { decision: 'off' };
   const secret = secretUse ? vaultEntry(handle) : null;
   if (secretUse && !secret) return { decision: 'refused', reason: 'unknown_secret' };
   // A copy names no control: what the user approves is the handle itself.
@@ -3171,7 +3176,7 @@ async function approveCommand(command) {
       level, createdAt: now, expiresAt: now + APPROVAL_PENDING_MS, status: 'pending', approvalId: null, useBy: 0,
       windowId: null, waiters: new Set(),
       // A secret use: the handle, and what the card shows of it (its placeholder and the origin it came from).
-      kind: secretUse || dialogUse || uploadUse ? kind : null, handle: secretUse ? handle : null,
+      kind: secretUse || dialogUse || uploadUse || enterUse ? kind : null, handle: secretUse ? handle : null,
       // An upload: the file's name and size the user approves (the bytes are checked against them at execute).
       file: upload,
       secret: secretUse ? { label: secretPlaceholder(handle, secret.kind, secret.value, secret.pre), kind: secret.kind, from: secret.origin } : null,
@@ -3218,8 +3223,9 @@ function takeApproval(action, expectedRevision, tab) {
   approvals.delete(entry.id);
   publishApprovals();
   if (Date.now() > entry.useBy) throw new ExtensionError('blocked_risky', 'The approval expired');
-  // The approval names the action kind (a click, a secret fill or copy) and, for a secret use, the handle.
-  const kind = action.type === 'click' ? null : action.type;
+  // The approval names the action kind (a click, a secret fill or copy, a committing Enter) and, for a secret use, the
+  // handle.
+  const kind = action.type === 'click' ? null : action.type === 'submit_field' ? 'enter_commit' : action.type;
   if (entry.tabId !== tab.id || entry.leaseId !== session.leaseId || (entry.target ?? undefined) !== action.target
     || (entry.kind ?? null) !== kind || (entry.handle ?? undefined) !== action.handle) {
     throw new ExtensionError('blocked_risky', 'The approval was for another action');

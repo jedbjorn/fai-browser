@@ -15,6 +15,16 @@ import { withResumeWait } from './resume.js';
 import { NOT_WEB_LINK_TEXT, OTHER_SITE_NEXT, OTHER_SITE_TEXT, otherSiteBrief } from './other-site.js';
 import { automaticPopupEvidence, automaticPopupScope } from './automatic-popups.js';
 
+// Enter declares commits (docs/REFERENCE.md "Enter submits"): every act that presses Enter says whether it commits the
+// user. Missing, the act is refused before anything runs; false runs under the usual gate and warns; true asks the
+// user once (approval kind enter_commit) and never lets an Enter run that the level refuses.
+export const ENTER_COMMITS_TEXT = 'Enter needs commits: true if it commits the user (purchase, payment, agreeing to '
+  + 'terms, sending a message, submitting an application, booking or registration, deleting, publishing, transferring), '
+  + 'else false. Send the act again with commits.';
+export const ENTER_NON_COMMITTING_TEXT = 'Enter sent as non-committing. If it committed the user, say so to the user now.';
+export const ENTER_COMMIT_UNASKED_TEXT = 'FAI Browser could not ask the user to approve this committing Enter. Tell the '
+  + 'user; they can press Enter in the tab themselves.';
+
 export const RESULT_VERSION = 2;
 
 export const STATUSES = [
@@ -839,7 +849,8 @@ function leanNeeds(needs) {
   // The Approve gate: the class, and the action id and revision to act on again once the user approves.
   const approval = needs.approval;
   if (approval && typeof approval === 'object' && typeof approval.actionId === 'string' && typeof approval.revision === 'string') {
-    out.approval = { class: String(approval.class ?? ''), actionId: approval.actionId, revision: approval.revision,
+    out.approval = { class: String(approval.class ?? ''), ...(approval.kind === 'enter_commit' ? { kind: 'enter_commit' } : {}),
+      actionId: approval.actionId, revision: approval.revision,
       ...(Number.isInteger(approval.expiresInMs) ? { expiresInMs: approval.expiresInMs } : {}) };
   }
   return out;
@@ -1174,9 +1185,10 @@ function directApproveText(origin, requestId, approval, resume) {
 function approvalPendingText(result, waitMs = null) {
   const label = String(result.needs?.control?.label ?? '').replace(/["'\u2018\u2019\u201c\u201d\s]+/g, ' ').trim().slice(0, 60);
   const pending = result.needs?.approval ?? {};
-  const again = pending.actionId && pending.revision
+  const again = (pending.actionId && pending.revision
     ? `fai_browser_act again with actionId ${pending.actionId} and revision "${pending.revision}"`
-    : 'fai_browser_act again with the same actionId and revision';
+    : 'fai_browser_act again with the same actionId and revision')
+    + (pending.kind === 'enter_commit' ? ' and commits: true' : '');
   const level = typeof result.needs?.level === 'string'
     ? ` Or ask for ${result.needs.level}: tell the user "click Act${result.needs.level === 'testing' ? ' with the test-only option' : ''} for this task in FAI Browser", then fai_browser_open with the requestId and mode "${result.needs.level}".` : '';
   const seconds = Number.isFinite(waitMs) && waitMs > 0 ? Math.round(waitMs / 1000) : null;

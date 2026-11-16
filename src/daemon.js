@@ -68,8 +68,8 @@ const ACT_KEYS = new Set(['requestId', 'actionId', 'point', 'revision', 'expecta
   'prune', 'outputDir', 'answerQuestion', 'approvalWaitMs', 'reason',
   // Host-composed acts (src/runtime.js checkActChoice): typed text, batched fills, keys, hover, URLs, history, tabs,
   // dialog answers and uploads.
-  'text', 'submit', 'fills', 'hover', 'key', 'url', 'openTab', 'nav', 'tab', 'dialog', 'file']);
-// The parts of an act body that make up the runtime's choice.
+  'text', 'submit', 'fills', 'hover', 'key', 'url', 'openTab', 'nav', 'tab', 'dialog', 'file', 'commits']);
+// The parts of an act body that make up the runtime's choice (`commits` is kept when false too).
 const CHOICE_KEYS = ['actionId', 'point', 'text', 'submit', 'fills', 'hover', 'key', 'url', 'openTab', 'nav', 'tab', 'dialog', 'file'];
 const OBSERVE_KEYS = new Set(['requestId', 'mode', 'allowedUrls', 'suppliedText', 'capture', 'prune', 'outputDir',
   'instruction', 'expectation', 'answerQuestion', 'policy', 'focus', 'digestChars', 'waitFor', 'maxMs', 'logs', 'afterAsk']);
@@ -1973,7 +1973,7 @@ export function createDaemon(options = {}) {
     if (choice.actionId) options.actionId = choice.actionId;
     if (choice.point) options.point = { x: choice.point.x, y: choice.point.y };
     // A composed act for the audit trail: what kind, never a typed value or a file's bytes (lengths and names only).
-    for (const key of ['key', 'url', 'nav', 'tab', 'dialog', 'hover', 'submit']) if (choice[key] !== undefined) options[key] = choice[key];
+    for (const key of ['key', 'url', 'nav', 'tab', 'dialog', 'hover', 'submit', 'commits']) if (choice[key] !== undefined) options[key] = choice[key];
     if (typeof choice.text === 'string') options.textChars = choice.text.length;
     if (Array.isArray(choice.fills)) options.fills = choice.fills.map(fill => ({ actionId: fill.actionId, chars: String(fill.text ?? '').length }));
     if (choice.file) options.file = { name: choice.file.name, size: choice.file.size };
@@ -2308,8 +2308,11 @@ export function createDaemon(options = {}) {
     if (body.revision !== undefined && typeof body.revision !== 'string') throw badOptions('revision must be a string');
     if (body.submit !== undefined && typeof body.submit !== 'boolean') throw badOptions('submit must be a boolean');
     if (body.hover !== undefined && typeof body.hover !== 'boolean') throw badOptions('hover must be a boolean');
+    if (body.commits !== undefined && body.commits !== null && typeof body.commits !== 'boolean') throw badOptions('commits must be a boolean');
     const choice = {};
     for (const key of CHOICE_KEYS) if (body[key] !== undefined && body[key] !== null && body[key] !== false) choice[key] = body[key];
+    // Whether an Enter commits the user (checkActChoice requires it on every Enter): false is a declaration too.
+    if (typeof body.commits === 'boolean') choice.commits = body.commits;
     if (point !== null) choice.point = point;
     // An upload: the file the MCP server checked lies in the host's workspace, read here (its bytes go to the
     // extension only; results and traces keep its name and size).

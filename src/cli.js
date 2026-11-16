@@ -51,6 +51,9 @@ const USAGE = `Usage (your agent chooses each action):
 act flags:
   --expect-url-includes S, --expect-text-includes S, --expect-title-includes S
   --capture each|last|none --timeout-ms N
+  --commits true|false     Required for a "press Enter in" action: true when the Enter commits the user (a purchase
+                           or payment, terms, a message or post, an application or form, a booking or registration,
+                           deleting, publishing, transferring; the user approves it once), false otherwise
   --release                Release the tab when the act ends (default: keep it for the next command)
   --no-prune               Skip artifact retention after writing the trace
   --pretty                 Pretty-print the JSON result
@@ -147,6 +150,7 @@ function parseCli(argv) {
         'open-tab': { type: 'string' },
         tab: { type: 'string' },
         revision: { type: 'string' },
+        commits: { type: 'string' },
         limit: { type: 'string' },
         step: { type: 'string' },
         kind: { type: 'string' },
@@ -393,6 +397,11 @@ async function executeAct(flags) {
   else if (flags['open-tab']) body.openTab = flags['open-tab'];
   else if (flags.tab) body.tab = flags.tab;
   else body.actionId = flags.action;
+  // Whether a "press Enter in" action commits the user (the daemon refuses an Enter without it, before anything runs).
+  if (flags.commits !== undefined) {
+    if (!['true', 'false'].includes(flags.commits)) throw new ConfigError('--commits takes true or false');
+    body.commits = flags.commits === 'true';
+  }
   for (const key of ['expectation', 'capture', 'timeoutMs']) {
     if (options[key] !== undefined) {
       body[key] = options[key];

@@ -14,6 +14,7 @@ import { aggregateItems, answerScope, buildMemory, coverage, itemValue, lineText
 import {
   ANSWER_STATUSES, MAX_ANSWER_CANDIDATES, bridgeError, buildVerdict, compactPage, pageExtras,
   compactStepObservation, createResult, isKnownCode, nextFor, outcomeFor, publicObservation, redactSecrets, setOutcome,
+  ENTER_COMMITS_TEXT, ENTER_COMMIT_UNASKED_TEXT,
   DIALOG_LEVEL_TEXT, HISTORY_OFF_SITE_TEXT, ONE_TAB_TEXT, URL_REFUSED_TEXT, URL_SCHEME_TEXT, URL_UNSEEN_CROSS_TEXT,
 } from './result.js';
 import {
@@ -1599,9 +1600,14 @@ class Session {
     // AbortSignal.timeout() is unref'ed by Node: an SDK-only process could exit before returning its result.
     const timeoutController = new AbortController();
     this.timeoutSignal = timeoutController.signal;
-    this.timeoutTimer = setTimeout(() => {
-      timeoutController.abort(new DOMException('Run time budget reached', 'TimeoutError'));
-    }, config.timeoutMs);
+    // The budget's end, and the timer that aborts the run there (held while the user decides on an approval).
+    this.budgetEnds = Date.now() + config.timeoutMs;
+    this.armBudget = ms => {
+      this.timeoutTimer = setTimeout(() => {
+        timeoutController.abort(new DOMException('Run time budget reached', 'TimeoutError'));
+      }, ms);
+    };
+    this.armBudget(config.timeoutMs);
     this.callerSignal = config.signal;
     this.signal = AbortSignal.any([controller.signal, this.timeoutSignal, ...(config.signal ? [config.signal] : [])]);
 
@@ -1705,6 +1711,20 @@ class Session {
     this.result.permissions = { ...config.permissions };
     this.why(`grant:lowered:${level}`);
     return true;
+  }
+
+  /** Stop the time budget's clock while the user decides on an approval (releaseBudget restarts it). */
+  holdBudget() {
+    clearTimeout(this.timeoutTimer);
+    this.budgetHeld = Math.max(0, this.budgetEnds - Date.now());
+  }
+
+  /** Restart the time budget's clock with what was left when holdBudget stopped it. */
+  releaseBudget() {
+    if (this.budgetHeld === undefined) return;
+    this.budgetEnds = Date.now() + this.budgetHeld;
+    this.armBudget(this.budgetHeld);
+    this.budgetHeld = undefined;
   }
 
   warn(code) {
@@ -2686,6 +2706,36 @@ function approvalOutcome(session, action, offer, approval) {
   result.needs.control = control;
 }
 
+// A committing Enter (commits: true) the user has not approved: pending (approval_pending; the field's "press Enter in"
+// action on `revision` runs it once approved), denied (refused_action, stop), an ask that failed as a known outcome
+// (stale, ...), or one FAI could not ask at all (refused_action: the user presses Enter themselves). Never a level
+// request: the Enter's own level was checked before the ask.
+function enterCommitOutcome(session, action, revision, approval) {
+  const result = session.result;
+  const control = { ref: String(action.target ?? ''), label: clip(action.label, 120) };
+  result.needs.control = control;
+  if (approval.decision === 'pending') {
+    setOutcome(result, 'approval_pending');
+    result.needs.approval = { class: 'submit', kind: 'enter_commit', actionId: action.id, revision, expiresInMs: APPROVAL_PENDING_MS };
+    session.why('approval:pending');
+    return;
+  }
+  if (approval.decision === 'denied') {
+    setOutcome(result, 'refused_action');
+    result.needs.message = APPROVAL_DENIED_TEXT;
+    session.why('approval:denied');
+    return;
+  }
+  if (approval.decision === 'error' && approval.code && !['unsupported', 'failed'].includes(approval.code)) {
+    setOutcome(result, approval.code);
+    session.why(`approval:${approval.code}`);
+    return;
+  }
+  setOutcome(result, 'refused_action');
+  result.needs.message = ENTER_COMMIT_UNASKED_TEXT;
+  session.why(`approval:${['refused', 'unavailable'].includes(approval.decision) ? approval.decision : 'failed'}`);
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Host-composed acts (fai_browser_act beyond one offered id): typed text, batched fills, keys, hover, URLs, history,
 // tabs and dialog answers. checkActChoice is the one shape check (the daemon answers 400 with it before any act).
@@ -2807,6 +2857,14 @@ export function checkActChoice(offer, choice, { revisionless = false } = {}) {
   if (action?.type === 'upload' && spec.file === undefined) return `${action.id} is an upload: give the file.`;
   if (revisionless && action && (action.needsApproval || ['fill_secret', 'copy_secret'].includes(action.type))) {
     return `revision is required for ${action.id}: the user approves it on the page they saw.`;
+  }
+  // Every Enter (key "Enter", a "press Enter in" action, submit after typed text) declares whether it commits the
+  // user; no other act takes the flag.
+  const enter = kind === 'key' ? pressKey(spec.key).key === 'Enter'
+    : (action?.type === 'submit_field' && !spec.hover) || (spec.submit !== undefined && spec.submit !== false);
+  if (enter && typeof spec.commits !== 'boolean') return ENTER_COMMITS_TEXT;
+  if (!enter && spec.commits !== undefined && spec.commits !== null) {
+    return 'commits goes with an Enter only (key "Enter", a "press Enter in" action, or submit: true).';
   }
   return null;
 }
@@ -3133,6 +3191,24 @@ export class BrowserRuntime {
           }
           ({ action: next, offer: base } = again);
         }
+        // A committing Enter (commits: true) asks the user once, on the page it runs on (after the act's own fills: the
+        // approval is bound to that revision), after its level was checked. A Test site runs it without asking.
+        if (next.type === 'submit_field' && spec.commits === true) {
+          if (config.level === 'testing') session.why('commits:declared');
+          else {
+            const answer = await this.#askEnterCommit(session, offer, page, next, options);
+            if (answer.decision !== 'approved' || typeof answer.approvalId !== 'string') {
+              // Pending: the page the Enter would run on, offered again; its "press Enter in" action is what runs once
+              // approved. Anything else ends here without an offer, as the Approve gate's other outcomes do.
+              if (answer.decision === 'pending') offerAgain(page);
+              const again = session.result.offer?.actions?.find(candidate => candidate.type === 'submit_field'
+                && String(candidate.target) === String(next.target));
+              enterCommitOutcome(session, again ?? next, page.revision, answer);
+              return session.result;
+            }
+            next = { ...next, approvalId: answer.approvalId };
+          }
+        }
         // The user approved this very click: no model guard second-guesses them.
         const guarded = next.approvalId ? { action: next } : await hostGuard(page, next);
         if (guarded.result) return guarded.result;
@@ -3171,6 +3247,7 @@ export class BrowserRuntime {
           next = again;
         }
         session.result.did.push(didLine(next));
+        if (next.type === 'submit_field' && spec.commits === false) session.warn('enter_non_committing');
         page = executed.observation;
         if (index + 1 < plan.length && automaticPopupEvidence(page).automatic?.length) {
           setOutcome(session.result, 'stale');
@@ -3515,6 +3592,38 @@ export class BrowserRuntime {
       return { decision: 'error', code: isKnownCode(error?.code) ? error.code : 'failed', message: String(error?.message ?? error) };
     } finally {
       this.active = null;
+    }
+  }
+
+  /**
+   * The Approve gate's question for a committing Enter (commits: true) on `page`, inside the act's session: kind
+   * enter_commit on the field, class submit, always asked whatever the user's settings. The wait (approvalWaitMs, as
+   * #askApproval) is not charged to the act's time budget and adds to the receipt's approvalMs; an interrupt ends the
+   * act as itself. Returns the extension's answer, { decision: 'unavailable' } for a bridge that cannot ask, or
+   * { decision: 'error', code } when the ask failed.
+   */
+  async #askEnterCommit(session, offer, page, action, options) {
+    if (typeof this.bridge.approve !== 'function') return { decision: 'unavailable' };
+    const waitMs = Number.isFinite(options.approvalWaitMs) ? Math.max(0, Math.min(options.approvalWaitMs, 120_000)) : 60_000;
+    const signal = AbortSignal.any([session.interruptSignal, ...(session.callerSignal ? [session.callerSignal] : [])]);
+    const askedAt = Date.now();
+    session.holdBudget();
+    try {
+      const answer = await this.bridge.approve({
+        target: action.target,
+        revision: page.revision,
+        cls: 'submit',
+        kind: 'enter_commit',
+        note: typeof options.reason === 'string' ? options.reason.slice(0, 200) : undefined,
+        waitMs,
+      }, { level: offer.config.level }, signal);
+      return answer && typeof answer === 'object' && typeof answer.decision === 'string' ? answer : { decision: 'error', code: 'unsupported' };
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return { decision: 'error', code: isKnownCode(error?.code) ? error.code : 'failed', message: String(error?.message ?? error) };
+    } finally {
+      session.result.approvalMs = (session.result.approvalMs ?? 0) + (Date.now() - askedAt);
+      session.releaseBudget();
     }
   }
 

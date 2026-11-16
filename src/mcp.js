@@ -17,7 +17,8 @@ import { createInterface } from 'node:readline';
 import { faiHome } from './paths.js';
 import { entryCovered, requestStartUrl, siteRoot } from './origins.js';
 import {
-  agentResult, applyBudget, approvalSteps, directNext, directResult, leanObserve, nextFor, outcomeResult, setOutcome,
+  ENTER_NON_COMMITTING_TEXT, agentResult, applyBudget, approvalSteps, directNext, directResult, leanObserve, nextFor,
+  outcomeResult, setOutcome,
 } from './result.js';
 import { validateExpectation } from './expectation.js';
 import { scrubSecrets } from './secrets.js';
@@ -119,7 +120,8 @@ export const INSTRUCTIONS = [
     + 'Values the user gave go in suppliedText. A deep URL in allowedUrls opens on approval. It returns the page. '
     + 'An inviteId from the user\'s FAI popup replaces origins and reason. Use approves read-only/single-tab; Act approves full/multiple-tabs.',
   '2. If page.digest answers the task, reply. Else fai_browser_act with one actions[].id (revision: single-use, '
-    + 'required only for needsApproval, secrets, point); a fill takes text (submit: true presses Enter). Give the '
+    + 'required only for needsApproval, secrets, point); a fill takes text (submit: true presses Enter; every Enter '
+    + 'sends commits: true if it commits the user, else false). Give the '
     + 'final act an expectation, e.g. {"urlIncludes":"/members"}; only verification.passed true is verified.',
   '3. Follow the links the page offers. Never a guessed address (url, allowedUrls or origins): only one the user gave '
     + 'or a result showed. Link not listed: fai_browser_observe with focus (label, host or path); moreActions counts '
@@ -296,6 +298,13 @@ export const TOOLS = [
       },
       text: { type: 'string', maxLength: MAX_TYPED_CHARS, description: 'For a "fill ... (act with text)" action: the text to type. Never passwords or codes.' },
       submit: { type: 'boolean', description: 'After text or fills: press Enter in that field (a search or form submit, gated by level).' },
+      commits: {
+        type: 'boolean',
+        description: 'Required with every Enter (key Enter, a "press Enter in" action, submit). true when it commits the '
+          + 'user: a purchase or payment, agreeing to terms, sending a message or post, submitting an application or form '
+          + 'for them, a booking or registration, deleting, publishing, transferring (the user approves it once). false '
+          + 'for search, filter, navigation, or text that only stays on the page.',
+      },
       fills: {
         type: 'array', minItems: 1, maxItems: MAX_BATCH_FILLS,
         description: 'Several fields in one call, in order: [{actionId, text}]; a "with supplied" fill takes no text.',
@@ -982,6 +991,7 @@ export function directText(structured, previous = null) {
  */
 export function warningLine(warning) {
   const code = oneLine(warning, 200);
+  if (code === 'enter_non_committing') return `${code} (${ENTER_NON_COMMITTING_TEXT})`;
   const withheld = /^controls_need_reversible:(\d+)$/.exec(code);
   if (!withheld) return code;
   return `${code} (${withheld[1]} button${withheld[1] === '1' ? '' : 's'} or field${withheld[1] === '1' ? '' : 's'} on this page `
@@ -2182,6 +2192,7 @@ class McpServer {
       point: hasPoint ? { x: args.point.x, y: args.point.y } : undefined,
       text: args.text,
       submit: args.submit === true ? true : undefined,
+      commits: typeof args.commits === 'boolean' ? args.commits : undefined,
       fills: args.fills,
       key: args.key,
       hover: args.hover === true ? true : undefined,

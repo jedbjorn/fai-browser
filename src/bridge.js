@@ -848,6 +848,8 @@ export function createHub({
       args.kind = 'upload';
       args.file = { name: String(file?.name ?? ''), size: Number(file?.size) };
     }
+    // A committing Enter (commits: true): the field it is pressed in; the extension always asks.
+    if (kind === 'enter_commit') args.kind = 'enter_commit';
     // Accepting a JavaScript dialog (Test site): no control, the extension shows the dialog's own text.
     if (kind === 'dialog') {
       args.kind = 'dialog';

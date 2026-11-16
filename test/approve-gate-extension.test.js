@@ -187,3 +187,68 @@ test('label hash: page.js SHA-256 matches node:crypto (block boundaries, Unicode
   assert.deepEqual(await execute(page, create.id, observation.revision, { approval: { target: create.id, cls: 'secret', labelHash: info.labelHash } }),
     { ok: true });
 });
+
+// --- A committing Enter (spec #79 "Enter declares commits"): approval kind enter_commit -----------------------------
+
+function pressEnter(page, target, revision, { allow = FULL, approval = null } = {}) {
+  return page.evaluate(([t, r, a, ap]) => globalThis.__faiPage.execute({ type: 'submit_field', target: t }, r, { quietMs: 10, capMs: 50 },
+    [], [], a, undefined, [], ap).then(() => ({ ok: true }), error => ({ code: error.code, message: error.message })), [target, revision, allow, approval]);
+}
+
+const FORMS = `<form id="note" onsubmit="window.sent = (window.sent || 0) + 1; return false;">
+  <label>Message <input name="message" value="See you at six"></label><button>Send</button></form>
+<form role="search" onsubmit="window.searched = (window.searched || 0) + 1; return false;">
+  <input type="search" name="q" aria-label="Search" value="kettle"><button>Search</button></form>
+<form onsubmit="window.paid = (window.paid || 0) + 1; return false;">
+  <label>Card number <input autocomplete="cc-number" value="4242"></label><label>Name on card <input name="holder" value="Ada"></label>
+  <button>Pay</button></form>
+<label>Notes <input name="notes"></label>`;
+
+test('enter_commit: approvalInfo binds a filled text field still offering Enter (class submit); never an empty, payment or sign-in field', async t => {
+  const page = await load(t, '/compose', FORMS);
+  const observation = await observe(page);
+  const info = (label, kind = 'enter_commit') => page.evaluate(([target, revision, k]) => globalThis.__faiPage.approvalInfo(target, revision, k)
+    .then(value => value, error => ({ code: error.code })), [byLabel(observation, label).id, observation.revision, kind]);
+  const message = await info('Message');
+  assert.equal(message.cls, 'submit');
+  assert.equal(message.label, 'Message');
+  assert.equal(message.labelHash, createHash('sha256').update('Message').digest('hex').slice(0, 32));
+  assert.equal(message.total, undefined);
+  assert.equal((await info('Search')).cls, 'submit', 'a search Enter the agent says commits is asked as a submit');
+  assert.equal((await info('Notes')).code, 'blocked_risky', 'an empty field submits nothing');
+  assert.equal((await info('Name on card')).code, 'blocked_risky', 'a payment form keeps its purchase class: never an enter_commit');
+  assert.equal((await info('Card number')).code, 'blocked_risky', 'never a payment field');
+});
+
+test('enter_commit: the Enter runs only with an approval for exactly this field; the approval never raises the level', async t => {
+  const page = await load(t, '/compose', FORMS);
+  const observation = await observe(page);
+  const message = byLabel(observation, 'Message');
+  const info = await page.evaluate(([target, revision]) => globalThis.__faiPage.approvalInfo(target, revision, 'enter_commit'),
+    [message.id, observation.revision]);
+  const approval = { target: message.id, cls: 'submit', kind: 'enter_commit', labelHash: info.labelHash };
+  // An approval that does not hold for this Enter refuses it: a click approval, another label, another field.
+  for (const wrong of [{ ...approval, kind: undefined }, { ...approval, labelHash: 'x'.repeat(32) }, { ...approval, cls: 'delete' },
+    { ...approval, target: byLabel(observation, 'Search').id }]) {
+    assert.equal((await pressEnter(page, message.id, observation.revision, { approval: wrong })).code, 'blocked_risky', JSON.stringify(wrong));
+  }
+  assert.equal(await page.evaluate(() => window.sent ?? 0), 0, 'nothing was sent');
+  // Below full a form submit stays refused, approval or not (commits never raises a level).
+  assert.equal((await pressEnter(page, message.id, observation.revision, { allow: [...REVERSIBLE, 'submit_safe'], approval })).code, 'blocked_risky');
+  assert.equal(await page.evaluate(() => window.sent ?? 0), 0);
+  // The approval for this field at full: one Enter, one submit.
+  assert.deepEqual(await pressEnter(page, message.id, observation.revision, { approval }), { ok: true });
+  assert.equal(await page.evaluate(() => window.sent), 1);
+
+  // A payment form's Enter: refused at full whatever approval comes with it (purchases stay the user's own outside
+  // testing); a click approval kind cannot stand in for an Enter either.
+  const next = await observe(page);
+  const holder = byLabel(next, 'Name on card');
+  assert.equal((await pressEnter(page, holder.id, next.revision, { approval: { target: holder.id, cls: 'submit', kind: 'enter_commit',
+    labelHash: createHash('sha256').update('Name on card').digest('hex').slice(0, 32) } })).code, 'blocked_risky');
+  assert.equal(await page.evaluate(() => window.paid ?? 0), 0);
+  // An enter_commit approval never lets a click run.
+  const send = byLabel(next, 'Send');
+  assert.equal((await execute(page, send.id, next.revision, { allow: REVERSIBLE, approval: { target: send.id, cls: 'submit', kind: 'enter_commit',
+    labelHash: createHash('sha256').update('Send').digest('hex').slice(0, 32) } })).code, 'blocked_risky');
+});

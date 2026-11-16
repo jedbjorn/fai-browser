@@ -2855,6 +2855,49 @@ test('approve: never at read-only, purchases only from full, off when the user t
   assert.equal((await h.waitFor(m => m.type === 'result' && m.id === bad)).error.code, 'unsupported');
 });
 
+test('enter_commit: a committing Enter is always asked (asks off too), shows its field, and binds the one Enter it approves', async () => {
+  const h = await started({ level: 'full' });
+  h.local.approvals = { purchase: false, secret: false, level: false };
+  h.emitStorage({ approvals: { newValue: { purchase: false, secret: false, level: false } } }, 'local');
+  const messageField = (target, revision) => ({ revision, documentId: 'doc', target, label: 'Message', labelHash: 'h-message', cls: 'submit' });
+  h.approvalInfo = messageField;
+  // Only as a submit: any other class is not a committing Enter.
+  const wrong = h.command('approve', { target: '1', expectedRevision: 'doc:1', cls: 'delete', kind: 'enter_commit', waitMs: 10 });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === wrong)).error.code, 'unsupported');
+  const { id, entry } = await asked(h, { cls: 'submit', kind: 'enter_commit', note: 'Sends your reply' });
+  assert.equal(entry.kind, 'enter_commit', 'asked although every ask setting is off');
+  assert.equal(entry.cls, 'submit');
+  assert.equal(entry.label, 'Message');
+  assert.equal(entry.note, 'Sends your reply');
+  assert.equal(h.pageArgs.filter(c => c.method === 'approvalInfo').at(-1).args[2], 'enter_commit', 'page.js checks the field offers Enter');
+  assert.ok(h.popupWindows.some(options => options.url.includes('approve.html?id=')), 'the approval window opened');
+  await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  const approvalId = (await h.waitFor(m => m.type === 'result' && m.id === id)).result.approvalId;
+  // A click on the same target cannot spend an Enter's approval.
+  const click = h.command('execute', { action: { type: 'click', target: '1', approvalId }, expectedRevision: 'doc:1', level: 'full' });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === click)).error.code, 'blocked_risky');
+  assert.equal(h.pageArgs.filter(c => c.method === 'execute').length, 0);
+  // Asked again (the click spent the first id): the Enter runs once with it; page.js gets the binding, never the id.
+  const second = await asked(h, { cls: 'submit', kind: 'enter_commit' });
+  await h.send({ type: 'approval_decision', id: second.entry.id, decision: 'approve' }, APPROVE_PAGE);
+  const enterId = (await h.waitFor(m => m.type === 'result' && m.id === second.id)).result.approvalId;
+  const run = h.command('execute', { action: { type: 'submit_field', target: '1', approvalId: enterId }, expectedRevision: 'doc:1', level: 'full' });
+  const ran = await h.waitFor(m => m.type === 'result' && m.id === run);
+  assert.equal(ran.error, undefined, JSON.stringify(ran.error));
+  const dispatch = h.pageArgs.filter(c => c.method === 'execute').at(-1);
+  assert.equal(dispatch.args[0].type, 'submit_field');
+  assert.equal(dispatch.args[0].approvalId, undefined, 'the id itself never reaches the page');
+  assert.deepEqual(dispatch.approval, { target: '1', cls: 'submit', labelHash: 'h-message', kind: 'enter_commit' });
+  const replay = h.command('execute', { action: { type: 'submit_field', target: '1', approvalId: enterId }, expectedRevision: 'doc:1', level: 'full' });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === replay)).error.code, 'blocked_risky', 'single use');
+  // Denied (on a fresh page): the act learns it.
+  const denying = await started({ level: 'full' });
+  denying.approvalInfo = messageField;
+  const third = await asked(denying, { cls: 'submit', kind: 'enter_commit' });
+  await denying.send({ type: 'approval_decision', id: third.entry.id, decision: 'deny' }, APPROVE_PAGE);
+  assert.deepEqual((await denying.waitFor(m => m.type === 'result' && m.id === third.id)).result, { decision: 'denied' });
+});
+
 // --- secret handles --------------------------------------------------------------------------------------------
 
 const FAKE_KEY = ['sk-proj-', 'FAKEvault0123456789', 'abcdefABCDEF0123456789'].join('');

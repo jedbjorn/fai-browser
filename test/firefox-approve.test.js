@@ -80,10 +80,13 @@ async function setup(t, extraLocal = {}) {
   // until release().
   const held = [];
   const release = () => { for (const done of held.splice(0)) done(); };
+  // Every path the browser asked for, in order (a form's submission is a GET of its action).
+  const hits = [];
   const site = http.createServer((req, res) => {
+    hits.push(req.url);
     const reply = () => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end('<!doctype html><title>Portal</title><h1>Portal</h1>');
+      res.end(SITE_PAGES[new URL(req.url, 'http://site').pathname] ?? '<!doctype html><title>Portal</title><h1>Portal</h1>');
     };
     if (req.url.startsWith('/held')) held.push(reply);
     else if (req.url.startsWith('/trickle')) {
@@ -172,8 +175,15 @@ async function setup(t, extraLocal = {}) {
   const approvals = async requestId => (await readFile(paths.logFile, 'utf8')).split('\n').filter(Boolean)
     .map(line => JSON.parse(line)).filter(line => line.event === 'approval' && line.requestId === requestId);
   const stateOf = async requestId => (await client.status()).requests.find(item => item.requestId === requestId);
-  return { origin, client, marionette, chrome, handles, armWindow, approvals, stateOf, release };
+  return { origin, client, marionette, chrome, handles, armWindow, approvals, stateOf, release, hits };
 }
+
+// Pages the site serves besides the portal: a note form whose Enter sends it (GET /sent).
+const SITE_PAGES = {
+  '/compose': '<!doctype html><title>Compose</title><h1>Compose</h1><form action="/sent"><label>Message '
+    + '<input name="message" value="See you at six"></label><button>Send</button></form>',
+  '/sent': '<!doctype html><title>Sent</title><h1>Sent</h1><p>message sent</p>',
+};
 
 // The modal's own page: its status line and Approve button (Marionette in the arm window's content).
 async function modal(ctx, handle) {
@@ -448,3 +458,86 @@ async function clickPopup(ctx, requestId, level) {
     return await promptOpen(ctx) || (await ctx.stateOf(requestId))?.state === 'active';
   }, 15_000);
 }
+
+// The user's click on a waiting action approval (the Approve gate): in the approval window (approve.html), or on the
+// toolbar popup's card when the browser opened the popup instead. Returns the surface used, or null.
+async function decideAction(ctx, decision, beforeClick = () => {}) {
+  return until(async () => {
+    for (const handle of await ctx.handles()) {
+      await ctx.marionette.send('WebDriver:SwitchToWindow', { handle, focus: false });
+      const url = await ctx.marionette.send('WebDriver:GetCurrentURL');
+      if (!String(url.value ?? url).includes('/approve.html')) continue;
+      const headline = await ctx.marionette.execute('return document.getElementById("headline").textContent;');
+      beforeClick();
+      const found = await ctx.marionette.send('WebDriver:FindElement', { using: 'css selector', value: decision === 'approve' ? '#approve' : '#deny' });
+      await ctx.marionette.send('WebDriver:ElementClick', { id: Object.values(found.value ?? found)[0] });
+      return { surface: 'window', headline };
+    }
+    const onCard = code => ctx.chrome(`const browser = browserWindows().flatMap(w => [...w.document.querySelectorAll('browser[webextension-view-type="popup"]')])[0];
+      const card = browser?.contentDocument?.querySelector('.approval-card');
+      if (!card) return null;
+      ${code}`, [decision]).catch(() => null);
+    const headline = await onCard("return card.querySelector('.approval-label')?.textContent ?? '';");
+    if (headline === null) return null;
+    beforeClick();
+    await onCard("card.querySelector(arguments[0] === 'approve' ? '.primary-button' : '.secondary-button').click(); return true;");
+    return { surface: 'popup', headline };
+  }, 30_000);
+}
+
+test('Firefox: a committing Enter (commits: true) asks once, runs only after Approve once, and Deny refuses it', { skip, timeout: 150_000 }, async t => {
+  const ctx = await setup(t);
+  // The site allowed by hand, so Act needs no site-access prompt here (the prompt flows are tested above).
+  await ctx.marionette.setContext('chrome');
+  await ctx.marionette.execute(`const done = arguments[arguments.length - 1];
+    const { ExtensionPermissions } = ChromeUtils.importESModule('resource://gre/modules/ExtensionPermissions.sys.mjs');
+    const extension = WebExtensionPolicy.getByID(${JSON.stringify(GECKO_ID)}).extension;
+    ExtensionPermissions.add(${JSON.stringify(GECKO_ID)}, { permissions: [], origins: ['http://127.0.0.1/*'] }, extension)
+      .then(() => done(true), error => done(error.message));`, [], { async: true });
+  await ctx.marionette.setContext('content');
+  const created = await ctx.client.requestTab({ origins: [ctx.origin], mode: 'full', reason: 'Send the note', url: `${ctx.origin}/compose` });
+  const { requestId } = created;
+  assert.ok(await ctx.armWindow(), 'the request modal opened');
+  assert.ok(await until(() => ctx.chrome(`return browserWindows().some(w => w.gBrowser.tabs.some(t =>
+    t.linkedBrowser.currentURI.spec.includes('/compose') && !t.hasAttribute('busy')));`), 10_000), 'the page loaded');
+  await clickIcon(ctx, '/compose');
+  assert.ok(await clickPopup(ctx, requestId, 'full'), 'Act approves the task');
+  await sleep(1000);
+  await allowPrompt(ctx).catch(() => false);
+  assert.equal((await ctx.client.wait({ requestId, maxMs: 15_000 })).state, 'active');
+  const sent = () => ctx.hits.filter(url => url.startsWith('/sent')).length;
+  const enterOn = async () => {
+    const page = await ctx.client.observe({ requestId });
+    return { page, enter: page.actions.find(action => action.type === 'submit_field') };
+  };
+
+  // Approve once: asked once, nothing sent before the click, one submission after it.
+  let { page, enter } = await enterOn();
+  assert.ok(enter, JSON.stringify(page.actions));
+  const missing = await ctx.client.act({ requestId, actionId: enter.id, revision: page.revision }).catch(error => error);
+  assert.match(String(missing?.message), /Enter needs commits/, 'an Enter without commits never reaches the page');
+  const approving = ctx.client.act({ requestId, actionId: enter.id, revision: page.revision, commits: true,
+    reason: 'Sends your note', waitMs: 90_000 });
+  let sentBeforeClick = null;
+  const approved = await decideAction(ctx, 'approve', () => { sentBeforeClick = sent(); });
+  assert.ok(approved, 'the approval was shown and clicked');
+  t.diagnostic(`approval surface: ${approved.surface}`);
+  assert.equal(sentBeforeClick ?? 0, 0, 'nothing was sent while the approval waited');
+  assert.match(approved.headline, /^Press Enter in "Message" on 127\.0\.0\.1:\d+\?$/);
+  const done = await approving;
+  assert.equal(done.state, 'done', JSON.stringify(done).slice(0, 400));
+  assert.notEqual(done.result.code, 'approval_pending', JSON.stringify(done.result).slice(0, 400));
+  assert.equal(done.result.page?.url?.includes('/sent') ?? true, true);
+  assert.ok(await until(async () => sent() === 1, 10_000), `one submission: ${JSON.stringify(ctx.hits)}`);
+
+  // Deny: refused_action, nothing sent.
+  await ctx.client.act({ requestId, nav: 'back', waitMs: 30_000 });
+  ({ page, enter } = await enterOn());
+  assert.ok(enter, JSON.stringify(page.actions));
+  const denying = ctx.client.act({ requestId, actionId: enter.id, revision: page.revision, commits: true, waitMs: 90_000 });
+  assert.ok(await decideAction(ctx, 'deny'), 'the second ask was shown and denied');
+  const denied = await denying;
+  assert.equal(denied.result.code, 'refused_action', JSON.stringify(denied.result).slice(0, 400));
+  await sleep(1000);
+  assert.equal(sent(), 1, 'a denied Enter sends nothing');
+});
