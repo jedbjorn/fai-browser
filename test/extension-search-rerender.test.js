@@ -36,7 +36,7 @@ test('a real DOM rerender fills and submits supplied text exactly once without l
     const current = document.getElementById('query');
     current.replaceWith(current.cloneNode(true));
   });
-  const result = await runtime.act({ actionId: fill.id, submit: true }, {
+  const result = await runtime.act({ actionId: fill.id, submit: true, commits: false }, {
     revision: initial.observation.revision, expectation: { textIncludes: 'Search completed' },
   });
   assert.equal(result.status, 'completed', result.reason);

@@ -21,6 +21,14 @@ export const SECRET_USE_TEXT = {
   copy_secret: 'FAI copies the secret to the clipboard, once. Local programs, including your agent, can read the clipboard.',
 };
 
+// A committing Enter (the agent sent commits: true): the field's label (page text) and the tab's site from the browser.
+export const ENTER_COMMIT_TEXT = 'Agent says this commits you.';
+
+/** The line a committing Enter asks: `Press Enter in "Message" on chat.example.com?`. */
+export function enterCommitLine(entry) {
+  return `Press Enter in "${entry.label || 'this field'}" on ${hostOf(entry.origin) || 'this site'}?`;
+}
+
 const SECRET_WORDS = { password: 'password', 'private-key': 'private key', totp: 'TOTP seed', 'recovery-code': 'recovery code',
   jwt: 'token', generic: 'secret' };
 
@@ -79,7 +87,8 @@ export function approvalCard(entry, decide) {
   const top = element('div', 'card-topline');
   const secretUse = entry.kind === 'fill_secret' || entry.kind === 'copy_secret';
   const uploadUse = entry.kind === 'upload' && entry.file;
-  top.append(element('span', 'card-label', secretUse ? 'APPROVE SECRET USE?' : uploadUse ? 'APPROVE UPLOAD?'
+  const enterUse = entry.kind === 'enter_commit';
+  top.append(element('span', 'card-label', secretUse ? 'APPROVE SECRET USE?' : uploadUse ? 'APPROVE UPLOAD?' : enterUse ? 'APPROVE ENTER?'
     : `APPROVE ${String(KIND_NAME[entry.cls] ?? entry.cls).toUpperCase()}?`),
     element('span', 'request-age', originText(entry)));
   card.append(top);
@@ -89,6 +98,9 @@ export function approvalCard(entry, decide) {
     card.append(element('p', 'approval-label', use.line), element('p', 'request-meta', SECRET_USE_TEXT[entry.kind]));
     if (use.cross) card.append(element('p', 'request-meta', `This secret came from ${use.from}, another site than ${use.to}.`));
     if (entry.kind === 'fill_secret') card.append(element('p', 'page-text-note', 'The field name is text from the page.'));
+  } else if (enterUse) {
+    card.append(element('p', 'approval-label', enterCommitLine(entry)), element('p', 'request-meta', ENTER_COMMIT_TEXT),
+      element('p', 'page-text-note', 'The field name is text from the page.'));
   } else {
     if (uploadUse) {
       const size = entry.file.size >= 1024 * 1024 ? `${(entry.file.size / 1024 / 1024).toFixed(1)} MB`

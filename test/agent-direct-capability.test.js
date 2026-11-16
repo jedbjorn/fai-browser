@@ -97,7 +97,7 @@ test('agent text: fill with text and submit in one act; the echo carries the len
   const search = find(page, /^fill textbox "Search" \(act with text\)$/);
   assert.ok(search, page.text);
   const typed = 'blue kettle!';
-  const done = await act(ctx, { actionId: search.id, text: typed, submit: true, expectation: { urlIncludes: '/results' } });
+  const done = await act(ctx, { actionId: search.id, text: typed, submit: true, commits: false, expectation: { urlIncludes: '/results' } });
   assert.equal(done.status, 'completed', done.text);
   assert.equal(done.verification.passed, true);
   assert.deepEqual(done.did, ['fill "Search" (12 chars)', 'press Enter in "Search"']);
@@ -122,7 +122,7 @@ test('supplied text: fill and search submit survive one rerender without echoing
   // compatible supplied-text fill remains on the fresh revision.
   ctx.bridge().version++;
   const done = await act(ctx, {
-    actionId: search.id, submit: true, revision: page.revision, expectation: { urlIncludes: '/results' },
+    actionId: search.id, submit: true, commits: false, revision: page.revision, expectation: { urlIncludes: '/results' },
   });
   assert.equal(done.status, 'completed', done.text);
   assert.equal(done.verification.passed, true);
@@ -143,7 +143,7 @@ test('agent text: submit needs the level its form submit needs; text is refused 
   const ctx = await setup(t);
   const page = await opened(ctx, 'reversible');
   const search = find(page, /^fill textbox "Search"/);
-  const refused = await act(ctx, { actionId: search.id, text: 'kettle', submit: true });
+  const refused = await act(ctx, { actionId: search.id, text: 'kettle', submit: true, commits: false });
   assert.equal(refused.code, 'refused_action', refused.text);
   assert.equal(refused.needs.level, 'interactive');
   assert.equal(refused.next.kind, 'relay');
@@ -170,7 +170,7 @@ test('fills batch: four fields in one call, then submit at full; password and pa
   const sent = await act(ctx, {
     fills: [{ actionId: ids.Name, text: 'Ada' }, { actionId: ids.Email, text: 'ada@example.com' },
       { actionId: ids.Subject, text: 'Hello' }, { actionId: ids.Message, text: 'A short note' }],
-    submit: true, revision: contact.revision, expectation: { textIncludes: 'message sent' },
+    submit: true, commits: false, revision: contact.revision, expectation: { textIncludes: 'message sent' },
   });
   assert.equal(sent.status, 'completed', sent.text);
   assert.equal(sent.did.length, 5);
@@ -277,7 +277,7 @@ test('keys and hover: reversible presses Escape and Tab; a shortcut needs full; 
   const shortcut = await act(ctx, { key: 'Ctrl+A' });
   assert.equal(shortcut.code, 'refused_action');
   assert.equal(shortcut.needs.level, 'full');
-  const enter = await act(ctx, { key: 'Enter' });
+  const enter = await act(ctx, { key: 'Enter', commits: false });
   assert.equal(enter.isError, true);
   assert.match(enter.text, /Enter is pressed in a filled field/);
   const bad = await act(ctx, { key: 'F12' });

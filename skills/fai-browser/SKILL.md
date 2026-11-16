@@ -22,7 +22,7 @@ Results: `next`, `revision`, `page.digest`, `actions` (`a3  click "About"`).
 - Otherwise `fai_browser_act {actionId}` from `actions`. `revision` is single-use; required for `needsApproval`, secrets and points.
 - `reveal` scrolls without clicking. Choose from the new page; open menus through visible controls.
 - Explicit popup grants allow necessary-only cookies and newsletter dismissal; `nuisancePending` needs your decision.
-- `fill "Search" (act with text)` takes `text`; `submit: true` then does `press Enter in` it. Several fields: `fills: [{actionId, text}]`; a `with supplied` fill takes no text. Never passwords or codes.
+- `fill "Search" (act with text)` takes `text`; `submit: true` then does `press Enter in` it. Every Enter needs `commits`: `true` if it commits the user (purchase, payment, terms, message, post, application, booking, registration, delete, publish, transfer; they approve once), else `false` (search, filter, navigation). Several fields: `fills: [{actionId, text}]`; a `with supplied` fill takes no text. Never passwords or codes.
 - Other acts: `url` (granted origins), `nav` (`back`, `forward`, `reload`), `key` (Escape, Tab, arrows, Space, ...; Ctrl/Cmd+letter at `full`), `hover: true` with an `actionId` (menus).
 - **Use**: reading/navigation, one tab; a child pauses (`child_tab`). **Act**: actions, multiple task tabs: `openTab: "<approved URL>"` opens, `tab: "t1"` switches; at most eight, never personal tabs.
 - Give the task’s final act an `expectation`: `{"urlIncludes": "/members"}` or text unique to that page. Only `status: "completed"` with `verification.passed: true` is verified.
@@ -38,7 +38,7 @@ Results: `next`, `revision`, `page.digest`, `actions` (`a3  click "About"`).
 | `observe` | The page changed or the act did not land: `fai_browser_observe`, then choose. |
 | `answer` | Verified: report it. |
 | `relay` | Tell the user `needs.message`. With `needs.level`: "click Act on the FAI Browser request", then `fai_browser_open` with the `requestId` and `mode` = `needs.level` (same tab and id; a still-pending one gets a successor: `requestId <new> replaces <old>`). Paused/pending: end your turn if FAI wakes you (ignore OpenCode's `_faiHostSession`), else (subagent, script) `fai_browser_wait`. |
-| `approve` | A `needsApproval` action waits for the user's Approve once: relay `next.text`, then repeat the act unchanged. |
+| `approve` | Relay `next.text` (the user's Approve once), then act as it says. |
 | `wait` | `fai_browser_wait` with the `requestId` (or `runId`); again while pending (not a repeat). |
 | `stop` | Report `next.text` (`refused_action`, `error_page`); no retry. |
 

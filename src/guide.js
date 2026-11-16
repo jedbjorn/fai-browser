@@ -180,7 +180,10 @@ const TOPICS = {
     '3. If page.digest answers the task, reply from it: no further call. Say what you read; an observation is not a '
       + 'verified result.',
     '4. Else fai_browser_act with one actionId from the latest actions (a fill takes text, submit: true presses Enter, '
-      + 'fills batches fields). Each act returns the next page and its actions: no observe needed in between.',
+      + 'fills batches fields). Every Enter takes commits: true when it commits the user (a purchase or payment, '
+      + 'agreeing to terms, sending a message or post, submitting an application or form, a booking or registration, '
+      + 'deleting, publishing, transferring; the user approves it once), false for search, filter or navigation. Each act '
+      + 'returns the next page and its actions: no observe needed in between.',
     '5. Give the act that should finish the task an expectation ({"urlIncludes": "/members"}, or text only that page '
       + 'shows). Only status completed with verification.passed true is verified.',
     '6. Do not release the tab at the end.',

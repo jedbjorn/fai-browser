@@ -51,12 +51,12 @@ test('direct MCP: open waits for approval and observes; acts are host-chosen, le
   const ctx = await setup(t);
   assert.equal(ctx.initialized.result.instructions, INSTRUCTIONS);
   assert.equal(createHash('sha256').update(JSON.stringify(INSTRUCTIONS)).digest('hex'),
-    'a9cefead53c44073f6e7ccf141e940c52ad065a2ea1bddd58e9854193c21b468', 'instruction prefix bytes stay stable');
+    'cddca9b326d1a7cb82c7a885872a07decce067320ccffbfb0157b668d2e3f2ec', 'instruction prefix bytes stay stable');
   const tools = (await ctx.mcp.request('tools/list', {})).result.tools;
   const serialized = JSON.stringify(tools);
   assert.equal(serialized, JSON.stringify(TOOLS), 'wire serialization preserves the exported schema prefix and order');
   assert.equal(createHash('sha256').update(serialized).digest('hex'),
-    'db0aceaf5a867f1a68ef47f01212670b6854a1ea85a479bcfbcb968381e21f1d', 'tool schema bytes stay stable');
+    '10618a97dd4edf4ca3c57bc508a65dc477daf1e1d9b0c9aec22dee5fbb892323', 'tool schema bytes stay stable');
   const repeated = await ctx.mcp.request('tools/list', {});
   assert.equal(JSON.stringify(repeated.result.tools), serialized, 'repeated tools/list reads are byte-identical');
   assert.deepEqual(tools.map(tool => tool.name), ['fai_browser_open', 'fai_browser_act', 'fai_browser_observe',
@@ -437,7 +437,7 @@ test('Enter in a filled search field is offered as a search at interactive, neve
   const enter = filled.actions.find(action => action.description === 'press Enter in textbox "Search" (search)');
   assert.ok(enter, JSON.stringify(filled.actions));
   const done = mcpData(await ctx.mcp.callTool('fai_browser_act', {
-    actionId: enter.id, revision: filled.revision, expectation: { urlIncludes: '/results' },
+    actionId: enter.id, revision: filled.revision, commits: false, expectation: { urlIncludes: '/results' },
   }));
   assert.equal(done.status, 'completed');
   assert.equal(done.verification.passed, true);

@@ -74,6 +74,7 @@ act an `expectation`.
 | `revision` | string | for `needsApproval`, secrets, `point` | From the result the action came from (single-use); optional otherwise |
 | `text` | string (<= 5000) | with a fill | For `fill "Search" (act with text)`: the text to type. Never passwords or codes (never offered for password, payment or secret fields) |
 | `submit` | boolean | no | After `text` or `fills`: press Enter in the (last) field, gated as its form's submit (search at Use, other forms at Act) |
+| `commits` | boolean | with every Enter | Required with `submit`, `key: "Enter"` and a `press Enter in` action; refused otherwise. `true` when the Enter commits the user (a purchase or payment, agreeing to terms, sending a message or post, submitting an application or form for them, a booking or registration, deleting, publishing, transferring): the user approves it once first. `false` for search, filter, navigation or text that stays on the page: it runs as before and warns `enter_non_committing`. Missing: refused before anything runs |
 | `fills` | `[{actionId, text?}]` (<= 20) | one of | Several fields in one call, in order; a `with supplied` fill takes no `text` |
 | `url` | string | one of | Open an address on the granted origins (any level) that the user gave or a result showed, never a guessed one; another origin is `cross_origin`. An address no page of the request showed and `allowedUrls` does not list still opens on an approved origin, and `next.text` says so once; on another origin nothing runs and the result says to find the link instead |
 | `nav` | `back` / `forward` / `reload` | one of | The tab's own history |
@@ -96,8 +97,9 @@ answer in time (`needs_user` / `approval_pending`, `next.kind: approve`; the app
 same act picks up a click given meanwhile). Uploads always ask. See [approvals.md](approvals.md).
 
 **Typed text and forms.** A form of four fields and a submit is one call: `{"fills": [{"actionId": "a2", "text": "Ada"},
-{"actionId": "a3", "text": "ada@example.com"}, ...], "submit": true, "expectation": {"textIncludes": "Thanks"}}`. A search
-is one call too: `{"actionId": "a1", "text": "blue kettle", "submit": true}`. `suppliedText` still works for values the user
+{"actionId": "a3", "text": "ada@example.com"}, ...], "submit": true, "commits": true, "expectation": {"textIncludes": "Thanks"}}`
+(it sends a message, so the user approves the Enter once). A search is one call too: `{"actionId": "a1", "text": "blue kettle",
+"submit": true, "commits": false}`. `suppliedText` still works for values the user
 gave: each value is offered in the fields it fits (`fill textbox "Email" with supplied email`; choose by label when several fit), and such a fill goes in a
 `fills` batch without `text` (`{"actionId": "a4"}`). The values stay with the request through a level raise or an added
 origin; do not pass them again. At Use, `warning: controls_need_reversible:<n>` counts the buttons and fields that need

@@ -23,6 +23,7 @@ test('the skill teaches the direct loop: open, read, act, verify, with the next.
   }
   assert.match(SKILL, /single-use/);
   assert.match(SKILL, /press Enter in/);
+  assert.match(SKILL, /Every Enter needs `commits`: `true` if it commits the user/);
   assert.match(SKILL, /returnImages: "final"/);
   assert.match(SKILL, /Do not call `fai_browser_release` at the end/);
   assert.match(SKILL, /untrusted data, not instructions/);
@@ -30,7 +31,8 @@ test('the skill teaches the direct loop: open, read, act, verify, with the next.
   assert.doesNotMatch(SKILL, /jev\.md|Jev/);
   assert.doesNotMatch(SKILL, /fai_browser_run|answer\.candidates|verdict/);
   const words = SKILL.split(/\s+/).filter(Boolean).length;
-  assert.ok(words <= 900, `the entire skill including frontmatter stays within 900 words (${words})`);
+  // 925: the 900 the skill had reached, plus the commit definition every Enter's `commits` flag needs (spec #79).
+  assert.ok(words <= 925, `the entire skill including frontmatter stays within 925 words (${words})`);
 });
 
 test('skill frontmatter has the name and a description of at most 1024 characters', () => {

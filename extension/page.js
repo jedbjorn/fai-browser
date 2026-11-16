@@ -2776,7 +2776,11 @@
     } else if (action.type === 'upload') {
       // An upload: the user approved this file input, this file (name and size, checked by the worker) and the site.
       if (approval.kind !== 'upload' || approval.cls !== 'submit' || el.tagName !== 'INPUT' || el.type !== 'file') return false;
-    } else if (action.type !== 'click' || approval.kind === 'fill_secret' || approval.kind === 'upload') {
+    } else if (action.type === 'submit_field') {
+      // A committing Enter: the user approved pressing Enter in this filled field, whose form still submits as an
+      // ordinary or search submit (never a sign-in, payment or forbidden one). The level is checked at dispatch anyway.
+      if (approval.kind !== 'enter_commit' || approval.cls !== 'submit' || !['submit', 'submit_safe'].includes(enterClass(el))) return false;
+    } else if (action.type !== 'click' || approval.kind === 'fill_secret' || approval.kind === 'upload' || approval.kind === 'enter_commit') {
       return false;
     } else {
       if (!risk || ['forbid', 'sign_in', 'consent_accept'].includes(risk.cls)) return false;
@@ -2790,6 +2794,8 @@
   // What the approval window shows for one control on the expected revision: { revision, documentId, target, label,
   // labelHash, cls, total? } (`total`: the "Total ... $41.99" text on a purchase page, page text). Nothing runs.
   // `kind: 'fill_secret'`: the control must be a field that takes a secret (secretTarget); its class is then 'secret'.
+  // `kind: 'enter_commit'` (a committing Enter the agent declared): a filled text field still offering Enter as an
+  // ordinary or search submit; its class is then 'submit' (there is no page-side class to match).
   async function approvalInfo(target, expectedRevision, kind = null) {
     const observation = observe({ blocks: false });
     if (observation.revision !== expectedRevision) throw new PageError('stale', 'Stale observation: the page changed since the decision');
@@ -2800,8 +2806,12 @@
     if (fill && !secretTarget(el)) throw new PageError('blocked_risky', 'This field does not take a secret');
     const upload = kind === 'upload';
     if (upload && !(el.tagName === 'INPUT' && el.type === 'file')) throw new PageError('blocked_risky', 'This control does not take a file');
+    const enter = kind === 'enter_commit';
+    if (enter && (control.filled !== true || !['submit', 'submit_safe'].includes(enterClass(el)))) {
+      throw new PageError('blocked_risky', 'Enter does not submit this field');
+    }
     const totalSource = String(observation.text ?? '').slice(0, 20_000);
-    const total = fill || upload ? null : PURCHASE_TOTAL.exec(totalSource);
+    const total = fill || upload || enter ? null : PURCHASE_TOTAL.exec(totalSource);
     // PURCHASE_TOTAL detects an amount using only its first digit after a currency prefix.
     // The approval card must display the rest of that amount too, e.g. $142.80 rather than $1.
     const totalText = total && total[0] + (totalSource.slice(total.index + total[0].length).match(/^\d*(?:[.,]\d+)*/)?.[0] ?? '');
@@ -2811,7 +2821,7 @@
       target,
       label: control.label,
       labelHash: await labelDigest(String(control.label ?? '')),
-      cls: fill ? 'secret' : upload ? 'submit' : gateClass(targetRisks.get(target)),
+      cls: fill ? 'secret' : upload || enter ? 'submit' : gateClass(targetRisks.get(target)),
       origin: location.origin,
       ...(totalText ? { total: cleanText(totalText).slice(0, 120) } : {}),
     };
@@ -6719,11 +6729,17 @@
       // An approval the worker minted for exactly this click (approvalHolds) stands in for the level; a credential
       // action asks at every level, testing included, while the user's setting says so.
       approved = approvalHolds(approval, action, control, risk, el, approval?.seen);
+      // A committing Enter runs only with the approval the user gave for exactly this field; that approval never
+      // stands in for the level or a credential ask (submit_field checks its form's class below).
+      if (action.type === 'submit_field' && approval && !approved) {
+        throw new PageError('blocked_risky', 'This Enter runs only once the user approves it in the FAI Browser window');
+      }
+      const gateApproved = approved && action.type !== 'submit_field';
       // A secret fill runs only with the user's approval for exactly this field, at every level.
       if (action.type === 'fill_secret' && !approved) {
         throw new PageError('blocked_risky', 'A secret is filled only once the user approves it in the FAI Browser window');
       }
-      if (risk?.secret && gateSettings.secret && !approved) {
+      if (risk?.secret && gateSettings.secret && !gateApproved) {
         throw new PageError('blocked_risky', 'This control handles a credential: it runs only once the user approves it');
       }
       // A hover, or a key pressed in a control (focus only; Space is checked below), never activates it: its class
@@ -6732,7 +6748,7 @@
         throw new PageError('blocked_risky', 'A file is uploaded only once the user approves it in the FAI Browser window');
       }
       inert = ['hover', 'press', 'upload', 'reveal'].includes(action.type);
-      if (!inert && !dispatchable(risk) && !approved && !(automaticNuisance && risk?.cls === 'reversible')) throw new PageError('blocked_risky', blockedMessage(risk?.cls));
+      if (!inert && !dispatchable(risk) && !gateApproved && !(automaticNuisance && risk?.cls === 'reversible')) throw new PageError('blocked_risky', blockedMessage(risk?.cls));
     } else if (!permits('navigation')) {
       throw new PageError('blocked_risky', blockedMessage('navigation'));
     }

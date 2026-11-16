@@ -44,7 +44,7 @@ export async function runDetectionMatrix(client, requestId, origin) {
   await act({ type: 'click', label: '+ Show details' });
   await act({ type: 'fill_supplied_text', suppliedName: 'name', label: 'Full name' });
   await act({ type: 'fill_supplied_text', suppliedName: 'notes', label: 'Notes' });
-  await act({ type: 'fill', label: 'Search' }, { text: suppliedText.query, submit: true });
+  await act({ type: 'fill', label: 'Search' }, { text: suppliedText.query, submit: true, commits: false });
   await act({ type: 'select', label: 'Sort by', value: 'price' });
   await act({ type: 'scroll', direction: 'down' });
   await act({ type: 'click', label: 'Load more results' });
