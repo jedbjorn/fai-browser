@@ -1,0 +1,5 @@
+{"type": "thread.started", "thread_id": "<uuid>"}
+{"type": "item.completed", "item": {"id": "<string len=6>", "type": "error", "message": "<string len=115>"}}
+{"type": "turn.started"}
+{"type": "error", "message": "<string len=73>"}
+{"type": "turn.failed", "error": {"message": "<string len=73>"}}

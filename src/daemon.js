@@ -12,7 +12,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { agentResult, applyLeaseMessage, approvalSteps, createResult, isKnownCode, outcomeResult, setOutcome } from './result.js';
 import { hostInfo, imageSize, toAgentResult, writeRun } from './trace.js';
 import { prune, retentionConfig } from './retention.js';
-import { INSTALLER_UPDATE_HINT, PACKAGE_ROOT, installedByInstaller } from './paths.js';
+import { INSTALLER_UPDATE_HINT, LOCAL_CHATS_NAME, PACKAGE_ROOT, installedByInstaller, localChatsDir } from './paths.js';
 import {
   acquireLock, configuredPort, createLogger, ensureClientToken, ensureDir, homePaths, loadConfig, readDaemonInfo,
   releaseLock, removeDaemonInfo, writeDaemonInfo,
@@ -28,6 +28,10 @@ import { automaticCheck, createUpdateChecker, runningUpdate, underTest, claimUpd
 import { gitReleaseSource, scrubbedEnv } from './update-git.js';
 import { SessionError, SESSION_POLL_MAX_MS, createSessionRegistry } from './sessions.js';
 import { MAX_CHAT_TEXT, cleanChatText, cleanInviteText } from './wake.js';
+import { ChatError, createChatRunner } from './chat-runner.js';
+import { PAGE_SIZE, createChatStore, validChatId } from './chat-store.js';
+import { writeLocalChats } from './local-chats.js';
+import { TOOL_NAMES } from './mcp.js';
 import { automaticPopupScope } from './automatic-popups.js';
 
 export const DAEMON_VERSION = readPackageVersion();
@@ -444,6 +448,18 @@ export function createDaemon(options = {}) {
   // The live coding-agent sessions (one per MCP server process) and their wakes (src/sessions.js).
   const sessions = options.sessions ?? createSessionRegistry({ now, log, isAlive: options.isAlive,
     onChange: () => changed() });
+  // FAI chats (spec #84): transcripts in FAI-Local-Chats and the runner that starts one provider process per turn.
+  // A daemon with its own home (FAI_HOME, tests) keeps its chats there too, and tells the MCP servers of its turns.
+  const chatRoot = options.chatRoot ?? (paths.custom ? join(paths.home, LOCAL_CHATS_NAME) : localChatsDir(env));
+  const chatStore = createChatStore({ root: chatRoot, now });
+  const chats = createChatRunner({ store: chatStore, root: chatRoot, log,
+    env: paths.custom ? { ...env, FAI_HOME: paths.home } : env,
+    // Before every turn: the folder again if it is missing, and FAI's guidance files restored if they changed.
+    prepare: () => writeLocalChats(chatRoot),
+    server: { command: process.execPath, args: [join(PACKAGE_ROOT, 'src', 'mcp-main.js')] }, tools: TOOL_NAMES,
+    opencodeConfigDir: join(paths.stateDir, 'chat-opencode-config'),
+    ...(options.chatPrograms ? { programs: options.chatPrograms } : {}),
+    ...(options.chatTurnLimitMs ? { turnLimitMs: options.chatTurnLimitMs } : {}) });
   // Values filled into password inputs (testing level) by any run of this daemon: redacted from later results.
   const filledSecrets = new Set();
   const runs = new Map();
@@ -2021,6 +2037,13 @@ export function createDaemon(options = {}) {
           return onApprovalEvent(event);
         case 'action_decision':
           return onActionDecision(event);
+        case 'chat_providers':
+        case 'chat_list':
+        case 'chat_history':
+        case 'chat_send':
+        case 'chat_stop':
+        case 'chat_delete':
+          return onChatEvent(event);
         default:
           return undefined;
       }
@@ -2029,6 +2052,81 @@ export function createDaemon(options = {}) {
       replyTo(event, { error: { code: 'internal', message: 'Daemon error' } });
       return undefined;
     }
+  }
+
+  // --- FAI chats (spec #84) -----------------------------------------------------------------------------------
+  // The panel's FAI chat messages (Sprint 3 panel <-> daemon contract, Planner messages #158 and #164):
+  //   chat_providers {} -> {providers: [{provider, name, available, code, line?, version}], defaultProvider}
+  //   chat_list {offset, limit <= 50} -> {chats: [chat view + lastActiveAt], next}
+  //   chat_history {chatId, after} -> {chat: chat view, messages: [after id], cursor}
+  //   chat_send {provider, model?, text} or {chatId, text} -> {chatId, turnId}
+  //   chat_stop {chatId} -> {stopped}; chat_delete {chatId} -> {deleted}
+  // A chat view is {chatId, title, provider, model, reportedModel, startedAt, running}. Refusals: {error: {code, message}}.
+
+  const chatIdOf = args => {
+    if (!validChatId(args.chatId)) throw new ChatError('unknown_chat', 'No such chat.');
+    return args.chatId;
+  };
+  const countOf = (value, fallback, max) => {
+    if (value === undefined || value === null) return fallback;
+    if (!Number.isInteger(value) || value < 0 || value > max) throw new ChatError('bad_request', 'Bad paging values.');
+    return value;
+  };
+  const stringOf = (value, name, max) => {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== 'string' || value.length > max) throw new ChatError('bad_request', `${name} must be a short string.`);
+    return value;
+  };
+  const chatView = header => ({ chatId: header.chatId, title: header.title, provider: header.provider, model: header.model,
+    reportedModel: header.reportedModel, startedAt: header.startedAt, running: chats.running(header.chatId) });
+
+  async function chatOp(type, args) {
+    switch (type) {
+      case 'chat_providers': {
+        const providers = await chats.providers();
+        return { providers, defaultProvider: providers.find(item => item.available)?.provider ?? null };
+      }
+      case 'chat_send': {
+        const { chatId, turnId } = await chats.send({ chatId: args.chatId === undefined || args.chatId === null ? null
+          : chatIdOf(args), provider: stringOf(args.provider, 'provider', 20), model: stringOf(args.model, 'model', 200),
+        text: stringOf(args.text, 'text', 20_000) });
+        return { chatId, turnId };
+      }
+      case 'chat_stop':
+        return { stopped: await chats.stop(chatIdOf(args)) };
+      case 'chat_list': {
+        const offset = countOf(args.offset, 0, 1_000_000);
+        const listed = await chatStore.list({ offset, limit: Math.max(1, countOf(args.limit, PAGE_SIZE, PAGE_SIZE)) });
+        const end = offset + listed.chats.length;
+        return { chats: listed.chats.map(chat => ({ ...chatView(chat), lastActiveAt: chat.lastActiveAt })),
+          next: end < listed.total ? end : null };
+      }
+      case 'chat_history': {
+        const after = countOf(args.after, 0, Number.MAX_SAFE_INTEGER);
+        const found = await chatStore.read(chatIdOf(args), { after });
+        if (!found) throw new ChatError('unknown_chat', 'No such chat.');
+        return { chat: chatView(found.chat), messages: found.records, cursor: found.records.at(-1)?.id ?? after };
+      }
+      case 'chat_delete': {
+        const chatId = chatIdOf(args);
+        await chats.stop(chatId);
+        return { deleted: await chatStore.remove(chatId) };
+      }
+      default:
+        throw new ChatError('bad_request', 'Unknown chat message.');
+    }
+  }
+
+  async function onChatEvent(event) {
+    const args = event.args && typeof event.args === 'object' && !Array.isArray(event.args) ? event.args : {};
+    try {
+      replyTo(event, await chatOp(event.type, args));
+    } catch (error) {
+      if (error instanceof ChatError) return replyTo(event, { error: { code: error.code, message: error.message } });
+      log('chat_error', { type: event.type, message: String(error?.message ?? error).slice(0, 200) });
+      replyTo(event, { error: { code: 'internal', message: 'Daemon error' } });
+    }
+    return undefined;
   }
 
   // --- settings and config --------------------------------------------------------------------------
@@ -3298,7 +3396,7 @@ export function createDaemon(options = {}) {
     const idleMs = idleShutdownMs();
     if (idleMs > 0 && !shuttingDown && t - lastClientCallAt >= idleMs) {
       const busy = [...requests.values()].some(record => LIVE.has(record.state))
-        || [...runs.values()].some(run => run.state === 'running');
+        || [...runs.values()].some(run => run.state === 'running') || chats.busy();
       if (!busy) {
         log('idle_shutdown', { idleMs });
         requestShutdown();
@@ -3352,6 +3450,8 @@ export function createDaemon(options = {}) {
       shuttingDown = true;
       updates.stop();
       clearInterval(sweepTimer);
+      // Running chat turns stop with the daemon (spec #84).
+      await chats.close();
       const running = [...runs.values()].filter(run => run.state === 'running');
       for (const run of running) requests.get(run.requestId)?.runtime?.interrupt('interrupted');
       for (const record of requests.values()) {

@@ -94,6 +94,31 @@ test('a symlink in place of a guidance file is replaced, never written through',
   assert.equal(read(outside), GUIDANCE);
 });
 
+test('a symlink planted at the old temporary name is never written through (flag #19)', { skip: process.platform === 'win32'
+  && 'symlinks need Developer Mode on Windows' }, async t => {
+  const root = await scratch(t);
+  const dir = join(root, 'FAI-Local-Chats');
+  await mkdir(dir);
+  const outside = join(root, 'outside.txt');
+  await writeFile(outside, 'not FAI\'s');
+  for (const name of ['README.txt', 'AGENTS.md', 'CLAUDE.md']) await symlink(outside, join(dir, `${name}.fai-${process.pid}.tmp`));
+  await writeLocalChats(dir);
+  assert.equal(read(outside), 'not FAI\'s');
+  for (const [name, content] of Object.entries(localChatsFiles())) assert.equal(read(join(dir, name)), content);
+});
+
+test('concurrent rewrites (the chat runner restores the files before each of up to three turns) never collide', async t => {
+  const root = await scratch(t);
+  const dir = join(root, 'FAI-Local-Chats');
+  await writeLocalChats(dir);
+  for (let round = 0; round < 5; round++) {
+    for (const name of ['README.txt', 'AGENTS.md', 'CLAUDE.md']) await writeFile(join(dir, name), `changed ${round}`);
+    await Promise.all([writeLocalChats(dir), writeLocalChats(dir), writeLocalChats(dir)]);
+    for (const [name, content] of Object.entries(localChatsFiles())) assert.equal(read(join(dir, name)), content);
+  }
+  assert.deepEqual(readdirSync(dir).filter(name => name.endsWith('.tmp')), [], 'no temporary file is left');
+});
+
 test('uninstall --host leaves FAI-Local-Chats in place and says so', async t => {
   const root = await scratch(t);
   const home = join(root, 'home');

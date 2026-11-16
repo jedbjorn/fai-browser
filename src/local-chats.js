@@ -2,8 +2,10 @@
 // README.txt, AGENTS.md and CLAUDE.md; the chat runner calls writeLocalChats again before a turn, which recreates a
 // missing folder and restores a changed guidance file. Only those three files are FAI's: `chats/` (each chat's
 // transcript and attached files) is never read, written or removed here, and uninstall leaves the whole folder.
-import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { renameRetrying } from './chat-store.js';
 
 /**
  * The fixed guidance each provider's program loads from FAI-Local-Chats, above a chat's working folder `chats/<id>/files`
@@ -72,10 +74,12 @@ export async function writeLocalChats(dir, { platform = process.platform } = {})
       files.push({ name, action: 'unchanged' });
       continue;
     }
-    const temporary = `${path}.fai-${process.pid}.tmp`;
+    // A fresh name created exclusively: nothing planted there is written through, and the chat runner's turns (up to
+    // three at once) never share one. The rename is retried while Windows has the file open (a provider reading it).
+    const temporary = `${path}.fai-${randomBytes(8).toString('hex')}.tmp`;
     try {
-      await writeFile(temporary, content);
-      await rename(temporary, path);
+      await writeFile(temporary, content, { flag: 'wx' });
+      await renameRetrying(temporary, path);
     } catch (error) {
       await rm(temporary, { force: true });
       throw error;
