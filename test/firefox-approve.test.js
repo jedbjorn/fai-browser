@@ -88,6 +88,12 @@ async function setup(t, extraLocal = {}) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(SITE_PAGES[new URL(req.url, 'http://site').pathname] ?? '<!doctype html><title>Portal</title><h1>Portal</h1>');
     };
+    // `/away`: redirects to the same server under another host (localhost), which the requests here never list.
+    if (req.url.startsWith('/away')) {
+      res.writeHead(302, { Location: `http://localhost:${site.address().port}/landed` });
+      res.end();
+      return;
+    }
     if (req.url.startsWith('/held')) held.push(reply);
     else if (req.url.startsWith('/trickle')) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -262,6 +268,41 @@ test('Firefox: Approve in a modal window that is not active shows the prompt, ne
   assert.equal(outcome.state, 'active');
   assert.ok(await until(async () => (await ctx.approvals(created.requestId)).at(-1)?.step === 'approved', 5000),
     'the approval is logged');
+});
+
+// The toolbar icon's per-tab look on the first tab whose address contains `match`: badge and title.
+const tabLook = (ctx, match) => ctx.chrome(`const win = browserWindows().find(w => w.gBrowser.tabs.some(t => t.linkedBrowser.currentURI.spec.includes(arguments[0])));
+  const tab = win?.gBrowser.tabs.find(t => t.linkedBrowser.currentURI.spec.includes(arguments[0]));
+  if (!tab) return null;
+  const data = ExtensionParent.apiManager.global.browserActionFor(extension).action?.getContextData?.(tab) ?? null;
+  return { badge: data?.badgeText ?? null, title: data?.title ?? null };`, [match]);
+
+// With `tabs` the worker sees every commit of an armed tab, also on a host it has no access to: a start page that
+// redirects off the request's origins keeps its arm and its window, and Use there says why nothing can be approved and
+// logs it (moved_away), as before the add-on held `tabs`.
+test('Firefox: a start page that redirects off the request\'s origins keeps its window; Use says it moved away', { skip, timeout: 90_000 }, async t => {
+  const ctx = await setup(t);
+  const created = await ctx.client.requestTab({ origins: [ctx.origin], mode: 'interactive', reason: 'Check the portal',
+    url: `${ctx.origin}/away` });
+  const arm = await ctx.armWindow();
+  assert.ok(arm, 'the request modal opened');
+  assert.ok(await until(() => ctx.chrome(`return browserWindows().some(w => w.gBrowser.tabs.some(t =>
+    t.linkedBrowser.currentURI.spec.includes('localhost') && t.linkedBrowser.currentURI.spec.includes('/landed') && !t.hasAttribute('busy')));`), 10_000),
+  'the task tab landed on the other host');
+  await sleep(1500);
+  const look = await tabLook(ctx, '/landed');
+  assert.equal(look?.badge, '?', 'the tab keeps its armed look');
+  assert.match(look?.title ?? '', /click to approve/);
+  assert.ok(await until(async () => !(await modal(ctx, arm)).disabled), 'the modal is still open with Use enabled');
+  await clickApprove(ctx, arm);
+  // Use asks for site access only while the page was still seen on the request's site; allowed if it does.
+  await until(() => allowPrompt(ctx), 2000);
+  const moved = /The page moved to an address this approval does not cover\. Nothing was approved\./;
+  assert.ok(await until(async () => moved.test((await modal(ctx, arm)).status), 10_000),
+    `the modal says the page moved away: ${(await modal(ctx, arm)).status}`);
+  assert.ok(await until(async () => (await steps(ctx, created.requestId)).includes('failed:moved_away'), 5000),
+    `the failure is logged: ${JSON.stringify(await steps(ctx, created.requestId))}`);
+  assert.equal((await ctx.stateOf(created.requestId)).state, 'pending', 'nothing was approved');
 });
 
 test('Firefox: the icon on a blank task opens choices; explicit Use waits for the page and never approves early', { skip, timeout: 90_000 }, async t => {

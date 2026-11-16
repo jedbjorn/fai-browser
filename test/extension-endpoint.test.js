@@ -69,7 +69,8 @@ test('manifest pins the extension ID and narrows host access to the companion or
   assert.deepEqual(manifest.host_permissions, ['http://127.0.0.1:4318/*']);
   assert.ok(manifest.permissions.includes('activeTab'));
   assert.ok(manifest.permissions.includes('alarms'));
-  assert.equal(manifest.permissions.includes('tabs'), false);
+  // `tabs` (decision #48): the worker reads the tab beside the chat panel without a site grant or activeTab (spec #84).
+  assert.ok(manifest.permissions.includes('tabs'));
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(manifest.version, pkg.version);
   // Domain roots: the popup may request https://*.<root>/* at approval time, never <all_urls>; opening a request's
