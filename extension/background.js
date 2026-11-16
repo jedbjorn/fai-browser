@@ -41,6 +41,10 @@ const BACKOFF_MS = [500, 1_000, 2_000, 4_000, 8_000, 15_000];
 const FALLBACK_AFTER_FAILURES = 3;
 const FALLBACK_WINDOW_MS = 5 * 60_000;
 const REPLY_TIMEOUT_MS = 10_000;
+// Panel messages whose work takes longer than a reply (spec #84): a send may first check the program (the service's
+// own check allows 15 s), a model list may run that check and the program's list (15 s each), and a file carries up
+// to 25 MB. A reply that comes after its timeout is lost, so the panel would show an error for work the service did.
+const LONG_REPLY_MS = { chat_send: 60_000, chat_models: 60_000, chat_file: 120_000 };
 const CONNECT_WAIT_MS = 2_500;
 const LONG_POLL_MS = 25_000;
 const POLL_RETRIES = 3;
@@ -113,7 +117,7 @@ const KNOWN_CODES = new Set([
 const RECOVERABLE = new Set(['stale', 'target_unavailable', 'capture_failed']);
 // Message types that get exactly one reply, and their HTTP fallback paths.
 const REPLY_TYPES = new Set(['hello', 'lease', 'lease_level', 'deny', 'validate', 'settings', 'update', 'move',
-  'invite', 'invite_cancel', 'agents']);
+  'invite', 'invite_cancel', 'agents', 'chat_send']);
 const HTTP_PATHS = {
   hello: '/hello',
   lease: '/lease',
@@ -132,6 +136,7 @@ const HTTP_PATHS = {
   agents: '/agents',
   approval: '/approval',
   action_decision: '/action-decision',
+  chat_send: '/chat-send',
 };
 const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
@@ -899,7 +904,8 @@ async function showApproval() {
       // A request the FAI tab already covers gets the window ("Approve on the FAI tab"), not a second page.
       const onFaiTab = served && session.origin && Array.isArray(request?.origins) && originCovered(session.origin, request.origins);
       const level = request ? rightAwayLevel(request) : null;
-      if (!request || onFaiTab || !level || !requestTarget(request)) left.push(id);
+      // A FAI chat's invite binds the tab beside the chat: it is approved in the window, never opened anew.
+      if (!request || onFaiTab || request.invite?.automatic || !level || !requestTarget(request)) left.push(id);
       else await openAndArm(id, level, false).catch(() => left.push(id));
     }
   }
@@ -1221,7 +1227,8 @@ function cleanAgents(data) {
     .map(item => ({ sessionId: text(item.sessionId, 64), host: AGENT_HOSTS.includes(item.host) ? item.host : 'unknown',
       repo: text(item.repo, 60) || 'unknown', lastActiveAt: text(item.lastActiveAt, 40) || null,
       startedAt: text(item.startedAt, 40) || null,
-      wake: ['claude-socket', 'codex-queue', 'opencode-plugin'].includes(item.wake) ? item.wake : 'none', ready: item.ready !== false }));
+      wake: ['claude-socket', 'codex-queue', 'opencode-plugin', 'fai-chat'].includes(item.wake) ? item.wake : 'none',
+      ready: item.ready !== false }));
   return { sessions };
 }
 
@@ -1416,7 +1423,7 @@ function send(type, body = {}) {
     const timer = setTimeout(() => {
       replies.delete(ref);
       reject(new ExtensionError('timeout', 'The FAI service did not reply'));
-    }, REPLY_TIMEOUT_MS);
+    }, LONG_REPLY_MS[type] ?? REPLY_TIMEOUT_MS);
     replies.set(ref, { resolve, reject, timer });
     socket.send(JSON.stringify(message));
   });
@@ -4502,6 +4509,56 @@ async function approveOnSessionTab(message) {
 }
 const ARM_ON_SESSION_TAB = 'Click the FAI Browser icon on the FAI tab to approve.';
 
+// The chat panel page itself: Chrome's side panel or Firefox's sidebar (panel.html, never opened as a tab: no sender tab).
+function fromChatPanel(sender) {
+  return typeof sender?.url === 'string' && sender.url.split(/[?#]/)[0] === chrome.runtime.getURL('panel.html') && !sender.tab;
+}
+
+// FAI chats (spec #84 "The page beside the chat"). The tab beside the chat panel: the active tab of the window the
+// user last focused (the panel's own), when it is a normal http(s) page this extension can read. The daemon makes a
+// pending invite for it when a turn starts; only the panel's own chat_send carries it (no page, no client API).
+async function tabBesideChat() {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
+  if (!Number.isInteger(tab?.id) || tab.incognito || !/^https?:\/\//.test(tab.url ?? '')) return null;
+  return { tabId: tab.id, origin: new URL(tab.url).origin };
+}
+
+// Open automatic invites by tab id ({inviteId, origin}): ended when their tab closes or leaves its site.
+const chatInvites = new Map();
+
+function endChatInvite(tabId, reason) {
+  const invite = chatInvites.get(tabId);
+  if (!invite) return;
+  chatInvites.delete(tabId);
+  if (connected) ignore(send('invite_cancel', { inviteId: invite.inviteId, reason }));
+}
+
+// The panel's message: forwarded with the tab beside it; the invite the daemon made is the worker's to watch.
+async function sendChatMessage(body) {
+  const currentTab = await tabBesideChat();
+  const reply = await send('chat_send', { ...body, currentTab });
+  const { invite, ...answer } = reply ?? {};
+  if (invite && Number.isInteger(invite.tabId) && typeof invite.inviteId === 'string' && invite.tabId === currentTab?.tabId) {
+    chatInvites.set(invite.tabId, { inviteId: invite.inviteId, origin: currentTab.origin });
+  }
+  return answer;
+}
+
+/**
+ * A FAI chat's automatic invite (the request view's invite is `automatic`, with its tabId): Use or Act in the approval
+ * window binds the tab beside the chat the invite named, not whichever tab is active. null for any other request.
+ */
+async function tabForChatInvite(requestId) {
+  const invite = requests.find(item => item.requestId === requestId)?.invite;
+  if (invite?.automatic !== true || !Number.isInteger(invite.tabId)) return null;
+  const tab = await chrome.tabs.get(invite.tabId).catch(() => null);
+  if (!/^https?:\/\//.test(tab?.url ?? '') || new URL(tab.url).origin !== invite.origin) {
+    throw new Error('The tab beside the chat closed or left its site. Nothing was shared.');
+  }
+  chatInvites.delete(invite.tabId);
+  return tab;
+}
+
 // The toolbar popup itself (popup.html, not the approval window popup.html?window=1, never a page or content script).
 function fromToolbarPopup(sender) {
   return typeof sender?.url === 'string' && sender.url.split('?')[0] === chrome.runtime.getURL('popup.html')
@@ -4628,7 +4685,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       const approvalMessage = { ...message, automaticPopups: !sender.tab && ['popup', 'window'].includes(surface)
         && message.automaticPopups === AUTOMATIC_POPUPS_POLICY ? AUTOMATIC_POPUPS_POLICY : null };
       if (message.onSessionTab === true) note = await approveOnSessionTab(approvalMessage);
-      else await startSession(approvalMessage);
+      else await startSession(approvalMessage, await tabForChatInvite(message.requestId));
       if (['popup', 'window'].includes(surface)) {
         reportApproval({ requestId: message.requestId ?? session?.requestId ?? null, surface, step: 'approved', origin: session?.origin ?? null });
       }
@@ -4737,6 +4794,11 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       if (session?.inviteId && (session.inviteId === message.inviteId || session.requestId === message.requestId)) {
         await setStatus('stopped');
       }
+    } else if (message.type === 'chat_send') {
+      if (!fromChatPanel(sender)) throw new Error('Unsupported control');
+      if (!connected) throw new ExtensionError('not_connected', 'Connect to the FAI service first.');
+      const { type: _type, currentTab: _forged, ...body } = message;
+      return await sendChatMessage(body);
     } else if (message.type === 'agents') {
       // The popup's Invite list: the live agent sessions (host, repo name, last activity, whether FAI can wake it).
       if (!fromToolbarPopup(sender)) throw new Error('Unsupported control');
@@ -4779,7 +4841,9 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     } catch {
       // Nothing to log with.
     }
-    respond({ error: error.message, ...(error.code === 'stale_approval' ? { code: error.code } : {}) });
+    // A chat panel call keeps the service's code (chat_too_many, chat_signed_out …): the panel shows FAI's line for it.
+    const code = error.code === 'stale_approval' || (message.type === 'chat_send' && typeof error.code === 'string');
+    respond({ error: error.message, ...(code ? { code: error.code } : {}) });
   });
   return true;
 });
@@ -4882,10 +4946,14 @@ chrome.tabs.onRemoved?.addListener(tabId => {
   if (session?.inviteId && tabId === session.homeTabId && connected) {
     ignore(send('invite_cancel', { inviteId: session.inviteId, reason: 'tab_closed' }));
   }
+  endChatInvite(tabId, 'tab_closed');
   if (session?.status !== 'active' || !leaseTab(tabId)) return;
   if (!leaseTabClosed(tabId)) endSession('paused', 'tab_changed');
 });
 chrome.tabs.onUpdated?.addListener((tabId, info) => {
+  if (info.url && chatInvites.has(tabId) && originOf(info.url) !== chatInvites.get(tabId).origin) {
+    endChatInvite(tabId, 'origin_changed');
+  }
   if (session?.status === 'active' && tabId === session.tabId && info.url && !sessionCovers(info.url)) {
     endSession('paused', 'origin_changed', leftOrigin(info.url));
   } else if (session?.status === 'active' && info.url && leaseTab(tabId) && !sessionCovers(info.url)) {

@@ -9,7 +9,8 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CHAT_CODES, chatTurnText, childEnv, cleanChatText, clipProviderError, createChatRunner } from '../src/chat-runner.js';
+import { CHAT_CODES, chatTurnText, childEnv, clipProviderError, createChatRunner } from '../src/chat-runner.js';
+import { wakeText } from '../src/wake.js';
 import { createChatStore, renameRetrying } from '../src/chat-store.js';
 import { turnCommand } from '../src/chat-providers.js';
 import { createChatUploads } from '../src/chat-files.js';
@@ -73,12 +74,15 @@ test('the child\'s environment keeps the daemon location variables and drops FAI
   { PATH: '/bin', FAI_HOME: '/h', FAI_DAEMON_DIR: '/d', FAI_DAEMON_PORT: '1', FAI_BRIDGE_PORT: '2' });
 });
 
-test('chat template: the user\'s words cleaned (line breaks kept), 4,000 characters, inside spec #80\'s template', () => {
-  assert.equal(cleanChatText('  one\r\ntwo\u0007​three four  '), 'one\ntwo three four');
-  assert.equal(cleanChatText('x'.repeat(5000)).length, 4000);
-  assert.equal(cleanChatText(42), '');
-  assert.equal(chatTurnText('hi\n"there"'),
-    '[FAI Browser] The user sent you a message from the FAI chat panel (the user\'s own words): "hi\\n\\"there\\""');
+test('chat template: the user\'s words in spec #80\'s template; 4,000 characters at most, never cut (too_long)', async t => {
+  const ctx = await setup(t);
+  await assert.rejects(ctx.runner.send({ provider: 'claude', text: 'x'.repeat(4001) }), error => error.code === 'too_long');
+  await assert.rejects(ctx.runner.send({ provider: 'claude', text: ' \u200b ' }), error => error.code === 'bad_request');
+  assert.deepEqual(await ctx.calls(), [], 'nothing started');
+  const { done } = await ctx.runner.send({ provider: 'claude', text: 'x'.repeat(4000) });
+  await done;
+  const [call] = await ctx.calls();
+  assert.equal(call.args[call.args.indexOf('-p') + 1], wakeText({ kind: 'chat', userText: 'x'.repeat(4000) }));
 });
 
 test('a turn: one process with the exact arguments, in the chat\'s files folder, no shell, no window; the transcript', async t => {
@@ -88,7 +92,7 @@ test('a turn: one process with the exact arguments, in the chat\'s files folder,
   const [call] = await ctx.calls();
   const filesDir = ctx.store.filesDir(chatId);
   assert.equal(await realpath(call.cwd), await realpath(filesDir), 'the working folder is chats/<chatId>/files');
-  const expected = turnCommand('claude', { text: chatTurnText('What is on the page?'), filesDir, root: ctx.root,
+  const expected = turnCommand('claude', { text: wakeText({ kind: 'chat', userText: 'What is on the page?' }), filesDir, root: ctx.root,
     server: SERVER, tools: TOOLS, platform: process.platform });
   assert.deepEqual(call.args, expected.args, 'exactly the discovery argument list, and no --model when none was picked');
   assert.ok(!call.args.includes('--model'));

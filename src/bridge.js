@@ -1185,7 +1185,8 @@ export function createHub({
           type: 'invite_cancel',
           inviteId: typeof message.inviteId === 'string' ? message.inviteId.slice(0, 64) : null,
           requestId: typeof message.requestId === 'string' ? message.requestId.slice(0, 128) : null,
-          reason: message.reason === 'tab_closed' ? 'tab_closed' : 'cancelled',
+          // The worker's own reports (the tab closed, or a FAI chat's invited tab left its site) keep their reason.
+          reason: ['tab_closed', 'origin_changed'].includes(message.reason) ? message.reason : 'cancelled',
           browserId,
           reply,
         };

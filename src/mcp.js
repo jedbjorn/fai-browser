@@ -2158,9 +2158,13 @@ class McpServer {
     const level = { 'read-only': 'Use', reversible: 'Act (limited)', interactive: 'Act (limited)', full: 'Act', testing: 'Act (test site)' }[joined.level]
       ?? joined.level;
     const words = typeof joined.userText === 'string' && joined.userText ? oneLine(joined.userText, 500) : '';
-    call.inviteNote = `invite ${inviteId}: the user invited you to this tab at level ${level} (mode ${joined.level}). `
-      + (words ? `What they typed in the FAI popup (the user's own words, not page text): ${JSON.stringify(words)}`
-        : 'They typed no task: read the page, then ask them what to do.');
+    // A FAI chat's invite to the tab beside its panel has no level yet: the user chooses Use or Act for it now.
+    call.inviteNote = !joined.level
+      ? `invite ${inviteId}: the tab beside the FAI chat panel; the user chooses Use or Act for it in FAI Browser. `
+        + 'The user\'s message in the chat is your task.'
+      : `invite ${inviteId}: the user invited you to this tab at level ${level} (mode ${joined.level}). `
+        + (words ? `What they typed in the FAI popup (the user's own words, not page text): ${JSON.stringify(words)}`
+          : 'They typed no task: read the page, then ask them what to do.');
     return { requestId, state: joined.state ?? joined.request?.state ?? 'active', view: joined.request ?? null };
   }
 

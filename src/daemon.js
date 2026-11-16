@@ -27,10 +27,11 @@ import { spawn } from 'node:child_process';
 import { automaticCheck, createUpdateChecker, runningUpdate, underTest, claimUpdateLock, writeInstallState } from './update.js';
 import { gitReleaseSource, scrubbedEnv } from './update-git.js';
 import { SessionError, SESSION_POLL_MAX_MS, createSessionRegistry } from './sessions.js';
-import { MAX_CHAT_TEXT, cleanChatText, cleanInviteText } from './wake.js';
+import { MAX_CHAT_TEXT, chatInviteText, cleanChatText, cleanInviteText } from './wake.js';
 import { ChatError, createChatRunner } from './chat-runner.js';
 import { ChatFileError, createChatUploads } from './chat-files.js';
 import { ChatSettingsError, checkModelName, createChatSettings } from './chat-settings.js';
+import { createChatWakes } from './chat-wakes.js';
 import { PAGE_SIZE, createChatStore, validChatId } from './chat-store.js';
 import { writeLocalChats } from './local-chats.js';
 import { TOOL_NAMES } from './mcp.js';
@@ -97,7 +98,8 @@ const INVITE_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
 const INVITE_KEEP_MS = 60 * 60_000;
 // How long a decision for an approval entry no act recorded yet waits for that act's pending answer.
 const EARLY_DECISION_MS = 30_000;
-const SESSION_KEYS = new Set(['host', 'hostSessionId', 'repo', 'pid', 'startedAt', 'wake', 'wakeReason', 'client', 'previous']);
+const SESSION_KEYS = new Set(['host', 'hostSessionId', 'repo', 'pid', 'startedAt', 'wake', 'wakeReason', 'client', 'previous',
+  'chatTurnToken']);
 const CHALLENGE = /^[A-Za-z0-9_-]{16,64}$/;
 const SESSION_UPDATE_KEYS = new Set(['lastToolCallAt', 'hostSessionId', 'wake', 'wakeReason', 'maxMs']);
 // The MCP server's read of its own conversation for the chat panel (POST /v1/sessions/:id/chat).
@@ -464,6 +466,8 @@ export function createDaemon(options = {}) {
     server: { command: process.execPath, args: [join(PACKAGE_ROOT, 'src', 'mcp-main.js')] }, tools: TOOL_NAMES,
     ...(options.chatPrograms ? { programs: options.chatPrograms } : {}),
     ...(options.chatTurnLimitMs ? { turnLimitMs: options.chatTurnLimitMs } : {}) });
+  // Wakes addressed to a FAI chat become turns in it, in order (spec #84 "Approvals and wakes").
+  const chatWakes = createChatWakes({ runner: chats, now, log, onChange: () => changed(), skip: skipChatWake });
   // Values filled into password inputs (testing level) by any run of this daemon: redacted from later results.
   const filledSecrets = new Set();
   const runs = new Map();
@@ -665,8 +669,9 @@ export function createDaemon(options = {}) {
     };
   }
 
+  // `unlisted`: a FAI chat's automatic invite before its agent joined (no view shows it, so no window opens for it).
   function liveViews() {
-    return [...requests.values()].filter(record => LIVE.has(record.state)).map(view);
+    return [...requests.values()].filter(record => LIVE.has(record.state) && !record.unlisted).map(view);
   }
 
   /**
@@ -767,13 +772,20 @@ export function createDaemon(options = {}) {
 
   // The requests a client lists: an invited tab only for its addressee or owner.
   function clientViews(caller) {
-    return [...requests.values()].filter(record => LIVE.has(record.state) && seesInvite(record, caller)).map(view);
+    return [...requests.values()].filter(record => LIVE.has(record.state) && !record.unlisted && seesInvite(record, caller))
+      .map(view);
   }
 
   // Open invites a client may see: those for no session in particular (the user's copy line names one) and its own.
   function inviteViewsFor(caller) {
-    return [...invites.values()].filter(invite => invite.state === 'open'
-      && (!invite.sessionId || invite.sessionId === caller?.sessionId)).map(inviteView);
+    return [...invites.values()].filter(invite => invite.state === 'open' && joinable(invite, caller)).map(inviteView);
+  }
+
+  // Whether `session` may join `invite`: one for a FAI chat by that chat's sessions only, one for a session by it only,
+  // one for nobody in particular (the popup's copy line) by any.
+  function joinable(invite, session) {
+    if (invite.chatId) return Boolean(session?.chatId) && session.chatId === invite.chatId;
+    return !invite.sessionId || invite.sessionId === session?.sessionId;
   }
 
   function getRecord(requestId) {
@@ -1301,11 +1313,33 @@ export function createDaemon(options = {}) {
    * cannot be woken, or one gone, gets nothing: its next text told it to wait or to ask the user.
    */
   function wakeOwner(record, kind, ids = {}) {
-    if (!record.ownerSession) return null;
-    const wake = sessions.queueWake(record.ownerSession, { kind, requestId: record.requestId,
-      level: record.grant?.level, ...ids });
+    if (!record.ownerSession && !record.ownerChat) return null;
+    const fields = { kind, requestId: record.requestId, level: record.grant?.level, ...ids };
+    // A request a FAI chat made belongs to the chat across its turns: the wake is the chat's next turn.
+    const wake = record.ownerChat ? chatWakes.queue(record.ownerChat, fields) : sessions.queueWake(record.ownerSession, fields);
     record.ownerWakeId = wake?.wakeId ?? null;
     return wake;
+  }
+
+  // A wake for agent session `sessionId` (the popup's invite): a FAI chat's session through its chat (a new turn),
+  // any other through its own MCP server's poll.
+  function wakeSession(sessionId, fields) {
+    const chatId = sessions.get(sessionId)?.chatId;
+    return chatId ? chatWakes.queue(chatId, fields) : sessions.queueWake(sessionId, fields);
+  }
+
+  const wakeById = wakeId => (wakeId ? sessions.wake(wakeId) ?? chatWakes.wake(wakeId) : null);
+
+  /**
+   * A chat's wake that has nothing left to tell by the time its turn could start: an invite no longer open (joined,
+   * cancelled, expired), or an Approve or Resume whose request the chat used after the wake was queued (its agent
+   * waited in fai_browser_open or fai_browser_wait and went on in that same turn).
+   */
+  function skipChatWake(wake) {
+    if (wake.kind === 'invite') return invites.get(wake.inviteId)?.state !== 'open';
+    if (wake.kind !== 'approved' && wake.kind !== 'resume') return false;
+    const record = requests.get(wake.requestId);
+    return Boolean(record && record.lastCallAt > wake.createdAt);
   }
 
   /**
@@ -1370,7 +1404,7 @@ export function createDaemon(options = {}) {
 
   // The last Approve or Resume wake of a request's owner, for the popup: a failed one shows "tell your agent".
   function ownerWakeView(record) {
-    const wake = record.ownerWakeId ? sessions.wake(record.ownerWakeId) : null;
+    const wake = wakeById(record.ownerWakeId);
     return wake ? { kind: wake.kind, state: wake.state, error: wake.error } : null;
   }
 
@@ -1391,9 +1425,25 @@ export function createDaemon(options = {}) {
     changed();
   }
 
+  /**
+   * The next turn of FAI chat `chatId` registered its MCP server (`sessionId`): the chat's tab requests, their runs and
+   * invites move to it by the same re-own step a returning session takes (transferOwner). Nothing ends because an
+   * earlier turn's process exited; each lease keeps its own expiry rules.
+   */
+  function adoptChat(chatId, sessionId) {
+    const owners = new Set();
+    for (const record of requests.values()) {
+      if (record.ownerChat === chatId && record.ownerSession && record.ownerSession !== sessionId) owners.add(record.ownerSession);
+    }
+    for (const invite of invites.values()) {
+      if (invite.chatId === chatId && invite.sessionId && invite.sessionId !== sessionId) owners.add(invite.sessionId);
+    }
+    for (const from of owners) transferOwner(from, sessionId);
+  }
+
   const inviteLog = new Map(); // browserId -> invite times (ms), for the rate limit
   function inviteView(invite) {
-    const wake = invite.wakeId ? sessions.wake(invite.wakeId) : null;
+    const wake = wakeById(invite.wakeId);
     const target = invite.sessionId ? sessions.view(invite.sessionId) ?? invite.target : null;
     const joined = invite.joinedBy ? sessions.view(invite.joinedBy) ?? invite.joinedView : null;
     return {
@@ -1403,6 +1453,9 @@ export function createDaemon(options = {}) {
       endReason: invite.endReason ?? null,
       level: invite.level,
       origin: invite.origin,
+      // Made for a FAI chat's turn without a click (spec #84): it grants nothing until the user's Use or Act in the
+      // approval window, which binds this tab.
+      ...(invite.automatic ? { automatic: true, tabId: invite.tabId } : {}),
       createdAt: iso(invite.createdAt),
       expiresAt: iso(invite.expiresAt),
       hasText: Boolean(invite.text),
@@ -1511,12 +1564,14 @@ export function createDaemon(options = {}) {
     const bound = bindRecord(record, { ...event, scope: 'origin', tabMode: event.tabMode ?? 'single' });
     if (bound.error) return replyTo(event, bound);
     requests.set(record.requestId, record);
-    const invite = { inviteId, requestId: record.requestId, sessionId: target?.sessionId ?? null, target, browserId,
+    // An invite for a FAI chat's session is the chat's: its next turn's session joins it.
+    const chatId = target ? sessions.get(target.sessionId)?.chatId ?? null : null;
+    const invite = { inviteId, requestId: record.requestId, sessionId: target?.sessionId ?? null, chatId, target, browserId,
       tabId: event.tabId, origin: event.origin, level: record.grant.level, text, createdAt: t,
       expiresAt: t + INVITE_TTL_MS, state: 'open', endReason: null, wakeId: null, joinedBy: null };
     invites.set(inviteId, invite);
     if (target) {
-      const wake = sessions.queueWake(target.sessionId, { kind: 'invite', inviteId, requestId: record.requestId,
+      const wake = wakeSession(target.sessionId, { kind: 'invite', inviteId, requestId: record.requestId,
         level: invite.level, userText: text });
       invite.wakeId = wake?.wakeId ?? null;
     }
@@ -1534,9 +1589,11 @@ export function createDaemon(options = {}) {
       return replyTo(event, { error: { code: 'unknown_invite', message: 'Another browser made this invite' } });
     }
     if (invite.state === 'open') {
-      invite.cancelled = event.reason !== 'tab_closed';
+      // The worker's own reports (the tab closed, or a FAI chat's invited tab left its site) revoke; the popup cancels.
+      const revoked = event.reason === 'tab_closed' || event.reason === 'origin_changed';
+      invite.cancelled = !revoked;
       const record = requests.get(invite.requestId);
-      endInvite(invite, invite.cancelled ? 'cancelled' : 'revoked', event.reason === 'tab_closed' ? 'tab_closed' : 'cancelled');
+      endInvite(invite, invite.cancelled ? 'cancelled' : 'revoked', revoked ? event.reason : 'cancelled');
       if (record && !TERMINAL.has(record.state)) {
         endRequest(record, 'released', invite.cancelled ? 'invite_cancelled' : 'invite_revoked', { interrupt: 'request_closed' });
       }
@@ -1551,8 +1608,9 @@ export function createDaemon(options = {}) {
     replyTo(event, {
       sessions: sessions.views().map(item => ({ sessionId: item.sessionId, host: item.host, repo: item.repo,
         startedAt: item.startedAt, lastActiveAt: item.lastActiveAt, wake: item.wake, wakeReason: item.wakeReason, ready: item.ready })),
-      invites: [...invites.values()].filter(invite => invite.state === 'open' && (!event.browserId || invite.browserId === event.browserId))
-        .map(inviteView),
+      // A FAI chat's automatic invite is not the popup's: it shows only as its request, once the agent joined.
+      invites: [...invites.values()].filter(invite => invite.state === 'open' && !invite.automatic
+        && (!event.browserId || invite.browserId === event.browserId)).map(inviteView),
     });
   }
 
@@ -1612,6 +1670,7 @@ export function createDaemon(options = {}) {
     if (!text) return fail('empty', 'Type a message first.');
     if (text.length > MAX_CHAT_TEXT) return fail('too_long', `A message can be at most ${MAX_CHAT_TEXT} characters.`);
     if (view.wake === 'none' || !view.ready) return fail('cannot_wake', 'FAI cannot send messages to this agent session.');
+    if (sessions.get(sessionId)?.chatId) return fail('cannot_wake', 'This agent is a FAI chat: write to it in its chat.');
     const t = now();
     if (sessions.wakesOf(sessionId, 'chat').filter(wake => t - wake.createdMs < 60_000).length >= CHAT_SENDS_PER_MINUTE) {
       return fail('rate_limited', 'Too many messages in a minute; wait a moment.');
@@ -1645,7 +1704,7 @@ export function createDaemon(options = {}) {
       throw new HttpError(403, 'session_required', 'Joining an invite needs a registered agent session (the FAI MCP '
         + 'server registers by itself; set no FAI_MCP_REGISTRY=0).');
     }
-    if (invite.sessionId && invite.sessionId !== session.sessionId) {
+    if (!joinable(invite, session)) {
       throw new HttpError(403, 'invite_for_another_session', 'This invite is for another agent session.');
     }
     const record = requests.get(invite.requestId);
@@ -1658,6 +1717,9 @@ export function createDaemon(options = {}) {
     invite.joinedBy = session.sessionId;
     invite.joinedView = sessions.view(session.sessionId);
     record.ownerSession = session.sessionId;
+    record.ownerChat = session.chatId ?? null;
+    // A FAI chat's automatic invite is listed from now on, pending: the approval window opens for it.
+    delete record.unlisted;
     // The agent that joins now owns the invited tab: its older pending requests are replaced by it (issue #36).
     expireReplaced(record);
     record.lastCallAt = now();
@@ -2069,7 +2131,9 @@ export function createDaemon(options = {}) {
   //   chat_list {offset, limit <= 50} -> {chats: [chat view + lastActiveAt], next}
   //   chat_history {chatId, after} -> {chat: chat view, messages: [after id], cursor}
   //   chat_send {provider, model?, text, files?} or {chatId, text, files?} -> {chatId, turnId}. A new chat without a
-  //     model takes the provider's model from Browser Chat settings (none: the program's own default).
+  //     model takes the provider's model from Browser Chat settings (none: the program's own default). The worker adds
+  //     `currentTab` ({tabId, origin}: the http(s) tab beside the panel) to the panel's own message, and the turn then
+  //     carries a pending invite for it (`invite` in the answer, for the worker only)
   //   chat_stop {chatId} -> {stopped}; chat_delete {chatId} -> {deleted}
   //   chat_settings {} -> {settings}; chat_settings_set {settings: any subset} -> {settings}, where settings is
   //     {defaultProvider, models: {codex, claude, opencode}, appearance}
@@ -2095,7 +2159,80 @@ export function createDaemon(options = {}) {
   const chatView = header => ({ chatId: header.chatId, title: header.title, provider: header.provider, model: header.model,
     reportedModel: header.reportedModel, startedAt: header.startedAt, running: chats.running(header.chatId) });
 
-  async function chatOp(type, args) {
+  /**
+   * The tab beside the chat panel, as the worker named it ({tabId, origin}), when it can be invited: a normal http(s)
+   * page in a browser, else null (the turn carries no invite).
+   */
+  function panelTab(value, browserId) {
+    if (!value || typeof value !== 'object' || !Number.isInteger(value.tabId) || value.tabId < 0) return null;
+    const { origin } = value;
+    if (typeof origin !== 'string' || !/^https?:\/\//.test(origin) || isSiteEntry(origin) || checkOriginEntry(origin).error) return null;
+    if (typeof browserId !== 'string' || !browserId) return null;
+    return { tabId: value.tabId, origin, browserId };
+  }
+
+  /**
+   * Spec #84 "The page beside the chat": when a turn of chat `chatId` starts and the tab beside the panel is not one
+   * the chat already holds, a pending invite for it, addressed to the chat and made without a click, so it grants
+   * nothing. Its request stays unlisted until the chat's agent joins; then the existing approval window opens for it
+   * and Use or Act there binds this tab. A newer automatic invite on the same tab replaces an older one.
+   * Returns the turn's invite sentence, or null.
+   */
+  function inviteForChat(chatId, tab) {
+    for (const record of requests.values()) {
+      if (record.ownerChat === chatId && LEASED.has(record.state) && record.lease?.tabId === tab.tabId
+        && sameBrowser(record, tab.browserId)) return null;
+    }
+    const t = now();
+    // Only an earlier automatic invite: a popup invite on this tab is the user's own grant to another agent.
+    for (const other of invites.values()) {
+      if (other.automatic && other.state === 'open' && other.tabId === tab.tabId && other.browserId === tab.browserId) {
+        other.cancelled = true;
+        const earlier = requests.get(other.requestId);
+        if (earlier && !TERMINAL.has(earlier.state)) endRequest(earlier, 'released', 'invite_replaced', { interrupt: 'request_closed' });
+        endInvite(other, 'cancelled', 'replaced');
+      }
+    }
+    const inviteId = newInviteId();
+    const record = {
+      requestId: newRequestId(),
+      seq: ++requestSeq,
+      state: 'pending',
+      stateReason: null,
+      origins: [tab.origin],
+      mode: 'read-only',
+      grant: null,
+      reason: 'Your FAI chat asks to use the tab beside it.',
+      instruction: null,
+      url: null,
+      client: 'invite',
+      ttlMs: INVITE_TTL_MS,
+      createdAt: t,
+      lastCallAt: t,
+      pausedAt: null,
+      endedAt: null,
+      lease: null,
+      browser: browserRef(browserCandidates().find(browser => browser.id === tab.browserId) ?? { id: tab.browserId }),
+      browserPinned: true,
+      activeRunId: null,
+      lastRunId: null,
+      runtime: null,
+      bridge: null,
+      invite: inviteId,
+      ownerSession: null,
+      ownerChat: chatId,
+      unlisted: true,
+    };
+    requests.set(record.requestId, record);
+    invites.set(inviteId, { inviteId, requestId: record.requestId, sessionId: null, chatId, automatic: true, target: null,
+      browserId: tab.browserId, tabId: tab.tabId, origin: tab.origin, level: null, text: '', createdAt: t,
+      expiresAt: t + INVITE_TTL_MS, state: 'open', endReason: null, wakeId: null, joinedBy: null });
+    log('invite_created', { inviteId, requestId: record.requestId, level: null, wake: 'chat_turn' });
+    changed();
+    return { inviteId, tabId: tab.tabId, sentence: chatInviteText(inviteId) };
+  }
+
+  async function chatOp(type, args, event = {}) {
     switch (type) {
       case 'chat_providers': {
         const [providers, settings] = await Promise.all([chats.providers(), chatSettings.get()]);
@@ -2112,8 +2249,17 @@ export function createDaemon(options = {}) {
           if (Object.hasOwn(models, provider)) model = models[provider];
         }
         const files = chatUploads.check(args.files, chatId);
-        const sent = await chats.send({ chatId, provider, model, text: stringOf(args.text, 'text', 20_000), files });
-        return { chatId: sent.chatId, turnId: sent.turnId };
+        const tab = panelTab(args.currentTab, event.browserId);
+        let invited = null;
+        const addendum = tab ? id => {
+          invited = inviteForChat(id, tab);
+          return invited?.sentence ?? null;
+        } : null;
+        // Any length here: the runner refuses an over-long message as too_long, as agent_send does.
+        const sent = await chats.send({ chatId, provider, model, text: stringOf(args.text, 'text', Number.MAX_SAFE_INTEGER),
+          files, addendum });
+        return { chatId: sent.chatId, turnId: sent.turnId,
+          ...(invited ? { invite: { inviteId: invited.inviteId, tabId: invited.tabId } } : {}) };
       }
       case 'chat_settings':
         return { settings: await chatSettings.get() };
@@ -2158,7 +2304,7 @@ export function createDaemon(options = {}) {
   async function onChatEvent(event) {
     const args = event.args && typeof event.args === 'object' && !Array.isArray(event.args) ? event.args : {};
     try {
-      replyTo(event, await chatOp(event.type, args));
+      replyTo(event, await chatOp(event.type, args, event));
     } catch (error) {
       if (error instanceof ChatError || error instanceof ChatFileError || error instanceof ChatSettingsError) {
         return replyTo(event, { error: { code: error.code, message: error.message } });
@@ -2517,6 +2663,8 @@ export function createDaemon(options = {}) {
       bridge: null,
       // The agent session (MCP server) that asked: woken when the user approves or resumes this request.
       ownerSession: session?.sessionId ?? null,
+      // A FAI chat's session asked: the request is the chat's across its turns, and its wakes are the chat's turns.
+      ownerChat: session?.chatId ?? null,
     };
     requests.set(record.requestId, record);
     log('request_state', { requestId: record.requestId, state: 'pending' });
@@ -3207,10 +3355,20 @@ export function createDaemon(options = {}) {
         return createRequest(body, client, caller, instance);
       case 'sessions.register': {
         checkKeys(body, SESSION_KEYS);
-        const registered = sessionCall(() => sessions.register(body));
+        const { chatTurnToken, ...fields } = body;
+        // An MCP server started inside a FAI chat turn (spec #84): its token is checked against a turn this daemon
+        // started, once, while that turn's process runs. Refused: no session at all.
+        let chat = null;
+        if (chatTurnToken !== undefined) {
+          chat = chats.claimToken(chatTurnToken);
+          if (!chat) throw new HttpError(403, 'chat_token_refused', 'This FAI chat turn token is unknown, used, or its turn has ended.');
+        }
+        const registered = sessionCall(() => sessions.register(fields, { chat }));
         // A session the daemon dropped (it stopped polling for a while) came back with its old key: its requests and
         // the invites meant for it are its own again.
         if (registered.replaced) transferOwner(registered.replaced, registered.sessionId);
+        // The chat's next turn: the chat's requests move to it.
+        if (chat) adoptChat(chat.chatId, registered.sessionId);
         const { replaced: _replaced, ...answer } = registered;
         return { status: 201, body: answer };
       }
@@ -3247,7 +3405,7 @@ export function createDaemon(options = {}) {
       case 'requests.list': {
         const cutoff = now() - TERMINAL_KEEP_MS;
         const list = [...requests.values()]
-          .filter(record => (LIVE.has(record.state) || record.endedAt >= cutoff) && seesInvite(record, caller))
+          .filter(record => (LIVE.has(record.state) || record.endedAt >= cutoff) && !record.unlisted && seesInvite(record, caller))
           .sort((a, b) => b.createdAt - a.createdAt)
           .map(view);
         return { body: { requests: list } };

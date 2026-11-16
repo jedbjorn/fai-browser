@@ -15,10 +15,11 @@ import { OPENCODE_CONFIG_ARGS, PROVIDERS, PROVIDER_NAMES, MIN_VERSIONS, TURN_TOK
   findProgram, modelsCommand, opencodeEnv, opencodeServers, parseModels, parseVersion, signedIn, statusArgs, turnCommand,
   versionSupported } from './chat-providers.js';
 import { CARRIED_ENV } from './resume.js';
+// One cleaner and one template for the user's words, in FAI chats and open agents alike (decision #41).
+import { MAX_CHAT_TEXT, cleanChatText, wakeText } from './wake.js';
 
 export const MAX_RUNNING = 3;
 export const TURN_LIMIT_MS = 30 * 60_000;
-export const CHAT_TEXT_LIMIT = 4000;
 export const PROVIDER_ERROR_LIMIT = 1000;
 const CHECK_TIMEOUT_MS = 15_000;
 const KILL_GRACE_MS = 5_000;
@@ -53,6 +54,18 @@ export const CHAT_CODES = Object.freeze({
   chat_turn_failed: (provider, status) => `${PROVIDER_NAMES[provider]} ended the turn with exit status ${status}.`,
 });
 
+/**
+ * Setup's closing summary (spec #84 "Setup"): which providers can start a FAI chat now, and the fixed fix line of each
+ * that cannot, from the runner's own availability check (`providers`: runner.providers()).
+ */
+export function chatSummary(providers) {
+  const ready = providers.filter(item => item.available).map(item => item.name);
+  const head = ready.length
+    ? `FAI chats: ${ready.length > 1 ? `${ready.slice(0, -1).join(', ')} and ${ready.at(-1)}` : ready[0]} can start a chat now (the Chat button in the browser).`
+    : 'FAI chats: no provider can start a chat yet.';
+  return [head, ...providers.filter(item => !item.available).map(item => `  ${item.line}`)].join('\n');
+}
+
 export class ChatError extends Error {
   constructor(code, message) {
     super(message);
@@ -63,24 +76,13 @@ export class ChatError extends Error {
 const fail = (code, provider, detail) => new ChatError(code, CHAT_CODES[code](provider, detail));
 
 /**
- * The user's words for spec #80's `chat` template: cleaned like an invite's text, except that line breaks are kept
- * and the limit is 4,000 characters.
- */
-export function cleanChatText(text) {
-  if (typeof text !== 'string') return '';
-  return text
-    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
-    .replace(/\r\n?/g, '\n')
-    .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ')
-    .trim().slice(0, CHAT_TEXT_LIMIT);
-}
-
 /**
- * Spec #80's chat template: the text a provider gets for the user's message. `paths`: the absolute paths of the files
- * attached to it, in the chat's files folder (spec #84 "Attachments"), named after the user's words.
+ * Spec #80's chat template (src/wake.js wakeText, one template for FAI chats and open agents, decision #41): the text a
+ * provider gets for the user's message. `paths`: the absolute paths of the files attached to it, in the chat's files
+ * folder (spec #84 "Attachments"), named after the user's words.
  */
 export function chatTurnText(words, paths = []) {
-  const text = `[FAI Browser] The user sent you a message from the FAI chat panel (the user's own words): ${JSON.stringify(words)}`;
+  const text = wakeText({ kind: 'chat', userText: words });
   if (!paths.length) return text;
   return `${text}\n[FAI Browser] The user attached ${paths.length === 1 ? 'this file' : 'these files'}, saved in this chat's `
     + `folder: ${paths.map(path => JSON.stringify(path)).join(', ')}`;
@@ -305,8 +307,9 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
 
   // Checks and reserves the chat's slot (unless `turn` is already reserved), moves the message's waiting files into
   // the chat's folder, writes the record, starts the process. `compose(paths)` gives {text, record} once the files'
-  // paths are known; `files`: waiting files checked by uploads.check.
-  async function begin(header, compose, files = [], turn = null) {
+  // paths are known; `files`: waiting files checked by uploads.check. `addendum(chatId)`: more text for this turn (the
+  // page beside the chat, spec #84), asked once the turn may start.
+  async function begin(header, compose, files = [], turn = null, addendum = null) {
     const { chatId, provider } = header;
     if (!turn) {
       checkLimits(chatId);
@@ -321,6 +324,8 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
     try {
       if (files.length) attached = await uploads.commit(files, store.filesDir(chatId));
       composed = compose(attached.map(file => file.path));
+      const extra = addendum ? await addendum(chatId) : null;
+      if (extra) composed = { ...composed, text: `${composed.text}\n${extra}` };
       await store.append(chatId, { ...composed.record,
         ...(attached.length ? { files: attached.map(({ name, size, type }) => ({ name, size, type })) } : {}) });
     } catch (error) {
@@ -337,27 +342,29 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
    * and its last line is written ({chatId, turnId, code}: a CHAT_CODES code, or null when it succeeded).
    * Rejects with a ChatError: unknown_chat, chat_too_many, chat_no_model, or an availability code.
    */
-  async function startTurn({ chatId, text, record }) {
+  async function startTurn({ chatId, text, record, addendum = null }) {
     const header = await store.header(chatId);
     if (!header) throw new ChatError('unknown_chat', 'No such chat.');
-    return begin(header, () => ({ text, record }));
+    return begin(header, () => ({ text, record }), [], null, addendum);
   }
 
   /**
    * The panel's message: `{provider, model, text, files}` starts a new chat, `{chatId, text, files}` continues one.
    * `files`: waiting files from uploads.check, moved into the chat's folder once the turn has its slot. The user's
-   * words travel inside the chat template, followed by the files' paths. Resolves {chatId, turnId, done}; rejects with
-   * a ChatError (bad_request too).
+   * words travel inside the chat template, followed by the files' paths; `addendum(chatId)` may add a line after them
+   * once the turn may start. Resolves {chatId, turnId, done}; rejects with a ChatError (bad_request, too_long: a
+   * message is never cut silently).
    */
-  async function send({ chatId: existing = null, provider = null, model = null, text, files = [] }) {
+  async function send({ chatId: existing = null, provider = null, model = null, text, files = [], addendum = null }) {
     const words = cleanChatText(text);
     if (!words) throw new ChatError('bad_request', 'Type a message first.');
+    if (words.length > MAX_CHAT_TEXT) throw new ChatError('too_long', `A message can be at most ${MAX_CHAT_TEXT} characters.`);
     if (files.length && !uploads) throw new ChatError('bad_request', 'Attachments are not available.');
     const compose = paths => ({ text: chatTurnText(words, paths), record: { role: 'user', text: words, files: [] } });
     if (existing) {
       const header = await store.header(existing);
       if (!header) throw new ChatError('unknown_chat', 'No such chat.');
-      return begin(header, compose, files);
+      return begin(header, compose, files, null, addendum);
     }
     if (!PROVIDERS.includes(provider)) throw new ChatError('bad_request', 'Choose a provider.');
     if (model !== null && (typeof model !== 'string' || !argumentSafe(model.trim()) || model.length > 200)) {
@@ -377,7 +384,7 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
       turns.delete(chatId);
       throw error;
     }
-    return begin(header, compose, files, turn);
+    return begin(header, compose, files, turn, addendum);
   }
 
   /**
@@ -458,6 +465,8 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
     stop,
     claimToken,
     running: chatId => turns.has(chatId),
+    /** Resolves when the chat's running turn has ended (at once when none runs). */
+    whenDone: chatId => turns.get(chatId)?.done ?? Promise.resolve(null),
     busy: () => turns.size > 0,
     close,
   };

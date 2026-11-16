@@ -12,6 +12,7 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { httpJson } from './client.js';
 import { createChatReader, fitPost } from './chat.js';
+import { TURN_TOKEN_ENV } from './chat-providers.js';
 import {
   claudeSocket, codexSupportsQueue, codexThreadId, deliverWake, hostSessionId, opencodeChannel, opencodeSessionId,
   opencodeVersionOk, repoName, wakeCapability, wakeReason, wakeText,
@@ -93,6 +94,11 @@ export class AgentSession {
     this.chatReader = chatReader ?? createChatReader({ host, env, version: this.chatVersion,
       opencode: () => opencodeChannel(this.env, { ppid: this.ppid }) });
     this.chatReading = false;
+    // A FAI chat turn's token (spec #84): presented once, at the first registration, to a daemon that proved itself.
+    // Accepted, this session belongs to the daemon's chat and its wakes are that chat's new turns (fai-chat).
+    const token = env?.[TURN_TOKEN_ENV];
+    this.chatToken = typeof token === 'string' && token ? token : null;
+    this.chatBound = false;
   }
 
   get ppid() {
@@ -110,7 +116,8 @@ export class AgentSession {
 
   wakeOptions() {
     return { host: this.host, env: this.env, threadId: this.threadId, codexReady: this.codexReady,
-      ppid: this.ppid, clientInfo: this.clientInfo, opencodeSession: this.hostSessionId, opencodeVersion: this.opencodeVersion };
+      ppid: this.ppid, clientInfo: this.clientInfo, opencodeSession: this.hostSessionId, opencodeVersion: this.opencodeVersion,
+      chatBound: this.chatBound };
   }
 
   /**
@@ -129,7 +136,7 @@ export class AgentSession {
   }
 
   view() {
-    const note = this.host === 'claude' && !claudeSocket(this.env, { ppid: this.ppid, clientInfo: this.clientInfo })
+    const note = this.chatBound ? null : this.host === 'claude' && !claudeSocket(this.env, { ppid: this.ppid, clientInfo: this.clientInfo })
       ? 'no messaging socket of its own (Claude Code 2.1.224+, not --bare, the MCP server started by Claude Code itself)'
       : this.host === 'opencode' && (!this.opencodeVersion || !opencodeChannel(this.env, { ppid: this.ppid }))
         ? 'no FAI plugin channel (install --host opencode, OpenCode 1.19 to 1.x, not --pure, the MCP server started by OpenCode itself)'
@@ -238,8 +245,14 @@ export class AgentSession {
       wakeReason: this.wakeReason,
       client: this.clientName,
       previous: this.previous ?? undefined,
+      chatTurnToken: this.chatToken ?? undefined,
     }), { timeoutMs: 5_000, signal: this.abort.signal });
     if (typeof response?.sessionId !== 'string' || typeof response?.key !== 'string') throw new Error('The daemon registered no session');
+    if (this.chatToken) {
+      // Single use: a re-registration as itself (`previous`) keeps the chat on the daemon's side.
+      this.chatToken = null;
+      this.chatBound = response.chat === true;
+    }
     this.sessionId = response.sessionId;
     this.key = response.key;
     this.previous = null;
@@ -298,6 +311,13 @@ export class AgentSession {
           this.forget();
           this.held = true;
           continue;
+        }
+        if (error?.code === 'chat_token_refused') {
+          // The daemon did not start this turn, or its turn has ended: no session, no wakes (fails closed).
+          this.log('the FAI chat turn token was refused; invites and wakes are off');
+          this.chatToken = null;
+          this.disabled = true;
+          break;
         }
         if (error?.status === 404 && error.code === 'unknown_session') {
           // Dropped (no poll for a while) or a restarted daemon: register again at once, as itself if it can.
