@@ -213,7 +213,7 @@ jobs:
         run: |
           $chats = Join-Path $env:USERPROFILE 'FAI-Local-Chats'
           New-Item -ItemType Directory -Force (Join-Path $chats 'chats\c1') | Out-Null
-          Set-Content -NoNewline (Join-Path $chats 'chats\c1\chat.jsonl') '{"keep":true}'
+          [IO.File]::WriteAllText((Join-Path $chats 'chats\c1\chat.jsonl'), '{"keep":true}')
           $out = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:FAI_INSTALL_ROOT\uninstall.ps1" 2>&1 | Out-String
           Write-Output $out
           if ($out -notmatch 'FAI Browser is removed') { throw 'uninstall did not finish' }
