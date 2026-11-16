@@ -197,8 +197,7 @@ From a checkout instead (`git clone`, then `node scripts/setup.mjs`), setup on W
 2. Download `fai-browser-firefox-<version>.xpi` from the
    [GitHub Releases](https://github.com/jedbjorn/fai-browser/releases) page and open it in Firefox (drag it into a window,
    or `about:addons`, gear menu, **Install Add-on From File**). It is signed by Mozilla and updates itself. Firefox
-   lists what it may do; **Access browser tabs** lets the chat panel invite the agent to the tab beside it (nothing
-   about that tab reaches the agent until you click **Use** or **Act**).
+   lists what it may do, including **Access browser tabs** ([firefox.md](firefox.md#permissions-and-the-gaps) says why).
 3. Click the FAI Browser button on the toolbar: it should say **Connected to the FAI service**.
 
 Firefox 140 or newer, not the Snap or Flatpak build (see above; `node src/cli.js pair` and the popup's Advanced,
@@ -298,8 +297,8 @@ back to the previous version; if it was interrupted, run `node src/cli.js update
 - **Firefox (paths 1 and 2)**: Firefox updates the signed add-on by itself (its `update_url`); the updater only updates
   the clone and the service. If Firefox has not picked it up yet, install the new `.xpi` from the Releases page by hand.
   A temporary add-on from `dist/firefox/` needs `npm run build:firefox` and a reload.
-  Version 0.12.0 adds the **Access browser tabs** permission: Firefox holds that update until you accept it (it asks
-  from its menu button), and the previous version keeps running until then.
+  Version 0.12.0 adds the **Access browser tabs** permission: Firefox holds that update until you accept it
+  ([firefox.md](firefox.md#permissions-and-the-gaps)).
 
 Details: [Updates](../REFERENCE.md#updates).
 
