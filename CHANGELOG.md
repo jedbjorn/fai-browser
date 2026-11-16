@@ -13,6 +13,8 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 
 ### Added
 
+- **An approval wakes the agent.** When you click Approve once or Deny after the agent's act stopped waiting (`approval_pending`), the agent's own session is woken with a new turn: `action_approved` tells it to repeat that act, `action_denied` tells it to stop and tell you. Ids only, no page text. One wake per approval, only for the session and browser that asked, within 5 minutes; an approval given this way stays usable for 5 minutes from the click. Works on every wake channel (Claude Code, Codex, OpenCode).
+- **Approval window over the driven tab.** When that browser window is not in front, the Approve once window opens at its top right; when it is in front, the card shows in the toolbar popup. The card names the action (`Click "Place order" on shop.example?`). Moving to another page on the same approved site keeps it open with a line saying the page changed.
 - **Windows wake channels and desktop setup.** Claude Code CLI and the desktop Code tab use a bound named pipe; Codex CLI and Codex in ChatGPT use a real queue-capable `codex.exe` (the standalone CLI is required even for the app); OpenCode CLI/Desktop 1.19 to 1.x use FAI's authenticated named pipe plugin. Setup detects desktop installs without standalone commands on PATH, names successful registrations and asks you to restart. Existing OpenCode JSONC is preserved with a manual config/plugin step. Ordinary Claude and ChatGPT chat and OpenCode 2.x are excluded. Status and the popup show fixed wake reasons with setup fixes.
 
 ### Fixed
@@ -23,6 +25,7 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 ### Verification
 
 - **Windows 10 live wakes.** Claude's Code tab and ChatGPT's Codex mode each took a new turn on their own for an invite, an Approve and a Resume. The OpenCode CLI 1.19.5 passed the same three wakes through FAI's plugin. OpenCode Desktop 1.19.5 is unverified: its provider refuses free models on that version, so it cannot take a turn. OpenCode 2.x is unsupported. Windows 11 is not yet checked.
+- **Approval flow live wakes** (late Approve once and Deny). Windows 10: Claude's Code tab, ChatGPT's Codex mode and the OpenCode CLI each took a new turn and ran the approved action, and stopped after Deny. macOS: Claude Code passed both. Linux: all three hosts accepted by the maintainer on the workstation; their late approve and deny wakes were not captured in the logs. Not seen live: OpenCode's plugin wake on Linux or macOS, and Codex's action wake on macOS (the wake logic is shared and passed on Windows).
 
 ## 0.10.0 (2026-11-15)
 
