@@ -28,6 +28,7 @@ const LABELS = {
   'delete-confirm': 'Delete confirmation',
   'open-agent': "An open agent (spec #80's view), working in this window",
   'approval-prompt': 'The approval prompt over a page with the panel open',
+  'popup-chat': 'The popup\'s Chat button that opens the panel (the popup keeps today\'s look)',
 };
 
 await mkdir(out, { recursive: true });
@@ -35,13 +36,16 @@ const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PAT
   env: headlessEnv(), args: ['--no-sandbox'] });
 const shots = [];
 const all = scenarios();
-const wanted = values.only ? values.only.split(',') : [...Object.keys(all), 'approval-prompt'];
+const wanted = values.only ? values.only.split(',') : [...Object.keys(all), 'approval-prompt', 'popup-chat'];
 try {
   for (const name of wanted) {
     for (const theme of THEMES) {
       for (const [size, width] of Object.entries(WIDTHS)) {
         const file = `${name}-${theme}-${size}.png`;
-        if (name === 'approval-prompt') await approvalPrompt(theme, size, width, file);
+        if (name === 'popup-chat') {
+          if (theme !== 'light' || size !== 'narrow') continue;
+          await popupChat(file);
+        } else if (name === 'approval-prompt') await approvalPrompt(theme, size, width, file);
         else {
           const scenario = { ...all[name], settings: { defaultProvider: null, models: { codex: null, claude: null, opencode: null }, appearance: theme } };
           const page = await panelPage(browser, scenario, { width, height: 720, colorScheme: theme });
@@ -78,6 +82,23 @@ async function approvalPrompt(theme, size, width, file) {
   await page.frameLocator('#approval').locator('.request-card').first().waitFor();
   await page.frameLocator('#panel').locator('#messages li').first().waitFor();
   await page.waitForTimeout(200);
+  await page.screenshot({ path: join(out, file) });
+  await page.close();
+}
+
+async function popupChat(file) {
+  const page = await browser.newPage({ viewport: { width: 364, height: 560 } });
+  const extension = new URL('../extension/', import.meta.url);
+  await page.route('https://panel.test/**', async route => {
+    const path = new URL(route.request().url()).pathname.slice(1);
+    const type = path.endsWith('.css') ? 'text/css' : path.endsWith('.js') ? 'text/javascript' : path.endsWith('.png') ? 'image/png' : 'text/html';
+    const body = await readFile(new URL(path, extension)).catch(() => null);
+    return body ? route.fulfill({ contentType: type, body }) : route.fulfill({ status: 404, body: '' });
+  });
+  await page.addInitScript({ content: `(${installApprovalFake})({}, null);` });
+  await page.goto('https://panel.test/popup.html');
+  await page.waitForSelector('#chat');
+  await page.waitForTimeout(300);
   await page.screenshot({ path: join(out, file) });
   await page.close();
 }

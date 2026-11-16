@@ -26,8 +26,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .eyebrow, .card-label, .local-label { font-size: 10px; font-weight: 700; letter-spacing: .105em; }
 .eyebrow { display: block; color: var(--amber-dark); }
 h1 { margin: 1px 0 0; font-size: 17px; line-height: 1.15; font-weight: 630; }
-.chat-button { min-height: 28px; padding: 0 11px; border: 1px solid var(--amber-dark); border-radius: 7px; background: var(--amber); color: white; font-size: 12px; font-weight: 650; }
-.chat-button:hover { background: var(--amber-dark); }
 .local-label { padding: 4px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); }
 .tab-card:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .tab-card { padding: 14px 15px 15px; border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 12px; background: var(--surface); box-shadow: 0 4px 14px #6950250a; }
@@ -141,6 +139,8 @@ body.arm-page[data-level="testing"] .level-select { border-color: var(--danger);
 .update-card[data-state="failed"] .card-label { color: var(--danger); }
 .update-card[data-state="succeeded"] .card-label { color: var(--green); }
 .approval-window .update-card { display: none; }
+/* Chat: opens the chat panel (extension/panel.html). */
+.chat-button { display: block; width: 100%; margin-top: 10px; }
 /* Invite agent (extension/invite-card.js) */
 .invite-picker { margin-top: 10px; padding: 12px 13px; border: 1px solid var(--line); border-left: 3px solid var(--green); border-radius: 10px; background: var(--surface); }
 .invite-levels { display: flex; gap: 3px; margin: 8px 0; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-deep); }

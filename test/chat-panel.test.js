@@ -90,6 +90,18 @@ test('manifests: Chrome\'s side panel and Firefox\'s sidebar are panel.html', as
   assert.ok(!firefox.permissions.includes('sidePanel'));
 });
 
+test('the page shown after install names the Chat button as the way to start', async () => {
+  const welcome = await readFile(new URL('../src/launcher/welcome.html', import.meta.url), 'utf8');
+  assert.match(welcome, /<h2 id="chat-title">Start a chat<\/h2>/);
+  assert.match(welcome, /then <b>Chat<\/b>\. The chat panel opens beside the page/);
+});
+
+test('the dark palette is the same whether forced by Appearance or taken from the system', async () => {
+  const css = await readFile(new URL('../extension/panel.css', import.meta.url), 'utf8');
+  const block = selector => css.slice(css.indexOf(selector)).match(/\{([^}]*)\}/)[1].replace(/\s+/g, ' ').trim();
+  assert.equal(block(':root:not([data-theme="light"])'), block(':root[data-theme="dark"]'));
+});
+
 // --- the panel in Chromium ------------------------------------------------------------------------------------------
 
 let browser;

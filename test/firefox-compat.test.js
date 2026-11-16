@@ -33,6 +33,10 @@ test('the Firefox manifest: event page with compat.js first, gecko id, no Chrome
   assert.equal('key' in manifest, false);
   assert.equal('minimum_chrome_version' in manifest, false);
   assert.equal(manifest.permissions.includes('offscreen'), false);
+  // The chat panel: Firefox's sidebar instead of Chrome's side panel.
+  assert.equal(manifest.permissions.includes('sidePanel'), false);
+  assert.equal('side_panel' in manifest, false);
+  assert.equal(manifest.sidebar_action.default_panel, chromeManifest.side_panel.default_path);
   // Ports: Firefox match patterns with a port match nothing, and a portless loopback grant would cover every local page.
   assert.equal('host_permissions' in manifest, false);
   assert.ok(manifest.optional_host_permissions.includes('https://*/*'));
@@ -49,7 +53,7 @@ test('the Firefox manifest: event page with compat.js first, gecko id, no Chrome
   // The signed ID by default; the old dev ID on request.
   assert.equal(GECKO_ID, 'fai-browser@jedbjorn.github.io');
   assert.equal(firefoxManifest(chromeManifest, { geckoId: GECKO_DEV_ID }).browser_specific_settings.gecko.id, 'fai-browser@local');
-  assert.deepEqual(manifest.permissions, chromeManifest.permissions.filter(item => item !== 'offscreen'));
+  assert.deepEqual(manifest.permissions, chromeManifest.permissions.filter(item => !['offscreen', 'sidePanel'].includes(item)));
   // The input is left alone.
   assert.ok(chromeManifest.key && chromeManifest.background.service_worker === 'background.js');
 });
