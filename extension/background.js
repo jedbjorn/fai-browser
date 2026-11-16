@@ -116,8 +116,12 @@ const KNOWN_CODES = new Set([
 ]);
 const RECOVERABLE = new Set(['stale', 'target_unavailable', 'capture_failed']);
 // Message types that get exactly one reply, and their HTTP fallback paths.
+// The chat panel's messages (extension/chat-api.js has the contract): accepted only from panel.html and forwarded to
+// the service unchanged, as replies over the socket or on HTTP at /<type with dashes> (chat_list -> /chat-list).
+const PANEL_MESSAGES = new Set(['chat_providers', 'chat_settings', 'chat_settings_set', 'chat_models', 'chat_list',
+  'chat_read', 'chat_file', 'chat_send', 'chat_stop', 'chat_delete', 'chat_model', 'agent_chat', 'agent_send']);
 const REPLY_TYPES = new Set(['hello', 'lease', 'lease_level', 'deny', 'validate', 'settings', 'update', 'move',
-  'invite', 'invite_cancel', 'agents', 'chat_send']);
+  'invite', 'invite_cancel', 'agents', ...PANEL_MESSAGES]);
 const HTTP_PATHS = {
   hello: '/hello',
   lease: '/lease',
@@ -136,7 +140,7 @@ const HTTP_PATHS = {
   agents: '/agents',
   approval: '/approval',
   action_decision: '/action-decision',
-  chat_send: '/chat-send',
+  ...Object.fromEntries([...PANEL_MESSAGES].map(type => [type, `/${type.replaceAll('_', '-')}`])),
 };
 const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
@@ -4799,9 +4803,15 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       if (!connected) throw new ExtensionError('not_connected', 'Connect to the FAI service first.');
       const { type: _type, currentTab: _forged, ...body } = message;
       return await sendChatMessage(body);
+    } else if (PANEL_MESSAGES.has(message.type)) {
+      if (!fromChatPanel(sender)) throw new Error('Unsupported control');
+      if (!connected) throw new ExtensionError('not_connected', 'Connect to the FAI service first.');
+      const { type, ...body } = message;
+      return await send(type, body);
     } else if (message.type === 'agents') {
-      // The popup's Invite list: the live agent sessions (host, repo name, last activity, whether FAI can wake it).
-      if (!fromToolbarPopup(sender)) throw new Error('Unsupported control');
+      // The popup's Invite list and the chat panel's Open agents: the live agent sessions (host, repo name, last
+      // activity, whether FAI can wake it).
+      if (!fromToolbarPopup(sender) && !fromChatPanel(sender)) throw new Error('Unsupported control');
       if (!connected) return { ...popupState(), agents: { sessions: [], invites: [] } };
       const data = await send('agents').catch(() => ({ sessions: [], invites: [] }));
       return { ...popupState(), agents: cleanAgents(data) };
@@ -4841,8 +4851,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     } catch {
       // Nothing to log with.
     }
-    // A chat panel call keeps the service's code (chat_too_many, chat_signed_out …): the panel shows FAI's line for it.
-    const code = error.code === 'stale_approval' || (message.type === 'chat_send' && typeof error.code === 'string');
+    // A panel call keeps the service's code (chat_too_many, chat_signed_out …): the panel shows FAI's line for it.
+    const code = error.code === 'stale_approval' || (PANEL_MESSAGES.has(message.type) && typeof error.code === 'string');
     respond({ error: error.message, ...(code ? { code: error.code } : {}) });
   });
   return true;

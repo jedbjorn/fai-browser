@@ -2,6 +2,17 @@
 // Chrome's site-access request for a domain root, and the toolbar facts the pin hint needs (pinned or not, the bound
 // shortcut). Everything an agent wrote is rendered with textContent only.
 
+/**
+ * Opens the chat panel (panel.html) in window `windowId`: Firefox's sidebar, else Chrome's side panel. Call it inside
+ * the user's click; both browsers refuse it outside one.
+ */
+export function openChatPanel(windowId) {
+  const sidebar = globalThis.browser?.sidebarAction ?? chrome.sidebarAction;
+  if (sidebar?.open) return sidebar.open();
+  if (chrome.sidePanel?.open && Number.isInteger(windowId)) return chrome.sidePanel.open({ windowId });
+  return Promise.reject(new Error('This browser cannot open the chat panel.'));
+}
+
 export function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;

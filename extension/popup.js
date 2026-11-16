@@ -14,7 +14,7 @@ import { mountApprovals } from './approval-card.js';
 import { mountUpdate } from './update-card.js';
 import { agentLabel, mountInvite } from './invite-card.js';
 import {
-  PIN_HINT, TESTING_WARNING, actionShortcut, allSitesGranted, askSiteAccess, element, iconPinned,
+  PIN_HINT, TESTING_WARNING, actionShortcut, allSitesGranted, askSiteAccess, element, iconPinned, openChatPanel,
   orShortcut, pressGuard, removeAllSites, replaceCardsPreservingFocus, requestAllSites,
 } from './ui.js';
 
@@ -757,6 +757,14 @@ function applyState(state) {
   else render();
 }
 
+// Chat: the chat panel in this window (spec #80 "Panel"). The browser opens a side panel only inside the click itself.
+let currentWindowId = null;
+const chatButton = document.getElementById('chat');
+chatButton.hidden = windowMode;
+chatButton.addEventListener('click', () => {
+  openChatPanel(currentWindowId).then(() => window.close(), error => { status.textContent = error.message; });
+});
+
 if (windowMode) {
   document.body.classList.add('approval-window');
   document.querySelector('.tab-card .card-label').textContent = 'AGENT REQUEST';
@@ -768,6 +776,7 @@ if (windowMode) {
   const http = /^https?:/.test(tab?.url || '');
   currentOrigin = http ? new URL(tab.url).origin : null;
   currentTabId = tab?.id ?? null;
+  currentWindowId = tab?.windowId ?? null;
   const host = http ? new URL(tab.url).host : 'Open an HTTP page to use FAI Browser';
   document.getElementById('tab-origin').textContent = host;
 } catch {
