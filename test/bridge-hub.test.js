@@ -544,7 +544,7 @@ test('chat_* messages (the panel\'s FAI chats) reach the daemon with their own f
 
   // chat_file carries a whole attachment (up to 25 MB, in base64): bigger than the other messages may be, on both routes.
   const data = Buffer.alloc(25 * 1024 * 1024, 7).toString('base64');
-  const file = await ext.request('chat_file', { chatId: null, name: 'big.bin', mime: 'application/octet-stream', data });
+  const file = await ext.request('chat_file', { chatId: null, name: 'big.bin', mime: 'application/octet-stream', data }, 60_000);
   assert.equal(file.ok, true);
   assert.deepEqual(file.data, { type: 'chat_file', received: data.length });
   const overHttp = await setup.post('/chat-file', { v: 3, name: 'big.bin', data });

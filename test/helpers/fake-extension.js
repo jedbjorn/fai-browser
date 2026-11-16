@@ -197,11 +197,12 @@ export class FakeExtension {
     this.client.send({ v: 3, type, ...body });
   }
 
-  // Sends a ref'd message and resolves the reply {ok, data|error}.
-  async request(type, body = {}) {
+  // Sends a ref'd message and resolves the reply {ok, data|error}. `ms`: how long to wait for it (a big message, such
+  // as a whole chat_file attachment, takes longer on a slow runner).
+  async request(type, body = {}, ms = undefined) {
     const ref = String(++this.ref);
     this.client.send({ v: 3, type, ref, ...body });
-    return this.client.message(message => message.type === 'reply' && message.ref === ref);
+    return this.client.message(message => message.type === 'reply' && message.ref === ref, ms);
   }
 
   /** `extra`: further hello fields, such as `settings: {budget}` (an extension with the budget setting). */
