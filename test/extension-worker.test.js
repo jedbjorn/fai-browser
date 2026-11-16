@@ -5008,3 +5008,18 @@ test('chat: an invite whose tab left its site is never bound', async () => {
   assert.match(reply.error, /left its site/);
   assert.ok(!h.sent.some(message => message.type === 'lease'));
 });
+
+// The panel's other slow messages go through the generic panel branch: a file (up to 25 MB) and a model list answered
+// after 10 s still reach the panel; anything else keeps 10 s (WU14 D2).
+test('panel: chat_file and chat_models answered after 10 s reach the panel; other panel messages keep 10 s', async () => {
+  const h = harness({ timeScale: 0.002 }); // worker time: 10 s is 20 ms, 60 s is 120 ms, 120 s is 240 ms
+  await h.waitFor(m => m.type === 'hello');
+  await h.until(() => h.session.connection?.connected);
+  h.state.replyDelay = { chat_file: 180, chat_models: 50, chat_list: 50 }; // 90 s, 25 s and 25 s of worker time
+  const file = await h.send({ type: 'chat_file', chatId: null, name: 'a.png', mime: 'image/png', size: 3, data: 'AAAA' }, PANEL);
+  assert.equal(file.error, undefined, JSON.stringify(file));
+  const models = await h.send({ type: 'chat_models', provider: 'codex' }, PANEL);
+  assert.equal(models.error, undefined, JSON.stringify(models));
+  const listed = await h.send({ type: 'chat_list' }, PANEL);
+  assert.equal(listed.code, 'timeout', JSON.stringify(listed));
+});

@@ -15,7 +15,9 @@
 //   latest GitHub release) so a self-distributed signed add-on updates itself; dev-ID builds get no update_url.
 // - action.default_area = navbar: the FAI Browser button sits on the toolbar from the first start instead of the
 //   extensions menu, because approving a request is a click on it.
-// - no `key`, `minimum_chrome_version` or `offscreen` permission (Chrome only).
+// - no `key`, `minimum_chrome_version`, `offscreen` or `sidePanel` permission (Chrome only).
+// - sidebar_action instead of side_panel: the chat panel (panel.html) is Firefox's sidebar. It does not open at install;
+//   the popup's Chat button opens it.
 // - content_security_policy.extension_pages without Firefox's MV3 default `upgrade-insecure-requests`, which turns the
 //   worker's ws://127.0.0.1 WebSocket into wss:// (refused: the service speaks plain HTTP on loopback only) and leaves
 //   only the HTTP long-poll. Chrome's default policy has no such directive; script-src stays 'self'.
@@ -42,7 +44,7 @@ export { GECKO_ID };
 // provides. Tested in Firefox 159 (npm run smoke:firefox).
 export const FIREFOX_MIN_VERSION = '140.0';
 // Chrome-only permissions dropped from the Firefox manifest (compat.js covers what they did).
-const CHROME_ONLY_PERMISSIONS = new Set(['offscreen']);
+const CHROME_ONLY_PERMISSIONS = new Set(['offscreen', 'sidePanel']);
 export const FIREFOX_EXTENSION_PAGES_CSP = "script-src 'self'; object-src 'none'";
 export const FIREFOX_OPTIONAL_HOSTS = ['https://*/*', 'http://*/*', '<all_urls>'];
 export const FIREFOX_BACKGROUND_SCRIPTS = ['compat.js', 'psl-data.js', 'frames.js', 'background.js'];
@@ -59,6 +61,11 @@ export function firefoxManifest(chrome, { geckoId = GECKO_ID, updateUrl = geckoI
   if (manifest.action) manifest.action = { ...manifest.action, default_area: 'navbar' };
   delete manifest.key;
   delete manifest.minimum_chrome_version;
+  if (manifest.side_panel) {
+    manifest.sidebar_action = { default_panel: manifest.side_panel.default_path, default_title: 'FAI Chat',
+      default_icon: manifest.action?.default_icon, open_at_install: false };
+    delete manifest.side_panel;
+  }
   manifest.background = { scripts: [...FIREFOX_BACKGROUND_SCRIPTS] };
   manifest.content_security_policy = { ...manifest.content_security_policy, extension_pages: FIREFOX_EXTENSION_PAGES_CSP };
   delete manifest.host_permissions;

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="panel.css">
+  <title>FAI Chat</title>
+</head>
+<body>
+  <div class="shell" id="shell">
+    <!-- The drawer: over the conversation in a narrow panel, beside it when the panel is wide (panel.css). -->
+    <nav id="drawer" class="drawer" aria-label="Chats" hidden>
+      <div class="drawer-head">
+        <span class="drawer-brand"><img src="icons/icon-32.png" alt="" width="20" height="20"> FAI Chat</span>
+        <button id="drawer-close" class="icon-button" type="button" aria-label="Close menu"><svg class="icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5l10 10M15 5L5 15"/></svg></button>
+      </div>
+      <button id="new-chat" class="new-chat" type="button"><svg class="icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M10 4v12M4 10h12"/></svg> New chat</button>
+      <h2 class="drawer-section" id="chats-heading">Chats</h2>
+      <ul id="chat-list" class="drawer-list" aria-labelledby="chats-heading"></ul>
+      <p id="chats-empty" class="drawer-empty" hidden>No chats yet.</p>
+      <button id="more-chats" class="link-button more-chats" type="button" hidden>Show more chats</button>
+      <h2 class="drawer-section" id="agents-heading">Open agents</h2>
+      <ul id="agent-list" class="drawer-list" aria-labelledby="agents-heading"></ul>
+      <p id="agents-empty" class="drawer-empty" hidden>No agent session is running FAI.</p>
+      <button id="open-settings" class="drawer-settings" type="button"><svg class="icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M10 7.2a2.8 2.8 0 1 0 0 5.6a2.8 2.8 0 1 0 0-5.6zM10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M4.7 15.3l1.6-1.6M13.7 6.3l1.6-1.6"/></svg> Settings</button>
+    </nav>
+    <div id="scrim" class="scrim" hidden></div>
+
+    <div class="main">
+      <header class="header">
+        <button id="drawer-toggle" class="icon-button" type="button" aria-label="Open menu" aria-controls="drawer" aria-expanded="false"><span class="burger" aria-hidden="true"></span></button>
+        <div class="header-copy">
+          <h1 id="title" class="title">New chat</h1>
+          <div id="meta" class="meta"></div>
+        </div>
+        <div id="header-controls" class="header-controls"></div>
+      </header>
+
+      <!-- The conversation (a FAI chat or an open agent). -->
+      <section id="conversation" class="conversation" aria-labelledby="title">
+        <div id="scroller" class="scroller">
+          <div id="empty" class="empty" hidden></div>
+          <ol id="messages" class="messages" aria-label="Messages"></ol>
+          <div id="browsing" class="browsing" role="status" hidden><span class="browsing-dot" aria-hidden="true"></span><span>Browsing…</span></div>
+          <p id="notice" class="notice" role="status" hidden></p>
+        </div>
+        <form id="composer" class="composer" novalidate>
+          <ul id="chips" class="chips" aria-label="Attached files" hidden></ul>
+          <p id="attach-hint" class="attach-hint">Attached files go to the provider's service under your account, like your message.</p>
+          <p id="composer-error" class="composer-error" role="alert" hidden></p>
+          <div class="composer-row">
+            <button id="attach" class="icon-button attach" type="button" aria-label="Attach files" aria-describedby="attach-hint"><svg class="icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M14.5 9.5l-5.3 5.3a3.2 3.2 0 0 1-4.5-4.5l6-6a2.1 2.1 0 0 1 3 3l-6 6a1 1 0 0 1-1.5-1.5l5.3-5.3"/></svg></button>
+            <input id="file-input" type="file" multiple hidden tabindex="-1" aria-hidden="true">
+            <textarea id="text" class="text" rows="1" placeholder="Message" aria-label="Message"></textarea>
+            <button id="send" class="send" type="submit">Send</button>
+            <button id="stop" class="stop" type="button" hidden>Stop</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Browser Chat settings: FAI's own, for FAI chats only. -->
+      <section id="settings" class="settings" aria-labelledby="settings-title" hidden>
+        <div class="settings-head">
+          <button id="settings-back" class="icon-button" type="button" aria-label="Close settings"><svg class="icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M16 10H4M9 5l-5 5l5 5"/></svg></button>
+          <h2 id="settings-title" class="settings-title" tabindex="-1">Browser Chat settings</h2>
+        </div>
+        <p class="settings-note">These apply to chats started here only. Your coding apps and open agents keep their own settings.</p>
+        <div id="settings-body" class="settings-body"></div>
+        <p id="settings-status" class="settings-status" role="status"></p>
+      </section>
+    </div>
+  </div>
+
+  <dialog id="confirm" class="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-text">
+    <form method="dialog">
+      <h2 id="confirm-title" class="confirm-title">Delete this chat?</h2>
+      <p id="confirm-text" class="confirm-text"></p>
+      <div class="confirm-actions">
+        <button id="confirm-cancel" class="secondary" value="cancel" type="submit">Cancel</button>
+        <button id="confirm-delete" class="danger" value="delete" type="submit">Delete</button>
+      </div>
+    </form>
+  </dialog>
+  <script type="module" src="panel.js"></script>
+</body>
+</html>
