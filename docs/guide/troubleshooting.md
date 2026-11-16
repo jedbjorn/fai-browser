@@ -24,6 +24,7 @@ Or ask your agent to call `fai_browser_status`. Reference: [REFERENCE.md: The da
 | A request shows as **In another browser** | Several browsers are paired and the request waits in the one you used FAI in last (or the one the agent named). Click **Open here** to move it to this browser |
 | Windows: the add-on does not pair, or FAI Browser does not open from the Start menu | Run the install command again (README, Windows): it repairs and updates in place, also while FAI Browser is open. The service's startup output is in `%LOCALAPPDATA%\fai-browser\logs\daemon-start.log`, its log in `daemon.log` next to it. Chrome, Edge and the other Chromium-family browsers are not supported on Windows |
 | Agent does not see the tools | Restart the agent after setup. `node src/cli.js install --host claude|codex|opencode` registers it; `--dry-run` shows what it would write. In Claude Code run `/mcp` |
+| Claude Code refuses an FAI action before FAI sees it (in Auto permission mode, the Code tab's default) | Claude Code's own Auto-mode check blocked the tool call; FAI's approvals never ran. Allow FAI's tools in a Claude Code settings file: `{"permissions":{"allow":["mcp__fai-browser"]}}` in `~/.claude/settings.json` (every project) or the project's `.claude/settings.json` or `.claude/settings.local.json`. FAI's own gates still apply: purchases and actions above your approved level still ask you |
 
 ## Approvals
 
