@@ -41,6 +41,10 @@ const BACKOFF_MS = [500, 1_000, 2_000, 4_000, 8_000, 15_000];
 const FALLBACK_AFTER_FAILURES = 3;
 const FALLBACK_WINDOW_MS = 5 * 60_000;
 const REPLY_TIMEOUT_MS = 10_000;
+// Panel messages whose work takes longer than a reply (spec #84): a send may first check the program (the service's
+// own check allows 15 s), a model list may run that check and the program's list (15 s each), and a file carries up
+// to 25 MB. A reply that comes after its timeout is lost, so the panel would show an error for work the service did.
+const LONG_REPLY_MS = { chat_send: 60_000, chat_models: 60_000, chat_file: 120_000 };
 const CONNECT_WAIT_MS = 2_500;
 const LONG_POLL_MS = 25_000;
 const POLL_RETRIES = 3;
@@ -1419,7 +1423,7 @@ function send(type, body = {}) {
     const timer = setTimeout(() => {
       replies.delete(ref);
       reject(new ExtensionError('timeout', 'The FAI service did not reply'));
-    }, REPLY_TIMEOUT_MS);
+    }, LONG_REPLY_MS[type] ?? REPLY_TIMEOUT_MS);
     replies.set(ref, { resolve, reject, timer });
     socket.send(JSON.stringify(message));
   });

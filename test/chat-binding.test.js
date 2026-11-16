@@ -375,3 +375,48 @@ test('one cleaner, one template: a FAI chat turn and an open agent\'s chat wake 
     'never a transport-sized cut or another code');
   assert.equal((await ctx.calls()).length, inputs.length, 'no turn for a refused message');
 });
+
+// The worker's own reports cross the real bridge (src/bridge.js) with their reason: the invited tab leaving its site
+// revokes the chat's invite as origin_changed, the tab closing as tab_closed; neither reads as the user's cancel.
+for (const reason of ['origin_changed', 'tab_closed']) {
+  test(`the page beside the chat, real bridge: the worker's ${reason} revokes the invite; the join is refused as revoked`, async t => {
+    const { EXTENSION_ID, FakeExtension, SECRET } = await import('./helpers/fake-extension.js');
+    const home = await mkdtemp(join(tmpdir(), 'fai-chat-binding-'));
+    await writeFile(join(home, 'control.json'), JSON.stringify({ claude: { hold: true } }));
+    const daemon = createDaemon({ home, env: { ...process.env, STANDIN_DIR: home, FAI_BRIDGE_SECRET: SECRET,
+      FAI_EXTENSION_ID: EXTENSION_ID }, port: 0, chatPrograms: programs, isAlive: () => true, sweepIntervalMs: 60_000 });
+    await daemon.listen();
+    const ext = await FakeExtension.connect({ port: daemon.port });
+    // One ordered cleanup: the held turn ends, the extension and daemon close, then the folder goes.
+    t.after(async () => {
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        await writeFile(join(home, 'release'), '').catch(() => {});
+        const listed = await ext.request('chat_list', {}).catch(() => null);
+        if (!listed?.data?.chats?.some(item => item.running)) break;
+        await delay(25);
+      }
+      ext.close();
+      await daemon.close();
+      await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    });
+    assert.equal((await ext.hello()).ok, true);
+    const api = (method, path, body, extra = {}) => call(daemon.port, method, path, body, { token: daemon.token, ...extra });
+    const sent = await ext.request('chat_send', { provider: 'claude', text: 'what is this page?', currentTab: { tabId: 7, origin: ORIGIN } });
+    assert.equal(sent.ok, true, JSON.stringify(sent));
+    const { inviteId } = sent.data.invite;
+    let entry;
+    for (const deadline = Date.now() + 10_000; !entry && Date.now() < deadline; await delay(20)) {
+      entry = (await readFile(join(home, 'calls.jsonl'), 'utf8').catch(() => '')).split('\n').filter(Boolean)
+        .map(line => JSON.parse(line)).find(item => item.args && item.token);
+    }
+    const registered = await api('POST', '/v1/sessions', { host: 'claude', repo: 'ignored', pid: 4999,
+      startedAt: new Date().toISOString(), wake: 'claude-socket', chatTurnToken: entry.token });
+    assert.equal(registered.status, 201, JSON.stringify(registered.body));
+    const cancel = await ext.request('invite_cancel', { inviteId, reason });
+    assert.deepEqual([cancel.data.invite.state, cancel.data.invite.endReason], ['revoked', reason], JSON.stringify(cancel));
+    const joined = await api('POST', `/v1/invites/${inviteId}/join`, {},
+      { headers: { 'X-Fai-Session': `${registered.body.sessionId}:${registered.body.key}` } });
+    assert.equal(joined.body.error?.code, 'invite_revoked', JSON.stringify(joined.body));
+  });
+}

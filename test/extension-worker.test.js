@@ -4950,6 +4950,23 @@ test('chat: only the panel page sends a chat message; the worker adds the tab be
   assert.deepEqual(h.sent.filter(m => m.type === 'invite_cancel').map(m => m.reason), ['origin_changed', 'tab_closed']);
 });
 
+// A send can take the service longer than a reply's 10 s (the program's check, the file moves). A late answer still
+// reaches the panel once, with no error, and the worker still watches the tab its invite names. Other messages keep 10 s.
+test('chat: a chat_send answered after 10 s reaches the panel once and its invite is watched; other replies keep 10 s', async () => {
+  const h = harness({ timeScale: 0.002 }); // worker time: 10 s is 20 ms, 60 s is 120 ms
+  await h.waitFor(m => m.type === 'hello');
+  await h.until(() => h.session.connection?.connected);
+  h.state.replyDelay = { chat_send: 50, agents: 50 }; // 25 s of worker time
+  const reply = await h.send({ type: 'chat_send', provider: 'claude', text: 'what is this page?' }, PANEL);
+  assert.deepEqual([reply.error, reply.chatId, reply.turnId], [undefined, 'c0123456789abcdef0123', 'turn-1'], JSON.stringify(reply));
+  assert.equal(h.sent.filter(m => m.type === 'chat_send').length, 1, 'sent once');
+  h.chrome.tabs.onUpdated.emit(7, { url: 'https://elsewhere.example/' });
+  const left = await h.waitFor(m => m.type === 'invite_cancel');
+  assert.deepEqual([left.inviteId, left.reason], ['inv-chat2345', 'origin_changed'], 'the late answer\'s invite is watched');
+  const agents = await h.send({ type: 'agents' }, POPUP);
+  assert.deepEqual(agents.agents.sessions, [], 'an agents list answered after 10 s timed out');
+});
+
 test('chat: a browser page beside the panel is never offered; the service\'s refusal keeps its code', async () => {
   const h = harness();
   await h.waitFor(m => m.type === 'hello');
