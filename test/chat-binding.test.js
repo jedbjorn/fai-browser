@@ -285,6 +285,77 @@ test('the page beside the chat: the agent learns no origin, URL or level before 
   await ctx.idle(sent.chatId);
 });
 
+// Simulated time for the sweep: `clock.skew` minutes ahead, one minute at a time; each session polls each minute, as a
+// live MCP server does (a silent one goes stale after 90 s).
+const MIN = 60_000;
+async function stepClock(ctx, clock, minutes, sessions) {
+  for (let m = Math.round(clock.skew / MIN) + 1; m <= minutes; m += 1) {
+    clock.skew = m * MIN;
+    for (const session of sessions) {
+      const polled = await ctx.api('POST', `/v1/sessions/${session.sessionId}/poll`, { maxMs: 0 },
+        { headers: session.headers });
+      assert.equal(polled.status, 200, JSON.stringify(polled.body));
+    }
+    await delay(30);
+  }
+}
+
+for (const ending of ['expired', 'denied']) {
+  test(`the page beside the chat: a never-granted tab (${ending}) stays withheld after the invite's keep time (flag #22)`,
+    async t => {
+      const clock = { skew: 0 };
+      const ctx = await setup(t, { sweepIntervalMs: 10, now: () => Date.now() + clock.skew });
+      const sent = await ctx.chat('send', { provider: 'claude', text: 'what is on this page?',
+        currentTab: { tabId: 7, origin: ORIGIN } });
+      const mine = ctx.sessionOf(await ctx.register((await ctx.turn(1)).token));
+      const as = { headers: mine.headers };
+      const leaks = value => JSON.stringify(value).includes(ORIGIN);
+      const joined = await ctx.api('POST', `/v1/invites/${sent.invite.inviteId}/join`, {}, as);
+      const requestId = joined.body.requestId;
+      if (ending === 'denied') {
+        await stepClock(ctx, clock, 5, [mine]);
+        await ctx.hub.emit({ type: 'deny', requestId, browserId: BROWSER });
+      }
+      // Past the pending request's 10 min, then past INVITE_KEEP_MS (60 min) from the join; the record is kept 60 min
+      // from its end, so it still answers.
+      await stepClock(ctx, clock, 61, [mine]);
+      await delay(50);
+      const got = await ctx.api('GET', `/v1/requests/${requestId}`, undefined, as);
+      assert.deepEqual([got.status, got.body.state, got.body.lease], [200, ending, null]);
+      assert.ok(!leaks(got.body), JSON.stringify(got.body));
+      assert.ok(!leaks((await ctx.api('POST', '/v1/wait', { requestId, maxMs: 0 }, as)).body));
+      assert.ok(!leaks((await ctx.api('GET', '/v1/requests', undefined, as)).body));
+      const other = ctx.sessionOf(await ctx.register(undefined, { repo: 'other' }));
+      const hidden = await ctx.api('GET', `/v1/requests/${requestId}`, undefined, { headers: other.headers });
+      assert.deepEqual([hidden.body.invited, leaks(hidden.body)], [true, false], 'another agent: only an invited tab');
+      await ctx.release();
+      await ctx.idle(sent.chatId);
+    });
+}
+
+test('invites: an invited tab stays its owner\'s after the invite\'s keep time while the lease is in use (flag #23)',
+  async t => {
+    const clock = { skew: 0 };
+    const ctx = await setup(t, { sweepIntervalMs: 10, now: () => Date.now() + clock.skew });
+    const owner = ctx.sessionOf(await ctx.register(undefined, { repo: 'owner' }));
+    const other = ctx.sessionOf(await ctx.register(undefined, { repo: 'other' }));
+    const popup = await ctx.hub.emit({ type: 'invite', tabId: 9, origin: ORIGIN, level: 'read-only', tabMode: 'single',
+      text: '', sessionId: owner.sessionId, browserId: BROWSER });
+    const requestId = (await ctx.api('POST', `/v1/invites/${popup.invite.inviteId}/join`, {}, { headers: owner.headers }))
+      .body.requestId;
+    // The owner uses the tab every 5 min (under the lease's idle expiry) up to 65 min after the join.
+    for (let minute = 5; minute <= 65; minute += 5) {
+      await stepClock(ctx, clock, minute, [owner, other]);
+      const kept = await ctx.api('POST', '/v1/wait', { requestId, maxMs: 0 }, { headers: owner.headers });
+      assert.equal(kept.body.state, 'active', `the owner's lease at +${minute} min`);
+    }
+    await delay(50);
+    const seen = await ctx.api('GET', `/v1/requests/${requestId}`, undefined, { headers: other.headers });
+    assert.deepEqual([seen.body.invited, 'origins' in seen.body], [true, false], 'another agent: only an invited tab');
+    const used = await ctx.api('POST', '/v1/observe', { requestId }, { headers: other.headers });
+    assert.deepEqual([used.status, used.body.error?.code], [403, 'not_owner']);
+  });
+
 test('wakes as turns: all five kinds, one turn each, in order, after the running turn; the text is the template', async t => {
   const ctx = await setup(t);
   const sent = await ctx.chat('send', { provider: 'claude', text: 'tidy my workspace' });

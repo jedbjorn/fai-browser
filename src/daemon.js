@@ -3607,9 +3607,12 @@ export function createDaemon(options = {}) {
     for (const [browserId, times] of [...inviteLog]) {
       if (!times.some(at => t - at < 60_000)) inviteLog.delete(browserId);
     }
+    // An invite outlives neither its keep time nor its request record: the owner rule (checkUse, seesInvite) and an
+    // automatic invite's withholding (withheld) read it as long as the record answers (flags #22, #23).
     for (const invite of [...invites.values()]) {
       if (invite.state === 'open' && t >= invite.expiresAt) expireInvite(invite);
-      else if (invite.state !== 'open' && t - (invite.endedAt ?? invite.joinedAt ?? invite.createdAt) >= INVITE_KEEP_MS) invites.delete(invite.inviteId);
+      else if (invite.state !== 'open' && !requests.has(invite.requestId)
+        && t - (invite.endedAt ?? invite.joinedAt ?? invite.createdAt) >= INVITE_KEEP_MS) invites.delete(invite.inviteId);
     }
     sessions.sweep();
     // A paused request turns stale with time alone (or its agent session went away): show the popup at once.
