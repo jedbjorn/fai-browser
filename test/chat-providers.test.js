@@ -3,7 +3,7 @@
 // shared/f7/chat-discovery.md (D3, D4, D6, D7, D9). Browserless.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -113,7 +113,8 @@ async function exe(path, content = '\x7fELF') {
 }
 
 test('finding the program (D1): PATH, then where installers put it; never a relative PATH entry', { skip: process.platform === 'win32' }, async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'fai-chat-find-'));
+  // Resolved: findProgram returns real paths, and macOS's temporary folder is behind a symlink.
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'fai-chat-find-')));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const home = join(dir, 'home');
   await exe(join(dir, 'bin', 'claude'));
@@ -127,7 +128,8 @@ test('finding the program (D1): PATH, then where installers put it; never a rela
 });
 
 test('finding the program (D1): npm\'s node launcher is replaced by the platform binary beside it', { skip: process.platform === 'win32' }, async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'fai-chat-npm-'));
+  // Resolved: findProgram returns real paths, and macOS's temporary folder is behind a symlink.
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'fai-chat-npm-')));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const pkg = join(dir, 'lib', 'node_modules', '@openai', 'codex');
   await exe(join(pkg, 'bin', 'codex.js'), '#!/usr/bin/env node\n');
