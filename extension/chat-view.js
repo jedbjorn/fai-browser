@@ -38,6 +38,22 @@ export function reasonLine(code, provider, { exit = null } = {}) {
   }
 }
 
+/**
+ * A turn that failed, as its FAI row (decision #48): any chat_* reason code but chat_stopped, which the user chose. No
+ * provider-specific detection (decision #28): every failed turn offers a new chat.
+ */
+export function failedTurn(message) {
+  return message?.role === 'fai' && typeof message.code === 'string' && message.code.startsWith('chat_') && message.code !== 'chat_stopped';
+}
+
+/** The text a new chat started from the failed row `id` begins with: the user's last message before it, or ''. */
+export function retryText(messages, id) {
+  const list = Array.isArray(messages) ? messages : [];
+  const index = list.findIndex(message => message.id === id);
+  const user = list.slice(0, index < 0 ? list.length : index).findLast(message => message.role === 'user');
+  return typeof user?.text === 'string' ? user.text : '';
+}
+
 /** The available providers in PROVIDER_ORDER. */
 export function availableProviders(providers) {
   const list = Array.isArray(providers) ? providers : [];

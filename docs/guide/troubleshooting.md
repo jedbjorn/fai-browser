@@ -88,6 +88,7 @@ OpenCode Desktop no longer supports free models", so it never takes a turn and F
 | Symptom | Cause and fix |
 |---|---|
 | A provider is listed as unavailable | Its fix line says what to do: install it, update it, or sign in to its command line once (`codex login`, `claude auth login`). Then reopen the panel. On macOS the FAI service must run in your login session for Claude ([install guide](install.md#fai-chats)) |
+| A FAI chat's turn failed and the chat will not continue | Every failed turn (not one you stopped) has **Start a new chat** under it. It opens a new chat with the same provider and model and puts the message before the failure in the composer; attachments are not carried, so attach again if you need them. If that provider is no longer available, the new chat starts on your default provider |
 | Every message in an OpenCode chat fails the same way after an attachment | OpenCode or its model refused the file (for example `invalid image input` for a GIF), and the file stays in OpenCode's own session. Click **Start a new chat** under the failed turn: same provider and model, your last message in the composer, no attachments ([Attachments](../REFERENCE.md#attachments)) |
 | `Can't read this conversation (…)` for an open agent | FAI could not find or read that program's conversation; a newer version may store it differently. Your messages still reach the agent ([Open agents](../REFERENCE.md#open-agents)) |
 
