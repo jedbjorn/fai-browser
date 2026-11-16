@@ -2982,7 +2982,8 @@ test('enter_commit: a committing Enter is always asked (asks off too), shows its
   denying.approvalInfo = messageField;
   const third = await asked(denying, { cls: 'submit', kind: 'enter_commit' });
   await denying.send({ type: 'approval_decision', id: third.entry.id, decision: 'deny' }, APPROVE_PAGE);
-  assert.deepEqual((await denying.waitFor(m => m.type === 'result' && m.id === third.id)).result, { decision: 'denied' });
+  assert.deepEqual((await denying.waitFor(m => m.type === 'result' && m.id === third.id)).result,
+    { decision: 'denied', entryId: third.entry.id }, 'the answer names the entry it was about');
 });
 
 // --- secret handles --------------------------------------------------------------------------------------------
