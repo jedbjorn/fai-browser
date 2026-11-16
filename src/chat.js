@@ -23,8 +23,8 @@ export const CLIPPED = '… (clipped)';
 // A first read starts this far from the end of a long file; one read takes at most READ_BYTES of it.
 export const TAIL_BYTES = 4 * 1024 * 1024;
 const READ_BYTES = 8 * 1024 * 1024;
-// What one post to the daemon may carry (its request bodies stop at 1 MB): the newest messages that fit.
-const POST_CHARS = 600_000;
+// What one post to the daemon may carry in UTF-8 bytes (its request bodies stop at 1 MB): the newest messages that fit.
+const POST_BYTES = 900_000;
 const OPENCODE_READ_TIMEOUT_MS = 5_000;
 const OPENCODE_ANSWER_MAX = 4 * 1024 * 1024;
 const FAI_PREFIX = '[FAI Browser] ';
@@ -379,13 +379,16 @@ export function createChatReader({ host, env = process.env, home = homedir(), ve
   };
 }
 
-/** The newest messages whose texts fit one post to the daemon (its request bodies stop at 1 MB). */
+/**
+ * The newest messages that fit one post to the daemon, measured as the serialized UTF-8 bytes the daemon counts (its
+ * request bodies stop at 1 MB; text in a non-Latin script takes 2-3 bytes a character).
+ */
 export function fitPost(messages) {
   let total = 0;
   const kept = [];
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    total += messages[index].text.length + 128;
-    if (total > POST_CHARS) break;
+    total += Buffer.byteLength(JSON.stringify(messages[index])) + 1;
+    if (total > POST_BYTES) break;
     kept.unshift(messages[index]);
   }
   return kept;

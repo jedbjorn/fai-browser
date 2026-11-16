@@ -89,7 +89,8 @@ export class AgentSession {
     this.handled = new Set();
     this.recentWakes = [];
     // The chat panel's reader of this host's own conversation, and whether a read is running (one at a time).
-    this.chatReader = chatReader ?? createChatReader({ host, env, version: clientInfo?.version ?? clientVersion,
+    this.chatVersion = clientInfo?.version ?? clientVersion;
+    this.chatReader = chatReader ?? createChatReader({ host, env, version: this.chatVersion,
       opencode: () => opencodeChannel(this.env, { ppid: this.ppid }) });
     this.chatReading = false;
   }
@@ -425,9 +426,15 @@ export class AgentSession {
       const body = read.error ? { error: { code: read.error.code, version: read.error.version } }
         : { messages: fitPost(read.messages), busy: read.busy, cursor: read.cursor };
       // Posted only over the connection the read was asked on (a daemon that proved it holds the client token).
-      if (client && sessionId && this.client === client) {
-        await client.request('POST', `/v1/sessions/${encodeURIComponent(sessionId)}/chat`, body, { timeoutMs: 5_000 })
-          .catch(() => null);
+      if (!client || !sessionId || this.client !== client) return;
+      const path = `/v1/sessions/${encodeURIComponent(sessionId)}/chat`;
+      const refused = await client.request('POST', path, body, { timeoutMs: 5_000 })
+        .then(() => false, error => error?.status >= 400 && error.status !== 409);
+      // The daemon refused what was read (too large, not understood): the panel shows the cannot-read line, not an
+      // empty conversation that looks readable.
+      if (refused && !read.error) {
+        await client.request('POST', path, { error: { code: 'unreadable', version: this.chatVersion ?? undefined } },
+          { timeoutMs: 5_000 }).catch(() => null);
       }
     })().catch(() => this.log('chat read failed')).finally(() => {
       this.chatReading = false;

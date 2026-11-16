@@ -198,7 +198,15 @@ test('limits: a text over 8,000 characters is clipped and says so; a first read 
   const fitted = fitPost(many);
   assert.ok(fitted.length < 200 && fitted.length > 50);
   assert.equal(fitted.at(-1).id, '199', 'the newest are kept');
-  assert.ok(JSON.stringify(fitted).length < 1024 * 1024);
+  assert.ok(Buffer.byteLength(JSON.stringify(fitted)) < 1024 * 1024);
+  // The daemon counts bytes: text in Cyrillic (2 bytes a character) and CJK (3) fits fewer, never over 1 MB.
+  for (const letter of ['ж', '漢']) {
+    const wide = many.map(item => ({ ...item, text: letter.repeat(MAX_MESSAGE_TEXT) }));
+    const fit = fitPost(wide);
+    assert.ok(fit.length > 10 && fit.length < fitted.length, `${letter}: ${fit.length}`);
+    assert.equal(fit.at(-1).id, '199');
+    assert.ok(Buffer.byteLength(JSON.stringify({ messages: fit, busy: false, cursor: 'x'.repeat(256) })) < 1024 * 1024);
+  }
 });
 
 test('a line too long to read is skipped to its end, never shown', async t => {
@@ -284,6 +292,32 @@ test('OpenCode: the plugin reads a FAI session\'s text parts only; busy until th
   // A busy status from OpenCode's events counts too.
   globalThis[STATE].busy.add(data.sessionID);
   assert.equal((await reader.read({ target: data.sessionID, cursor: done.cursor })).busy, true);
+});
+
+test('OpenCode: an older assistant message OpenCode never completed does not hold the read back', async t => {
+  const { data, store, hooks, channel } = await opencodePlugin(t);
+  const reader = createChatReader({ host: 'opencode', version: '1.19.5', opencode: () => channel });
+  await hooks['tool.execute.before']({ tool: 'fai-browser_fai_browser_open', sessionID: data.sessionID, callID: 'c1' }, { args: {} });
+  const first = await reader.read({ target: data.sessionID });
+  const base = Number(data.messages.at(-1).info.time.created) + 1000;
+  const message = (id, role, text, created, completed) => ({
+    info: { id, sessionID: data.sessionID, role, time: completed ? { created, completed } : { created } },
+    parts: [{ type: 'text', text }],
+  });
+  // A turn cut off (no completed time), then the user went on and the next turn finished.
+  store[data.sessionID].push(
+    message('msg_zcut00000000000001', 'assistant', 'Cut off mid', base, false),
+    message('msg_zcut00000000000002', 'user', 'Try again.', base + 1, false),
+    message('msg_zcut00000000000003', 'assistant', 'Done this time.', base + 2, true),
+  );
+  const read = await reader.read({ target: data.sessionID, cursor: first.cursor });
+  assert.deepEqual(brief(read.messages), [['agent', 'Cut off mid'], ['user', 'Try again.'], ['agent', 'Done this time.']]);
+  assert.equal(read.busy, false);
+  assert.equal(read.cursor, 'msg_zcut00000000000003');
+  // While OpenCode reports the session busy, an unfinished message still waits (its turn may be running).
+  globalThis[STATE].busy.add(data.sessionID);
+  const running = await reader.read({ target: data.sessionID, cursor: first.cursor });
+  assert.deepEqual([read.messages.length > running.messages.length, running.busy, running.cursor], [true, true, first.cursor]);
 });
 
 test('OpenCode: a wrong token, an unknown session or no plugin channel cannot read', async t => {

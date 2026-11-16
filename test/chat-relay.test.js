@@ -1,4 +1,4 @@
-// Watched reads through the daemon (spec #80 AC 3) and the panel's chat wake: a panel's `chat` event (through the fake
+// Watched reads through the daemon (spec #80 AC 3) and the panel's chat wake: a panel's `agent_chat` (through the fake
 // hub, as the extension sends it) starts a watch; only then does the session's long poll carry a chatRead; only that
 // session's own MCP server (its key) may post the read; the daemon keeps the newest 200 messages in memory and drops
 // them when the watch ends (30 s without a panel read); nothing of a conversation reaches a log line. Panel messages
@@ -292,6 +292,35 @@ test('MCP server: reads only on the daemon\'s chatRead, posts with its own key, 
   assert.equal(delivered[0].text, '[FAI Browser] The user sent you a message from the FAI chat panel (the user\'s own words): '
     + '"Use the other\\naccount page."');
   assert.equal((await panel(ctx, 'agent_chat', { sessionId })).sends.find(item => item.wakeId === sent.wakeId)?.state, 'delivered');
+});
+
+test('MCP server: a read the daemon refuses is posted as cannot-read, never as an empty readable conversation', async () => {
+  const posts = [];
+  const client = { request: async (method, path, body) => {
+    posts.push({ method, path, body });
+    if (body.messages) throw Object.assign(new Error('Request body exceeds 1 MB'), { status: 413, code: 'too_large' });
+    return { taken: 0 };
+  } };
+  const agent = new AgentSession({ env: { CLAUDE_CODE_SESSION_ID: '5f0c2a8e-1d34-4b6a-9e77-0c1f2d3e4a5b' }, host: 'claude',
+    clientVersion: '2.1.0', connect: async () => client,
+    chatReader: { read: async () => ({ messages: [{ id: 'm1', role: 'agent', text: 'hi', at: null }], busy: false, cursor: 'c1' }) } });
+  agent.client = client;
+  agent.sessionId = 'sess_1';
+  agent.readChat(null);
+  await Promise.allSettled([...agent.deliveries]);
+  assert.deepEqual(posts.map(post => post.body), [
+    { messages: [{ id: 'm1', role: 'agent', text: 'hi', at: null }], busy: false, cursor: 'c1' },
+    { error: { code: 'unreadable', version: '2.1.0' } },
+  ]);
+  // The watch ended (409): nothing more is posted.
+  posts.length = 0;
+  client.request = async (method, path, body) => {
+    posts.push(body);
+    throw Object.assign(new Error('No chat panel watches this session'), { status: 409, code: 'not_watched' });
+  };
+  agent.readChat(null);
+  await Promise.allSettled([...agent.deliveries]);
+  assert.equal(posts.length, 1);
 });
 
 test('MCP server: the chat target is its own session; with several OpenCode sessions lately, none (ambiguous)', async () => {

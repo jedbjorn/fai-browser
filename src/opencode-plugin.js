@@ -284,7 +284,8 @@ function partsText(parts) {
 
 // The chat panel's read of a session that used FAI: its user and agent messages after message id `after` (all of the
 // newest READ_LIMIT when `after` is not among them), oldest first, and whether a turn runs. An assistant message that
-// is not complete yet ends the read: it shows once OpenCode finished it, and the cursor stays before it.
+// is not complete yet ends the read while its turn can run (it is the newest, or the session is busy): it shows once
+// OpenCode finished it, and the cursor stays before it.
 async function answerRead(state, auth, request) {
   if (auth?.type !== 'auth' || !sameToken(auth.token, state.token)) return { ok: false, code: 'bad_token', message: 'Wrong token.' };
   const sessionID = request.sessionID;
@@ -298,10 +299,14 @@ async function answerRead(state, auth, request) {
   const after = typeof request.after === 'string' ? list.findIndex(item => item.info.id === request.after) : -1;
   const messages = [];
   let cursor = after >= 0 ? request.after : null;
-  let busy = state.busy.has(sessionID);
-  for (const item of list.slice(after + 1)) {
+  const running = state.busy.has(sessionID);
+  let busy = running;
+  const newer = list.slice(after + 1);
+  for (const [index, item] of newer.entries()) {
     const { info } = item;
-    if (info.role === 'assistant' && !info.time?.completed) {
+    // An unfinished assistant message waits only while its turn can still run: it is the newest, or the session is
+    // busy. An older one (a turn OpenCode cut off) is shown as far as it got and never holds the read back.
+    if (info.role === 'assistant' && !info.time?.completed && (running || index === newer.length - 1)) {
       busy = true;
       break;
     }
