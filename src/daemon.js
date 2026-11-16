@@ -12,7 +12,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { agentResult, applyLeaseMessage, approvalSteps, createResult, isKnownCode, outcomeResult, setOutcome } from './result.js';
 import { hostInfo, imageSize, toAgentResult, writeRun } from './trace.js';
 import { prune, retentionConfig } from './retention.js';
-import { INSTALLER_UPDATE_HINT, PACKAGE_ROOT, installedByInstaller } from './paths.js';
+import { INSTALLER_UPDATE_HINT, LOCAL_CHATS_NAME, PACKAGE_ROOT, installedByInstaller, localChatsDir } from './paths.js';
 import {
   acquireLock, configuredPort, createLogger, ensureClientToken, ensureDir, homePaths, loadConfig, readDaemonInfo,
   releaseLock, removeDaemonInfo, writeDaemonInfo,
@@ -29,7 +29,8 @@ import { gitReleaseSource, scrubbedEnv } from './update-git.js';
 import { SessionError, SESSION_POLL_MAX_MS, createSessionRegistry } from './sessions.js';
 import { MAX_CHAT_TEXT, cleanChatText, cleanInviteText } from './wake.js';
 import { ChatError, createChatRunner } from './chat-runner.js';
-import { LOCAL_CHATS_NAME, PAGE_SIZE, createChatStore, localChatsDir, validChatId } from './chat-store.js';
+import { PAGE_SIZE, createChatStore, validChatId } from './chat-store.js';
+import { writeLocalChats } from './local-chats.js';
 import { TOOL_NAMES } from './mcp.js';
 import { automaticPopupScope } from './automatic-popups.js';
 
@@ -453,7 +454,8 @@ export function createDaemon(options = {}) {
   const chatStore = createChatStore({ root: chatRoot, now });
   const chats = createChatRunner({ store: chatStore, root: chatRoot, log,
     env: paths.custom ? { ...env, FAI_HOME: paths.home } : env,
-    prepare: () => mkdir(chatRoot, { recursive: true }),
+    // Before every turn: the folder again if it is missing, and FAI's guidance files restored if they changed.
+    prepare: () => writeLocalChats(chatRoot),
     server: { command: process.execPath, args: [join(PACKAGE_ROOT, 'src', 'mcp-main.js')] }, tools: TOOL_NAMES,
     opencodeConfigDir: join(paths.stateDir, 'chat-opencode-config'),
     ...(options.chatPrograms ? { programs: options.chatPrograms } : {}),

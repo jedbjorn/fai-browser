@@ -5,8 +5,7 @@
 // by a rename, never in place.
 import { randomBytes } from 'node:crypto';
 import { appendFile, mkdir, readFile, readdir, rename as fsRename, rm, stat, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 
 export const TEXT_LIMIT = 8000;
 export const TITLE_LIMIT = 60;
@@ -14,15 +13,6 @@ export const PAGE_SIZE = 50;
 const CLIPPED = ' [clipped at 8,000 characters]';
 const CHAT_ID = /^c[a-f0-9]{20}$/;
 const ROLES = new Set(['user', 'agent', 'fai']);
-
-export const LOCAL_CHATS_NAME = 'FAI-Local-Chats';
-
-/** FAI-Local-Chats: in the user's home directory (%USERPROFILE% on Windows), or <FAI_HOME>/FAI-Local-Chats. */
-export function localChatsDir(env = process.env, platform = process.platform) {
-  if (env.FAI_HOME) return join(resolve(env.FAI_HOME), LOCAL_CHATS_NAME);
-  const home = platform === 'win32' ? env.USERPROFILE || homedir() : env.HOME || homedir();
-  return join(home, LOCAL_CHATS_NAME);
-}
 
 /** True for an id this store makes: it is also a safe folder name. */
 export function validChatId(chatId) {
