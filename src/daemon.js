@@ -763,22 +763,44 @@ export function createDaemon(options = {}) {
     return invite.state === 'open' && invite.sessionId === caller.sessionId;
   }
 
+  // A FAI chat's automatic invite before the user's Use or Act (spec #84 "id only in the turn"; flag #22): the chat's
+  // agent learns nothing about the tab (origin, URL) until the lease is granted. Popup invites name their tab as before.
+  function withheld(invite, record = requests.get(invite?.requestId)) {
+    return Boolean(invite?.automatic) && !record?.lease;
+  }
+
+  // A request as a client sees it: an automatic invite's tab without its origins, URL or the invite's origin until granted.
+  function clientView(record) {
+    const full = view(record);
+    const invite = record.invite ? invites.get(record.invite) : null;
+    if (!withheld(invite, record)) return full;
+    const { origins: _origins, url: _url, ...rest } = full;
+    return { ...rest, ...(full.invite ? { invite: clientInviteView(invite) } : {}) };
+  }
+
+  function clientInviteView(invite) {
+    const full = inviteView(invite);
+    if (!withheld(invite)) return full;
+    const { origin: _origin, ...rest } = full;
+    return rest;
+  }
+
   // A request as `caller` may see it: in full, or for an invited tab that is not theirs only its id and state (the CLI's
   // resume wait still works; the personal tab's origin and invite id stay hidden).
   function viewFor(record, caller) {
-    if (seesInvite(record, caller)) return view(record);
+    if (seesInvite(record, caller)) return clientView(record);
     return { requestId: record.requestId, state: record.state, stateReason: record.stateReason, invited: true };
   }
 
   // The requests a client lists: an invited tab only for its addressee or owner.
   function clientViews(caller) {
     return [...requests.values()].filter(record => LIVE.has(record.state) && !record.unlisted && seesInvite(record, caller))
-      .map(view);
+      .map(clientView);
   }
 
   // Open invites a client may see: those for no session in particular (the user's copy line names one) and its own.
   function inviteViewsFor(caller) {
-    return [...invites.values()].filter(invite => invite.state === 'open' && joinable(invite, caller)).map(inviteView);
+    return [...invites.values()].filter(invite => invite.state === 'open' && joinable(invite, caller)).map(clientInviteView);
   }
 
   // Whether `session` may join `invite`: one for a FAI chat by that chat's sessions only, one for a session by it only,
@@ -890,6 +912,11 @@ export function createDaemon(options = {}) {
     touch(record);
     if (!LIVE.has(record.state)) {
       throw new HttpError(409, 'request_closed', `This tab request is ${record.state}; request a tab again.`);
+    }
+    // A successor would carry the tab's withheld origin, and a covered origin would answer nothing (flag #22).
+    if (record.invite && withheld(invites.get(record.invite), record)) {
+      throw new HttpError(409, 'invite_not_granted', 'The user has not chosen Use or Act for the tab beside the FAI chat '
+        + 'yet: wait for it, then ask for more.');
     }
     const mode = body.mode === undefined ? null : oneOf(body, 'mode', [...LEVELS], null);
     const origins = body.origins ?? [];
@@ -1726,7 +1753,7 @@ export function createDaemon(options = {}) {
     log('invite_joined', { inviteId: invite.inviteId, requestId: record.requestId, sessionId: invite.joinedBy });
     changed();
     return { inviteId: invite.inviteId, requestId: record.requestId, state: record.state, level: invite.level,
-      origin: invite.origin, userText: invite.text || null, request: view(record) };
+      ...(withheld(invite, record) ? {} : { origin: invite.origin }), userText: invite.text || null, request: clientView(record) };
   }
 
   function expireInvite(invite) {
@@ -3407,7 +3434,7 @@ export function createDaemon(options = {}) {
         const list = [...requests.values()]
           .filter(record => (LIVE.has(record.state) || record.endedAt >= cutoff) && !record.unlisted && seesInvite(record, caller))
           .sort((a, b) => b.createdAt - a.createdAt)
-          .map(view);
+          .map(clientView);
         return { body: { requests: list } };
       }
       case 'requests.ask':

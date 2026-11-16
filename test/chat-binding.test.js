@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDaemon } from '../src/daemon.js';
 import { chatInviteText, wakeText } from '../src/wake.js';
+import { controlText } from '../src/mcp.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { ORIGIN } from './runtime-fixtures.js';
 
@@ -158,7 +159,8 @@ test('ownership: a request opened in turn 1 is the chat\'s and usable in turn 2;
   assert.equal(owned.body.owner.sessionId, two.sessionId, 'the request moved to the next turn\'s session');
   const invited = await ctx.api('GET', `/v1/requests/${joined.body.requestId}`, undefined, { headers: two.headers });
   assert.equal(invited.body.owner.sessionId, two.sessionId);
-  assert.deepEqual(invited.body.origins, [ORIGIN], 'the invited tab in full, for the chat');
+  assert.deepEqual([invited.body.state, 'origins' in invited.body], ['pending', false],
+    'the invited tab for the chat, without its origin before the grant (flag #22)');
   const other = ctx.sessionOf(await ctx.register(undefined, { repo: 'other' }));
   const hidden = await ctx.api('GET', `/v1/requests/${joined.body.requestId}`, undefined, { headers: other.headers });
   assert.equal(hidden.body.invited, true, 'another agent sees only that it is an invited tab');
@@ -227,6 +229,60 @@ test('the page beside the chat: a pending invite named in the turn, unlisted unt
     assert.equal(plain.invite, undefined, JSON.stringify(currentTab));
   }
   for (const entry of await ctx.calls()) assert.ok(!ctx.turnText(entry).includes(ORIGIN));
+});
+
+test('the page beside the chat: the agent learns no origin, URL or level before the Use/Act grant (flag #22)', async t => {
+  const ctx = await setup(t);
+  const sent = await ctx.chat('send', { provider: 'claude', text: 'what is on this page?',
+    currentTab: { tabId: 7, origin: ORIGIN } });
+  const first = await ctx.turn(1);
+  const mine = ctx.sessionOf(await ctx.register(first.token));
+  const as = { headers: mine.headers };
+  const leaks = value => JSON.stringify(value).includes(ORIGIN);
+  // Before the join: status names the invite (id, automatic, tab id) and nothing about the page.
+  const pre = (await ctx.api('GET', '/v1/status', undefined, as)).body;
+  assert.deepEqual(pre.invites.map(invite => [invite.inviteId, invite.automatic, 'origin' in invite]),
+    [[sent.invite.inviteId, true, false]]);
+  assert.ok(!leaks(pre.invites), JSON.stringify(pre.invites));
+  const line = controlText({ invites: pre.invites });
+  assert.equal(line, `invite: ${sent.invite.inviteId} for this FAI chat, the tab beside its panel (the user chooses Use `
+    + `or Act after you join), expires ${pre.invites[0].expiresAt}`);
+  // The join reply: pending, no level, no origin, and its request without origins or URL.
+  const joined = await ctx.api('POST', `/v1/invites/${sent.invite.inviteId}/join`, {}, as);
+  assert.equal(joined.status, 200);
+  assert.deepEqual([joined.body.state, joined.body.level, 'origin' in joined.body, 'origins' in joined.body.request,
+    'url' in joined.body.request], ['pending', null, false, false, false]);
+  assert.ok(!leaks(joined.body), JSON.stringify(joined.body));
+  const requestId = joined.body.requestId;
+  // After the join, before the click: every view the agent can read (status, list, get, wait) leaves the page out.
+  const post = (await ctx.api('GET', '/v1/status', undefined, as)).body;
+  assert.deepEqual(post.requests.map(view => [view.requestId, view.state]), [[requestId, 'pending']]);
+  assert.ok(!leaks(post.requests), JSON.stringify(post.requests));
+  assert.ok(!controlText({ requests: post.requests }).includes(ORIGIN));
+  assert.ok(!leaks((await ctx.api('GET', '/v1/requests', undefined, as)).body));
+  assert.ok(!leaks((await ctx.api('GET', `/v1/requests/${requestId}`, undefined, as)).body));
+  const waited = await ctx.api('POST', '/v1/wait', { requestId, maxMs: 50 }, as);
+  assert.deepEqual([waited.body.state, leaks(waited.body)], ['pending', false]);
+  // Asking for more before the grant would make a successor carrying the origin: refused.
+  const asked = await ctx.api('POST', `/v1/requests/${requestId}/ask`, { origins: [ORIGIN] }, as);
+  assert.deepEqual([asked.status, asked.body.error.code], [409, 'invite_not_granted']);
+  // The extension's approval window still shows the site.
+  assert.deepEqual(ctx.hub.published.at(-1).find(view => view.requestId === requestId).origins, [ORIGIN]);
+  // Granted: the agent sees the tab's origin.
+  await ctx.lease(requestId, { tabId: 7, level: 'read-only' });
+  assert.deepEqual((await ctx.api('GET', `/v1/requests/${requestId}`, undefined, as)).body.origins, [ORIGIN]);
+
+  // A popup invite keeps today's view: its level and origin, in status, its line and the join reply.
+  const popup = await ctx.hub.emit({ type: 'invite', tabId: 9, origin: ORIGIN, level: 'read-only', tabMode: 'single',
+    text: '', sessionId: mine.sessionId, browserId: BROWSER });
+  const listed = (await ctx.api('GET', '/v1/status', undefined, as)).body.invites;
+  const invite = listed.find(item => item.inviteId === popup.invite.inviteId);
+  assert.deepEqual([invite.origin, invite.automatic], [ORIGIN, undefined]);
+  assert.ok(controlText({ invites: [invite] }).includes(`for this session, level read-only, ${ORIGIN}, expires`));
+  const joinedPopup = await ctx.api('POST', `/v1/invites/${popup.invite.inviteId}/join`, {}, as);
+  assert.deepEqual([joinedPopup.body.origin, joinedPopup.body.request.origins], [ORIGIN, [ORIGIN]]);
+  await ctx.release();
+  await ctx.idle(sent.chatId);
 });
 
 test('wakes as turns: all five kinds, one turn each, in order, after the running turn; the text is the template', async t => {

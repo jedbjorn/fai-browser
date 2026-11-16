@@ -129,6 +129,7 @@ const OTHER_CODES = {
   invite_revoked: 'The invited tab is no longer held: ask the user to invite you again.',
   invite_for_another_session: 'That invite is for another agent session.',
   invite_not_joined: 'An invited tab nobody joined yet: fai_browser_open with its inviteId first.',
+  invite_not_granted: 'The tab beside the FAI chat waits for the user\'s Use or Act: wait for it, then ask for more.',
   chat_token_refused: 'This FAI chat turn\'s token was refused (used, unknown, or its turn ended): no invites or wakes '
     + 'for this session; the user sends the chat its next message.',
 };
