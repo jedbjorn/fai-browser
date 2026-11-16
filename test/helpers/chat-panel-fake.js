@@ -197,7 +197,7 @@ export const STORED_CHATS = [
 ];
 export const CONVERSATION = [
   { id: 'm1', role: 'user', text: 'Compare the two laptop listings on this page. Which has more memory?', at: minutesAgo(4) },
-  { id: 'm2', role: 'fai', text: '[FAI Browser] Approved tab request r12 (Use).', at: minutesAgo(4) },
+  { id: 'm2', role: 'fai', text: 'FAI: approved tab request r12', at: minutesAgo(4) },
   { id: 'm3', role: 'agent', text: 'The first listing (ThinkPad X1) has 32 GB of memory; the second (XPS 13) has 16 GB.\n\nBoth have 1 TB storage. The ThinkPad costs $240 more.', at: minutesAgo(3) },
   { id: 'm4', role: 'user', text: 'Open the ThinkPad and check the delivery date.', at: minutesAgo(1) },
 ];
@@ -226,7 +226,7 @@ export function scenarios() {
     'open-agent': { ...base, open: null, requests: [{ requestId: 'r12', state: 'active', lease: { tabId: 7 }, owner: { sessionId: 'ses_1' } }],
       agentReads: { ses_1: { busy: true, messages: [
         { id: 'a1', role: 'user', text: 'Check the order status on the shop tab.', at: minutesAgo(2) },
-        { id: 'a2', role: 'fai', text: '[FAI Browser] Approved tab request r12 (Use).', at: minutesAgo(2) },
+        { id: 'a2', role: 'fai', text: 'FAI: approved tab request r12', at: minutesAgo(2) },
         { id: 'a3', role: 'agent', text: 'The order #4471 is marked as shipped. I am opening the tracking page now.', at: minutesAgo(1) }] } } },
   };
 }

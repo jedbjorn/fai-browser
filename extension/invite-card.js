@@ -150,8 +150,10 @@ export function mountInvite({ root, context, onState, say }) {
     card.dataset.requestId = request.requestId;
     card.dataset.state = invite.state === 'joined' ? 'active' : 'invited';
     const top = element('div', 'card-topline');
+    // A FAI chat's automatic invite has no level of its own (spec #84): the level the user approved, else none.
+    const level = invite.level ?? request.mode;
     top.append(element('span', 'card-label', invite.state === 'joined' ? 'INVITED AGENT' : 'INVITE'),
-      element('span', 'request-age', `${LEVEL_NAMES[invite.level] ?? invite.level}`));
+      element('span', 'request-age', level ? LEVEL_NAMES[level] ?? String(level) : ''));
     card.append(top);
     card.append(element('p', 'invite-where', `${invite.origin}${request.state === 'paused' ? ' · paused' : ''}`));
     const { text: line, fallback } = wakeLine(invite);
