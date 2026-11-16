@@ -4,7 +4,8 @@
 // for every detected browser so the extension pairs by itself, starts the FAI service, and offers to register FAI
 // Browser with each coding agent found on PATH or as a Windows desktop app. Older checkout-local settings move first.
 // Last, when an official Firefox is installed, it offers to set up the FAI Browser profile for it (src/launcher/
-// launch.js: a separate profile with the signed add-on, paired); otherwise it prints the launcher command.
+// launch.js: a separate profile with the signed add-on, paired); otherwise it prints the launcher command. It also creates
+// FAI-Local-Chats (src/local-chats.js), where chats started from the browser's chat panel run and are kept.
 // Your coding agent drives the browser; no key is needed.
 //   npm run setup                                  everything above; asks before registering each coding agent
 //   npm run setup -- --yes                          register every detected coding agent without asking
@@ -19,7 +20,8 @@ import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { PINNED_EXTENSION_ID } from '../src/bridge.js';
 import { FaiBrowserClient } from '../src/client.js';
-import { PACKAGE_ROOT, installedByInstaller } from '../src/paths.js';
+import { PACKAGE_ROOT, installedByInstaller, localChatsDir } from '../src/paths.js';
+import { writeLocalChats } from '../src/local-chats.js';
 import { homePaths, loadConfig } from '../src/home.js';
 import { readEnvFile, saveSettings } from '../src/settings.js';
 import { migrateLegacyHome } from '../src/migrate.js';
@@ -107,6 +109,14 @@ async function main() {
   const values = { FAI_EXTENSION_ID: extensionId, FAI_BRIDGE_SECRET: secret };
   await saveSettings(values, paths.envFile);
   console.log(`Settings saved in ${paths.home} (mode 0600).`);
+  // FAI-Local-Chats: FAI's three files are rewritten on every run; chats/ is never touched. The chat runner creates the
+  // folder again if this fails, so setup goes on.
+  try {
+    const { dir } = await writeLocalChats(localChatsDir());
+    console.log(`FAI chats folder: ${dir}`);
+  } catch (error) {
+    console.log(`Could not create the FAI chats folder ${localChatsDir()} (${error.message}).`);
+  }
 
   let native;
   try {

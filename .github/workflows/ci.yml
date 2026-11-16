@@ -108,10 +108,21 @@ jobs:
       - name: Setup of this checkout through the installer, twice (pseudo-terminal)
         run: |
           set -eu
+          chats="$FAI_HOME/FAI-Local-Chats"
           for round in 1 2; do
             script -q "$RUNNER_TEMP/setup-$round.txt" sh scripts/install.sh --yes --dir "$GITHUB_WORKSPACE" -- --no-firefox < /dev/null
             grep -q 'FAI Browser is installed in' "$RUNNER_TEMP/setup-$round.txt"
+            grep -q "FAI chats folder: $chats" "$RUNNER_TEMP/setup-$round.txt"
+            for file in README.txt AGENTS.md CLAUDE.md; do test -s "$chats/$file"; done
+            # A chat and an edited guidance file between the runs: the rerun restores the file and keeps the chat.
+            if [ "$round" = 1 ]; then
+              mkdir -p "$chats/chats/c1/files"
+              echo '{"keep":true}' > "$chats/chats/c1/chat.jsonl"
+              echo 'edited' > "$chats/CLAUDE.md"
+            fi
           done
+          test "$(cat "$chats/chats/c1/chat.jsonl")" = '{"keep":true}'
+          cmp "$chats/AGENTS.md" "$chats/CLAUDE.md"
           grep -q 'FAI service running (reloaded the settings)' "$RUNNER_TEMP/setup-2.txt"
           test "$(stat -f %Lp "$FAI_HOME/.env.local")" = 600
           node src/cli.js daemon status > "$RUNNER_TEMP/status.json"
@@ -196,13 +207,18 @@ jobs:
           if ($out -notmatch 'is already in' -or $out -notmatch 'Done \(files only') { throw 'the rerun failed' }
           $newest = Get-ChildItem "$env:FAI_INSTALL_ROOT\app" -Directory | Sort-Object Name | Select-Object -Last 1
           if ((Get-Content "$env:FAI_INSTALL_ROOT\bin\fai-browser.cmd" -Raw) -notmatch [regex]::Escape($newest.FullName)) { throw 'the command does not run the new copy' }
-      - name: Uninstall removes everything
+      - name: Uninstall removes everything but the FAI chats
         env:
           FAI_UNINSTALL_YES: '1'
         run: |
+          $chats = Join-Path $env:USERPROFILE 'FAI-Local-Chats'
+          New-Item -ItemType Directory -Force (Join-Path $chats 'chats\c1') | Out-Null
+          [IO.File]::WriteAllText((Join-Path $chats 'chats\c1\chat.jsonl'), '{"keep":true}')
           $out = powershell -NoProfile -ExecutionPolicy Bypass -File "$env:FAI_INSTALL_ROOT\uninstall.ps1" 2>&1 | Out-String
           Write-Output $out
           if ($out -notmatch 'FAI Browser is removed') { throw 'uninstall did not finish' }
+          if ($out -notmatch [regex]::Escape("Your FAI chats stay in $chats.")) { throw 'uninstall did not name the chats folder' }
+          if ((Get-Content -Raw (Join-Path $chats 'chats\c1\chat.jsonl')) -ne '{"keep":true}') { throw 'uninstall touched the chats' }
           if (Test-Path $env:FAI_INSTALL_ROOT) { throw 'the install folder is still there' }
           if (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) 'FAI Browser.lnk')) { throw 'the Start menu entry is still there' }
           if (([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -contains "$env:FAI_INSTALL_ROOT\bin") { throw 'bin is still on PATH' }

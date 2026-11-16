@@ -6,12 +6,14 @@
 # It closes FAI Browser (Firefox with the FAI profile; your everyday Firefox is left alone), undoes the registration
 # with Claude Code, Codex and OpenCode, stops the FAI service, removes Firefox's pairing helper, the FAI profile (its
 # sign-ins and history), FAI's own Firefox copy, the private Node.js, the Start menu entry, the fai-browser command and
-# the settings with the pairing secret (%APPDATA%\fai-browser). Set FAI_UNINSTALL_YES=1 to skip the question.
+# the settings with the pairing secret (%APPDATA%\fai-browser). Your FAI chats (%USERPROFILE%\FAI-Local-Chats) stay,
+# and it says so. Set FAI_UNINSTALL_YES=1 to skip the question.
 & {
   $ErrorActionPreference = 'Continue'
   $root = if ($env:FAI_INSTALL_ROOT) { $env:FAI_INSTALL_ROOT } else { Join-Path $env:LOCALAPPDATA 'fai-browser' }
   $settings = Join-Path $env:APPDATA 'fai-browser'
   $profileDir = Join-Path $env:LOCALAPPDATA 'fai-browser\browser\profile'
+  $chats = Join-Path $env:USERPROFILE 'FAI-Local-Chats'
   $cli = Get-ChildItem (Join-Path $root 'app') -Directory -ErrorAction SilentlyContinue | Sort-Object Name |
     ForEach-Object { Join-Path $_.FullName 'src\cli.js' } | Where-Object { Test-Path $_ } | Select-Object -Last 1
   $node = Get-ChildItem (Join-Path $root 'node') -Directory -ErrorAction SilentlyContinue |
@@ -22,6 +24,7 @@
   Write-Host "  $settings  (settings and the pairing secret)"
   Write-Host '  the Start menu entry, the fai-browser command, Firefox''s pairing helper and the coding-agent registrations'
   Write-Host 'Your everyday Firefox and its profile stay as they are.'
+  if (Test-Path $chats) { Write-Host "Your FAI chats stay in $chats." }
   if ($env:FAI_UNINSTALL_YES -ne '1') {
     $answer = Read-Host 'Remove FAI Browser? [y/N]'
     if ($answer -notmatch '^(y|yes)$') { Write-Host 'Nothing removed.'; return }
@@ -36,7 +39,7 @@
   }
 
   if ($node -and $cli) {
-    & $node $cli uninstall --host all | Out-Null
+    & $node $cli uninstall --host all *> $null
     & $node $cli daemon stop *> $null
     & $node $cli uninstall-native | Out-Null
     & $node $cli uninstall-launcher --yes *> $null
@@ -64,4 +67,5 @@
   } else {
     Write-Host 'FAI Browser is removed. Restart your coding agent so it forgets the FAI Browser tools.'
   }
+  if (Test-Path $chats) { Write-Host "Your FAI chats stay in $chats. Delete that folder to remove them." }
 }
