@@ -212,8 +212,8 @@ first FAI call to name the thread. Existing OpenCode `opencode.jsonc` needs the 
 setup preserves it and says OpenCode was not auto-registered. The popup's fixed wake-reason sentence explains missing
 steps; the copy line remains available. [Per-app support and limits](docs/REFERENCE.md#invites-and-wakes).
 
-Windows channel tests are enabled. App-level Windows 10 wake acceptance is pending and blocks release of these
-changes; Windows 11 is not yet checked.
+Windows channel tests are enabled. On Windows 10, live wakes passed for Claude's Code tab, Codex in the ChatGPT app
+and the OpenCode CLI 1.19.5; OpenCode Desktop's live wake is unverified, and Windows 11 is not yet checked.
 
 Run the same command again to update. Remove everything with
 `powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\fai-browser\uninstall.ps1"`. Coding agents can follow

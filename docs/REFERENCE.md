@@ -743,8 +743,8 @@ other host gets the copy-text fallback. The channels work on Linux, macOS and na
 run in CI. In live acceptance on Windows 10, the Claude desktop app's Code tab and Codex in the ChatGPT app each
 started a new turn by themselves for an invite, an Approve and a Resume. OpenCode Desktop 1.19.5 could not be
 checked: its provider no longer serves free models to that version, and OpenCode 2.x is unsupported. The same plugin
-wake passed with the OpenCode CLI 1.19.5. Release of these Windows changes stays blocked until OpenCode Desktop is
-ruled on. Windows 11 is not yet checked.
+wake passed with the OpenCode CLI 1.19.5, so OpenCode Desktop's live wake is unverified. Windows 11 is not yet
+checked.
 
 | App or CLI | Wake channel and setup |
 |---|---|
