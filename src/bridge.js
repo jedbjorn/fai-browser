@@ -109,6 +109,7 @@ const HTTP_ROUTES = {
   '/heartbeat': 'heartbeat',
   '/used': 'used',
   '/approval': 'approval',
+  '/action-decision': 'action_decision',
   '/move': 'move',
   '/invite': 'invite',
   '/invite-cancel': 'invite_cancel',
@@ -141,6 +142,15 @@ export function approvalEvent(message) {
     origin = null;
   }
   return { requestId, surface: message.surface, step: message.step, reason, origin };
+}
+
+// An action decided after the act that asked stopped waiting (extension reportDecision): the approval entry's id (a
+// UUID the extension minted) and approved or denied. Null when it is not one.
+const ENTRY_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export function actionDecision(message) {
+  if (typeof message?.entryId !== 'string' || !ENTRY_ID.test(message.entryId)) return null;
+  if (message.decision !== 'approved' && message.decision !== 'denied') return null;
+  return { entryId: message.entryId, decision: message.decision };
 }
 
 /**
@@ -1035,6 +1045,13 @@ export function createHub({
         // An approval surface shown, an approval attempt, or why one failed (extension reportApproval): logged only.
         const event = approvalEvent(message);
         if (event) emit({ type: 'approval', browserId, ...event });
+        if (message.ref !== undefined || via === 'http') answer(true, { ok: true });
+        return;
+      }
+      case 'action_decision': {
+        // Approve once or Deny given while no act waited (extension reportDecision): the daemon may wake the agent.
+        const event = actionDecision(message);
+        if (event) emit({ type: 'action_decision', browserId, ...event });
         if (message.ref !== undefined || via === 'http') answer(true, { ok: true });
         return;
       }

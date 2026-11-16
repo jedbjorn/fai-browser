@@ -215,6 +215,7 @@ export function createSessionRegistry(options = {}) {
       // Fields only: the MCP server writes the wake text itself from its fixed template (src/wake.js wakeText).
       return { wakes: list.map(wake => ({ wakeId: wake.wakeId, kind: wake.kind, requestId: wake.requestId ?? null,
         inviteId: wake.inviteId ?? null, level: wake.level ?? null, at: iso(wake.createdAt),
+        ...(wake.actionId ? { actionId: wake.actionId, revision: wake.revision } : {}),
         ...(wake.userText ? { userText: wake.userText } : {}) })) };
     };
     if (pendingFor(session).length || maxMs <= 0) return Promise.resolve(deliver());
@@ -241,16 +242,18 @@ export function createSessionRegistry(options = {}) {
   }
 
   /**
-   * Queue a wake for `sessionId`: `kind` (invite, resume, approved), the ids, the level and, for an invite, the user's
-   * own words from the popup. Returns the wake view, or null when the session is unknown or cannot be woken (its
-   * capability is none): the caller then shows the copy fallback.
+   * Queue a wake for `sessionId`: `kind` (invite, resume, approved, action_approved, action_denied), the ids (an
+   * action decision: its actionId and revision), the level and, for an invite, the user's own words from the popup.
+   * Returns the wake view, or null when the session is unknown or cannot be woken (its capability is none): the caller
+   * then shows the copy fallback.
    */
-  function queueWake(sessionId, { kind, requestId = null, inviteId = null, level = null, userText = '' }) {
+  function queueWake(sessionId, { kind, requestId = null, inviteId = null, level = null, userText = '', actionId = null,
+    revision = null }) {
     const session = sessions.get(sessionId);
     if (!session || session.wake === 'none') return null;
     const wake = { wakeId: `wake_${randomBytes(8).toString('base64url')}`, sessionId, kind, requestId, inviteId, level,
-      userText: typeof userText === 'string' ? userText : '', state: 'queued', error: null, createdAt: now(), sentAt: null,
-      settledAt: null };
+      actionId, revision, userText: typeof userText === 'string' ? userText : '', state: 'queued', error: null,
+      createdAt: now(), sentAt: null, settledAt: null };
     wakes.set(wake.wakeId, wake);
     log('wake_queued', { sessionId, kind, requestId, inviteId });
     if (session.waiter) {
