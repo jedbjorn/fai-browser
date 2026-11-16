@@ -46,7 +46,10 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
   // Window 1, the driven tab's window (chrome.windows.get); `placedPopupFails`: a popup with left/top is refused, as
   // Chrome refuses bounds mostly off screen.
   tabWindow = { type: 'normal', focused: true, state: 'normal', left: 100, top: 50, width: 1200, height: 800 },
-  placedPopupFails = false } = {}) {
+  placedPopupFails = false,
+  // `tabUrlsNeedPermission`: chrome.tabs.query reports a tab's url and title only as the browser does, with the
+  // manifest's `tabs` permission or a host grant for the tab's origin (activeTab is not modelled: none is granted).
+  tabUrlsNeedPermission = false } = {}) {
   const reloads = []; // chrome.runtime.reload() calls (an update's reload of the unpacked extension)
   const nativeCalls = []; // chrome.runtime.sendNativeMessage(host, message) calls
   const events = name => ({
@@ -403,7 +406,10 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       async query(query) {
         if (query.currentWindow) return [{ id: 7, url: tab.url, windowId: 1, title: 'Members' }];
         // The tab beside the chat panel (the worker asks for the last focused window's active tab).
-        if (query.lastFocusedWindow) return [{ id: 7, url: tab.url, windowId: 1, title: 'Members', active: true }];
+        if (query.lastFocusedWindow) {
+          const readable = !tabUrlsNeedPermission || manifest.permissions?.includes('tabs') || grants.has(`${new URL(tab.url).origin}/*`);
+          return [{ id: 7, windowId: 1, active: true, ...(readable ? { url: tab.url, title: 'Members' } : {}) }];
+        }
         return [{ id: activeTabId, windowId: 1 }];
       },
       async get(id) {
@@ -4965,6 +4971,30 @@ test('chat: a chat_send answered after 10 s reaches the panel once and its invit
   assert.deepEqual([left.inviteId, left.reason], ['inv-chat2345', 'origin_changed'], 'the late answer\'s invite is watched');
   const agents = await h.send({ type: 'agents' }, POPUP);
   assert.deepEqual(agents.agents.sessions, [], 'an agents list answered after 10 s timed out');
+});
+
+// Decision #48: the Firefox add-on holds `tabs`, so the tab beside the panel is read on any visit, return or tab switch,
+// with no site grant and no activeTab, and a turn carries the automatic invite there. Without `tabs` the browser hides the
+// url and the turn has no tab (the control: the fake can fail).
+test('chat: with the shipped Firefox manifest a tab with no site grant and no activeTab is still invited', async () => {
+  const { firefoxManifest } = await import('../scripts/build-firefox.mjs');
+  const shipped = firefoxManifest(JSON.parse(await readFile(new URL('../extension/manifest.json', import.meta.url), 'utf8')));
+  const turn = async permissions => {
+    const h = harness({ manifest: { permissions }, hostGrants: [], tabUrlsNeedPermission: true });
+    await h.waitFor(m => m.type === 'hello');
+    await h.until(() => h.session.connection?.connected);
+    const reply = await h.send({ type: 'chat_send', provider: 'claude', text: 'what is this page?' }, PANEL);
+    assert.equal(reply.error, undefined, JSON.stringify(reply));
+    return { h, sent: h.sent.find(message => message.type === 'chat_send') };
+  };
+  const { h, sent } = await turn(shipped.permissions);
+  assert.deepEqual(sent.currentTab, { tabId: 7, origin: ORIGIN });
+  // The invite the service made is watched: the tab leaving its site revokes it.
+  h.chrome.tabs.onUpdated.emit(7, { url: 'https://elsewhere.example/' });
+  const left = await h.waitFor(m => m.type === 'invite_cancel');
+  assert.deepEqual([left.inviteId, left.reason], ['inv-chat2345', 'origin_changed']);
+  const without = await turn(shipped.permissions.filter(permission => permission !== 'tabs'));
+  assert.equal(without.sent.currentTab, null, 'without tabs the browser hides the url: no invite');
 });
 
 test('chat: a browser page beside the panel is never offered; the service\'s refusal keeps its code', async () => {

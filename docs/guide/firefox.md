@@ -42,6 +42,11 @@ maintainer's AMO API key) and the `Release` workflow on a version tag, which als
 
 ## Permissions and the gaps
 
+- **Access browser tabs** (`tabs`, from 0.12.0): Firefox shows this warning when you add FAI Browser. It lets the add-on
+  read the address of the tab beside the chat panel, so a chat you start there is invited to that tab. The agent learns
+  nothing about the tab (address, title or page) until you click **Use** or **Act**. If you already have FAI Browser,
+  Firefox asks you to accept the new permission when it updates to 0.12.0 (from its menu button); until you do, the
+  previous version keeps running.
 - Firefox drops `activeTab` at a tab's **first navigation**. So the approval click also asks Firefox for the request's exact origins
   (one Firefox prompt per new site); the add-on removes each grant it caused when the request ends. Declining keeps the approval, but the session pauses at the first navigation.
 - Firefox host permissions take **no port**: approving `http://127.0.0.1:8080` grants `http://127.0.0.1` on every port.

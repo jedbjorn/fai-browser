@@ -54,6 +54,8 @@ test('the Firefox manifest: event page with compat.js first, gecko id, no Chrome
   assert.equal(GECKO_ID, 'fai-browser@jedbjorn.github.io');
   assert.equal(firefoxManifest(chromeManifest, { geckoId: GECKO_DEV_ID }).browser_specific_settings.gecko.id, 'fai-browser@local');
   assert.deepEqual(manifest.permissions, chromeManifest.permissions.filter(item => !['offscreen', 'sidePanel'].includes(item)));
+  // The tab beside the chat panel is read with `tabs` (decision #48), so the Firefox build must keep it.
+  assert.ok(manifest.permissions.includes('tabs'));
   // The input is left alone.
   assert.ok(chromeManifest.key && chromeManifest.background.service_worker === 'background.js');
 });
