@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CHAT_CODES, chatTurnText, cleanChatText, clipProviderError, createChatRunner } from '../src/chat-runner.js';
+import { CHAT_CODES, chatTurnText, childEnv, cleanChatText, clipProviderError, createChatRunner } from '../src/chat-runner.js';
 import { createChatStore, renameRetrying } from '../src/chat-store.js';
 import { turnCommand } from '../src/chat-providers.js';
 
@@ -63,6 +63,12 @@ async function setup(t, { control = {}, programs = standins(), ...options } = {}
   const setControl = value => writeFile(join(dir, 'control.json'), JSON.stringify(value));
   return { dir, root, store, runner, spawned, calls, grandchildren, setControl };
 }
+
+test('the child\'s environment keeps the daemon location variables and drops FAI\'s secrets and host markers', () => {
+  assert.deepEqual(childEnv({ PATH: '/bin', FAI_HOME: '/h', FAI_DAEMON_DIR: '/d', FAI_DAEMON_PORT: '1', FAI_BRIDGE_PORT: '2',
+    FAI_BRIDGE_SECRET: 's', FAI_CLIENT_TOKEN: 't', CLAUDECODE: '1', CLAUDE_CODE_MESSAGING_X: 'x' }),
+  { PATH: '/bin', FAI_HOME: '/h', FAI_DAEMON_DIR: '/d', FAI_DAEMON_PORT: '1', FAI_BRIDGE_PORT: '2' });
+});
 
 test('chat template: the user\'s words cleaned (line breaks kept), 4,000 characters, inside spec #80\'s template', () => {
   assert.equal(cleanChatText('  one\r\ntwo\u0007​three four  '), 'one\ntwo three four');
@@ -220,6 +226,8 @@ test('a program that fails a turn: chat_turn_failed with the exit status and its
   assert.equal(last.text, 'OpenCode ended the turn with exit status 1.');
   assert.equal(last.providerText, 'boom on stderr');
   assert.equal(clipProviderError('a\u0000b\u001bc  '), 'abc');
+  // A colour sequence goes whole; zero-width and bidi characters go too.
+  assert.equal(clipProviderError('\u001b[31mError:\u001b[0m bad\u200b\u202e key'), 'Error: bad key');
 });
 
 test('a program that cannot be started gives chat_start_failed', async t => {

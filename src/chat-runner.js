@@ -11,8 +11,9 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { newChatId } from './chat-store.js';
-import { PROVIDERS, PROVIDER_NAMES, MIN_VERSIONS, TURN_TOKEN_ENV, createOutputParser, findProgram, parseVersion,
-  signedIn, statusArgs, turnCommand, versionSupported } from './chat-providers.js';
+import { PROVIDERS, PROVIDER_NAMES, MIN_VERSIONS, TURN_TOKEN_ENV, argumentSafe, createOutputParser, findProgram,
+  parseVersion, signedIn, statusArgs, turnCommand, versionSupported } from './chat-providers.js';
+import { CARRIED_ENV } from './resume.js';
 
 export const MAX_RUNNING = 3;
 export const TURN_LIMIT_MS = 30 * 60_000;
@@ -76,18 +77,25 @@ export function chatTurnText(words) {
   return `[FAI Browser] The user sent you a message from the FAI chat panel (the user's own words): ${JSON.stringify(words)}`;
 }
 
-/** The program's own error as shown to the user: plain text, one block, clipped to 1,000 characters. */
+/**
+ * The program's own error as shown to the user: plain text (no colour sequences, zero-width or bidi characters), one
+ * block, clipped to 1,000 characters.
+ */
 export function clipProviderError(text) {
-  return String(text ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, PROVIDER_ERROR_LIMIT);
+  return String(text ?? '')
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '').trim().slice(0, PROVIDER_ERROR_LIMIT);
 }
 
-// The child's environment: the daemon's, without FAI's own variables (FAI_HOME stays: the MCP server needs it) and
-// without the markers of a host session that may have started this daemon (its MCP server auto-starts it).
+// The child's environment: the daemon's, without FAI's own variables (the daemon location ones stay: the MCP server
+// needs them to reach this daemon) and without the markers of a host session that may have started this daemon (its
+// MCP server auto-starts it).
 export function childEnv(env) {
   const out = {};
   for (const [name, value] of Object.entries(env)) {
     if (typeof value !== 'string') continue;
-    if (/^FAI_/.test(name) && name !== 'FAI_HOME') continue;
+    if (/^FAI_/.test(name) && !CARRIED_ENV.includes(name)) continue;
     if (name === 'CLAUDECODE' || /^CLAUDE_CODE_MESSAGING_/.test(name)) continue;
     out[name] = value;
   }
@@ -321,7 +329,7 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
     const record = { role: 'user', text: words, files: [] };
     if (existing) return startTurn({ chatId: existing, text: chatTurnText(words), record });
     if (!PROVIDERS.includes(provider)) throw new ChatError('bad_request', 'Choose a provider.');
-    if (model !== null && (typeof model !== 'string' || !model.trim() || model.length > 200)) {
+    if (model !== null && (typeof model !== 'string' || !argumentSafe(model.trim()) || model.length > 200)) {
       throw new ChatError('bad_request', 'The model must be a name.');
     }
     checkLimits(null);

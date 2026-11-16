@@ -24,7 +24,7 @@ export function blockingWaitText(requestId) {
 /** The default --timeout of the resume wait: a paused lease expires after 30 minutes (src/daemon.js PAUSED_TTL_MS). */
 export const RESUME_WAIT_TIMEOUT = '30m';
 // What the CLI must share with this process to reach the same daemon. Never the client token: it stays in its file.
-const CARRIED_ENV = ['FAI_HOME', 'FAI_DAEMON_DIR', 'FAI_DAEMON_PORT', 'FAI_BRIDGE_PORT'];
+export const CARRIED_ENV = ['FAI_HOME', 'FAI_DAEMON_DIR', 'FAI_DAEMON_PORT', 'FAI_BRIDGE_PORT'];
 const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function shellQuote(value) {

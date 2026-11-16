@@ -125,6 +125,10 @@ test('finding the program (D1): PATH, then where installers put it; never a rela
   await exe(join(home, '.opencode', 'bin', 'opencode'));
   assert.equal(findProgram('opencode', { env, platform: 'linux', home }), join(home, '.opencode', 'bin', 'opencode'));
   assert.equal(findProgram('nope', { env, platform: 'linux', home }), null);
+  // Too short to be a launcher script: the program itself (only its first two bytes are read).
+  await exe(join(dir, 'bin2', 'codex'), '#');
+  assert.equal(findProgram('codex', { env: { PATH: join(dir, 'bin2'), HOME: home }, platform: 'linux', home }),
+    join(dir, 'bin2', 'codex'));
 });
 
 test('finding the program (D1): npm\'s node launcher is replaced by the platform binary beside it', { skip: process.platform === 'win32' }, async t => {
@@ -204,6 +208,18 @@ test('Codex: the exact argument list per OS; env_vars carries the turn token (D7
   assert.deepEqual(turnCommand('codex', { ...BASE, platform: 'win32', conversationId: 'thread-1', env: { FAI_HOME: '/fai-home' } }).args,
     ['exec', 'resume', ...CODEX_FLAGS, ...CODEX_FEATURES, '-c', 'mcp_servers.fai.env_vars=["FAI_CHAT_TURN_TOKEN","FAI_HOME"]',
       '-c', 'sandbox_mode="read-only"', 'thread-1', '[FAI Browser] hi']);
+  // Every daemon location variable that is set, so the turn's server reaches the daemon that started it.
+  assert.ok(turnCommand('codex', { ...BASE, platform: 'linux', env: { FAI_DAEMON_DIR: '/d', FAI_BRIDGE_PORT: '2' } }).args
+    .includes('mcp_servers.fai.env_vars=["FAI_CHAT_TURN_TOKEN","FAI_DAEMON_DIR","FAI_BRIDGE_PORT"]'));
+});
+
+test('a header value that would read as an option or carries control characters never reaches the command line', () => {
+  for (const provider of ['claude', 'codex', 'opencode']) {
+    assert.throws(() => turnCommand(provider, { ...BASE, platform: 'linux', model: 'p/m', conversationId: '--help' }));
+    assert.throws(() => turnCommand(provider, { ...BASE, platform: 'linux', model: '-x' }));
+    assert.throws(() => turnCommand(provider, { ...BASE, platform: 'linux', model: 'p/m', conversationId: 'a\nb' }));
+  }
+  assert.ok(turnCommand('codex', { ...BASE, platform: 'linux', model: 'gpt-6.1-sol', conversationId: 'thread-1' }));
 });
 
 test('OpenCode: the exact argument list, its isolation settings, and --session by id', () => {

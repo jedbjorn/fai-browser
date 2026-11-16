@@ -99,6 +99,7 @@ test('chat messages: refusals are {error: {code, message}}', async t => {
   assert.equal((await ctx.chat('send', { provider: 'claude', text: '   ' })).error.code, 'bad_request');
   assert.equal((await ctx.chat('send', { provider: 'other', text: 'hi' })).error.code, 'bad_request');
   assert.equal((await ctx.chat('send', { provider: 'claude', text: 42 })).error.code, 'bad_request');
+  assert.equal((await ctx.chat('send', { provider: 'claude', model: '--help', text: 'hi' })).error.code, 'bad_request');
   assert.equal((await ctx.chat('list', { limit: 'all' })).error.code, 'bad_request');
   assert.deepEqual(await ctx.chat('stop', { chatId: 'c0123456789abcdef0123' }), { stopped: false });
 });

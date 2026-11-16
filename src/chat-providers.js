@@ -2,9 +2,10 @@
 // without a shell (D1), which version FAI supports, how the program itself says it is signed in (D2), the exact
 // argument list of one turn and of a resumed one (D3, D4, D6, D7, D9; shared/f7/chat-discovery.md), and how to read
 // its machine-readable output (D5). Nothing here starts a turn: src/chat-runner.js does.
-import { accessSync, constants, readFileSync, realpathSync, statSync } from 'node:fs';
+import { accessSync, closeSync, constants, openSync, readSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, posix, win32 } from 'node:path';
+import { CARRIED_ENV } from './resume.js';
 
 /** Provider order: the first available is the default (decision #30). */
 export const PROVIDERS = Object.freeze(['codex', 'claude', 'opencode']);
@@ -88,11 +89,17 @@ function vendorPaths(provider, root, platform, arch) {
 // The package folder under a global npm prefix (Windows puts the shims in the prefix itself).
 const NPM_PACKAGE = { codex: ['@openai', 'codex'], opencode: ['opencode-ai'] };
 
+// Reads two bytes only: the programs themselves are hundreds of megabytes, and this runs on the daemon's event loop.
 function startsWithShebang(path) {
+  let fd;
   try {
-    return readFileSync(path, { encoding: 'latin1', flag: 'r' }).startsWith('#!');
+    fd = openSync(path, 'r');
+    const head = Buffer.alloc(2);
+    return readSync(fd, head, 0, 2, 0) === 2 && head.toString('latin1') === '#!';
   } catch {
     return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 
@@ -170,6 +177,11 @@ export function signedIn(provider, { code, stdout }) {
 const toml = value => JSON.stringify(String(value));
 const tomlArray = values => `[${values.map(toml).join(',')}]`;
 
+/** A header value that may go on a command line: a non-empty string, no leading -, no control characters. */
+export function argumentSafe(value) {
+  return typeof value === 'string' && value !== '' && !value.startsWith('-') && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
+}
+
 /**
  * The argument list and extra environment for one turn. `text`: the turn's text (always a FAI template, so it never
  * starts with "-"). `model`: only when the user picked one (D9). `conversationId`: the provider's id to continue (D4).
@@ -180,6 +192,10 @@ const tomlArray = values => `[${values.map(toml).join(',')}]`;
  */
 export function turnCommand(provider, { text, model = null, conversationId = null, filesDir, root, server, tools,
   opencodeConfigDir, env = {}, platform = process.platform, home = homedir() }) {
+  // Both come from the chat's header; Codex resume takes the id as a bare positional, where a leading - is an option.
+  for (const value of [model, conversationId]) {
+    if (value !== null && !argumentSafe(value)) throw new Error('A model or conversation id is not a plain name.');
+  }
   // Paths follow the target platform's rules (the same as this machine's outside tests).
   const pathJoin = (platform === 'win32' ? win32 : posix).join;
   if (provider === 'claude') {
@@ -193,9 +209,9 @@ export function turnCommand(provider, { text, model = null, conversationId = nul
     };
   }
   if (provider === 'codex') {
-    // Codex hands its MCP server only a few variables plus those named here (D7). FAI_HOME too when set, so the server
-    // finds the daemon that started the turn.
-    const passed = [TURN_TOKEN_ENV, ...(env.FAI_HOME ? ['FAI_HOME'] : [])];
+    // Codex hands its MCP server only a few variables plus those named here (D7). The daemon location variables too
+    // when set (FAI_HOME, FAI_DAEMON_DIR, ...), so the server finds the daemon that started the turn.
+    const passed = [TURN_TOKEN_ENV, ...CARRIED_ENV.filter(name => env[name])];
     const sandbox = platform === 'win32'
       ? (conversationId ? ['-c', 'sandbox_mode="read-only"'] : ['--sandbox', 'read-only'])
       : ['-c', `permissions.fai.filesystem={${toml(':minimal')}="read",${toml(filesDir)}="read",`
