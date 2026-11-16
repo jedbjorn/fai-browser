@@ -4303,9 +4303,10 @@ async function prepareModalApproval(message, sender) {
   const existing = modalIntents.get(arm.tabId);
   if (existing?.arm === arm) return { approval: { token: existing.token, pattern: existing.pattern, patterns: [existing.pattern, ...existing.extraPatterns] } };
   const tab = await chrome.tabs.get(arm.tabId);
-  // Without activeTab Chrome may omit url. A freshly opened arm records its original origin; after permission
-  // is granted, approval always reads and verifies the actual tab URL, including pending navigations.
-  const origin = originOf(tab.url ?? '') || arm.origin || requestTarget(request)?.origin;
+  // Without activeTab Chrome may omit url; with `tabs` Firefox reports about:blank (origin "null") until the page
+  // commits. A freshly opened arm records its original origin; after permission is granted, approval always reads and
+  // verifies the actual tab URL, including pending navigations.
+  const origin = (tab.url && tab.url !== 'about:blank' ? originOf(tab.url) : null) || arm.origin || requestTarget(request)?.origin;
   if (!origin || !originCovered(origin, request.origins) || tab.incognito) throw new Error(ARM_DECLINED);
   const pattern = taskOriginPattern(origin);
   const owned = !await hasSitePermission([pattern]);
@@ -4928,8 +4929,8 @@ chrome.tabs.onActivated.addListener(async info => {
   }
   endSession('paused', 'tab_changed');
 });
-// An armed tab's events: closed, or seen committing a page off its request's origins (a url is only visible with a
-// grant; the icon click re-checks, which is the authoritative check). A finished load re-applies its look.
+// An armed tab's events: closed, or seen committing a page off its request's origins (the icon click re-checks, which
+// is the authoritative check). A finished load re-applies its look.
 chrome.tabs.onRemoved?.addListener(async tabId => {
   await loadArms();
   if (armed.has(tabId)) ignore(disarm(tabId));
