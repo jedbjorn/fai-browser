@@ -1,8 +1,9 @@
 // A stand-in for a provider's program (Claude Code, Codex, OpenCode) in the chat runner tests: `node chat-standin.js
 // <provider> <the program's own arguments>`. It answers --version and the status commands from STANDIN_DIR/control.json,
 // logs every call to STANDIN_DIR/calls.jsonl (arguments, working folder, the turn token), and plays one turn in the
-// provider's output shape (D5) as control.json's `mode` says: ok, fail, stderr, hang (with a child process).
-import { appendFileSync, readFileSync } from 'node:fs';
+// provider's output shape (D5) as control.json's `mode` says: ok, fail, stderr, hang (with a child process). With
+// `hold: true` a turn waits (its process running) until the test writes STANDIN_DIR/release, which it then removes.
+import { appendFileSync, readFileSync, unlinkSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 
@@ -66,6 +67,19 @@ const token = process.env.FAI_CHAT_TURN_TOKEN ?? null;
 log({ args, cwd: process.cwd(), token, xdg: process.env.XDG_CONFIG_HOME ?? null,
   configContent: process.env.OPENCODE_CONFIG_CONTENT ?? null,
   faiSecret: Object.keys(process.env).filter(name => /^FAI_/.test(name) && !['FAI_HOME', 'FAI_CHAT_TURN_TOKEN'].includes(name)) });
+if (control.hold) {
+  await new Promise(resolve => {
+    const timer = setInterval(() => {
+      try {
+        unlinkSync(join(dir, 'release'));
+      } catch {
+        return;
+      }
+      clearInterval(timer);
+      resolve();
+    }, 20);
+  });
+}
 const mode = control.mode ?? 'ok';
 const conversation = control.conversation ?? `conv-${provider}`;
 const turnIndex = args.includes('--resume') || args.includes('resume') || args.includes('--session') ? 2 : 1;

@@ -5,7 +5,8 @@
 // Browser with each coding agent found on PATH or as a Windows desktop app. Older checkout-local settings move first.
 // Last, when an official Firefox is installed, it offers to set up the FAI Browser profile for it (src/launcher/
 // launch.js: a separate profile with the signed add-on, paired); otherwise it prints the launcher command. It also creates
-// FAI-Local-Chats (src/local-chats.js), where chats started from the browser's chat panel run and are kept.
+// FAI-Local-Chats (src/local-chats.js), where chats started from the browser's chat panel run and are kept, and closes
+// with which providers can start such a chat now (the chat runner's own availability check) and the fix for each other.
 // Your coding agent drives the browser; no key is needed.
 //   npm run setup                                  everything above; asks before registering each coding agent
 //   npm run setup -- --yes                          register every detected coding agent without asking
@@ -22,6 +23,7 @@ import { PINNED_EXTENSION_ID } from '../src/bridge.js';
 import { FaiBrowserClient } from '../src/client.js';
 import { PACKAGE_ROOT, installedByInstaller, localChatsDir } from '../src/paths.js';
 import { writeLocalChats } from '../src/local-chats.js';
+import { chatSummary, createChatRunner } from '../src/chat-runner.js';
 import { homePaths, loadConfig } from '../src/home.js';
 import { readEnvFile, saveSettings } from '../src/settings.js';
 import { migrateLegacyHome } from '../src/migrate.js';
@@ -178,6 +180,12 @@ async function main() {
   steps.forEach((step, index) => console.log(`  ${index + 1}. ${step}`));
   if (native.written) console.log('The extension pairs by itself: nothing to copy or paste.');
   console.log(registrationSummary(agents, { opencodeManual }));
+  // Which providers can start a FAI chat now, by the same check the panel uses (each program's own status command).
+  try {
+    console.log(chatSummary(await createChatRunner({}).providers()));
+  } catch (error) {
+    console.log(`Could not check which providers can start a FAI chat (${error.message}).`);
+  }
 }
 
 process.umask(0o077);

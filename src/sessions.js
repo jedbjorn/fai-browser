@@ -30,7 +30,10 @@ const CHAT_ERRORS = new Set(['unreadable', 'not_ready', 'ambiguous_session']);
 const CHAT_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const WAKE_KEEP_MS = 10 * 60_000;
 const HOSTS = new Set(['claude', 'codex', 'opencode', 'unknown']);
-const CAPABILITIES = new Set(['claude-socket', 'codex-queue', 'opencode-plugin', 'none']);
+// fai-chat: an MCP server started inside a FAI chat turn (spec #84), bound to its chat by the turn token. The daemon
+// wakes the chat with a new turn; nothing is delivered through this server's poll.
+const CAPABILITIES = new Set(['claude-socket', 'codex-queue', 'opencode-plugin', 'fai-chat', 'none']);
+const CHAT_REPO = 'FAI chat';
 const REASONS = new Set(WAKE_REASONS);
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -115,9 +118,15 @@ export function createSessionRegistry(options = {}) {
       settledAt: iso(wake.settledAt ?? null) };
   }
 
-  function register(body = {}) {
+  /**
+   * `chat`: {chatId, turnId} when the daemon accepted this server's turn token (the runner's claimToken): the session
+   * belongs to that chat, its capability is fai-chat whatever the server says, and it keeps the chat across a
+   * re-registration as itself (`previous`).
+   */
+  function register(body = {}, { chat = null } = {}) {
     const host = HOSTS.has(body.host) ? body.host : 'unknown';
-    const wake = CAPABILITIES.has(body.wake) ? body.wake : 'none';
+    // fai-chat only ever comes from the daemon's own check of a turn token.
+    const wake = CAPABILITIES.has(body.wake) && body.wake !== 'fai-chat' ? body.wake : 'none';
     const pid = Number.isInteger(body.pid) && body.pid > 0 ? body.pid : null;
     if (!pid) throw new SessionError(400, 'invalid_options', 'pid must be the MCP server process id');
     const startedAt = Date.parse(body.startedAt ?? '');
@@ -131,12 +140,14 @@ export function createSessionRegistry(options = {}) {
     // `previous`: the id and key this MCP server held before the daemon dropped it; proven by the key, it takes its
     // requests and invites back (the daemon's transferOwner).
     let replaced = null;
+    let chatId = chat?.chatId ?? null;
     const previous = body.previous;
     if (previous && typeof previous === 'object' && typeof previous.sessionId === 'string' && typeof previous.key === 'string') {
       const stone = tombstones.get(previous.sessionId);
       // The same process only: the key proves the id, the pid that it is still the same MCP server.
       if (stone && stone.pid === pid && timingSafeEqual(digest(previous.key), stone.keyDigest)) {
         replaced = previous.sessionId;
+        chatId ??= stone.chatId ?? null;
         tombstones.delete(previous.sessionId);
       }
     }
@@ -145,14 +156,16 @@ export function createSessionRegistry(options = {}) {
       keyDigest: null,
       host,
       hostSessionId: ID.test(String(body.hostSessionId ?? '')) ? body.hostSessionId : null,
-      repo: cleanRepo(body.repo),
+      repo: chatId ? CHAT_REPO : cleanRepo(body.repo),
       pid,
       startedAt: Number.isFinite(startedAt) ? startedAt : now(),
       registeredAt: now(),
       lastSeenAt: now(),
       lastToolCallAt: null,
-      wake,
-      wakeReason: REASONS.has(body.wakeReason) ? body.wakeReason : null,
+      wake: chatId ? 'fai-chat' : wake,
+      wakeReason: chatId ? 'ok' : REASONS.has(body.wakeReason) ? body.wakeReason : null,
+      // The FAI chat this session belongs to (spec #84 "Approvals and wakes"), or null.
+      chatId,
       client: typeof body.client === 'string' ? body.client.slice(0, 80) : null,
       waiter: null,
       // The chat panel's watch of this session (watchChat), or null.
@@ -161,9 +174,10 @@ export function createSessionRegistry(options = {}) {
     const key = randomBytes(24).toString('base64url');
     session.keyDigest = digest(key);
     sessions.set(session.sessionId, session);
-    log('session_registered', { sessionId: session.sessionId, host, wake, replaced });
+    log('session_registered', { sessionId: session.sessionId, host, wake: session.wake, replaced });
     changed();
-    return { sessionId: session.sessionId, key, pollMs: SESSION_POLL_MAX_MS, staleMs, ...(replaced ? { replaced } : {}) };
+    return { sessionId: session.sessionId, key, pollMs: SESSION_POLL_MAX_MS, staleMs, ...(replaced ? { replaced } : {}),
+      ...(chatId ? { chat: true } : {}) };
   }
 
   /** The session `sessionId` when `key` is its key; 404 when unknown (re-register), 403 on a wrong key. */
@@ -189,12 +203,13 @@ export function createSessionRegistry(options = {}) {
       session.hostSessionId = body.hostSessionId;
       dirty = true;
     }
-    if (CAPABILITIES.has(body.wake) && body.wake !== session.wake) {
+    // A chat's session keeps fai-chat: its wakes are the chat's, whatever its server can do itself.
+    if (!session.chatId && CAPABILITIES.has(body.wake) && body.wake !== 'fai-chat' && body.wake !== session.wake) {
       session.wake = body.wake;
       log('session_wake', { sessionId: session.sessionId, wake: session.wake });
       dirty = true;
     }
-    if (REASONS.has(body.wakeReason) && body.wakeReason !== session.wakeReason) {
+    if (!session.chatId && REASONS.has(body.wakeReason) && body.wakeReason !== session.wakeReason) {
       session.wakeReason = body.wakeReason;
       dirty = true;
     }
@@ -277,7 +292,8 @@ export function createSessionRegistry(options = {}) {
   function queueWake(sessionId, { kind, requestId = null, inviteId = null, level = null, userText = '', actionId = null,
     revision = null }) {
     const session = sessions.get(sessionId);
-    if (!session || session.wake === 'none') return null;
+    // A chat's session is woken through its chat (the daemon starts a turn), never through this queue.
+    if (!session || session.wake === 'none' || session.chatId) return null;
     const wake = { wakeId: `wake_${randomBytes(8).toString('base64url')}`, sessionId, kind, requestId, inviteId, level,
       actionId, revision, userText: typeof userText === 'string' ? userText : '', state: 'queued', error: null,
       createdAt: now(), sentAt: null, settledAt: null };
@@ -418,7 +434,9 @@ export function createSessionRegistry(options = {}) {
         release(session, { wakes: [], closed: true });
         sessions.delete(session.sessionId);
         // Only a session that went quiet may come back as itself; a dead process never does.
-        if (silent && isAlive(session.pid)) tombstones.set(session.sessionId, { keyDigest: session.keyDigest, pid: session.pid, at: t });
+        if (silent && isAlive(session.pid)) {
+          tombstones.set(session.sessionId, { keyDigest: session.keyDigest, pid: session.pid, chatId: session.chatId, at: t });
+        }
         failWakesOf(session.sessionId, 'session_gone', 'The agent session is no longer running.');
         log('session_dropped', { sessionId: session.sessionId, reason: silent ? 'stale' : 'pid' });
         dirty = true;

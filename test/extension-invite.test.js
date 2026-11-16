@@ -186,3 +186,42 @@ test('popup: denied browser site access cannot turn an Act invite into a single-
   await page.waitForFunction(() => document.body.textContent.includes('Nothing was approved'));
   assert.equal(await page.evaluate(() => __sent.some(message => message.type === 'invite')), false);
 });
+
+// A FAI chat's automatic invite (spec #84 "The page beside the chat", acceptance 11): once its agent joined, the request
+// shows in the existing approval window with the existing Use and Act; the click binds the tab the invite names.
+const CHAT_REQUEST = { requestId: 'req_chat', state: 'pending', origins: ['https://shop.example'], mode: 'read-only',
+  reason: 'Your FAI chat asks to use the tab beside it.', client: 'invite', createdAt: new Date().toISOString(),
+  invite: { inviteId: 'inv-chat2345', state: 'open', automatic: true, tabId: 7, origin: 'https://shop.example', level: null } };
+
+test('approval window: a FAI chat\'s invite is approved with the existing Use and Act, binding its tab', async t => {
+  const page = await popup(t, { sessions: [], search: '?window=1', requests: [CHAT_REQUEST] });
+  await page.waitForSelector('.request-card[data-request-id=req_chat]');
+  const card = page.locator('.request-card[data-request-id=req_chat]');
+  assert.deepEqual(await card.locator('.approve-request').allTextContents(), ['Use', 'Act'], 'the existing buttons, nothing new');
+  assert.equal(await card.locator('.approve-request[data-level=read-only]').isDisabled(), false, 'usable in the window');
+  assert.equal(await card.locator('.request-mismatch').count(), 0, 'no "open the requested page" detour');
+  assert.equal(await page.locator('#invite .invite-agent').count(), 0, 'the window never offers Invite');
+  await card.locator('.approve-request[data-level=read-only]').click();
+  await page.waitForFunction(() => __sent.some(message => message.type === 'start'));
+  const start = await page.evaluate(() => __sent.find(message => message.type === 'start'));
+  assert.deepEqual([start.requestId, start.level, start.onSessionTab], ['req_chat', 'read-only', undefined]);
+  assert.ok(!(await page.evaluate(() => __sent.some(message => message.type === 'open'))), 'no new task page');
+});
+
+test('approval window: approving the chat\'s tab warns, in today\'s words, that it ends another agent\'s task', async t => {
+  const other = { requestId: 'req_other', state: 'active', origins: ['https://bank.example'], mode: 'read-only', reason: 'x',
+    createdAt: new Date().toISOString(), lease: { tabId: 3 }, owner: { sessionId: 'ses_1', host: 'claude', repo: 'fai-browser' } };
+  const page = await popup(t, { sessions: [], search: '?window=1', requests: [CHAT_REQUEST, other] });
+  await page.waitForSelector('.request-card[data-request-id=req_chat]');
+  assert.equal(await page.textContent('.request-card[data-request-id=req_chat] .invite-supersede'),
+    'This will end Claude Code · fai-browser\'s current tab task.');
+});
+
+test('approval window: an ordinary request still opens its page from the window (unchanged)', async t => {
+  const page = await popup(t, { sessions: [], search: '?window=1',
+    requests: [{ ...CHAT_REQUEST, requestId: 'req_plain', invite: undefined, client: 'claude-code' }] });
+  await page.waitForSelector('.request-card[data-request-id=req_plain]');
+  await page.locator('.request-card[data-request-id=req_plain] .approve-request[data-level=read-only]').click();
+  await page.waitForFunction(() => __sent.some(message => message.type === 'open' || message.type === 'start'));
+  assert.equal(await page.evaluate(() => __sent.find(message => ['open', 'start'].includes(message.type)).type), 'open');
+});

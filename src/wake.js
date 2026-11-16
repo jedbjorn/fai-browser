@@ -21,7 +21,9 @@ import { accessSync, constants as fsConstants, statSync } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
 import { findOnPath } from './install.js';
 
-export const WAKE_CAPABILITIES = Object.freeze(['claude-socket', 'codex-queue', 'opencode-plugin', 'none']);
+// fai-chat: this server runs inside a FAI chat turn the daemon started and bound to its chat (spec #84): the daemon
+// wakes the chat with a new turn, so the agent may end its turn as with any other wake.
+export const WAKE_CAPABILITIES = Object.freeze(['claude-socket', 'codex-queue', 'opencode-plugin', 'fai-chat', 'none']);
 export const WAKE_REASONS = Object.freeze(['ok', 'wakes_off', 'claude_no_messaging', 'claude_channel_unbound',
   'codex_not_found', 'codex_no_thread', 'codex_no_queue', 'opencode_no_plugin', 'opencode_version',
   'opencode_channel_unbound', 'unknown_host']);
@@ -472,13 +474,27 @@ export function wakeText({ kind, inviteId, requestId, level, userText, actionId,
 }
 
 /**
+ * The sentence a FAI chat turn carries when the tab beside the chat panel is offered to it (spec #84 "The page beside
+ * the chat"): the invite id only, never a URL, title or page text. Joining grants nothing by itself: the user approves
+ * the tab in FAI Browser's approval window.
+ */
+export function chatInviteText(inviteId) {
+  return '[FAI Browser] The user has a browser tab open beside the FAI chat panel (invite '
+    + `${safeId(inviteId)}). If the message needs that page, call fai_browser_open with {"inviteId": "${safeId(inviteId)}"}; `
+    + 'the user then approves it in FAI Browser. If it does not, leave the invite unused.';
+}
+
+/**
  * The wake capability of a session: claude-socket (Claude Code with its socket), codex-queue (Codex with a known
  * thread and a `codex queue`), opencode-plugin (OpenCode 1.19+ below 2 with FAI's plugin channel, once a session tagged
  * a FAI call: `opencodeSession`), else none. `codexReady` is the cached `codex queue --help` answer.
  */
 export function wakeCapability({ host, env = process.env, threadId = null, codexReady = false, ppid = process.ppid,
-  opencodeSession = null, opencodeVersion = false, clientInfo = null, platform = process.platform, exec = execFileSync }) {
+  opencodeSession = null, opencodeVersion = false, clientInfo = null, platform = process.platform, exec = execFileSync,
+  chatBound = false }) {
   if (env.FAI_WAKE === '0') return 'none';
+  // The daemon accepted this server's FAI chat turn token: its chat is woken with a new turn.
+  if (chatBound) return 'fai-chat';
   if (host === 'claude' && claudeSocket(env, { ppid, clientInfo, platform, exec })) return 'claude-socket';
   if (host === 'codex' && threadId && codexReady) return 'codex-queue';
   if (host === 'opencode' && opencodeVersion && opencodeSessionId(opencodeSession) && opencodeChannel(env, { ppid })) {

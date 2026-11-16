@@ -352,20 +352,32 @@ function requestCard(request, { serving }) {
   const level = levelSelector(request);
   card.append(level.node);
   card.dataset.level = level.value();
-  const mismatch = currentOrigin && origins.length && !originCovered(currentOrigin, origins);
+  // A FAI chat's invite (spec #84): Use or Act binds the tab beside the chat it names, whichever tab this popup is on.
+  const besideChat = request.invite?.automatic === true && Number.isInteger(request.invite.tabId);
+  const mismatch = !besideChat && currentOrigin && origins.length && !originCovered(currentOrigin, origins);
   // "Approve on the FAI tab": in the approval window, a request the live session's own tab already covers (an agent
   // asking for a higher level on the tab it drives) is leased on that tab directly (the worker's approveOnSessionTab).
   const live = ['active', 'paused'].includes(view.status) ? view.session : null;
-  const onFaiTab = Boolean(windowMode && live?.origin && live.requestId !== request.requestId
+  const onFaiTab = Boolean(!besideChat && windowMode && live?.origin && live.requestId !== request.requestId
     && origins.length && originCovered(live.origin, origins));
   // "Open <host>": this tab (or a non-http one) does not cover the request, so the page opens in a new tab, armed:
   // Use or Act opens and approves that task page directly.
   const target = startTarget(request);
-  const opens = Boolean(!onFaiTab && target && origins.length && (!currentOrigin || mismatch));
-  const scope = mismatch && !opens ? null : scopeSelector(request, level.value, opens ? target.origin : currentOrigin);
+  const opens = Boolean(!besideChat && !onFaiTab && target && origins.length && (!currentOrigin || mismatch));
+  const scope = besideChat || (mismatch && !opens) ? null : scopeSelector(request, level.value, opens ? target.origin : currentOrigin);
   if (scope) {
     card.append(scope.node);
     card.dataset.scope = scope.value();
+  }
+  // Today's line from the invite card: binding the tab beside the chat ends the task this browser runs on another tab.
+  const busyTask = besideChat ? (view.requests ?? []).find(item => item.requestId !== request.requestId
+    && ['active', 'paused'].includes(item.state) && here(item) && item.lease?.tabId !== undefined
+    && item.lease.tabId !== request.invite.tabId) : null;
+  if (busyTask) {
+    const line = element('p', 'level-warning invite-supersede', busyTask.owner
+      ? `This will end ${agentLabel(busyTask.owner)}'s current tab task.` : 'This will end the current FAI tab task.');
+    line.setAttribute('role', 'note');
+    card.append(line);
   }
   if (mismatch) {
     const text = `This tab is on ${currentOrigin}; the agent asked for: ${described}`;
@@ -377,7 +389,8 @@ function requestCard(request, { serving }) {
     approve.type = 'button';
     approve.dataset.level = choice.level;
     approve.title = `${paused ? 'Resume: ' : ''}${choice.description}`;
-    approve.disabled = (Boolean(mismatch) && !opens && !onFaiTab) || (windowMode && !opens && !onFaiTab) || busy || approvalPending;
+    const bindable = opens || onFaiTab || besideChat;
+    approve.disabled = (Boolean(mismatch) && !bindable) || (windowMode && !bindable) || busy || approvalPending;
     approve.addEventListener('click', () => {
       const selected = level.pick(choice.level);
       return opens ? openRequest(request, selected, scope, target)
@@ -385,7 +398,7 @@ function requestCard(request, { serving }) {
     });
     actions.append(approve);
   }
-  if (windowMode && !opens && !onFaiTab) {
+  if (windowMode && !opens && !onFaiTab && !besideChat) {
     card.append(element('p', 'request-mismatch', 'Open the requested page, then choose Use or Act in the FAI Browser popup.'));
   }
   const deny = element('button', 'link-button deny-request', request.state === 'paused' ? 'Release' : 'Deny');
@@ -490,7 +503,10 @@ function clock(ms) {
 // "origin". The worker checks the permission itself before it asks for the domain.
 function approveRequest(request, level, scope, onSessionTab = false) {
   if (busy || approvalPending) return Promise.resolve();
-  const asked = askSiteAccess(scope, { requestId: request.requestId, level, origins: [...new Set([onSessionTab ? view.session.origin : currentOrigin, ...(request.origins ?? [])])].filter(Boolean), tabMode: approvalTabMode(level) });
+  // The tab beside a FAI chat is on the request's own origin: that is the site access to ask for, not this tab's.
+  const besideChat = request.invite?.automatic === true;
+  const tabOrigin = besideChat ? null : onSessionTab ? view.session.origin : currentOrigin;
+  const asked = askSiteAccess(scope, { requestId: request.requestId, level, origins: [...new Set([tabOrigin, ...(request.origins ?? [])])].filter(Boolean), tabMode: approvalTabMode(level) });
   if (asked.blocked) {
     status.textContent = ENDING_REMEMBERED;
     return Promise.resolve();

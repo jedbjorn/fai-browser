@@ -216,6 +216,12 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
         wake: 'claude-socket', ready: true, key: 'NEVER-SHOWN', pid: 4242 }, { sessionId: 'ses_2', host: 'evil<host>', repo: 'r\u0007x' }] } };
     }
     if (message.type === 'invite_cancel') return { ok: true, data: { invite: { inviteId: message.inviteId, state: 'cancelled' } } };
+    // FAI chats (spec #84): a turn starts; the tab beside the panel, when named, gets a pending invite.
+    if (message.type === 'chat_send') {
+      if (state.chatError) return { ok: false, error: { code: state.chatError, message: 'FAI\'s line' } };
+      return { ok: true, data: { chatId: 'c0123456789abcdef0123', turnId: 'turn-1',
+        ...(message.currentTab ? { invite: { inviteId: 'inv-chat2345', tabId: message.currentTab.tabId } } : {}) } };
+    }
     return { ok: true, data: { ok: true } };
   }
 
@@ -396,6 +402,8 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       onUpdated: events('onUpdated'),
       async query(query) {
         if (query.currentWindow) return [{ id: 7, url: tab.url, windowId: 1, title: 'Members' }];
+        // The tab beside the chat panel (the worker asks for the last focused window's active tab).
+        if (query.lastFocusedWindow) return [{ id: 7, url: tab.url, windowId: 1, title: 'Members', active: true }];
         return [{ id: activeTabId, windowId: 1 }];
       },
       async get(id) {
@@ -4907,4 +4915,79 @@ test('automatic popup policy follows modal and invite approvals and is revoked b
   h.grant(message.pattern);
   const modal = await h.send({ ...message, type: 'arm_approve', level: 'read-only', granted: true, automaticPopups: AUTOMATIC_POLICY }, MODAL_SENDER);
   assert.equal(modal.session.automaticPopups, AUTOMATIC_POLICY);
+});
+
+// --- FAI chats: the page beside the chat (spec #84) --------------------------------------------------------------
+
+const PANEL = { id: 'ext', url: 'chrome-extension://ext/panel.html' };
+const CHAT_INVITE = { inviteId: 'inv-chat2345', state: 'open', automatic: true, tabId: 7, origin: ORIGIN, level: null };
+
+test('chat: only the panel page sends a chat message; the worker adds the tab beside it and keeps the invite to itself', async () => {
+  const h = harness();
+  await h.waitFor(m => m.type === 'hello');
+  await h.until(() => h.session.connection?.connected);
+  for (const sender of [POPUP, { id: 'ext', url: ORIGIN }, { id: 'ext', url: 'chrome-extension://ext/panel.html', tab: { id: 7 } },
+    { id: 'ext', url: 'chrome-extension://ext/popup.html?window=1' }]) {
+    const refused = await h.send({ type: 'chat_send', provider: 'claude', text: 'hi' }, sender);
+    assert.ok(refused.error, JSON.stringify(sender));
+  }
+  assert.ok(!h.sent.some(message => message.type === 'chat_send'), 'nothing reached the service');
+  const reply = await h.send({ type: 'chat_send', provider: 'claude', text: 'what is this page?',
+    currentTab: { tabId: 99, origin: 'https://forged.example' } }, PANEL);
+  assert.deepEqual([reply.chatId, reply.turnId, reply.invite], ['c0123456789abcdef0123', 'turn-1', undefined],
+    'the panel gets the contract\'s answer only');
+  const sent = h.sent.find(message => message.type === 'chat_send');
+  assert.deepEqual([sent.provider, sent.text, sent.currentTab], ['claude', 'what is this page?', { tabId: 7, origin: ORIGIN }],
+    'the tab is the worker\'s own reading, never the panel\'s word');
+  // The invited tab leaves its site: the worker revokes the invite.
+  h.chrome.tabs.onUpdated.emit(7, { url: 'https://elsewhere.example/' });
+  const left = await h.waitFor(m => m.type === 'invite_cancel');
+  assert.deepEqual([left.inviteId, left.reason], ['inv-chat2345', 'origin_changed']);
+  // A later turn's invite, then the tab closes.
+  await h.send({ type: 'chat_send', chatId: 'c0123456789abcdef0123', text: 'again' }, PANEL);
+  h.chrome.tabs.onRemoved.emit(7);
+  await h.until(() => h.sent.filter(m => m.type === 'invite_cancel').length === 2);
+  assert.deepEqual(h.sent.filter(m => m.type === 'invite_cancel').map(m => m.reason), ['origin_changed', 'tab_closed']);
+});
+
+test('chat: a browser page beside the panel is never offered; the service\'s refusal keeps its code', async () => {
+  const h = harness();
+  await h.waitFor(m => m.type === 'hello');
+  await h.until(() => h.session.connection?.connected);
+  h.tab.url = 'chrome://newtab/';
+  await h.send({ type: 'chat_send', provider: 'claude', text: 'hi' }, PANEL);
+  assert.equal(h.sent.find(message => message.type === 'chat_send').currentTab, null);
+  h.state.chatError = 'chat_signed_out';
+  const refused = await h.send({ type: 'chat_send', provider: 'claude', text: 'hi' }, PANEL);
+  assert.deepEqual([refused.code, refused.error], ['chat_signed_out', 'FAI\'s line']);
+});
+
+test('chat: the approval window binds the tab beside the chat its invite names, and opens no new page', async () => {
+  const h = harness();
+  await h.waitFor(m => m.type === 'hello');
+  await h.until(() => h.session.connection?.connected);
+  h.setActiveTab(3);
+  const pending = { requestId: 'req_chat', state: 'pending', origins: [ORIGIN], mode: 'read-only', reason: 'Your FAI chat asks to use the tab beside it.',
+    client: 'invite', invite: CHAT_INVITE };
+  h.push({ type: 'requests', requests: [pending] });
+  await h.until(() => h.popupWindows.length === 1);
+  assert.equal(h.popupWindows[0].url, 'chrome-extension://ext/popup.html?window=1', 'the existing approval window');
+  assert.deepEqual(h.tabsCreated, [], 'no task page opens: the tab is already there');
+  const reply = await h.send({ type: 'start', requestId: 'req_chat', level: 'read-only', endpoint: ENDPOINT, secret: SECRET },
+    { id: 'ext', url: 'chrome-extension://ext/popup.html?window=1' });
+  assert.equal(reply.status, 'active', JSON.stringify(reply));
+  const lease = h.sent.find(message => message.type === 'lease');
+  assert.deepEqual([lease.requestId, lease.tabId, lease.origin, lease.level], ['req_chat', 7, ORIGIN, 'read-only']);
+});
+
+test('chat: an invite whose tab left its site is never bound', async () => {
+  const h = harness();
+  await h.waitFor(m => m.type === 'hello');
+  h.push({ type: 'requests', requests: [{ requestId: 'req_chat', state: 'pending', origins: [ORIGIN], mode: 'read-only',
+    invite: CHAT_INVITE }] });
+  await h.until(() => h.session.requests?.length === 1);
+  h.tab.url = 'https://elsewhere.example/';
+  const reply = await h.send({ type: 'start', requestId: 'req_chat', level: 'read-only', endpoint: ENDPOINT, secret: SECRET });
+  assert.match(reply.error, /left its site/);
+  assert.ok(!h.sent.some(message => message.type === 'lease'));
 });
