@@ -4,7 +4,7 @@
 // its machine-readable output (D5). Nothing here starts a turn: src/chat-runner.js does.
 import { accessSync, constants, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, dirname, isAbsolute, join } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, posix, win32 } from 'node:path';
 
 /** Provider order: the first available is the default (decision #30). */
 export const PROVIDERS = Object.freeze(['codex', 'claude', 'opencode']);
@@ -180,6 +180,8 @@ const tomlArray = values => `[${values.map(toml).join(',')}]`;
  */
 export function turnCommand(provider, { text, model = null, conversationId = null, filesDir, root, server, tools,
   opencodeConfigDir, env = {}, platform = process.platform, home = homedir() }) {
+  // Paths follow the target platform's rules (the same as this machine's outside tests).
+  const pathJoin = (platform === 'win32' ? win32 : posix).join;
   if (provider === 'claude') {
     const config = JSON.stringify({ mcpServers: { [SERVER_KEY]: { command: server.command, args: server.args } } });
     return {
@@ -197,7 +199,7 @@ export function turnCommand(provider, { text, model = null, conversationId = nul
     const sandbox = platform === 'win32'
       ? (conversationId ? ['-c', 'sandbox_mode="read-only"'] : ['--sandbox', 'read-only'])
       : ['-c', `permissions.fai.filesystem={${toml(':minimal')}="read",${toml(filesDir)}="read",`
-        + `${toml(join(root, 'AGENTS.md'))}="read"}`, '-c', 'default_permissions="fai"'];
+        + `${toml(pathJoin(root, 'AGENTS.md'))}="read"}`, '-c', 'default_permissions="fai"'];
     return {
       args: ['exec', ...(conversationId ? ['resume'] : []), '--json', '--ignore-user-config', '--skip-git-repo-check',
         ...(model ? ['-m', model] : []), ...CODEX_DISABLED.flatMap(feature => ['--disable', feature]),
@@ -216,7 +218,7 @@ export function turnCommand(provider, { text, model = null, conversationId = nul
     // server gets the user's value back: on Linux FAI's own settings live under it (src/paths.js).
     const mcp = { type: 'local', command: [server.command, ...server.args], enabled: true };
     if (platform !== 'win32' && platform !== 'darwin') {
-      mcp.environment = { XDG_CONFIG_HOME: env.XDG_CONFIG_HOME || join(home, '.config') };
+      mcp.environment = { XDG_CONFIG_HOME: env.XDG_CONFIG_HOME || pathJoin(home, '.config') };
     }
     const config = { $schema: 'https://opencode.ai/config.json', mcp: { [SERVER_KEY]: mcp },
       tools: { '*': false, [`${SERVER_KEY}_*`]: true }, permission: { '*': 'deny', [`${SERVER_KEY}_*`]: 'allow' } };
