@@ -25,7 +25,7 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 ### Verification
 
 - **Windows 10 live wakes.** Claude's Code tab and ChatGPT's Codex mode each took a new turn on their own for an invite, an Approve and a Resume. The OpenCode CLI 1.19.5 passed the same three wakes through FAI's plugin. OpenCode Desktop 1.19.5 is unverified: its provider refuses free models on that version, so it cannot take a turn. OpenCode 2.x is unsupported. Windows 11 is not yet checked.
-- **Approval flow live wakes** (late Approve once and Deny). Windows 10: Claude's Code tab, ChatGPT's Codex mode and the OpenCode CLI each took a new turn and ran the approved action, and stopped after Deny. macOS: Claude Code passed both. Linux: all three hosts accepted by the maintainer on the workstation; their late approve and deny wakes were not captured in the logs. Not seen live: OpenCode's plugin wake on Linux or macOS, and Codex's action wake on macOS (the wake logic is shared and passed on Windows).
+- **Approval flow live wakes** (late Approve once and Deny). Windows 10: Claude's Code tab, ChatGPT's Codex mode and the OpenCode CLI each took a new turn and ran the approved action, and stopped after Deny. macOS: Claude Code passed both. Linux: all three hosts accepted by the maintainer on the workstation; their late approve and deny wakes were not captured in the logs. Live wakes not yet verified: OpenCode's plugin wake on Linux and on macOS, and Codex's queue wake on macOS (the wake logic is shared and passed on Windows). All seats ran a pre-release build of the add-on; the signed 0.11.0 add-on was not checked live.
 
 ## 0.10.0 (2026-11-15)
 
