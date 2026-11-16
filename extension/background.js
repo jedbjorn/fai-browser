@@ -3125,17 +3125,16 @@ function expireApprovals(leaseId = null) {
   publishApprovals();
 }
 
-// The approval window opens over the driven tab: inside the browser window that holds the approval's tab, top right
-// below its toolbar (the arm prompt's inset), not over whichever window was focused last. The toolbar popup opens in
-// the last focused window, so it is used only when that is the tab's own window and it has the focus (headless
-// Chromium reports every window focused). A minimized window, unknown bounds, or bounds the browser refuses (a window
-// partly off screen) get the browser's own placement, as showPrompt does.
+// The approval window always opens over the driven tab: inside the browser window that holds the approval's tab, top
+// right below its toolbar (the arm prompt's inset), not over whichever window was focused last, also when that window
+// is focused. Never the toolbar popup (spec #86): the browser counts the window focused while the user is in the agent's
+// chat or another app, and the transient popup then closes at the first click elsewhere, leaving nothing on screen. A
+// minimized window, unknown bounds, or bounds the browser refuses (a window partly off screen) get the browser's own
+// placement, as showPrompt does.
 async function showApprovalWindow(entry) {
   try {
     const tab = await chrome.tabs.get(entry.tabId).catch(() => null);
     const parent = Number.isInteger(tab?.windowId) ? await chrome.windows.get(tab.windowId).catch(() => null) : null;
-    const last = parent?.focused ? await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => null) : null;
-    if (parent?.type === 'normal' && last?.id === parent.id && await openToolbarPopup()) return;
     const size = APPROVAL_PROMPT_SIZE;
     const placed = parent && parent.state !== 'minimized' && Number.isInteger(parent.left) && Number.isInteger(parent.top)
       && Number.isInteger(parent.width)
