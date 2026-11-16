@@ -32,7 +32,8 @@ test('the skill teaches the direct loop: open, read, act, verify, with the next.
   assert.doesNotMatch(SKILL, /fai_browser_run|answer\.candidates|verdict/);
   const words = SKILL.split(/\s+/).filter(Boolean).length;
   // 925: the 900 the skill had reached, plus the commit definition every Enter's `commits` flag needs (spec #79).
-  assert.ok(words <= 925, `the entire skill including frontmatter stays within 925 words (${words})`);
+  // 970: plus the chat panel's message template and a FAI chat's limits (specs #80 and #84).
+  assert.ok(words <= 970, `the entire skill including frontmatter stays within 970 words (${words})`);
 });
 
 test('skill frontmatter has the name and a description of at most 1024 characters', () => {

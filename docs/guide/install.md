@@ -1,15 +1,13 @@
 # Install
 
-FAI Browser is distributed for **Firefox**. There are two ways to get it, plus a from-source path for Chromium-family
-browsers:
+FAI Browser is for **Firefox** only. Chrome, Brave, Edge and the other Chromium browsers are not supported from v0.12.0. There are two ways to get it:
 
 | | What you get | For |
 |---|---|---|
 | **1. Download FAI Browser** (recommended) | Official Firefox with a separate **FAI** profile, the signed add-on preinstalled and paired | Most people: the agent never sees your everyday browsing |
 | **2. Add to your Firefox** | The signed add-on in a Firefox profile you already use | You want the agent in a profile you already have |
-| Chromium, from source | `extension/` loaded unpacked in Chrome, Brave, Edge, Vivaldi | Developers |
 
-All three need the local part (the FAI service and the MCP server) from this repository, Node 22 or newer, and Linux or
+Both need the local part (the FAI service and the MCP server) from this repository, Node 22 or newer, and Linux or
 macOS. On Windows, [one command](#windows) installs path 1 with everything it needs.
 
 ```sh
@@ -185,7 +183,8 @@ open says so instead of starting another copy.
 - **Remove:** `powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\fai-browser\uninstall.ps1"` asks, then
   closes FAI Browser (your everyday Firefox stays open), undoes the agent registrations (`fai-browser uninstall --host
   all`), and removes the pairing helper, the FAI profile with its sign-ins and history, FAI's Firefox copy, the private
-  Node.js, the Start menu entry, the command and the settings.
+  Node.js, the Start menu entry, the command and the settings. Your FAI chats (`%USERPROFILE%\FAI-Local-Chats`) stay;
+  see [FAI chats](#fai-chats).
 - **Overrides** (environment variables, mostly for testing): `FAI_INSTALL_REF` (a release tag from `v0.9.0` on, or a
   branch), `FAI_INSTALL_ZIP` (a local source zip), `FAI_INSTALL_NO_SETUP=1` (files only), `FAI_INSTALL_ROOT`.
 
@@ -206,12 +205,71 @@ deliberately and use the lowest level. A separate profile (path 1) is safer.
 
 ## Chromium family, from source
 
-Chrome, Chromium, Brave, Edge and Vivaldi 116+ load the extension unpacked; there is no store listing.
+**Not supported from v0.12.0.** The unpacked Chromium extension is still in the repository until its code is removed;
+these steps load it for development only, and nothing in it is maintained for users. Chrome, Chromium, Brave, Edge
+and Vivaldi 116+ load it unpacked; there is no store listing.
 
 1. `npm run setup` installs the pairing helper for every Chromium-family browser it finds.
 2. Open `chrome://extensions` (`brave://extensions`, `edge://extensions`), turn on **Developer mode**, click
    **Load unpacked** and pick the `extension/` folder. The manifest pins the extension ID the pairing helper trusts.
 3. Pin the FAI Browser icon (puzzle-piece menu, then the pin).
+
+## FAI chats
+
+The **Chat** button in the FAI Browser popup opens a chat panel beside the page. There you can talk to an agent you
+already run ([Open agents](../REFERENCE.md#open-agents)), or start one from the browser with no coding app open: a
+**FAI chat** ([details](../REFERENCE.md#fai-chats)). A FAI chat uses a coding program you already have installed and
+signed in on this computer, on Windows, macOS and Linux:
+
+| Provider | Program it starts | Version | Sign in once with |
+|---|---|---|---|
+| ChatGPT (Codex) | the Codex command line, `codex` | 0.169.0 or newer | `codex login` |
+| Claude | Claude Code, `claude` | 2.1.325 or newer | `claude auth login` |
+| OpenCode | the OpenCode command line, `opencode` | 1.19.5 to 1.x (OpenCode 2 is not supported) | `opencode auth login` (FAI cannot check it); also choose an OpenCode model in the panel's Settings |
+
+Setup never installs or signs in to these programs, and never reads their credentials. Install and sign in yourself;
+then reopen the panel (setup needs no rerun). With more than one available, a new chat uses Codex, then Claude, then
+OpenCode, unless you pick another, and each program uses its own default model unless you pick one in the panel's
+Settings. Your coding app's own settings are never changed.
+
+- **Windows:** signing in to the Claude desktop app does not sign in the `claude` command line: sign in to the command
+  line once. FAI starts only a real `.exe` (for npm installs, the platform binary npm put beside the `.cmd` shim).
+- **macOS:** Claude Code keeps its sign-in in the login Keychain. FAI chats work when the FAI service runs in your
+  login session, as it does when the browser or your own terminal starts it; started over plain SSH it reports
+  Claude as not signed in.
+
+**What setup does.** Setup creates the folder FAI chats run in and prints its path (`FAI chats folder: …`), then
+closes with which providers can start a chat now and one fix line for each that cannot:
+
+```text
+FAI chats: ChatGPT (Codex) and Claude can start a chat now (the Chat button in the browser).
+  OpenCode is not installed. Install the OpenCode command line (opencode, version 1), then try again.
+```
+
+| | Folder |
+|---|---|
+| Windows | `%USERPROFILE%\FAI-Local-Chats` |
+| macOS, Linux | `~/FAI-Local-Chats` |
+| With `FAI_HOME` set | `<FAI_HOME>/FAI-Local-Chats` |
+
+It holds `README.txt`, FAI's guidance for the agents it starts (`AGENTS.md`, `CLAUDE.md`; rewritten by setup and before
+every chat turn, so edits do not last), and one folder per chat under `chats/` with its transcript (`chat.jsonl`) and
+the files you attached (`files/`). Running setup again rewrites FAI's three files and never touches `chats/`.
+
+**What the agent can do.** Only FAI's browser tools, plus reading the files you attached to that chat; every tab still
+needs your Use or Act. It has no shell and cannot write files. Codex keeps a few built-in tools that cannot be
+switched off; on Windows one of them, `view_image`, can read any image your user account can read
+([Tools and files](../REFERENCE.md#tools-and-files)).
+
+**Attachments** (up to 10 files a message, 25 MB each) are saved in the chat's folder and handed to the program by
+path. FAI does not check the type: the program or model tells you when it cannot read one. Which formats each
+provider read is listed under [Attachments](../REFERENCE.md#attachments). Attached files go to the provider's service
+under your account, like your message.
+
+**Removing.** Uninstalling FAI (`node src/cli.js uninstall --host all`, or `uninstall.ps1` on Windows) leaves `FAI-Local-Chats`
+in place and says so; delete the folder yourself to remove your chats. Deleting a chat in the panel, or its folder,
+removes FAI's copy only: the provider's program keeps its own copy of the conversation in its own store, which FAI
+does not manage or remove.
 
 ## Updating
 
@@ -234,7 +292,7 @@ has local changes or unpushed commits, is on another branch, or does not come fr
 While it runs, new agent tab requests wait ("retry in a minute"). If the refresh or restart fails after the move it rolls
 back to the previous version; if it was interrupted, run `node src/cli.js update` again to finish it.
 
-- **Chromium, from source**: the extension reloads itself once the new service answers. Restart your coding agent.
+- **Chromium, from source** (not supported): the extension reloads itself once the new service answers. Restart your coding agent.
 - **Firefox (paths 1 and 2)**: Firefox updates the signed add-on by itself (its `update_url`); the updater only updates
   the clone and the service. If Firefox has not picked it up yet, install the new `.xpi` from the Releases page by hand.
   A temporary add-on from `dist/firefox/` needs `npm run build:firefox` and a reload.
@@ -243,7 +301,7 @@ Details: [Updates](../REFERENCE.md#updates).
 
 ## Next
 
-[Getting started](getting-started.md) (your first task), [Firefox notes](firefox.md),
+[Getting started](getting-started.md) (your first task), [the chat panel](chat.md), [Firefox notes](firefox.md),
 [troubleshooting](troubleshooting.md).
 
 Firefox and the Firefox logo are trademarks of the Mozilla Foundation. FAI Browser is not affiliated with or endorsed by

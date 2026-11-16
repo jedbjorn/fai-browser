@@ -9,12 +9,12 @@ action approvals and verified outcomes.**
 [![Runtime deps: 0](https://img.shields.io/badge/runtime%20deps-0-brightgreen?style=flat-square)](package.json)
 <br>
 [![MCP server](https://img.shields.io/badge/MCP-server-7c3aed?style=flat-square)](docs/REFERENCE.md#coding-agents-mcp-and-skill)
-[![Chrome extension MV3](https://img.shields.io/badge/Chrome%20extension-MV3-4285F4?style=flat-square&logo=googlechrome&logoColor=white)](extension/)
+[![Firefox add-on](https://img.shields.io/badge/Firefox-add--on-FF7139?style=flat-square&logo=firefoxbrowser&logoColor=white)](docs/guide/install.md)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](#contributing)
 
 [Website](https://jedbjorn.github.io/fai-browser/) · [Install](docs/guide/install.md) · [Measured comparisons](#benchmarks)
 
-FAI Browser lets a coding agent work in one Chrome or Firefox tab you approved, in your own signed-in browser.
+FAI Browser lets a coding agent work in one Firefox tab you approved, in your own signed-in browser.
 **Your agent drives**: `fai_browser_open` asks for your approval and returns a compact
 page digest with the actions your granted level allows; your agent picks one with `fai_browser_act`
 and gets the next page back, until an expectation verifies the outcome. No key, no provider calls,
@@ -40,8 +40,8 @@ approval for payments. Login is restricted to your configured test environments.
 - **Invite an agent to a tab you are on.** The toolbar popup's **Invite an agent to this tab** hands the current
   tab to a live Claude Code, Codex or OpenCode session at the level you pick. Approve and Resume wake that session,
   so it continues without you typing "done" (other hosts get a copy-paste line).
-- **Several browsers, one service.** The Firefox add-on and Chromium-family builds can be paired at the same time;
-  each browser holds its own task tab, and a request opens in the browser you used last (or the one the agent names).
+- **Several browsers, one service.** Several Firefox installs (the FAI profile and your own Firefox, say) can be paired
+  at the same time; each holds its own task tab, and a request opens in the browser you used last (or the one the agent names).
 - **Frames you approved are readable.** A cross-origin frame inside the page (an admin portal's content blade, say) is
   read and acted on when its own origin is one you approved; other frames are never read and are boxed in screenshots.
 - **Everything is local.** The FAI service, extension and traces stay on your machine, outside the
@@ -133,9 +133,8 @@ extension acts only in the approved tab. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Quickstart
 
-Requires Node 22+ and a Chromium-family browser 116+ (Chrome, Chromium, Brave, Edge, Vivaldi) or Firefox 140+, on
-Linux or macOS. On **Windows**, one command sets up everything, Firefox only: see [Windows](#windows). See
-[Browsers](#browsers).
+Requires Node 22+ and Firefox 140+, on Linux or macOS. On **Windows**, one command sets up everything: see
+[Windows](#windows). FAI Browser is Firefox only: Chrome, Brave, Edge and the other Chromium browsers are not supported from v0.12.0 ([Browsers](#browsers)).
 
 **Try it without a key or browser:**
 
@@ -176,8 +175,6 @@ exercised in CI yet: the CI runners already have both.
      It starts Mozilla's unmodified Firefox with a separate profile and the signed add-on, already paired.
    - **Your existing Firefox:** install the signed `fai-browser-firefox-<version>.xpi` from
      [GitHub Releases](https://github.com/jedbjorn/fai-browser/releases).
-   - **Chromium family, from source:** open `chrome://extensions` (or `brave://`, `edge://`), turn on Developer mode,
-     click **Load unpacked** and select `extension/`.
 
    The extension pairs by itself: nothing to copy or paste.
 3. Pin the FAI Browser icon (puzzle-piece menu, then the pin) for controls, invites and toolbar approval. You can
@@ -188,7 +185,7 @@ To register an agent later: `node src/cli.js install --host claude|codex|opencod
 
 ### Windows
 
-Firefox only (Chrome, Edge and the other Chromium browsers are not supported on Windows). In PowerShell:
+Firefox only, as on every system. In PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/jedbjorn/fai-browser/main/scripts/install.ps1 | iex
@@ -307,15 +304,14 @@ retention](docs/REFERENCE.md#traces-and-retention).
 |---|---|
 | **Coding agents** | Claude Code, Codex CLI and OpenCode via `node src/cli.js install --host claude\|codex\|opencode`, with invites and wakes for all three; any other MCP client through the stdio server `fai-browser-mcp` (no wakes) |
 | **Without MCP** | the CLI (`node src/cli.js`, one JSON line per command) and the SDK client (`FaiBrowserClient`) |
-| **Browser** | Chrome, Chromium, Brave, Edge or Vivaldi 116+ (Manifest V3), Firefox 140+ (a signed build of the same extension); several can be paired at once; pairing by native messaging. See [Browsers](#browsers) |
+| **Browser** | Firefox 140+ (the signed add-on); several installs can be paired at once; pairing by native messaging. Chromium browsers are not supported from v0.12.0. See [Browsers](#browsers) |
 
 ### Browsers
 
 | Browser | Status | Load | Tested |
 |---|---|---|---|
-| Chrome, Chromium | Supported | `chrome://extensions`, Developer mode, **Load unpacked**, `extension/` | headless Chromium (`npm run browser-smoke`), headed Chrome |
-| Brave, Edge, Vivaldi | Supported (Chromium, same extension) | `brave://extensions`, `edge://extensions`, `vivaldi://extensions` | native pairing paths in unit tests |
 | Firefox 140+ | Supported, with the gaps below | `node src/cli.js launch` (dedicated profile), or the signed `.xpi` from [Releases](https://github.com/jedbjorn/fai-browser/releases); for development `npm run build:firefox` and **Load Temporary Add-on** from `dist/firefox/` | headless Firefox 159 (`npm run smoke:firefox`), `web-ext lint` |
+| Chrome, Chromium, Brave, Edge, Vivaldi | Not supported from v0.12.0. The Chromium extension code, its tests and pairing are still in the repository and will be removed later; nothing in them is maintained for users | | |
 | Firefox for Android, Safari | Not supported | | |
 
 **Firefox install.** Each release carries a Mozilla-signed add-on (`fai-browser-firefox-<version>.xpi`) that

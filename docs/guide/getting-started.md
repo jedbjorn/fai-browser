@@ -6,8 +6,7 @@ manual is [REFERENCE.md](../REFERENCE.md#one-time-setup).
 ## What you need
 
 - Node 22 or newer.
-- Firefox 140+ (ESR or newer; the launcher can download it from Mozilla), or a Chromium-family browser 116+ (Chrome,
-  Chromium, Brave, Edge, Vivaldi) from source.
+- Firefox 140+ (ESR or newer; the launcher can download it from Mozilla). Chrome, Brave, Edge and the other Chromium browsers are not supported from v0.12.0.
 - Linux or macOS. On Windows (Firefox only), one PowerShell command installs everything, Node.js included: see
   [install.md](install.md#windows).
 - git, to get the code (on macOS the [installer](../REFERENCE.md#bootstrap-installers) installs git and Node for you).
@@ -18,7 +17,7 @@ No account and no API key: by default **your agent drives** and FAI makes no pro
 ## 1. Install
 
 [install.md](install.md) covers every way in detail: **Download FAI Browser** (official Firefox with a separate FAI
-profile, the signed add-on preinstalled and paired), **Add to your Firefox**, and Chromium from source.
+profile, the signed add-on preinstalled and paired), and **Add to your Firefox**.
 
 ```sh
 git clone https://github.com/jedbjorn/fai-browser
@@ -66,12 +65,7 @@ welcome page. Open it again from your applications menu ("FAI Browser", Linux) o
 **Your own Firefox.** Install the signed `fai-browser-firefox-<version>.xpi` from the GitHub Releases
 ([install.md](install.md#2-add-to-your-firefox)).
 
-**Chrome, Chromium, Brave, Edge, Vivaldi (from source).** Open `chrome://extensions` (`brave://extensions`, `edge://extensions`),
-turn on **Developer mode**, click **Load unpacked** and select the `extension/` folder. The extension ID is pinned by the
-manifest, so the native host already trusts it.
-
-In Firefox the FAI Browser button is on the toolbar from the start; in Chromium **pin the FAI Browser icon** (puzzle-piece
-menu, then the pin). It holds the popup's controls and invites, and is one way to approve agent requests.
+The FAI Browser button is on the toolbar from the start. It holds the popup's controls and invites, and is one way to approve agent requests.
 
 The extension should now say it is paired. If not, click **Pair with the FAI service** in the popup, or see
 [troubleshooting](troubleshooting.md).
@@ -133,5 +127,6 @@ node examples/fake-demo.js     # an in-memory bridge; observe, then act; prints 
 ## Next
 
 - [MCP tools](mcp-tools.md): what your agent can call.
+- [The chat panel](chat.md): talk to your agent beside the page, or start one from the browser.
 - [Secret redaction](secret-redaction.md) and [approvals](approvals.md): what is hidden and what asks.
 - [Troubleshooting](troubleshooting.md).

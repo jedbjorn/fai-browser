@@ -31,6 +31,7 @@ Or ask your agent to call `fai_browser_status`. Reference: [REFERENCE.md: The da
 | Symptom | Cause and fix |
 |---|---|
 | Nothing to approve / the agent says `needs_user` `select_tab` | You did not approve within the wait (default 60 s). Click the FAI Browser icon on the page that opened (pin the icon first), then ask the agent to continue. A request for Act or Test site shows the FAI Browser window first |
+| "This approval waited too long for the browser's site-access prompt …" | Firefox asks for site access after **Use** or **Act**; that prompt was not answered within 45 s, so nothing was approved. Choose **Use** or **Act** again and answer the prompt at once |
 | Approve does nothing, or the agent says to use the toolbar icon | The last approval attempt did not complete (the browser's site-access prompt never showed or was not answered within 45 s, the page had not loaded, the popup closed). Click the FAI Browser icon on the task tab once it shows the site. `daemon logs` has an `approval` line per surface and attempt with its reason (`site_access_timeout`, `page_not_loaded`, ...); no line after your click means it never reached the service ([Approval events](../REFERENCE.md#approval-events)) |
 | The agent says you declined site access | You declined the browser's site-access prompt, so nothing was approved. Approve again and allow site access only if you want the task to go on |
 | The approval window did not appear | Popup, Advanced: **Show a window when an agent asks** and **Open requested pages right away** must be on; otherwise look for the `?` badge on the icon |
@@ -81,6 +82,14 @@ OpenCode Desktop no longer supports free models", so it never takes a turn and F
 | "Sent to …" but Claude Code does nothing | Its `crossSessionInbound` setting holds or refuses messages from other processes (a repository or managed setting can impose it), or the session bypasses permission prompts. FAI cannot tell: Claude Code's socket answers nothing either way, so "Sent" means written, not received. Claude Code shows a held message for you to accept; set `crossSessionInbound` to `accept` in your Claude Code settings, or tell the agent `join FAI invite inv-…` (the id is in the popup's invite card and in `fai_browser_status`). A session busy with a turn takes the invite when that turn ends |
 | The agent says the invite expired, was used or was revoked | An invite lives 10 minutes, is used once, and ends when the tab closes or leaves its site before an agent joined. Invite again from the popup |
 | After Resume the agent did not continue | Only the session that made the request is woken, and only Claude Code (with its messaging socket or Windows named pipe), Codex (with the standalone queue-capable CLI and after its first FAI call) and OpenCode 1.19 to 1.x (with FAI's plugin, after its first FAI call). Tell the agent to continue; it calls `fai_browser_observe` with the requestId |
+
+## Chat panel
+
+| Symptom | Cause and fix |
+|---|---|
+| A provider is listed as unavailable | Its fix line says what to do: install it, update it, or sign in to its command line once (`codex login`, `claude auth login`). Then reopen the panel. On macOS the FAI service must run in your login session for Claude ([install guide](install.md#fai-chats)) |
+| Every message in an OpenCode chat fails the same way after an attachment | OpenCode or its model refused the file (for example `invalid image input` for a GIF), and the file stays in OpenCode's own session. Click **Start a new chat** under the failed turn: same provider and model, your last message in the composer, no attachments ([Attachments](../REFERENCE.md#attachments)) |
+| `Can't read this conversation (…)` for an open agent | FAI could not find or read that program's conversation; a newer version may store it differently. Your messages still reach the agent ([Open agents](../REFERENCE.md#open-agents)) |
 
 ## Pages and actions
 

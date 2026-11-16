@@ -4,7 +4,7 @@ The detailed manual for FAI Browser: setup, the daemon, the MCP server and CLI, 
 
 An agent opens a tab the user approved, reads a compact page and chooses one of the browser actions on offer; the extension runs it, and the agent gets back the next page, a verified outcome when it gave an expectation, annotated screenshots on request and a trace on disk. FAI makes no model or provider calls of its own.
 
-Requires Node 22+ and Chrome/Chromium 116+. The runtime has no npm dependencies, and everything runs locally except the daily [update check](#updates) (one GET to GitHub's releases API; `FAI_UPDATE_CHECK=0` turns it off). Commands below run from the package root.
+Requires Node 22+ and Firefox 140+. FAI Browser is Firefox only: Chrome, Brave, Edge and the other Chromium browsers are not supported from v0.12.0. The Chromium extension, its pairing and tests are still in the repository until they are removed, and the sections below that describe them are kept for that code only. The runtime has no npm dependencies, and everything runs locally except the daily [update check](#updates) (one GET to GitHub's releases API; `FAI_UPDATE_CHECK=0` turns it off). Commands below run from the package root.
 
 ## Contents
 
@@ -23,6 +23,9 @@ Requires Node 22+ and Chrome/Chromium 116+. The runtime has no npm dependencies,
   - [Updates](#updates)
 - [Coding agents (MCP and skill)](#coding-agents-mcp-and-skill)
 - [Invites and wakes](#invites-and-wakes)
+- [Chat panel](#chat-panel)
+  - [Open agents](#open-agents)
+  - [FAI chats](#fai-chats)
 - [Running a task from the shell](#running-a-task-from-the-shell)
   - [Output, status and exit codes](#output-status-and-exit-codes)
   - [Fact memory and aggregation](#fact-memory-and-aggregation)
@@ -56,9 +59,9 @@ node examples/fake-demo.js   # in-memory bridge; observe, then act; prints a res
 
 ## One-time setup
 
-1. Run `npm run setup` in the package directory. It moves settings left in the checkout by an older version, saves the pairing secret to `.env.local` (mode `0600`) in the settings directory (see [The daemon](#the-daemon)), installs the [native messaging host](#native-messaging-pairing) for every browser it finds, starts or reloads the FAI service (the daemon), and offers to register FAI Browser with each coding agent on your `PATH` ("Register FAI Browser with Claude Code? [Y/n]"; user scope, through `install --host`). It ends with a three-step checklist. No key is needed. `--yes` registers every detected agent and takes the FAI profile offer without asking (also without a terminal), `--no-register` skips that; `--download-firefox` lets the profile offer download Mozilla's Firefox when no usable Firefox is installed; `--extension-id <id>` overrides the pinned ID for a re-keyed manifest. Other settings are preserved. On Windows setup sets up Firefox only (the pairing helper for Firefox and the FAI profile; Chromium-family browsers are not supported there), and the [Windows installer](guide/install.md#windows) runs it as `--yes --download-firefox`.
-2. Open `chrome://extensions` (`brave://extensions`, `edge://extensions`), turn on Developer mode, click **Load unpacked** and select `extension/`. The manifest `key` fixes the extension ID at `ikkpdnokohfcjhfidepcledkbepmkfcm`, so you don't need to copy it. The extension pairs by itself through the native host: nothing to paste.
-   Firefox: setup offers the FAI profile with the signed add-on (`node src/cli.js launch`), or install the signed `.xpi` from GitHub Releases in your own Firefox ([install guide](guide/install.md)). For development, `npm run build:firefox` writes `dist/firefox/`; load it from `about:debugging#/runtime/this-firefox` (**Load Temporary Add-on**, pick its `manifest.json`). [Firefox](#firefox) has the details.
+1. Run `npm run setup` in the package directory. It moves settings left in the checkout by an older version, saves the pairing secret to `.env.local` (mode `0600`) in the settings directory (see [The daemon](#the-daemon)), installs the [native messaging host](#native-messaging-pairing) for every browser it finds, starts or reloads the FAI service (the daemon), and offers to register FAI Browser with each coding agent on your `PATH` ("Register FAI Browser with Claude Code? [Y/n]"; user scope, through `install --host`). It creates the [`FAI-Local-Chats`](#the-folder) folder for FAI chats and prints its path. It ends with a three-step checklist, then which providers can start a [FAI chat](#fai-chats) now and the fix line for each that cannot. No key is needed. `--yes` registers every detected agent and takes the FAI profile offer without asking (also without a terminal), `--no-register` skips that; `--download-firefox` lets the profile offer download Mozilla's Firefox when no usable Firefox is installed; `--extension-id <id>` overrides the pinned ID for a re-keyed manifest. Other settings are preserved. On Windows setup sets up Firefox only (the pairing helper for Firefox and the FAI profile; Chromium-family browsers are not supported there), and the [Windows installer](guide/install.md#windows) runs it as `--yes --download-firefox`.
+2. Firefox: setup offers the FAI profile with the signed add-on (`node src/cli.js launch`), or install the signed `.xpi` from GitHub Releases in your own Firefox ([install guide](guide/install.md)). For development, `npm run build:firefox` writes `dist/firefox/`; load it from `about:debugging#/runtime/this-firefox` (**Load Temporary Add-on**, pick its `manifest.json`). [Firefox](#firefox) has the details.
+   Chromium (not supported from v0.12.0; kept for the code until it is removed): open `chrome://extensions` (`brave://extensions`, `edge://extensions`), turn on Developer mode, click **Load unpacked** and select `extension/`. The manifest `key` fixes the extension ID at `ikkpdnokohfcjhfidepcledkbepmkfcm`, so you don't need to copy it. The extension pairs by itself through the native host: nothing to paste.
 3. Pin the FAI Browser icon (puzzle-piece menu, then the pin) for the popup's controls, invites and the toolbar approval; most requests can also be approved with **Approve** in the task tab's request modal. The popup shows how to pin it while it is not pinned.
 4. Restart your coding agent so it loads the MCP server and skill (or connect one by hand, [next section](#coding-agents-mcp-and-skill)), or use the CLI directly.
 
@@ -785,6 +788,7 @@ listed but never wakes it.
 | `claude-socket` | Claude Code 2.1.224+ (the token since 2.1.228) gives the server `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN` (`--bare` sessions have none), and on POSIX the socket is `<dir>/<pid>.sock` with the MCP server's parent pid; on Windows it is a named pipe (`\\.\pipe\…` or `\\?\pipe\…`) and binding also requires Claude Code's client name, `CLAUDE_CODE_SESSION_ID`, and a live parent image of `claude.exe` (looked up directly with `tasklist.exe`, 3 s timeout): the variables are inherited by everything Claude Code starts, so a server started through a wrapper (npx, a shell) or by a Bash command fails closed to `none` | the MCP server writes `{"type":"auth","token":…}` and `{"type":"user","message":{"role":"user","content":<text>}}`, one line each, to that socket; an idle session takes a new turn |
 | `codex-queue` | Codex 0.149+, once a tool call named the thread (`_meta["x-codex-turn-metadata"].thread_id`, a UUID) and `codex queue --help` works (`codex` from an absolute `PATH` entry or `FAI_CODEX_BIN`; on Windows a real `codex.exe`, never a `.cmd`, `.bat`, `.ps1` or WindowsApps binary) | `codex queue --thread <id> --message <text>`, argv only (no shell), 15 s timeout, `codex` from `PATH` or `FAI_CODEX_BIN`, no `FAI_*` variable passed on; a busy session runs it as its next turn with its own permissions |
 | `opencode-plugin` | OpenCode 1.19 to 1.x (`clientInfo.version`; 2.x has another plugin API and is refused), FAI's plugin installed (`install --host opencode`; not with `opencode --pure`), the MCP server started by OpenCode itself (`FAI_OPENCODE_PID` equals the parent pid, and `FAI_OPENCODE_WAKE_SOCKET` names `oc-<parent pid>.sock` on POSIX or `\\.\pipe\fai-browser-oc-<parent pid>-<random>` on Windows: a server started through a wrapper or by a bash tool fails closed), and after a FAI tool call the plugin tagged with its (root) session | the MCP server connects to the plugin's private socket and writes `{"type":"auth","token":…}` and `{"type":"wake","sessionID":"ses_…","text":<text>}`; the plugin checks the token, that the session called a FAI tool and that the text matches one of FAI's wake templates exactly, reads the session's last user message and calls OpenCode's `client.session.promptAsync` with that one text part and that message's `agent` and `model` (with its variant; a session without one is refused, `prompt_failed`), then answers `{"ok":true}` once OpenCode accepted the prompt and reported no error before the turn started (it watches OpenCode's events for at most 2 s; a session already running a turn is not watched, since an error then belongs to that turn); a busy session runs it as its next turn |
+| `fai-chat` | the MCP server runs inside a [FAI chat](#fai-chats) turn and the daemon accepted its turn token | the daemon starts a new turn in that chat with the wake's text ([Wakes become turns](#wakes-become-turns)); nothing is written to a host |
 | `none` | anything else (an unknown host, Claude Code without the socket, Codex or OpenCode before its first FAI call, OpenCode without the plugin or outside 1.19 to 1.x) | none: the popup shows the copy line |
 
 The socket format is the one Claude Code's own debug output prints; it is undocumented and may change. Claude Code's
@@ -832,8 +836,8 @@ line under it, as for Claude Code. OpenCode lists as
 for an action decision `actionId` and `revision`); the MCP server writes the text from fixed templates in
 `src/wake.js`, prefixed `[FAI Browser]`: an invite ("The user invited you … Call fai_browser_open with
 {"inviteId": "inv-…"}", then the user's words on one labelled line), an approval ("The user approved tab request req_…
-at level …"), a resume ("The user resumed tab request req_…"), or an action decision (below), each naming the tool to
-call next. A wake never contains a page title, URL, origin, control label or page text; an id that is not one is
+at level …"), a resume ("The user resumed tab request req_…"), an action decision (below), each naming the tool to
+call next, or a message you typed in the [chat panel](#chat-panel) (kind `chat`: your own words as one JSON string). A wake never contains a page title, URL, origin, control label or page text; an id that is not one is
 written as `unknown`. It reports `delivered` (written to the channel: Claude Code's socket answers nothing, not even to a wrong
 token or a message `crossSessionInbound` holds or refuses, checked on 2.1.319, so this means sent, not received, and the
 popup says "Sent to …"; anything the socket does write back is kept as the wake's `detail`; for Codex, `codex queue`
@@ -923,6 +927,17 @@ open to any client-token holder, as before: the CLI and SDK drive MCP-made reque
 CLI). `fai_browser_status` lists only the invites this session may join, and its next is the join when one is for
 this session; its other nexts only ever name this session's own requests.
 
+**A FAI chat's automatic invite.** A [FAI chat](#fai-chats) turn may carry an invite FAI made, without a click, for
+the tab beside the chat panel ([The page beside the chat](#the-page-beside-the-chat)). It is addressed to that chat,
+is pending and grants nothing. Until the user's **Use** or **Act** grants the lease, the chat's session learns nothing
+about the tab: the invite in status (`fai_browser_status`), the join reply, and the pending request in status,
+`GET /v1/requests[/:id]` and `POST /v1/wait` all leave out the tab's origin and URL (no request view carries the page
+title), and the relay and approve lines built from those views do not name the site. Asking for more on that request
+(`POST /v1/requests/:id/ask`, `fai_browser_open` with its `requestId`) is refused with `invite_not_granted` (409)
+until then, because a successor request would carry the withheld origin. The popup does not list it as an invite;
+its request stays unlisted until the agent joins, then is listed as pending, so the approval window opens for it.
+After the grant every view shows the tab as for any request. Popup invites name their tab as before.
+
 **Registry safety.** The MCP server's session loop connects with `autoStart: false` and `takeover: false`: it never
 starts a daemon and never stops one of another version (after an update an old server would otherwise shut the new,
 idle daemon down); on `version_mismatch` it waits until the server's own tool call (which may replace the daemon as any
@@ -942,13 +957,366 @@ invite, so the daemon records it as the owner; a relay `next.text` says "FAI Bro
 requests whose view names this session as `owner`. An invite ends `expired` after 10 minutes (the tab is released), `revoked` when
 the tab closes or leaves its origin before an agent joined, `cancelled` by the user, or replaced by a new invite on the
 same tab; joining then fails with `invite_expired`, `invite_revoked`, `invite_cancelled` (or `invite_joined` when used),
-and the agent should ask the user to invite it again. A browser may make 6 invites a minute (`rate_limited`).
+and the agent should ask the user to invite it again. A browser may make 6 invites a minute (`rate_limited`). An invite
+is kept as long as its request record exists (an ended one is dropped only once its request is gone and an hour has
+passed since it ended), so an invited tab's owner rule, and an automatic invite's withholding, last as long as its
+request does.
 
 **Approve and Resume.** A request an MCP server created carries that session as its owner. When the user approves it,
 or resumes it after a pause, the daemon wakes the owner, which continues with `fai_browser_observe` without a
 background command. For a session FAI can wake, the relay `next.text` of a pending or paused request says "FAI Browser
 wakes this session with a message once the user has done it (no wait command needed): tell the user, then end your
 turn"; without a wake capability it keeps the `wait --until active` command ([Waking the agent on Resume](#running-a-task-from-the-shell)).
+
+## Chat panel
+
+The chat panel sits beside the page on Windows, macOS and Linux, as Firefox's sidebar (`sidebar_action`, titled
+**FAI Chat**; it does not open at install). The **Chat** button in the toolbar popup opens it in the current window. It has two modes, which share one layout:
+
+- **Open agents**: talk to a Claude Code, Codex or OpenCode session you already run in a terminal or desktop app
+  ([below](#open-agents)).
+- **FAI chats**: start an agent from the panel itself, with no coding app open ([FAI chats](#fai-chats)).
+
+**Layout.** The conversation fills the panel, with the composer at the bottom (**Attach**, the text box, **Send**).
+The header holds the drawer button, the chat's title, and the provider and model in use (in a FAI chat the model is a
+control, and in a new chat the provider is one too). The drawer slides over the conversation, or stays open beside it
+when the panel is wide enough, and lists **New chat**, **Chats** (every FAI chat on disk, most recently active first,
+50 at a time, each with title, provider, time and **Delete**), **Open agents** (the live sessions) and **Settings**.
+The panel follows the system's light or dark setting, and **Appearance** in Settings (System, Light, Dark) overrides
+it. Every control works from the keyboard and has a name for screen readers; opening the drawer or Settings moves
+focus into it, and Escape closes it. With `prefers-reduced-motion` the animations stop and their text stays.
+
+**What is shown.** User and agent messages, and FAI's own lines, once the host or provider has written them. No
+streaming, no tool calls, tool results, thinking or subagent conversations, no formatted markdown. Every message is
+set as plain text (`textContent`), never as HTML; line breaks are kept and links are not clickable. A message is
+`{id, role: user|agent|fai, text, at}`, its text clipped at 8,000 characters with a note saying so. While the agent's
+turn runs, an animated **Browsing…** row sits under the last message.
+
+**The chat template.** What you type travels inside one fixed template, for open agents and FAI chats alike:
+
+```text
+[FAI Browser] The user sent you a message from the FAI chat panel (the user's own words): "<your message as a JSON string>"
+```
+
+The text is cleaned like an invite's words (control, zero-width and bidi characters removed, runs of spaces folded)
+except that line breaks stay, escaped inside the JSON string. A message is at most **4,000 characters**: the panel
+counts and refuses a longer one before sending, and the daemon refuses it too (`too_long`); it is never cut. FAI's
+other wake texts (an invite, an approval, a resume, an action decision) show in the conversation as one short `fai`
+line, such as "FAI: approved tab request req_…".
+
+### Open agents
+
+The panel lists the live agent sessions under **Open agents**, labelled as in the popup ("Claude Code · fai-browser").
+It opens on the session that owns a task tab in this window, else on the only live session; otherwise you pick one. A
+session it cannot read or write to yet shows why in a fixed line: a Codex or OpenCode session is "not ready yet" until
+its first FAI tool call (only then is its thread or session known), and a session that cannot be woken shows its
+[wake reason](#invites-and-wakes). A FAI chat's own session is not written to here: "This agent is a FAI chat: write to
+it in its chat." When the session ends the panel says `This agent session has ended.` and the composer is disabled.
+CLI and SDK callers have no conversation and are not listed.
+
+**Who reads.** The session's own MCP server reads its own host's conversation; the daemon only passes it on and the
+extension never reads a file. The server reads only a session it can name itself: Claude Code's own
+`CLAUDE_CODE_SESSION_ID`, a Codex thread id seen in its own tool calls, an OpenCode root session FAI's plugin tagged
+on its own calls. It reads only while a panel watches, and only what is new since its cursor (a byte offset in the
+file, or OpenCode's message id). A first read starts at most 4 MB from the end of a long file.
+
+| Host | Source (Linux, macOS; Windows) | User message | Agent message | Browsing… |
+|---|---|---|---|---|
+| Claude Code | `<CLAUDE_CONFIG_DIR or ~/.claude>/projects/*/<sessionId>.jsonl`; `%USERPROFILE%\.claude\projects\…` | `type: user` text that is not a tool result, `isMeta`, `isSidechain`, or Claude Code's injected wrappers (`<system-reminder>`, `<command-name>`, `<local-command-…>` and the like) | `type: assistant` `text` blocks | From the user's message until an assistant stop other than a tool call, the turn's duration record, or an interruption |
+| Codex | `<CODEX_HOME or ~/.codex>/sessions/YYYY/MM/DD/rollout-*-<threadId>.jsonl`; `%USERPROFILE%\.codex\sessions\…` | `response_item` `message` role `user`, minus the environment, `AGENTS.md` and instruction items Codex injects | role `assistant` (commentary and final answer) | `task_started` until `task_complete` or `turn_aborted` |
+| OpenCode 1.19 to 1.x | FAI's plugin answers a `read` on its private socket (POSIX) or named pipe (Windows), from `client.session.messages` | `text` parts of user messages that are not `synthetic` | `text` parts of assistant messages | The session is busy, or its last assistant message has no completed time |
+
+None of these formats is documented by its host; they were read from Claude Code 2.1.325, Codex 0.169.0 and OpenCode
+1.19.5, with recorded fixtures under `test/fixtures/chat/`. A record the reader does not recognise is skipped, never
+shown raw. FAI's own wakes, which Claude Code records as `isMeta` messages from another process, still show as
+`fai` lines (a chat message as your words). When a reader cannot find or parse its source the panel says
+`Can't read this conversation (<host> <version>). Messages you send still reach the agent.`, and sending stays
+available. An older FAI plugin cannot answer `read`; reinstall it (`install --host opencode`). When several sessions
+share one OpenCode server, FAI cannot tell which one the panel means, and says so.
+
+**Watching.** The panel asks the daemon about every 2 s (`agent_chat`, over the extension's paired connection; HTTP
+fallback `/agent-chat`). Each ask starts or extends the session's watch; the watch ends 30 s after the last one, and
+nothing is read while nobody watches. While a session is watched, its long poll hands its MCP server a `chatRead` with
+the last cursor; the server reads and posts `{messages, busy, cursor}` (or an error) to `POST /v1/sessions/:id/chat`
+with its own session key, so no other session can post for it. The daemon keeps the newest 200 messages per watched
+session in memory only, drops them when the watch ends, and never writes them to traces or logs.
+
+**Sending.** **Send** (`agent_send`; HTTP fallback `/agent-send`) queues a `chat` wake for that session, delivered over
+its existing channel (`claude-socket`, `codex-queue`, `opencode-plugin`; [Invites and wakes](#invites-and-wakes)). The
+OpenCode plugin accepts the chat template, matched whole, like every other wake template. Your message shows
+**Sending…** at once, then **Sent** when the wake is delivered, or **Not delivered: <reason>** with a retry button; there
+is no automatic retry. A busy session still takes it: Codex `queue` and OpenCode `promptAsync` queue it as the next
+turn, and Claude Code's `crossSessionInbound` setting decides what its socket does with it. The message then appears in
+the conversation once the host writes it, matched by its text so it shows once. A session takes at most 10 messages a
+minute from the panel (`rate_limited`). Messages only: no attachments to an open agent, and no editing or deleting.
+
+### FAI chats
+
+A FAI chat starts the agent from the panel. FAI picks a provider program that is installed and signed in on this
+computer (ChatGPT's Codex, Claude or OpenCode), starts it headless for each turn in a folder of its own, and the agent
+works in the browser only through FAI's tools. FAI provides four things and the provider's program owns the rest:
+whether the program is signed in (by its own status command), the model (the program's default, or the one you
+picked), a folder to work in, and the browser connection (the panel, the turn token, the automatic invite and wakes as
+turns). It also limits the agent to its tools and its chat's files, and keeps chats so they can be resumed. Failures
+the program or model can report reach you in the program's own words: FAI adds no per-provider pre-checks.
+
+#### The folder
+
+`FAI-Local-Chats` is in your home directory: `%USERPROFILE%\FAI-Local-Chats` on Windows, `~/FAI-Local-Chats` on macOS
+and Linux, `<FAI_HOME>/FAI-Local-Chats` when `FAI_HOME` is set. Setup creates it, and the daemon creates it again if it
+is missing when a turn starts.
+
+| Path | What it is |
+|---|---|
+| `README.txt` | What the folder is; that deleting a chat's folder deletes FAI's copy of that chat |
+| `AGENTS.md`, `CLAUDE.md` | The same fixed FAI guidance, read by Claude (`CLAUDE.md`, one level above the working folder), Codex (`AGENTS.md`: a turn makes this folder Codex's project root with `project_root_markers`) and OpenCode (`AGENTS.md`, named in the turn's `instructions`): the agent was started from the FAI panel, works only through FAI's browser tools and the attached files, and answers in plain text. Setup rewrites them, and the daemon restores them before every turn (by a rename, so a link planted there is replaced, not followed): edits do not last |
+| `chats/<chatId>/chat.jsonl` | The chat's transcript |
+| `chats/<chatId>/files/` | The files attached in that chat, and the turn's working folder |
+
+Running setup again rewrites FAI's three files and never touches `chats/`. Uninstalling FAI leaves the folder in place
+and says so; delete it yourself to remove your chats.
+
+#### Providers and availability
+
+A provider is checked when the panel opens and again when a turn starts. FAI finds the program without a shell: on
+`PATH`, then where its installer puts it (`~/.local/bin`, `~/.opencode/bin`, `/opt/homebrew/bin`, `/usr/local/bin`;
+on Windows `%USERPROFILE%\.local\bin` and npm's folder in `%APPDATA%`). On Windows only a real `.exe` counts, never a
+`.cmd`, `.bat`, `.ps1` or a `WindowsApps` entry; an npm launcher script is replaced by the platform binary npm
+installed beside it.
+
+| Provider | Program | Oldest supported | Signed in |
+|---|---|---|---|
+| ChatGPT (Codex) | `codex` | 0.169.0 | `codex login status` exits 0 |
+| Claude | `claude` (Claude Code) | 2.1.325 | `claude auth status` exits 0 and does not report `loggedIn: false` |
+| OpenCode | `opencode`, version 1 (OpenCode 2 is not supported) | 1.19.5 | Not checked: `opencode auth list` succeeds signed in or not, so a signed-out turn fails with OpenCode's own error |
+
+FAI never reads or handles credentials, and never installs or signs in to a program; the fix line names the step. On
+Windows the Claude desktop app's sign-in does not sign in the `claude` command line: sign in to the command line
+once. On macOS Claude Code keeps its sign-in in the login Keychain, which only processes in your login session can
+read; a daemon started outside it (over plain SSH, say) reports `chat_signed_out`. The daemon started by the browser
+or your own terminal runs in that session.
+
+When a provider cannot run a turn, the panel and setup show it as unavailable with one fixed line naming the fix:
+
+| Provider | `chat_not_installed` | `chat_signed_out` | `chat_unsupported_version` |
+|---|---|---|---|
+| ChatGPT (Codex) | "ChatGPT (Codex) is not installed. Install the Codex command line (codex), then try again." | "ChatGPT (Codex) is not signed in. Sign in to the Codex command line once: run "codex login" in a terminal." | "This version of ChatGPT (Codex) is not supported. Update it to 0.169.0 or newer." |
+| Claude | "Claude is not installed. Install Claude Code (the claude command line), then try again." | "Claude is not signed in. Sign in to the Claude command line once: run "claude auth login" in a terminal." | "This version of Claude is not supported. Update it to 2.1.325 or newer." |
+| OpenCode | "OpenCode is not installed. Install the OpenCode command line (opencode, version 1), then try again." | Not checked | "This version of OpenCode is not supported. Update it to 1.19.5 or newer (version 1; OpenCode 2 is not supported yet)." |
+
+The other fixed codes are about a turn: `chat_no_model` (OpenCode has no model chosen: choose one in Settings),
+`chat_start_failed` (the program could not be started), `chat_stopped` ("Stopped."), `chat_timed_out` (the turn ran
+for 30 minutes and was stopped), `chat_too_many` (this chat is already running a turn, or three chats are) and
+`chat_turn_failed`. With no provider available, the panel's first view lists the three providers with their fix lines,
+and **Open agents** if there are any.
+
+A turn the program itself fails (a refused model, an unreadable file, a sign-in or service error) shows
+`chat_turn_failed` with the exit status, followed by "<Provider> said:" and the program's own error as plain text
+(colour sequences, control, zero-width and bidi characters removed), clipped to 1,000 characters. FAI does not
+translate or pre-empt these errors. Setup's closing summary lists which providers can start a FAI chat now, and the
+fix line for each that cannot ([install guide](guide/install.md#fai-chats)).
+
+#### Defaults, models and settings
+
+A new chat needs no setup when a provider is signed in. Its provider is your **Default provider** when that is
+available, else the first available of Codex, then Claude, then OpenCode; you can pick another available provider
+before the first message. A chat keeps its provider for life.
+
+FAI passes **no model** unless you picked one, so the program uses its own default, and the header shows the model the
+program reports when it reports one (Claude does). OpenCode has no default by design, and FAI's isolation hides your
+own OpenCode default, so an OpenCode chat needs a model (`chat_no_model`); when OpenCode is the only available
+provider, **New chat** opens Settings on OpenCode's model list first. A new chat takes the provider's model from
+Settings when it is created; after that the chat keeps its own, which its header's model control changes from the next
+turn.
+
+**Browser Chat settings** (Settings in the drawer) are FAI's own, kept by the daemon in `chat-settings.json` in FAI's
+settings directory ([The daemon](#the-daemon)), and apply to FAI chats only. A model set here goes on a turn's command
+line; nothing is ever written into a provider's own configuration, so your coding app, your open agents and their
+settings are unchanged.
+
+| Setting | Values | Default |
+|---|---|---|
+| Default provider | The available providers | First available of Codex, Claude, OpenCode |
+| Codex model | The visible entries of `codex debug models`, read live, or a typed name | Codex's own default |
+| Claude model | The aliases Claude's `--help` names for `--model` (`opus`, `sonnet`, `fable` and so on), read live, or a typed full name | Claude's own default |
+| OpenCode model | `opencode models`, read live under the same settings a turn uses (`provider/model`) | None |
+| Appearance | System, Light, Dark | System |
+
+The model picker reads each list when Settings opens. When a list cannot be read the picker takes a typed name
+(`models_unavailable`). A model name is a plain name of at most 200 characters (no leading `-`, no control
+characters). A name the program refuses fails the turn with the program's own message.
+
+#### A turn
+
+One turn is one provider process; nothing runs between turns.
+
+1. The panel sends `{provider, model, text, files}` for a new chat, or `{chatId, text, files}` to continue one, over the
+   extension's paired connection.
+2. The daemon checks the provider is available, mints a single-use **turn token**, restores FAI's guidance files, and
+   starts the program with no shell and no window (`windowsHide`), its working folder the chat's own
+   `chats/<chatId>/files`, never `FAI-Local-Chats` itself. The token goes in the environment as
+   `FAI_CHAT_TURN_TOKEN`; FAI's own variables other than the daemon location ones are left out, as are the messaging
+   variables of a Claude Code session that may have started the daemon.
+3. Your words travel inside [the chat template](#chat-panel), followed by the attached files' paths and, when the tab
+   beside the panel can be offered, the invite sentence ([below](#the-page-beside-the-chat)).
+4. The daemon reads the program's machine-readable output: the conversation id, each completed agent message (appended
+   to the transcript as it arrives), the model it reports, and the turn's end. Output it does not recognise is skipped,
+   never shown raw.
+5. The turn ends when the process exits.
+
+| Provider | Command line (FAI's MCP server only, approved, nothing else) |
+|---|---|
+| Claude | `claude -p <text> --output-format stream-json --verbose [--model <m>] --strict-mcp-config --mcp-config <FAI's server as "fai"> --tools Read --allowedTools mcp__fai__<each FAI tool> --permission-mode dontAsk [--resume <id>]` |
+| Codex | `codex exec [resume] [-i <file>]… --json --ignore-user-config --skip-git-repo-check [-m <m>] --disable <shell_tool, unified_exec, apps, plugins, browser_use, computer_use, image_generation and others> -c web_search="disabled" -c project_root_markers=["AGENTS.md"] -c tools.experimental_request_user_input.enabled=false -c mcp_servers.fai.{command,args} -c mcp_servers.fai.default_tools_approval_mode="approve" -c mcp_servers.fai.env_vars=["FAI_CHAT_TURN_TOKEN", …] <sandbox> [<id>] <text>`; the sandbox is a read permission profile (`:minimal`, the chat's files folder and `FAI-Local-Chats/AGENTS.md`) on Linux and macOS, and `read-only` on Windows |
+| OpenCode | `opencode run --pure --format json --agent fai-browser-chat -m <m> [--session <id>] [-f <file>]… -- <text>` with `OPENCODE_DISABLE_PROJECT_CONFIG=1` and `OPENCODE_CONFIG_CONTENT` defining FAI's server, FAI's agent and `instructions` (`FAI-Local-Chats/AGENTS.md`) |
+
+**Limits.** One running turn per chat and three across all chats; another is refused (`chat_too_many`). While a turn
+runs, the composer is disabled and **Stop** replaces **Send**; sending during a turn is not supported. **Stop** ends
+the turn's whole process tree (the process group on macOS and Linux, `taskkill /T` on Windows) and adds `Stopped.` to
+the transcript; the chat can be continued. A turn that runs 30 minutes is stopped (`chat_timed_out`). The daemon stops
+running turns when it shuts down. A failed turn adds its line to the conversation and offers **Start a new chat** ([below](#attachments)); the chat
+itself stays usable.
+
+#### Tools and files
+
+A FAI chat's agent has FAI's MCP tools and can read the files attached to its own chat. It has no shell, cannot write
+files, cannot read transcripts or another chat, and nobody is present to answer a host permission prompt, so a turn
+never raises one. Its browser authority is the same as any other agent's: every tab still needs your Use or Act.
+
+- **Claude:** FAI's tools plus `Read`, which `dontAsk` mode confines to the working folder (the chat's `files`).
+  Reading anything outside it is denied without a prompt.
+- **OpenCode:** FAI's tools only. Your own OpenCode configuration folder stays, so your providers, models and sign-ins
+  are reachable; `--pure` leaves out every external plugin (FAI's own wake plugin too), project configuration is off,
+  and the turn runs FAI's agent `fai-browser-chat`, whose rules (every tool off and denied except `fai_*`) come last.
+  Each MCP server your configuration names is switched off by name: before each turn FAI reads OpenCode's resolved
+  configuration (`opencode debug config --pure`, under the turn's settings) and keeps only those names, in memory. If
+  that read fails, no turn starts (`chat_start_failed`).
+- **Codex:** some of its built-in tools cannot be switched off without losing MCP, so these remain on every OS:
+  `exec` (code-mode JavaScript, the route FAI's tools run through; it cannot read files), `apply_patch` (writes are
+  blocked by the sandbox), `view_image`, the clock, MCP resource listing, and six collaboration tools (`spawn_agent`,
+  `send_message`, `wait_agent`, `followup_task`, `interrupt_agent`, `list_agents`), whose helper agents get the same
+  confined tools. `request_user_input` and `request_user_input_async` are switched off (nobody could answer them in a
+  chat turn), as are its shell, web search, apps, plugins and the others listed above, and your own Codex
+  configuration is ignored. On Linux and
+  macOS a permission profile confines reads, `view_image` included, to the chat's `files` folder.
+  **On Windows Codex's sandbox cannot confine reads to a folder, so `view_image` can read any image your user account
+  can read.** It still has no shell, no writes and no way to read a file that is not an image.
+
+#### Attachments
+
+**Attach** opens the browser's file selection: up to **10 files** a message, **25 MB** each, any type. The panel sends
+each file to the daemon over its paired connection (`chat_file`, base64), where it waits, in FAI's state directory with
+mode 0600, until the message that names it is sent (at most 30 files wait at once, each for an hour; a restarted
+daemon starts with none). When the turn may start, the daemon moves the files into the chat's `files/` folder and the
+turn's text names each by its absolute path:
+
+```text
+[FAI Browser] The user attached these files, saved in this chat's folder: "<path>", "<path>"
+```
+
+Codex also gets each file with `-i` and OpenCode with `-f`, their own attachment routes; Claude reads it with its
+confined `Read`. FAI never checks or converts a file's type, and never runs or opens a file: if the program or model
+cannot read a format, it says so in its reply or its error. FAI keeps only its own limits: the count, the size, and the
+name. A name is cleaned so it cannot leave the folder on any OS: the last path component only; control, zero-width and
+bidi characters removed; `< > : " | ? *` and `,` replaced by `_`; no leading dots and no trailing dots or spaces; a
+Windows device name (`CON`, `NUL`, `COM1`…) or a file a program would load as instructions (`AGENTS.md`, `CLAUDE.md`,
+`opencode.json`…) gets an `attached-` prefix; at most 100 characters, extension kept. A name already taken is numbered
+(`shot (2).png`), and an existing file or link is never written through. Each file shows as a chip with its name, and
+images with a small preview. Attached files go to the provider's service under your account, like the message itself;
+the Attach hint says so.
+
+The formats each provider read when FAI's support was checked (Claude Code 2.1.325, Codex 0.169.0 and OpenCode 1.19.5;
+OpenCode on DeepSeek v4.1 Flash, whose own input types limit what it reads). These are documented, not enforced, and a
+newer program or another model may read more or less:
+
+| Provider | Reads | Does not read |
+|---|---|---|
+| Claude | PNG, JPEG, GIF, WebP, PDF, TXT, MD, CSV, JSON | DOCX, XLSX, PPTX ("cannot read binary files") |
+| Codex | PNG, JPEG, GIF, WebP (images only) | PDF, text and Office files: with the shell off it has no route for them |
+| OpenCode | PNG, JPEG, WebP, TXT, MD, CSV, JSON | PDF and GIF on that model (it has no PDF input; its provider refused GIF); DOCX, XLSX, PPTX (OpenCode: "Cannot read binary file") |
+
+**A chat the provider will not continue.** When OpenCode or its model refuses an attached file (a GIF's `invalid image
+input`, say), the file stays in OpenCode's own session, so every later message in that chat fails the same way. A
+failed turn therefore offers **Start a new chat**: a new chat with the same provider and model, your last message
+already in the composer, and no attachments carried over.
+
+#### Stored chats and resuming
+
+The transcript's first line is a header: provider, model, the model the program reported, the provider's conversation
+id, the title (the first 60 characters of the first message) and the start time. Every other line is one message
+`{id, role: user|agent|fai, text, at, files}`, where `files` lists the attached files' names, sizes and types, and a
+`fai` line may carry its `code` and the program's own error text. A line cut short by a crash is skipped.
+
+**Resume.** Opening a chat from the drawer shows its transcript, and the next message continues the provider's same
+conversation by id (`claude --resume`, `codex exec resume`, `opencode run --session`). This works after the panel, the
+browser or the daemon restarts.
+
+**Delete** in the drawer removes the chat's folder (transcript and attached files) after a confirmation. **The
+provider's program keeps its own copy of the conversation** in its own store (Claude Code's projects folder, Codex's
+sessions, OpenCode's database); FAI does not manage or remove that copy, and the confirmation says so. Renaming and
+searching chats are not available.
+
+#### The page beside the chat
+
+When a turn starts and the tab beside the panel (the active tab of the last focused window) is a normal http(s) page
+the chat does not already hold, FAI makes an invite for it, addressed to that chat, and adds one sentence with its
+`inviteId` to the turn's text:
+
+```text
+[FAI Browser] The user has a browser tab open beside the FAI chat panel (invite inv-…). If the message needs that page, call fai_browser_open with {"inviteId": "inv-…"}; the user then approves it in FAI Browser. If it does not, leave the invite unused.
+```
+
+The sentence carries the id only, never a URL, title or page text. Made without your click, the invite is
+**pending and grants nothing**. Until you grant it, every view the agent can see (status, the join reply, the request
+views, `fai_browser_wait`) leaves out the tab's origin and URL, and asking for more on that request is refused
+(`invite_not_granted`). When the agent joins, the request is listed as pending and the existing
+[approval window](#approval-window-and-tab-mark) opens for it, with the usual **Use** and **Act**, the cookie
+disclosure and the "This will end …'s current tab task" warning: there is no chat-specific approval page or button.
+Use or Act binds the lease to that tab; Deny, or no answer, gives the agent the usual refusal or pending result. After
+that the standard rules apply ([Invites and wakes](#invites-and-wakes), [Open and approve](#open-and-approve)).
+
+No window opens unless the agent chooses to join. An unused invite ends when its tab closes or leaves its site, after
+the usual 10 minutes, or when a later turn makes a fresh one for the same tab. A browser page, an extension page, a new
+tab or a private window gets no invite: the agent asks for a site with an ordinary tab request, which opens a new tab.
+Only the panel's own `chat_send` can make this invite (the worker accepts it from the panel page only); no client API
+route creates one.
+
+The add-on holds Firefox's `tabs` permission (a required permission, which Firefox asks you to accept when the add-on
+updates to a version that adds it), so the panel can see the address of the tab beside it on any visit and offer it.
+The invite still grants nothing: the tab's page is read only after your Use or Act.
+
+#### Wakes become turns
+
+The MCP server started inside a turn registers with its turn token. The daemon accepts a token once, only while the
+turn it started is still running, and marks that session as the chat's, with the wake capability `fai-chat`. A token
+that is reused, unknown, or whose turn has ended is refused. Tab requests opened in a chat belong to the chat: when the
+next turn's server registers, they move to it, and a request is not ended because a turn's process exited (its lease
+keeps its own expiry rules).
+
+A wake addressed to a chat's request (an invite, a resume, an approval, and an action approved or denied) starts a new
+turn in that chat whose text is the wake's fixed template, shown in the transcript as one short `fai` line. Wakes run
+in order, each after the running turn ends. One that cannot start a turn reports the turn's reason code, and the popup
+shows its usual "Could not wake …" line.
+
+#### Panel messages
+
+The panel talks to the daemon over the extension's paired connection (HTTP fallback paths in brackets). Refusals are
+`{error: {code, message}}`.
+
+| Message | Answer |
+|---|---|
+| `chat_providers {}` (`/chat-providers`) | `{providers: [{provider, name, available, code, line?, version}], defaultProvider}` |
+| `chat_list {offset, limit ≤ 50}` (`/chat-list`) | `{chats: [chat view + lastActiveAt], next}` |
+| `chat_history {chatId, after}` (`/chat-history`) | `{chat, messages, cursor}` |
+| `chat_send {provider, model?, text, files?}` or `{chatId, text, files?}` (`/chat-send`) | `{chatId, turnId}` |
+| `chat_stop {chatId}` (`/chat-stop`), `chat_delete {chatId}` (`/chat-delete`) | `{stopped}`, `{deleted}` |
+| `chat_settings {}` (`/chat-settings`), `chat_settings_set {settings}` (`/chat-settings-set`) | `{settings: {defaultProvider, models: {codex, claude, opencode}, appearance}}` |
+| `chat_models {provider}` (`/chat-models`) | `{models: [name]}`, or `models_unavailable` |
+| `chat_file {chatId or null, name, mime, size, data}` (`/chat-file`, up to 36 MB) | `{fileId}`; `file_too_large`, `too_many_files` |
+| `chat_model {chatId, model}` (`/chat-model`) | `{chat}`: the chat's model from its next turn (null: the program's own) |
+
+A chat view is `{chatId, title, provider, model, reportedModel, startedAt, running}`. Other refusal codes:
+`unknown_chat`, `unknown_file` (attach it again), `bad_request`, `too_long`, and the reason codes above.
 
 ## Running a task from the shell
 
@@ -1365,7 +1733,7 @@ One active tab lease per browser; approving another request in the same browser 
 **compat.js** ([extension/compat.js](../extension/compat.js)) loads first in the Firefox event page and only fills in what is missing, so the rest of the extension keeps calling `chrome.*` (Firefox's `chrome` namespace returns promises in MV3):
 
 - `chrome.offscreen`: Firefox's background is a page with a DOM, so the offscreen document is a hidden `<iframe src="offscreen.html">` in it. The same `offscreen.js` runs there and answers the same `annotate` message, so screenshot drawing, action-id tags and [secret boxes](#secret-redaction) are one code path in both browsers.
-- Exact-origin keeper. Chrome keeps `activeTab` until the tab leaves its origin; Firefox drops it at any navigation, after which the worker could neither read the tab's URL nor run `page.js`, and paused the lease (`origin_changed`). In the Firefox build an explicit **Use** or **Act** click in the popup or request modal asks, inside that click, for the request's exact origins as host permissions (`https://host/*`, port dropped; domain roots keep their own prompt). Firefox shows its permission prompt once per new site. The keeper records each pattern Firefox reports added after such a click (`chrome.storage.local.compatGrantedOrigins`) and removes it once no pending, active or paused request in `chrome.storage.session.requests` needs it; a site the user allowed by hand is never recorded, so never removed. An Act or direct-open approval requires this site access; declining it grants no session. Opening the toolbar alone neither requests site access nor approves a task.
+- Exact-origin keeper. Chrome keeps `activeTab` until the tab leaves its origin; Firefox drops it at any navigation, after which the worker could neither read the tab's URL nor run `page.js`, and paused the lease (`origin_changed`). In the Firefox build an explicit **Use** or **Act** click in the popup or request modal asks, inside that click, for the request's exact origins as host permissions (`https://host/*`, port dropped; domain roots keep their own prompt). Firefox shows its permission prompt once per new site. The keeper records each pattern Firefox reports added after such a click (`chrome.storage.local.compatGrantedOrigins`) and removes it once no pending, active or paused request in `chrome.storage.session.requests` needs it; a site the user allowed by hand is never recorded, so never removed. An Act or direct-open approval requires this site access; declining it grants no session. Answer Firefox's prompt within 45 s: after that the attempt is given up and a late answer approves nothing ("This approval waited too long for the browser's site-access prompt and was given up: nothing was approved. Choose Use or Act again."). Opening the toolbar alone neither requests site access nor approves a task.
 - Feature-detected as in Chrome: `tabGroups` (the tab mark; without it the badge and title remain), `action.getUserSettings` (the pin hint), `storage.local.setAccessLevel` (absent in Firefox, where `storage.local` is also readable by the add-on's own content scripts; `page.js` runs isolated from the page, so a page still cannot read it). The same in both: `storage.session`, `scripting.executeScript` with `func`/`args` (Firefox returns no `documentId`, so the injection retry targets the tab), `action.setPopup`/`onClicked`, `windows.create({type: 'popup'})`, `commands` (`_execute_action`, Ctrl+Shift+Y), `alarms`, `runtime.sendNativeMessage`.
 
 `chrome.tabs.group` names the tab's own window (`createProperties.windowId`): Firefox otherwise moved the tab into the last focused window, the prompt popup, and closing the prompt then closed the leased tab. Chrome already grouped the tab in its own window.
