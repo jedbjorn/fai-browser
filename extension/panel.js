@@ -415,10 +415,12 @@ function addFiles(list) {
   renderComposer();
 }
 
+let fileCount = 0;
 function fileItem(file) {
   const url = /^image\/(png|jpeg|gif|webp)$/.test(file.type) ? URL.createObjectURL(file) : null;
   if (url) state.previews.set(file.name, url);
-  return { file, url };
+  fileCount += 1;
+  return { file, url, key: `f${fileCount}` };
 }
 
 function clearFiles({ keepPreviews = false } = {}) {
@@ -463,6 +465,44 @@ function icon(path) {
   return svg;
 }
 
+// --- keeping nodes --------------------------------------------------------------------------------------------------
+
+// A poll redraws from state every 2 s, so a node whose content did not change stays the same node: focus, an open
+// dropdown list and a text selection live on it. `entries`, in order: [{key, sig, build, update?}]. A child with the
+// same key and sig is kept (`update` sets on it what may change in place); any other is built anew, and focus in the
+// node it replaces moves to the same part (data-part) of the new one. Unchanged children at the front are not touched.
+const kept = new WeakMap(); // node -> {key, sig}
+
+function syncChildren(parent, entries) {
+  const current = [...parent.children];
+  const byKey = new Map(current.map(node => [kept.get(node)?.key, node]));
+  const active = document.activeElement;
+  let refocus = null;
+  const nodes = entries.map(({ key, sig, build, update }) => {
+    const old = byKey.get(key);
+    byKey.delete(key);
+    if (old && kept.get(old).sig === sig) {
+      update?.(old);
+      return old;
+    }
+    const node = build();
+    kept.set(node, { key, sig });
+    if (old?.contains(active)) refocus = active === old ? node : node.querySelector(`[data-part="${active.dataset.part}"]`);
+    return node;
+  });
+  let same = 0;
+  while (same < nodes.length && nodes[same] === current[same]) same += 1;
+  if (same === nodes.length && same === current.length) return;
+  for (const node of current.slice(same)) node.remove();
+  parent.append(...nodes.slice(same));
+  // A kept node that moved lost focus on the way.
+  (refocus ?? (active !== document.activeElement && active?.isConnected ? active : null))?.focus();
+}
+
+function setText(node, text) {
+  if (node.textContent !== text) node.textContent = text;
+}
+
 // --- drawer ---------------------------------------------------------------------------------------------------------
 
 function drawerShown() {
@@ -494,41 +534,57 @@ function renderDrawer() {
   ui.toggle.setAttribute('aria-expanded', String(shown));
   ui.toggle.setAttribute('aria-label', shown ? 'Close menu' : 'Open menu');
 
-  ui.chatList.replaceChildren(...state.chats.map(chat => {
-    const row = element('li', 'drawer-row');
-    if (state.view === 'chat' && state.chat?.chatId === chat.chatId) row.setAttribute('aria-current', 'true');
-    const open = element('button', 'drawer-open');
-    open.type = 'button';
-    open.dataset.chatId = chat.chatId;
-    const meta = element('span', 'drawer-open-meta');
-    if (chat.running) meta.append(element('span', 'running-mark'));
-    meta.append(`${providerName(chat.provider)} · ${relativeTime(chat.lastActiveAt)}${chat.running ? ' · running' : ''}`);
-    open.append(element('span', 'drawer-open-title', chat.title || 'Chat'), meta);
-    open.addEventListener('click', () => openChat(chat.chatId));
-    const remove = element('button', 'drawer-delete', 'Delete');
-    remove.type = 'button';
-    remove.setAttribute('aria-label', `Delete chat ${chat.title || 'Chat'}`);
-    remove.addEventListener('click', () => confirmDelete(chat));
-    row.append(open, remove);
-    return row;
+  syncChildren(ui.chatList, state.chats.map(chat => {
+    const current = state.view === 'chat' && state.chat?.chatId === chat.chatId;
+    const line = `${providerName(chat.provider)} · ${relativeTime(chat.lastActiveAt)}${chat.running ? ' · running' : ''}`;
+    return { key: chat.chatId, sig: JSON.stringify([chat.title, line, Boolean(chat.running), current]), build: () => chatRow(chat, line, current) };
   }));
   ui.chatsEmpty.hidden = state.chats.length > 0;
   ui.moreChats.hidden = state.chatsNext === null;
 
   const agents = [...state.agents].sort((a, b) => (b.sessionId === state.suggested?.sessionId) - (a.sessionId === state.suggested?.sessionId));
-  ui.agentList.replaceChildren(...agents.map(agent => agentRow(agent)));
+  syncChildren(ui.agentList, agents.map(agentEntry));
   ui.agentsEmpty.hidden = state.agents.length > 0;
 }
 
-function agentRow(agent) {
+function chatRow(chat, line, current) {
   const row = element('li', 'drawer-row');
-  if (state.view === 'agent' && state.agent?.sessionId === agent.sessionId) row.setAttribute('aria-current', 'true');
+  if (current) row.setAttribute('aria-current', 'true');
+  const open = element('button', 'drawer-open');
+  open.type = 'button';
+  open.dataset.chatId = chat.chatId;
+  open.dataset.part = 'open';
+  const meta = element('span', 'drawer-open-meta');
+  if (chat.running) meta.append(element('span', 'running-mark'));
+  meta.append(line);
+  open.append(element('span', 'drawer-open-title', chat.title || 'Chat'), meta);
+  open.addEventListener('click', () => openChat(chat.chatId));
+  const remove = element('button', 'drawer-delete', 'Delete');
+  remove.type = 'button';
+  remove.dataset.part = 'delete';
+  remove.setAttribute('aria-label', `Delete chat ${chat.title || 'Chat'}`);
+  remove.addEventListener('click', () => confirmDelete(chat));
+  row.append(open, remove);
+  return row;
+}
+
+function agentEntry(agent) {
+  const current = state.view === 'agent' && state.agent?.sessionId === agent.sessionId;
+  const blocked = agentBlockedLine(agent);
+  const line = blocked
+    ?? (agent.sessionId === state.suggested?.sessionId && state.suggested.why === 'task' ? 'Working in this window' : relativeTime(agent.lastActiveAt));
+  return { key: agent.sessionId, sig: JSON.stringify([agentLabel(agent), line, Boolean(blocked), current]),
+    build: () => agentRow(agent, line, Boolean(blocked), current) };
+}
+
+function agentRow(agent, line, blocked, current) {
+  const row = element('li', 'drawer-row');
+  if (current) row.setAttribute('aria-current', 'true');
   const open = element('button', 'drawer-open');
   open.type = 'button';
   open.dataset.sessionId = agent.sessionId;
-  const blocked = agentBlockedLine(agent);
-  const meta = element('span', 'drawer-open-meta', blocked
-    ?? (agent.sessionId === state.suggested?.sessionId && state.suggested.why === 'task' ? 'Working in this window' : relativeTime(agent.lastActiveAt)));
+  open.dataset.part = 'open';
+  const meta = element('span', 'drawer-open-meta', line);
   if (blocked) meta.dataset.blocked = '';
   open.append(element('span', 'drawer-open-title', agentLabel(agent)), meta);
   open.addEventListener('click', () => openAgent(agent.sessionId));
@@ -734,12 +790,12 @@ function renderSettings() {
 // --- rendering ------------------------------------------------------------------------------------------------------
 
 function setNotice(text) {
-  ui.notice.textContent = text ?? '';
+  setText(ui.notice, text ?? '');
   ui.notice.hidden = !text;
 }
 
-function metaSelect(label, options, value, onChange) {
-  const select = element('select', 'meta-select');
+function metaSelect(label, options, value, onChange, className = 'meta-select') {
+  const select = element('select', className);
   select.setAttribute('aria-label', label);
   for (const [optionValue, text] of options) select.append(option(optionValue, text, optionValue === value));
   select.addEventListener('change', () => onChange(select.value));
@@ -766,42 +822,51 @@ function ensureModels(provider) {
 }
 
 // The chat's dropdowns sit at the right of the title's row; plain text about the chat stays under the title.
+// A dropdown is kept across renders while its options stay the same, so a poll leaves it open and focused.
+function selectEntry(key, label, options, value, onChange, className) {
+  return { key, sig: JSON.stringify(options), build: () => metaSelect(label, options, value, onChange, className),
+    update: select => { if (select.value !== value) select.value = value; } };
+}
+
 function renderHeader() {
-  const meta = [];
+  let meta = null;
   const controls = [];
   if (state.settingsOpen) {
-    ui.title.textContent = 'Settings';
+    setText(ui.title, 'Settings');
   } else if (state.view === 'new') {
-    ui.title.textContent = 'New chat';
+    setText(ui.title, 'New chat');
     ensureModels(state.newProvider);
     const providers = availableProviders(state.providers).map(id => [id, providerName(id)]);
-    controls.push(metaSelect('Provider for this chat', providers, state.newProvider, value => {
+    // The provider's name shows in full; the model takes the shrink when the row is short (decision #45, 320 px).
+    controls.push(selectEntry('new-provider', 'Provider for this chat', providers, state.newProvider, value => {
       state.newProvider = value;
       state.newModel = state.settings.models[value] ?? '';
       render();
-    }));
-    controls.push(metaSelect('Model for this chat', modelOptions(state.newProvider, state.newModel), state.newModel, value => {
+    }, 'meta-select meta-select-fixed'));
+    controls.push(selectEntry(`new-model-${state.newProvider}`, 'Model for this chat', modelOptions(state.newProvider, state.newModel), state.newModel, value => {
       state.newModel = value;
     }));
   } else if (state.view === 'chat' && state.chat) {
-    ui.title.textContent = state.chat.title || 'Chat';
+    setText(ui.title, state.chat.title || 'Chat');
     ensureModels(state.chat.provider);
-    meta.push(element('span', 'meta-text', providerName(state.chat.provider)));
+    meta = providerName(state.chat.provider);
     // A chat keeps its provider; its model can change and applies from the next turn (spec #84).
-    controls.push(metaSelect('Model for this chat', modelOptions(state.chat.provider, state.chat.model, state.chat.reportedModel), state.chat.model ?? '', value => {
-      const chat = state.chat;
-      chat.model = value || null;
-      chatApi.setModel(chat.chatId, value || null).catch(error => setNotice(error.message));
+    const chat = state.chat;
+    // The kept dropdown outlives this render, so its change reads the chat open then.
+    controls.push(selectEntry(`chat-model-${chat.chatId}`, 'Model for this chat', modelOptions(chat.provider, chat.model, chat.reportedModel), chat.model ?? '', value => {
+      const open = state.chat;
+      open.model = value || null;
+      chatApi.setModel(open.chatId, value || null).catch(error => setNotice(error.message));
     }));
   } else if (state.view === 'agent' && state.agent) {
-    ui.title.textContent = agentLabel(state.agent);
-    meta.push(element('span', 'meta-text', `Open agent · ${HOST_NAMES[state.agent.host] ?? 'Agent'}`));
+    setText(ui.title, agentLabel(state.agent));
+    meta = `Open agent · ${HOST_NAMES[state.agent.host] ?? 'Agent'}`;
   } else {
-    ui.title.textContent = 'FAI Chat';
+    setText(ui.title, 'FAI Chat');
   }
-  ui.meta.replaceChildren(...meta);
-  ui.meta.hidden = !meta.length;
-  ui.headerControls.replaceChildren(...controls);
+  syncChildren(ui.meta, meta ? [{ key: 'meta', sig: meta, build: () => element('span', 'meta-text', meta) }] : []);
+  ui.meta.hidden = !meta;
+  syncChildren(ui.headerControls, controls);
 }
 
 function messageNode(message, provider) {
@@ -848,6 +913,7 @@ function pendingNode(item) {
     line.textContent = `Not delivered: ${item.reason ?? 'unknown reason'}`;
     const retry = element('button', 'link-button', 'Retry');
     retry.type = 'button';
+    retry.dataset.part = 'retry';
     retry.addEventListener('click', () => sendAgent(item));
     line.append(retry);
   }
@@ -884,7 +950,7 @@ function emptyView() {
   if (state.agents.length) {
     nodes.push(element('p', 'drawer-section', 'Open agents'));
     const agents = element('ul', 'drawer-list');
-    agents.append(...state.agents.map(agent => agentRow(agent)));
+    agents.append(...state.agents.map(agent => agentEntry(agent).build()));
     nodes.push(agents);
   }
   return nodes;
@@ -905,17 +971,17 @@ function renderComposer() {
   ui.send.disabled = locked;
   ui.stop.hidden = !running;
   ui.text.placeholder = agent ? `Message ${HOST_NAMES[state.agent?.host] ?? 'the agent'}` : running ? 'Waiting for the reply…' : 'Message';
-  ui.chips.replaceChildren(...state.files.map((item, index) => chip(item.file, { url: item.url, onRemove: () => {
+  syncChildren(ui.chips, state.files.map(item => ({ key: item.key, sig: '', build: () => chip(item.file, { url: item.url, onRemove: () => {
     if (item.url) URL.revokeObjectURL(item.url);
-    state.files.splice(index, 1);
+    state.files.splice(state.files.indexOf(item), 1);
     state.composerError = null;
     renderComposer();
     ui.attach.focus();
-  } })));
+  } }) })));
   ui.chips.hidden = state.files.length === 0;
-  ui.attachHint.textContent = `Attached files go to ${providerName(state.chat?.provider ?? state.newProvider)}'s service under your account, like your message.`;
+  setText(ui.attachHint, `Attached files go to ${providerName(state.chat?.provider ?? state.newProvider)}'s service under your account, like your message.`);
   ui.composer.dataset.files = state.files.length ? 'yes' : 'no';
-  ui.composerError.textContent = state.composerError ?? '';
+  setText(ui.composerError, state.composerError ?? '');
   ui.composerError.hidden = !state.composerError;
 }
 
@@ -932,10 +998,15 @@ function render() {
   const conversation = state.view === 'chat' || state.view === 'agent';
   const messages = state.view === 'agent' ? state.agentMessages : state.messages;
   const provider = state.chat?.provider ?? state.newProvider;
-  const nodes = conversation ? messages.map(message => messageNode(message, provider)) : [];
-  if (state.view === 'agent') nodes.push(...state.pending.map(pendingNode));
-  ui.messages.replaceChildren(...nodes);
-  ui.messages.hidden = nodes.length === 0;
+  const who = state.view === 'agent' ? state.agent?.host : provider;
+  const entries = conversation ? messages.map((message, index) => ({ key: `m:${message.id ?? index}`,
+    sig: JSON.stringify([message, who]), build: () => messageNode(message, provider) })) : [];
+  if (state.view === 'agent') {
+    entries.push(...state.pending.map(item => ({ key: `p:${item.key}`, sig: JSON.stringify([item.text, item.state, item.reason]),
+      build: () => pendingNode(item) })));
+  }
+  syncChildren(ui.messages, entries);
+  ui.messages.hidden = entries.length === 0;
   ui.empty.replaceChildren(...(conversation ? [] : emptyView()));
   ui.empty.hidden = conversation;
   // Browsing… under the last message while the agent works (spec #80); the text stays with reduced motion.

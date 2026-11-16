@@ -207,6 +207,7 @@ export function scenarios() {
     transcripts: { chat_a: CONVERSATION, chat_b: [], chat_c: [] } };
   return {
     'first-open': { ...base },
+    'new-opencode': { ...base, newProvider: 'opencode' },
     'no-provider': { ...base, providers: NO_PROVIDERS },
     'opencode-only': { ...base, providers: [NO_PROVIDERS[0], NO_PROVIDERS[1], ALL_PROVIDERS[2]] },
     running: { ...base, chats: STORED_CHATS.map(chat => chat.chatId === 'chat_a' ? { ...chat, running: true } : chat), stuck: true, open: 'chat_a' },
@@ -259,6 +260,10 @@ export async function showState(page, scenario, { wide = false } = {}) {
   const drawer = async () => {
     if (!wide && await page.locator('#drawer').isHidden()) await page.click('#drawer-toggle');
   };
+  if (scenario.newProvider) {
+    await page.selectOption('[aria-label="Provider for this chat"]', scenario.newProvider);
+    await page.waitForFunction(() => document.querySelector('[aria-label="Model for this chat"]').options.length > 1);
+  }
   if (scenario.open) {
     await drawer();
     await page.click(`[data-chat-id="${scenario.open}"]`);

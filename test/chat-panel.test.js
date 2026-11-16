@@ -571,6 +571,23 @@ test('header: the dropdowns sit at the right of the title row, without wrapping'
   }
   assert.equal(boxes.provider.top, boxes.model.top, 'one row');
   assert.ok(boxes.header.right - boxes.model.right <= 12, 'right-aligned');
+  // OpenCode lists long model names: Provider still shows its name in full and the Model dropdown takes the shrink.
+  await page.selectOption('[aria-label="Provider for this chat"]', 'opencode');
+  await page.waitForFunction(() => [...document.querySelector('[aria-label="Model for this chat"]').options].length > 1);
+  const fit = await page.evaluate(() => {
+    const provider = document.querySelector('[aria-label="Provider for this chat"]');
+    const alone = provider.cloneNode(true);
+    alone.style.position = 'absolute';
+    document.body.append(alone);
+    const full = alone.getBoundingClientRect().width;
+    alone.remove();
+    const box = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
+    return { full, provider: box('[aria-label="Provider for this chat"]'), model: box('[aria-label="Model for this chat"]'),
+      header: box('.header'), wide: document.documentElement.scrollWidth <= document.documentElement.clientWidth };
+  });
+  assert.equal(fit.provider.width, fit.full, 'OpenCode in full');
+  assert.equal(fit.provider.top, fit.model.top, 'one row on OpenCode');
+  assert.ok(fit.model.right <= fit.header.right && fit.wide, 'no overflow on OpenCode');
 });
 
 test('keyboard: every control in the conversation, drawer and settings is reached by Tab, with a focus mark', async t => {
@@ -634,6 +651,83 @@ test('keyboard: a settings change keeps focus on its control, so arrows step thr
   await page.waitForFunction(() => document.getElementById('settings-status').textContent === 'Saved.');
   assert.equal((await sent(page, 'chat_settings_set')).at(-1).settings.defaultProvider, 'claude');
   assert.equal(await focused(), 'default-provider');
+});
+
+// Polls redraw from state (every 2 s for real; 100 ms here): across several, the nodes a user acts on stay.
+const polled = async (page, type, count = 4) => {
+  const start = (await sent(page, type)).length;
+  await page.waitForFunction(([kind, until]) => globalThis.__sent.filter(message => message.type === kind).length >= until, [type, start + count]);
+};
+const selectIn = (page, selector) => page.evaluate(target => {
+  const node = document.querySelector(target).lastChild;
+  const range = document.createRange();
+  range.setStart(node, 0);
+  range.setEnd(node, 12);
+  getSelection().removeAllRanges();
+  getSelection().addRange(range);
+  return getSelection().toString();
+}, selector);
+const selection = page => page.evaluate(() => getSelection().toString());
+
+test('polls keep a stored chat as it is: the Model dropdown, its focus, a selection, and messages already shown', async t => {
+  const page = await open(t, {});
+  await openFromDrawer(page, 'chat_a');
+  await page.focus('[aria-label="Model for this chat"]');
+  await page.evaluate(() => { globalThis.__model = document.querySelector('[aria-label="Model for this chat"]'); });
+  await polled(page, 'chat_history');
+  assert.equal(await page.evaluate(() => document.querySelector('[aria-label="Model for this chat"]') === globalThis.__model), true, 'the same node');
+  assert.equal(await page.evaluate(() => document.activeElement === globalThis.__model), true, 'focus stays');
+  // A change keeps focus on the dropdown, and the next polls keep the choice.
+  await page.keyboard.press('ArrowDown');
+  await page.waitForFunction(() => globalThis.__sent.some(message => message.type === 'chat_model'));
+  await polled(page, 'chat_history');
+  assert.equal(await page.evaluate(() => document.activeElement === globalThis.__model), true, 'focus stays after a change');
+  assert.equal(await page.inputValue('[aria-label="Model for this chat"]'), 'gpt-5.5-sol');
+  const picked = await selectIn(page, '#messages li[data-role="agent"]');
+  assert.equal(picked, 'The first li');
+  await page.evaluate(() => { globalThis.__first = document.querySelector('#messages li'); });
+  await polled(page, 'chat_history');
+  assert.equal(await selection(page), picked, 'a selection stays');
+  // A new message is added under the others; those already shown stay, and so does the selection.
+  await page.evaluate(() => globalThis.__fake.push('chat_a', { id: 'm9', role: 'agent', text: 'Delivery is on Friday.', at: new Date().toISOString() }));
+  await page.waitForFunction(() => document.querySelectorAll('#messages li').length === 5);
+  assert.equal(await page.evaluate(() => document.querySelector('#messages li') === globalThis.__first), true);
+  assert.equal(await selection(page), picked, 'a selection stays when a message arrives');
+});
+
+for (const width of [320, 720]) {
+  test(`polls keep focus on a chat's row in the drawer, and a selection in an open agent's messages (${width} px)`, async t => {
+    const page = await open(t, { requests: [{ requestId: 'r1', state: 'active', lease: { tabId: 7 }, owner: { sessionId: 'ses_1' } }],
+      agentReads: { ses_1: { busy: true, messages: [{ id: 'a1', role: 'agent', text: 'The order is marked as shipped.', at: new Date().toISOString() }] } } },
+    { width });
+    await page.waitForSelector('#messages li');
+    const picked = await selectIn(page, '#messages li');
+    await polled(page, 'agent_chat');
+    assert.equal(await selection(page), picked, 'a selection in an open agent stays');
+    if (await page.locator('#drawer').isHidden()) await page.click('#drawer-toggle');
+    await page.focus('[data-chat-id="chat_b"]');
+    await polled(page, 'agent_chat');
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.chatId), 'chat_b', 'focus stays on the row');
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Delete chat Fill in the shipping form from my notes');
+    // The same in a stored chat.
+    await page.click('[data-chat-id="chat_a"]');
+    await page.waitForSelector('#messages li[data-role="agent"]');
+    if (await page.locator('#drawer').isHidden()) await page.click('#drawer-toggle');
+    await page.focus('[data-session-id="ses_1"]');
+    await polled(page, 'chat_history');
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.sessionId), 'ses_1', 'focus stays on the row in a stored chat');
+  });
+}
+
+test('keyboard: ArrowDown on a new chat\'s Provider changes it and keeps focus there', async t => {
+  const page = await open(t, {});
+  await page.focus('[aria-label="Provider for this chat"]');
+  await page.keyboard.press('ArrowDown');
+  await page.waitForFunction(() => document.querySelector('[aria-label="Provider for this chat"]').value === 'claude');
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Provider for this chat');
+  await page.waitForFunction(() => [...document.querySelector('[aria-label="Model for this chat"]').options].some(item => item.value === 'opus'));
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Provider for this chat');
 });
 
 test('the popup\'s Chat button opens the side panel in its window', async t => {

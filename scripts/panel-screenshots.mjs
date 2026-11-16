@@ -17,6 +17,7 @@ const WIDTHS = { narrow: 320, wide: 720 };
 const THEMES = ['light', 'dark'];
 const LABELS = {
   'first-open': 'First open, a provider available',
+  'new-opencode': 'A new chat on OpenCode (long model names)',
   'no-provider': 'No provider available',
   'opencode-only': 'OpenCode only, choosing a model',
   running: 'A conversation with a running turn',
