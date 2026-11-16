@@ -65,8 +65,10 @@ not confirmation that the app took a new turn.
 | `unknown_host` | This host has no supported wake channel. Use the copy line; ordinary Claude/ChatGPT chat is outside coding-session support |
 
 On Windows, **Registered apps** lists only successful registrations. **OpenCode needs one manual step** means an
-existing JSONC config was preserved, not that OpenCode auto-registration succeeded. Windows 10 app-level wake
-acceptance remains pending and release-blocking; Windows 11 is not yet checked.
+existing JSONC config was preserved, not that OpenCode auto-registration succeeded. On Windows 10, live wakes passed
+for Claude's Code tab and ChatGPT's Codex mode. OpenCode Desktop 1.19.5 answers its free model with "This version of
+OpenCode Desktop no longer supports free models", so it never takes a turn and FAI cannot wake it (the OpenCode CLI
+1.19.5 still runs and wakes). Release stays blocked on that; Windows 11 is not yet checked.
 
 | Symptom | Cause and fix |
 |---|---|

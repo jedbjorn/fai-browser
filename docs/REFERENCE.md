@@ -712,8 +712,11 @@ Loop stoppers: each `requestId` has a call budget (`maxCalls` act/observe calls 
 The user can bring a connected coding agent to a tab they already have open, and FAI wakes an idle agent when the user
 approves or resumes its tab. Claude Code, Codex and OpenCode (1.19 to 1.x, through FAI's plugin) can be woken; any
 other host gets the copy-text fallback. The channels work on Linux, macOS and native Windows. Windows channel tests
-run in CI; app-level invite, Approve and Resume acceptance on Windows 10 is still pending and blocks release of
-these Windows changes. Windows 11 is not yet checked.
+run in CI. In live acceptance on Windows 10, the Claude desktop app's Code tab and Codex in the ChatGPT app each
+started a new turn by themselves for an invite, an Approve and a Resume. OpenCode Desktop 1.19.5 could not be
+checked: its provider no longer serves free models to that version, and OpenCode 2.x is unsupported. The same plugin
+wake passed with the OpenCode CLI 1.19.5. Release of these Windows changes stays blocked until OpenCode Desktop is
+ruled on. Windows 11 is not yet checked.
 
 | App or CLI | Wake channel and setup |
 |---|---|
