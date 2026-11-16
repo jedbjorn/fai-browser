@@ -120,9 +120,12 @@ test('approval window: opens over the task tab\'s unfocused window with the dire
   assert.equal(asked.result?.next?.kind ?? asked.next?.kind, 'approve', JSON.stringify(asked));
 
   // Acceptance 8: the window lies inside the task tab's window, and the header is the direct line.
+  // The window that shows approve.html, found through the extension's own contexts: without the tabs permission
+  // Chrome 153 reports no URL for a tab, the extension's own pages included.
   const approvalWindow = () => worker.evaluate(async () => {
-    const all = await chrome.windows.getAll({ populate: true, windowTypes: ['popup'] });
-    return all.find(win => win.tabs?.some(tab => (tab.url || tab.pendingUrl || '').includes('/approve.html'))) ?? null;
+    const [page] = (await chrome.runtime.getContexts({ contextTypes: ['TAB'] }))
+      .filter(context => context.documentUrl?.startsWith(chrome.runtime.getURL('approve.html')));
+    return page ? chrome.windows.get(page.windowId).catch(() => null) : null;
   });
   const shown = await until(approvalWindow);
   assert.ok(shown, 'the approval window opened (not the toolbar popup of the focused window)');
@@ -154,7 +157,8 @@ test('approval window: opens over the task tab\'s unfocused window with the dire
   assert.equal(approve.isClosed(), false);
 
   // Deny closes it, as before.
-  await approve.click('#deny');
+  // Clicked in the page: the window closes itself right after, which a Playwright click may still be waiting on.
+  await approve.evaluate(() => document.getElementById('deny').click());
   assert.ok(await until(async () => (await approvalWindow()) === null, 5000), 'the window closes on the decision');
   await client.release(created.requestId);
 });
