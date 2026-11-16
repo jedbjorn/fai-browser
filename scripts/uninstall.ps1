@@ -39,7 +39,7 @@
   }
 
   if ($node -and $cli) {
-    & $node $cli uninstall --host all | Out-Null
+    & $node $cli uninstall --host all *> $null
     & $node $cli daemon stop *> $null
     & $node $cli uninstall-native | Out-Null
     & $node $cli uninstall-launcher --yes *> $null
