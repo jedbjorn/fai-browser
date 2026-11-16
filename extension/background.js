@@ -672,6 +672,14 @@ function originOf(url) {
   }
 }
 
+function hostOf(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '';
+  }
+}
+
 // The saved FAI service address must be plain http on 127.0.0.1; the pairing secret is only ever sent there.
 function serviceEndpoint(value) {
   const url = new URL(value);
@@ -3047,7 +3055,8 @@ const APPROVAL_PROMPT_SIZE = { width: 440, height: 420 };
 const MAX_APPROVALS = 20;
 let approvalSettings = { purchase: true, secret: true, level: true };
 // id -> { id, key, tabId, leaseId, requestId, origin, title, revision, documentId, target, cls, label, labelHash, total,
-// note, level, createdAt, expiresAt, status: pending | approved | denied, approvalId, useBy, windowId, waiters }
+// note, level, createdAt, expiresAt, status: pending | approved | denied, approvalId, useBy, windowId, waiters, host,
+// pageChanged }
 const approvals = new Map();
 
 // A random id from the platform's secure source (never Math.random): approval ids are the user's consent.
@@ -3075,7 +3084,8 @@ function approvalSetting(cls) {
 function approvalView(entry) {
   return {
     id: entry.id, requestId: entry.requestId, origin: entry.origin, ...(entry.frameOf ? { frameOf: entry.frameOf } : {}),
-    title: entry.title, cls: entry.cls, label: entry.label,
+    title: entry.title, host: entry.host, cls: entry.cls, label: entry.label,
+    ...(entry.pageChanged ? { pageChanged: true } : {}),
     ...(entry.total ? { total: entry.total } : {}), ...(entry.note ? { note: entry.note } : {}), level: entry.level,
     ...(entry.kind ? { kind: entry.kind, handle: entry.handle, secret: entry.secret } : {}),
     ...(entry.file ? { file: { ...entry.file } } : {}),
@@ -3115,10 +3125,25 @@ function expireApprovals(leaseId = null) {
   publishApprovals();
 }
 
+// The approval window opens over the driven tab: inside the browser window that holds the approval's tab, top right
+// below its toolbar (the arm prompt's inset), not over whichever window was focused last. The toolbar popup opens in
+// the last focused window, so it is used only when that is the tab's own window and it has the focus (headless
+// Chromium reports every window focused). A minimized window, unknown bounds, or bounds the browser refuses (a window
+// partly off screen) get the browser's own placement, as showPrompt does.
 async function showApprovalWindow(entry) {
   try {
-    if (await openToolbarPopup()) return;
-    const created = await createPopupWindow(chrome.runtime.getURL(`${APPROVAL_PROMPT_PAGE}?id=${entry.id}`), APPROVAL_PROMPT_SIZE);
+    const tab = await chrome.tabs.get(entry.tabId).catch(() => null);
+    const parent = Number.isInteger(tab?.windowId) ? await chrome.windows.get(tab.windowId).catch(() => null) : null;
+    const last = parent?.focused ? await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => null) : null;
+    if (parent?.type === 'normal' && last?.id === parent.id && await openToolbarPopup()) return;
+    const size = APPROVAL_PROMPT_SIZE;
+    const placed = parent && parent.state !== 'minimized' && Number.isInteger(parent.left) && Number.isInteger(parent.top)
+      && Number.isInteger(parent.width)
+      ? { left: Math.max(parent.left, parent.left + parent.width - size.width - PROMPT_INSET.right), top: parent.top + PROMPT_INSET.top }
+      : {};
+    const options = { url: chrome.runtime.getURL(`${APPROVAL_PROMPT_PAGE}?id=${entry.id}`), type: 'popup', ...size, focused: true };
+    const created = await chrome.windows.create({ ...options, ...placed })
+      .catch(error => (placed.left === undefined ? Promise.reject(error) : chrome.windows.create(options)));
     if (Number.isInteger(created?.id) && approvals.get(entry.id) === entry && entry.status === 'pending') entry.windowId = created.id;
     else if (Number.isInteger(created?.id)) ignore(chrome.windows.remove(created.id));
   } catch {
@@ -3191,7 +3216,8 @@ async function approveCommand(command) {
     entry = {
       id: randomId(), key, tabId: tab.id, leaseId: session.leaseId, requestId: session.requestId ?? null,
       origin: inFrame ? info.frameOrigin : session.origin, ...(inFrame ? { frameOf: session.origin } : {}),
-      title: reportedText(String(tab.title ?? '')).slice(0, 120), revision: info.revision,
+      title: reportedText(String(tab.title ?? '')).slice(0, 120), host: hostOf(tab.url) || hostOf(session.origin),
+      pageChanged: false, revision: info.revision,
       documentId: info.documentId, target, cls, label: String(info.label ?? '').slice(0, 200), labelHash: info.labelHash,
       total: typeof info.total === 'string' ? info.total.slice(0, 120) : null,
       note: typeof note === 'string' && note.trim() ? reportedText(note.replace(/\s+/g, ' ').trim()).slice(0, 200) : null,
@@ -4867,6 +4893,16 @@ chrome.tabs.onUpdated?.addListener((tabId, info) => {
     // Another tab of the lease left the approved site: it is no longer part of it.
     session.tabs = session.tabs.filter(entry => entry.tabId !== tabId);
   }
+});
+
+// A pending approval's tab navigated or redirected: its window stays open (it closes on the decision, on expiry or
+// when the lease ends) and says the page has changed since the agent asked. The approval itself stays bound to the
+// revision it was asked on, so an act on the new page fails stale.
+chrome.tabs.onUpdated?.addListener((tabId, info) => {
+  if (!info.url && info.status !== 'loading') return;
+  const moved = [...approvals.values()].filter(entry => entry.tabId === tabId && entry.status === 'pending' && !entry.pageChanged);
+  for (const entry of moved) entry.pageChanged = true;
+  if (moved.length) publishApprovals();
 });
 
 // Keepalive: a ping on the open socket every 20 s; in long-poll mode a cheap extension API call instead.

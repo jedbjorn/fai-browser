@@ -15,6 +15,8 @@ export const KIND_TEXT = {
 
 export const KIND_NAME = { purchase: 'Purchase', secret: 'Credential', delete: 'Delete', submit: 'Submit' };
 
+export const PAGE_CHANGED_TEXT = 'The page has changed since the agent asked.';
+
 // A secret handle's use (fill_secret, copy_secret): the value never reaches the agent; the user approves each use.
 export const SECRET_USE_TEXT = {
   fill_secret: 'FAI pastes the secret into this one field, once. The agent never sees the value. Approve only if this site should have it.',
@@ -80,6 +82,16 @@ function element(tag, className, text) {
   return node;
 }
 
+/**
+ * The direct line for a click, `Click "<label>" on <site>?`, as nodes: the label in quotes and marked as page text,
+ * the site the tab's host as the browser reported it when the agent asked.
+ */
+export function directLine(entry) {
+  const label = element('span', 'page-text', entry.label || '(unlabelled control)');
+  label.title = 'Text from the page';
+  return ['Click "', label, `" on ${entry.host || hostOf(entry.origin) || 'this site'}?`];
+}
+
 /** One card for a pending approval; `decide(id, decision)` sends the click to the worker. */
 export function approvalCard(entry, decide) {
   const card = element('article', 'request-card approval-card');
@@ -112,9 +124,13 @@ export function approvalCard(entry, decide) {
       card.append(element('p', 'request-meta', KIND_TEXT[entry.cls] ?? ''));
     }
     const label = element('p', 'approval-label');
-    label.append(element('q', '', entry.label || '(unlabelled control)'), element('span', 'page-text-note', ' (text from the page)'));
+    // A plain click gets the direct line; an upload or a dialog accept names its control or text as before.
+    if (entry.kind) label.append(element('q', '', entry.label || '(unlabelled control)'));
+    else label.append(...directLine(entry));
+    label.append(element('span', 'page-text-note', ' (text from the page)'));
     card.append(label);
   }
+  if (entry.pageChanged) card.append(element('p', 'request-instruction', PAGE_CHANGED_TEXT));
   if (entry.total) card.append(element('p', 'request-meta', `Total: ${entry.total} (as the page shows it)`));
   if (entry.note) card.append(element('p', 'request-instruction', `Agent says: ${entry.note} (not checked)`));
   const actions = element('div', 'request-actions');

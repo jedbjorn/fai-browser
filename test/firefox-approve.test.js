@@ -467,7 +467,10 @@ async function decideAction(ctx, decision, beforeClick = () => {}) {
       await ctx.marionette.send('WebDriver:SwitchToWindow', { handle, focus: false });
       const url = await ctx.marionette.send('WebDriver:GetCurrentURL');
       if (!String(url.value ?? url).includes('/approve.html')) continue;
-      const headline = await ctx.marionette.execute('return document.getElementById("headline").textContent;');
+      // render() runs after an async storage read; until it fills #detail, #headline still holds the static default.
+      const headline = await ctx.marionette.execute(`return document.getElementById("detail").textContent
+        ? document.getElementById("headline").textContent : null;`);
+      if (headline === null) continue;
       beforeClick();
       const found = await ctx.marionette.send('WebDriver:FindElement', { using: 'css selector', value: decision === 'approve' ? '#approve' : '#deny' });
       await ctx.marionette.send('WebDriver:ElementClick', { id: Object.values(found.value ?? found)[0] });

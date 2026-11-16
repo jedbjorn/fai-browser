@@ -42,7 +42,11 @@ test.afterEach(() => {
 function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode = 'daemon', leaseOrigins = null, permissions,
   hostGrants, local: extraLocal = {}, leaseError = null, opened = null, sessionStore = {}, daemonBudget = null,
   native = null, actionOpenPopup = null, lastWindow = undefined, normalWindows = [], tabCreateFails = false,
-  daemonVersion = '0.2.0', daemonUpdate = null, manifest = {}, leaseIdFor = null, leaseGrant = null, clock = null } = {}) {
+  daemonVersion = '0.2.0', daemonUpdate = null, manifest = {}, leaseIdFor = null, leaseGrant = null, clock = null,
+  // Window 1, the driven tab's window (chrome.windows.get); `placedPopupFails`: a popup with left/top is refused, as
+  // Chrome refuses bounds mostly off screen.
+  tabWindow = { type: 'normal', focused: true, state: 'normal', left: 100, top: 50, width: 1200, height: 800 },
+  placedPopupFails = false } = {}) {
   const reloads = []; // chrome.runtime.reload() calls (an update's reload of the unpacked extension)
   const nativeCalls = []; // chrome.runtime.sendNativeMessage(host, message) calls
   const events = name => ({
@@ -354,6 +358,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
         return normalWindows;
       },
       async get(id) {
+        if (id === 1 && tabWindow) return { id, ...tabWindow };
         if (!openPopups.has(id) && id !== 2) throw new Error(`No window with id: ${id}.`);
         return { id };
       },
@@ -365,6 +370,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       },
       async create(options) {
         if (options.type === 'popup') {
+          if (placedPopupFails && options.left !== undefined) throw new Error('Bounds must be at least 50% within visible screen space.');
           popupWindows.push(options);
           openPopups.add(30 + popupWindows.length);
           return { id: 30 + popupWindows.length, type: 'popup', tabs: [{ id: 40 + popupWindows.length }] };
@@ -2737,7 +2743,9 @@ test('approve: the window, badge and card show the request; Approve once mints a
 });
 
 test('approve: a supported toolbar popup keeps the same one-click approval without a standalone window', async () => {
-  const h = await started({ level: 'full', actionOpenPopup: 'ok' });
+  // The driven tab's window (1) is the focused, last focused one: the popup opens over it.
+  const h = await started({ level: 'full', actionOpenPopup: 'ok',
+    lastWindow: { id: 1, type: 'normal', incognito: false, left: 100, top: 50, width: 1200, height: 800 } });
   const { id, entry } = await asked(h);
   await h.until(() => h.actionPopupCalls.length === 1);
   assert.equal(h.popupWindows.some(options => options.url.includes('approve.html?id=')), false);
@@ -2746,6 +2754,55 @@ test('approve: a supported toolbar popup keeps the same one-click approval witho
   const reply = await h.waitFor(m => m.type === 'result' && m.id === id);
   assert.equal(reply.result.decision, 'approved');
   assert.match(reply.result.approvalId, /^[0-9a-f-]{36}$/);
+});
+
+// Spec #79 "Window over the driven tab": the window opens inside the window that holds the approval's tab (window 1
+// here), not the last focused one (window 2), and the toolbar popup only when the tab's own window is focused.
+test('approve: the window opens over the driven tab\'s window, top right, not over the last focused window', async () => {
+  const h = await started({ level: 'full', actionOpenPopup: 'ok',
+    tabWindow: { type: 'normal', focused: false, state: 'normal', left: 2000, top: 100, width: 1000, height: 700 },
+    lastWindow: { id: 2, type: 'normal', incognito: false, left: 0, top: 0, width: 1200, height: 800 } });
+  const { entry } = await asked(h);
+  await h.until(() => h.popupWindows.some(options => options.url.includes('approve.html?id=')));
+  assert.equal(h.actionPopupCalls.length, 0, 'the toolbar popup would open in the focused window, not the tab\'s');
+  const popup = h.popupWindows.find(options => options.url.includes('approve.html?id='));
+  assert.deepEqual(clone(popup), { url: `chrome-extension://ext/approve.html?id=${entry.id}`, type: 'popup', width: 440,
+    height: 420, focused: true, left: 2000 + 1000 - 440 - 24, top: 100 + 90 });
+  assert.equal(entry.host, 'example.com', 'the site the header names is the tab\'s host from the browser');
+});
+
+test('approve: a minimized tab window, or bounds the browser refuses, get the browser\'s own placement', async () => {
+  const minimized = await started({ level: 'full',
+    tabWindow: { type: 'normal', focused: false, state: 'minimized', left: -32000, top: -32000, width: 160, height: 28 } });
+  await asked(minimized);
+  await minimized.until(() => minimized.popupWindows.length === 1);
+  assert.equal(minimized.popupWindows[0].left, undefined);
+  assert.equal(minimized.popupWindows[0].top, undefined);
+  const offScreen = await started({ level: 'full', placedPopupFails: true,
+    tabWindow: { type: 'normal', focused: false, state: 'normal', left: 5000, top: 0, width: 1000, height: 700 } });
+  await asked(offScreen);
+  await offScreen.until(() => offScreen.popupWindows.length === 1);
+  assert.equal(offScreen.popupWindows[0].left, undefined, 'created again without a position');
+  assert.equal(offScreen.popupWindows[0].focused, true);
+});
+
+test('approve: the window stays open when the tab navigates and says the page has changed; the approval stays bound', async () => {
+  const h = await started({ level: 'full' });
+  const { id, entry } = await asked(h);
+  await h.until(() => h.popupWindows.some(options => options.url.includes('approve.html?id=')));
+  assert.equal(entry.pageChanged, undefined);
+  h.chrome.tabs.onUpdated.emit(7, { status: 'complete' });
+  await sleep(20);
+  assert.equal(h.session.approvals.at(-1).pageChanged, undefined, 'a finished load or a title is no new page');
+  h.chrome.tabs.onUpdated.emit(7, { status: 'loading', url: `${ORIGIN}/next` });
+  await h.until(() => h.session.approvals.at(-1)?.pageChanged === true);
+  assert.deepEqual(h.windowsRemoved, [], 'the window stays open');
+  // Still decidable from the window; the approval stays bound to the revision it was asked on.
+  const decided = await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  assert.equal(decided.error, undefined, JSON.stringify(decided));
+  const { approvalId } = (await h.waitFor(m => m.type === 'result' && m.id === id)).result;
+  const run = h.command('execute', { action: { type: 'click', target: '1', approvalId }, expectedRevision: 'doc:2', level: 'full' });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === run)).error.code, 'stale');
 });
 
 test('upload: worker dispatch accepts a bound once-only approval and rejects forged, malformed and mismatched files', async () => {
