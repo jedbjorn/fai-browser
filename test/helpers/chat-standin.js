@@ -29,8 +29,42 @@ if ((provider === 'claude' && args[0] === 'auth') || (provider === 'codex' && ar
   process.exit(signedIn ? 0 : 1);
 }
 
+// Model lists and OpenCode's resolved config (spec #84 "Providers and models", decision #43). control.json:
+// `models` (the names listed), `listFail` (the list exits 1), `userServers` (OpenCode MCP servers in the user's
+// config), `configFail` (debug config exits 1). Each call is logged as {listing: args, env: OpenCode's settings}.
+const listing = (provider === 'codex' && args[0] === 'debug' && args[1] === 'models')
+  || (provider === 'claude' && args[0] === '--help')
+  || (provider === 'opencode' && (args[0] === 'models' || (args[0] === 'debug' && args[1] === 'config')));
+if (listing) {
+  log({ listing: args, cwd: process.cwd(), configContent: process.env.OPENCODE_CONFIG_CONTENT ?? null,
+    noProjectConfig: process.env.OPENCODE_DISABLE_PROJECT_CONFIG ?? null });
+  if (provider === 'opencode' && args[0] === 'debug') {
+    if (control.configFail) process.exit(1);
+    out({ $schema: 'https://opencode.ai/config.json', provider: { custom: { options: { apiKey: 'never-kept' } } },
+      mcp: Object.fromEntries((control.userServers ?? []).map(name => [name, { type: 'local', command: ['x'] }])) });
+    process.exit(0);
+  }
+  if (control.listFail) {
+    process.stderr.write('could not list\n');
+    process.exit(1);
+  }
+  const names = control.models ?? { codex: ['gpt-a', 'gpt-b'], claude: ['fable', 'opus', 'sonnet'], opencode: ['p/m', 'q/n'] }[provider];
+  if (provider === 'codex') {
+    out({ models: [...names.map((slug, index) => ({ slug, visibility: 'list', priority: index + 1 })),
+      { slug: 'hidden-one', visibility: 'hide', priority: 0 }] });
+  } else if (provider === 'claude') {
+    process.stdout.write(`Usage: claude [options]\n  --mcp-config <configs...>   Load MCP servers\n  --model <model>   Model for the current session. Provide\n`
+      + `                    an alias for the latest model (e.g. ${names.map(name => `'${name}'`).join(', ')}) or a\n`
+      + `                    model's full name.\n  --permission-mode <mode>   Permission mode ('default', 'plan')\n`);
+  } else {
+    process.stdout.write(`${names.join('\n')}\n`);
+  }
+  process.exit(0);
+}
+
 const token = process.env.FAI_CHAT_TURN_TOKEN ?? null;
 log({ args, cwd: process.cwd(), token, xdg: process.env.XDG_CONFIG_HOME ?? null,
+  configContent: process.env.OPENCODE_CONFIG_CONTENT ?? null,
   faiSecret: Object.keys(process.env).filter(name => /^FAI_/.test(name) && !['FAI_HOME', 'FAI_CHAT_TURN_TOKEN'].includes(name)) });
 const mode = control.mode ?? 'ok';
 const conversation = control.conversation ?? `conv-${provider}`;

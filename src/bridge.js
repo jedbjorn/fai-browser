@@ -92,6 +92,9 @@ export const LEVEL_RAISE_MESSAGE = 'A lease_level message can only lower the lev
   + 'in the FAI Browser popup';
 const RECOVERABLE = new Set(['stale', 'target_unavailable', 'capture_failed']);
 const MAX_BODY_BYTES = 12_000_000;
+// One chat_file message carries a whole attachment (up to 25 MB, src/chat-files.js) in base64, so a message may be this
+// big: on the WebSocket, and over HTTP on /chat-file only.
+export const MAX_FILE_MESSAGE_BYTES = 36 * 1024 * 1024;
 const MAX_LONG_POLL_MS = 25_000;
 
 // HTTP fallback path -> v3 message type.
@@ -122,6 +125,11 @@ const HTTP_ROUTES = {
   '/chat-send': 'chat_send',
   '/chat-stop': 'chat_stop',
   '/chat-delete': 'chat_delete',
+  '/chat-settings': 'chat_settings',
+  '/chat-settings-set': 'chat_settings_set',
+  '/chat-models': 'chat_models',
+  '/chat-file': 'chat_file',
+  '/chat-model': 'chat_model',
   '/commands': 'commands',
 };
 const REPLY_HTTP_STATUS = {
@@ -1189,7 +1197,12 @@ export function createHub({
       case 'chat_history':
       case 'chat_send':
       case 'chat_stop':
-      case 'chat_delete': {
+      case 'chat_delete':
+      case 'chat_settings':
+      case 'chat_settings_set':
+      case 'chat_models':
+      case 'chat_file':
+      case 'chat_model': {
         // The chat panel's FAI chats (spec #84): the message's own fields are its arguments, answered by the daemon
         // (src/daemon.js chatOp).
         const { v: _v, type, ref: _ref, ...args } = message;
@@ -1299,7 +1312,8 @@ export function createHub({
     const auth = protocols.find(value => value.startsWith(AUTH_PROTOCOL_PREFIX));
     if (!auth || !secretMatches(auth.slice(AUTH_PROTOCOL_PREFIX.length))) return reject(403, 'Unauthorized extension');
     if (!protocols.includes(WS_PROTOCOL)) return reject(400, 'unsupported_protocol');
-    const connection = acceptUpgrade(req, rawSocket, head, { protocol: WS_PROTOCOL, pingIntervalMs, idleTimeoutMs });
+    const connection = acceptUpgrade(req, rawSocket, head, { protocol: WS_PROTOCOL, pingIntervalMs, idleTimeoutMs,
+      maxMessageBytes: MAX_FILE_MESSAGE_BYTES });
     if (!connection) return true;
     const identity = identify(url.searchParams.get('browser'), req.headers.origin);
     if (!identity) {
@@ -1365,12 +1379,12 @@ export function createHub({
 
   // --- HTTP fallback ---------------------------------------------------------------------------------------
 
-  async function readBody(req) {
+  async function readBody(req, limit = MAX_BODY_BYTES) {
     const chunks = [];
     let length = 0;
     for await (const chunk of req) {
       length += chunk.length;
-      if (length > MAX_BODY_BYTES) throw new Error('Request too large');
+      if (length > limit) throw new Error('Request too large');
       chunks.push(chunk);
     }
     return chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
@@ -1425,7 +1439,8 @@ export function createHub({
     markSeen(browser, 'longpoll');
     (async () => {
       try {
-        const body = req.method === 'POST' ? await readBody(req) : {};
+        const body = req.method === 'POST'
+          ? await readBody(req, type === 'chat_file' ? MAX_FILE_MESSAGE_BYTES : MAX_BODY_BYTES) : {};
         if (type === 'commands') {
           const command = takeCommand(browser);
           const requested = Number(url.searchParams.get('wait') ?? 0);

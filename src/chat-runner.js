@@ -11,8 +11,9 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { newChatId } from './chat-store.js';
-import { PROVIDERS, PROVIDER_NAMES, MIN_VERSIONS, TURN_TOKEN_ENV, argumentSafe, createOutputParser, findProgram,
-  parseVersion, signedIn, statusArgs, turnCommand, versionSupported } from './chat-providers.js';
+import { OPENCODE_CONFIG_ARGS, PROVIDERS, PROVIDER_NAMES, MIN_VERSIONS, TURN_TOKEN_ENV, argumentSafe, createOutputParser,
+  findProgram, modelsCommand, opencodeEnv, opencodeServers, parseModels, parseVersion, signedIn, statusArgs, turnCommand,
+  versionSupported } from './chat-providers.js';
 import { CARRIED_ENV } from './resume.js';
 
 export const MAX_RUNNING = 3;
@@ -23,6 +24,8 @@ const CHECK_TIMEOUT_MS = 15_000;
 const KILL_GRACE_MS = 5_000;
 const CLOSE_WAIT_MS = 5_000;
 const STDERR_KEEP = 8192;
+// A model list or OpenCode's resolved config can be long (OpenCode lists every model of every provider).
+const LIST_BUFFER = 8 * 1024 * 1024;
 
 const FIX_INSTALL = {
   claude: 'Install Claude Code (the claude command line), then try again.',
@@ -72,9 +75,15 @@ export function cleanChatText(text) {
     .trim().slice(0, CHAT_TEXT_LIMIT);
 }
 
-/** Spec #80's chat template: the text a provider gets for the user's message. */
-export function chatTurnText(words) {
-  return `[FAI Browser] The user sent you a message from the FAI chat panel (the user's own words): ${JSON.stringify(words)}`;
+/**
+ * Spec #80's chat template: the text a provider gets for the user's message. `paths`: the absolute paths of the files
+ * attached to it, in the chat's files folder (spec #84 "Attachments"), named after the user's words.
+ */
+export function chatTurnText(words, paths = []) {
+  const text = `[FAI Browser] The user sent you a message from the FAI chat panel (the user's own words): ${JSON.stringify(words)}`;
+  if (!paths.length) return text;
+  return `${text}\n[FAI Browser] The user attached ${paths.length === 1 ? 'this file' : 'these files'}, saved in this chat's `
+    + `folder: ${paths.map(path => JSON.stringify(path)).join(', ')}`;
 }
 
 /**
@@ -106,11 +115,11 @@ const digest = value => createHash('sha256').update(String(value)).digest();
 
 /**
  * `store`: src/chat-store.js. `root`: FAI-Local-Chats. `prepare()`: run before every turn (recreates the folder and
- * restores FAI's guidance files). `server`: FAI's MCP server {command, args}. `tools`: FAI's tool names.
- * `opencodeConfigDir`: an empty folder FAI owns. `programs`: tests' stand-ins, {provider: {file, prefix}}, used instead
- * of finding the program. `turnLimitMs`, `maxRunning`: test overrides.
+ * restores FAI's guidance files). `server`: FAI's MCP server {command, args}. `tools`: FAI's tool names. `uploads`:
+ * src/chat-files.js, for a message's attached files. `programs`: tests' stand-ins, {provider: {file, prefix}}, used
+ * instead of finding the program. `turnLimitMs`, `maxRunning`: test overrides.
  */
-export function createChatRunner({ store, root, prepare = async () => {}, server, tools, opencodeConfigDir,
+export function createChatRunner({ store, root, prepare = async () => {}, server, tools, uploads = null,
   env = process.env, platform = process.platform, arch = process.arch, programs = {}, log = () => {},
   turnLimitMs = TURN_LIMIT_MS, maxRunning = MAX_RUNNING, spawn = spawnProcess }) {
   const baseEnv = childEnv(env);
@@ -123,10 +132,10 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
     return file ? { file, prefix: [] } : null;
   }
 
-  function run(program, args) {
+  function run(program, args, { extraEnv = {}, cwd, maxBuffer = 256 * 1024 } = {}) {
     return new Promise(resolveRun => {
-      execFile(program.file, [...program.prefix, ...args], { env: baseEnv, timeout: CHECK_TIMEOUT_MS, windowsHide: true,
-        maxBuffer: 256 * 1024 }, (error, stdout, stderr) => {
+      execFile(program.file, [...program.prefix, ...args], { env: { ...baseEnv, ...extraEnv }, cwd,
+        timeout: CHECK_TIMEOUT_MS, windowsHide: true, maxBuffer }, (error, stdout, stderr) => {
         resolveRun({ code: error ? (typeof error.code === 'number' ? error.code : null) : 0,
           missing: ['ENOENT', 'EACCES', 'ENOTDIR'].includes(error?.code), stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
       });
@@ -230,8 +239,16 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
       message: String(error?.message ?? error).slice(0, 200) }));
   }
 
-  // Starts the provider's process for a turn already reserved in `turns`.
-  async function launch(turn, header, text) {
+  // The user's OpenCode MCP server names, from OpenCode's own resolved config under the turn's settings (decision #43).
+  // Only the names are kept. A read that fails starts no turn: FAI cannot then switch those servers off.
+  async function opencodeUserServers(program, cwd) {
+    const answer = await run(program, OPENCODE_CONFIG_ARGS, { extraEnv: opencodeEnv({ server }), cwd, maxBuffer: LIST_BUFFER });
+    if (answer.code !== 0) throw new Error(`opencode debug config exited ${answer.code}`);
+    return opencodeServers(answer.stdout);
+  }
+
+  // Starts the provider's process for a turn already reserved in `turns`. `files`: this message's attached paths.
+  async function launch(turn, header, text, files = []) {
     const { chatId, provider } = turn;
     const program = programFor(provider);
     const filesDir = store.filesDir(chatId);
@@ -240,10 +257,10 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
       if (!program) throw new Error('not found');
       await prepare();
       await mkdir(filesDir, { recursive: true });
-      if (opencodeConfigDir) await mkdir(opencodeConfigDir, { recursive: true });
+      const disable = provider === 'opencode' ? await opencodeUserServers(program, filesDir) : [];
       if (turn.stopReason) return finish(turn, {});
       const command = turnCommand(provider, { text, model: header.model, conversationId: header.conversationId,
-        filesDir, root, server, tools, opencodeConfigDir, env: baseEnv, platform });
+        files, filesDir, root, server, tools, opencodeServers: disable, env: baseEnv, platform });
       child = spawn(program.file, [...program.prefix, ...command.args], {
         cwd: filesDir, env: { ...baseEnv, ...command.env, [TURN_TOKEN_ENV]: turn.token }, shell: false,
         windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], detached: platform !== 'win32' });
@@ -286,8 +303,10 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
     return turn;
   }
 
-  // Checks and reserves the chat's slot (unless `turn` is already reserved), writes `record`, starts the process.
-  async function begin(header, text, record, turn = null) {
+  // Checks and reserves the chat's slot (unless `turn` is already reserved), moves the message's waiting files into
+  // the chat's folder, writes the record, starts the process. `compose(paths)` gives {text, record} once the files'
+  // paths are known; `files`: waiting files checked by uploads.check.
+  async function begin(header, compose, files = [], turn = null) {
     const { chatId, provider } = header;
     if (!turn) {
       checkLimits(chatId);
@@ -297,13 +316,18 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
       checkLimits(chatId);
       turn = reserve(chatId, provider);
     }
+    let attached = [];
+    let composed;
     try {
-      await store.append(chatId, record);
+      if (files.length) attached = await uploads.commit(files, store.filesDir(chatId));
+      composed = compose(attached.map(file => file.path));
+      await store.append(chatId, { ...composed.record,
+        ...(attached.length ? { files: attached.map(({ name, size, type }) => ({ name, size, type })) } : {}) });
     } catch (error) {
       turns.delete(chatId);
       throw error;
     }
-    await launch(turn, header, text);
+    await launch(turn, header, composed.text, attached.map(file => file.path));
     return { chatId, turnId: turn.turnId, done: turn.done };
   }
 
@@ -316,18 +340,25 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
   async function startTurn({ chatId, text, record }) {
     const header = await store.header(chatId);
     if (!header) throw new ChatError('unknown_chat', 'No such chat.');
-    return begin(header, text, record);
+    return begin(header, () => ({ text, record }));
   }
 
   /**
-   * The panel's message: `{provider, model, text}` starts a new chat, `{chatId, text}` continues one. The user's words
-   * travel inside the chat template. Resolves {chatId, turnId, done}; rejects with a ChatError (bad_request too).
+   * The panel's message: `{provider, model, text, files}` starts a new chat, `{chatId, text, files}` continues one.
+   * `files`: waiting files from uploads.check, moved into the chat's folder once the turn has its slot. The user's
+   * words travel inside the chat template, followed by the files' paths. Resolves {chatId, turnId, done}; rejects with
+   * a ChatError (bad_request too).
    */
-  async function send({ chatId: existing = null, provider = null, model = null, text }) {
+  async function send({ chatId: existing = null, provider = null, model = null, text, files = [] }) {
     const words = cleanChatText(text);
     if (!words) throw new ChatError('bad_request', 'Type a message first.');
-    const record = { role: 'user', text: words, files: [] };
-    if (existing) return startTurn({ chatId: existing, text: chatTurnText(words), record });
+    if (files.length && !uploads) throw new ChatError('bad_request', 'Attachments are not available.');
+    const compose = paths => ({ text: chatTurnText(words, paths), record: { role: 'user', text: words, files: [] } });
+    if (existing) {
+      const header = await store.header(existing);
+      if (!header) throw new ChatError('unknown_chat', 'No such chat.');
+      return begin(header, compose, files);
+    }
     if (!PROVIDERS.includes(provider)) throw new ChatError('bad_request', 'Choose a provider.');
     if (model !== null && (typeof model !== 'string' || !argumentSafe(model.trim()) || model.length > 200)) {
       throw new ChatError('bad_request', 'The model must be a name.');
@@ -346,7 +377,35 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
       turns.delete(chatId);
       throw error;
     }
-    return begin(header, chatTurnText(words), record, turn);
+    return begin(header, compose, files, turn);
+  }
+
+  /**
+   * The models `provider`'s program lists, read live (decision #30): Codex's catalogue, the aliases Claude's help
+   * names, OpenCode's list under a turn's own settings. Resolves {models: [name]}. Rejects with a ChatError:
+   * chat_not_installed, or models_unavailable when the list cannot be read (the panel then takes a typed name).
+   */
+  async function models(provider) {
+    if (!PROVIDERS.includes(provider)) throw new ChatError('bad_request', 'Choose a provider.');
+    const program = programFor(provider);
+    if (!program) throw fail('chat_not_installed', provider);
+    const command = modelsCommand(provider, { server });
+    const answer = await run(program, command.args, { extraEnv: command.env, maxBuffer: LIST_BUFFER });
+    if (answer.missing) throw fail('chat_not_installed', provider);
+    try {
+      if (answer.code !== 0) throw new Error(`exit ${answer.code}`);
+      return { models: parseModels(provider, answer.stdout) };
+    } catch (error) {
+      log('chat_models_error', { provider, message: String(error?.message ?? error).slice(0, 200) });
+      throw new ChatError('models_unavailable', `${PROVIDER_NAMES[provider]} did not list its models. Type a model name.`);
+    }
+  }
+
+  /** Change a chat's model (null: the program's own default) from its next turn. Resolves the chat's header view. */
+  async function setModel(chatId, model) {
+    if (model !== null && !argumentSafe(model)) throw new ChatError('bad_request', 'The model must be a name.');
+    if (!await store.header(chatId)) throw new ChatError('unknown_chat', 'No such chat.');
+    return store.updateHeader(chatId, { model });
   }
 
   /** Stop the chat's running turn and wait for it to end. Resolves true when one was running. */
@@ -394,6 +453,8 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
     providers: () => Promise.all(PROVIDERS.map(availability)),
     send,
     startTurn,
+    models,
+    setModel,
     stop,
     claimToken,
     running: chatId => turns.has(chatId),

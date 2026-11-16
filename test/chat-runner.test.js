@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { CHAT_CODES, chatTurnText, childEnv, cleanChatText, clipProviderError, createChatRunner } from '../src/chat-runner.js';
 import { createChatStore, renameRetrying } from '../src/chat-store.js';
 import { turnCommand } from '../src/chat-providers.js';
+import { createChatUploads } from '../src/chat-files.js';
 
 const STANDIN = join(import.meta.dirname, 'helpers', 'chat-standin.js');
 const SERVER = { command: process.execPath, args: ['/fai/src/mcp-main.js'] };
@@ -45,8 +46,8 @@ async function setup(t, { control = {}, programs = standins(), ...options } = {}
   await writeFile(join(dir, 'control.json'), JSON.stringify(control));
   const store = createChatStore({ root });
   const spawned = [];
-  const runner = createChatRunner({ store, root, server: SERVER, tools: TOOLS, programs,
-    opencodeConfigDir: join(dir, 'opencode-config'),
+  const uploads = createChatUploads({ dir: join(dir, 'uploads') });
+  const runner = createChatRunner({ store, root, server: SERVER, tools: TOOLS, programs, uploads,
     env: { ...process.env, STANDIN_DIR: dir, FAI_BRIDGE_SECRET: 'never-passed-on', FAI_CLIENT_TOKEN: 'never-either' },
     spawn: (file, args, spawnOptions) => {
       spawned.push({ file, args, options: spawnOptions });
@@ -61,7 +62,9 @@ async function setup(t, { control = {}, programs = standins(), ...options } = {}
   const grandchildren = async () => (await readFile(join(dir, 'calls.jsonl'), 'utf8').catch(() => '')).split('\n')
     .filter(Boolean).map(line => JSON.parse(line)).filter(entry => entry.grandchild).map(entry => entry.grandchild);
   const setControl = value => writeFile(join(dir, 'control.json'), JSON.stringify(value));
-  return { dir, root, store, runner, spawned, calls, grandchildren, setControl };
+  const listings = async () => (await readFile(join(dir, 'calls.jsonl'), 'utf8').catch(() => '')).split('\n')
+    .filter(Boolean).map(line => JSON.parse(line)).filter(entry => entry.listing);
+  return { dir, root, store, uploads, runner, spawned, calls, grandchildren, setControl, listings };
 }
 
 test('the child\'s environment keeps the daemon location variables and drops FAI\'s secrets and host markers', () => {
@@ -243,7 +246,7 @@ test('turn token: accepted once, only while its turn runs; unknown or used token
   const { chatId, turnId, done } = await ctx.runner.send({ provider: 'opencode', model: 'p/m', text: 'hi' });
   await until(async () => (await ctx.calls()).length === 1);
   const [{ token, xdg }] = await ctx.calls();
-  assert.equal(xdg, join(ctx.dir, 'opencode-config'), 'OpenCode runs on FAI\'s empty config folder');
+  assert.equal(xdg, process.env.XDG_CONFIG_HOME ?? null, 'OpenCode keeps the user\'s own config folder (decision #43)');
   assert.equal(ctx.runner.claimToken('not-a-token'), null);
   assert.deepEqual(ctx.runner.claimToken(token), { chatId, turnId });
   assert.equal(ctx.runner.claimToken(token), null, 'single use');
@@ -290,4 +293,107 @@ test('the transcript header\'s rename is retried while Windows refuses it (the p
   const stuck = refusing(Array(10).fill('EPERM'));
   await assert.rejects(renameRetrying('a.tmp', 'a', { rename: stuck.rename, tries: 3, waitMs: 1 }), { code: 'EPERM' });
   assert.equal(stuck.seen.length, 3);
+});
+
+const b64 = text => Buffer.from(text).toString('base64');
+
+test('OpenCode: the user\'s MCP servers, read from its own resolved config just before each turn, are switched off', async t => {
+  const ctx = await setup(t, { control: { opencode: { userServers: ['dev_browser', 'fai-browser'] } } });
+  const { chatId, done } = await ctx.runner.send({ provider: 'opencode', model: 'p/m', text: 'hi' });
+  assert.equal((await done).code, null);
+  const [read] = await ctx.listings();
+  assert.deepEqual(read.listing, ['debug', 'config', '--pure']);
+  assert.equal(await realpath(read.cwd), await realpath(ctx.store.filesDir(chatId)), 'under the turn\'s own folder');
+  assert.equal(read.noProjectConfig, '1');
+  const [turn] = await ctx.calls();
+  const config = JSON.parse(turn.configContent);
+  assert.deepEqual(config.mcp.dev_browser, { enabled: false });
+  assert.deepEqual(config.mcp['fai-browser'], { enabled: false });
+  assert.equal(config.mcp.fai.enabled, true);
+  assert.deepEqual(turn.args.slice(0, 5), ['run', '--pure', '--format', 'json', '--agent']);
+
+  // When OpenCode cannot name its servers, FAI cannot switch them off: no turn starts.
+  await ctx.setControl({ opencode: { configFail: true } });
+  const failed = await ctx.runner.send({ chatId, text: 'again' });
+  assert.equal((await failed.done).code, 'chat_start_failed');
+  assert.equal((await ctx.calls()).length, 1, 'the turn\'s program never ran');
+});
+
+test('attachments: waiting files move into the chat\'s files folder under clean names; the turn text names their paths', async t => {
+  const ctx = await setup(t);
+  const one = await ctx.uploads.add({ chatId: null, name: '../../secret/report.pdf', mime: 'application/pdf', data: b64('%PDF') });
+  const two = await ctx.uploads.add({ chatId: null, name: 'shot.png', mime: 'image/png', data: b64('png bytes') });
+  const files = ctx.uploads.check([one.fileId, two.fileId], null);
+  const { chatId, done } = await ctx.runner.send({ provider: 'codex', text: 'Read these', files });
+  await done;
+  const filesDir = ctx.store.filesDir(chatId);
+  assert.equal(await readFile(join(filesDir, 'report.pdf'), 'utf8'), '%PDF', 'a path in a name cannot leave files');
+  assert.equal(await readFile(join(filesDir, 'shot.png'), 'utf8'), 'png bytes');
+  assert.equal(ctx.uploads.waiting(), 0);
+  const { records } = await ctx.store.read(chatId);
+  assert.deepEqual(records[0].files, [{ name: 'report.pdf', size: 4, type: 'application/pdf' },
+    { name: 'shot.png', size: 9, type: 'image/png' }]);
+  assert.equal(records[0].text, 'Read these', 'the transcript keeps the user\'s words; the files are listed beside them');
+  const [call] = await ctx.calls();
+  const paths = [join(filesDir, 'report.pdf'), join(filesDir, 'shot.png')];
+  assert.equal(call.args.at(-1), chatTurnText('Read these', paths));
+  assert.match(call.args.at(-1), /\n\[FAI Browser\] The user attached these files, saved in this chat's folder: "/);
+  assert.deepEqual(call.args.slice(0, 5), ['exec', '-i', paths[0], '-i', paths[1]], 'Codex gets them with -i (D10)');
+
+  // The next message of the same chat: a taken name is numbered, never overwritten.
+  const again = await ctx.uploads.add({ chatId, name: 'shot.png', mime: 'image/png', data: b64('second') });
+  const next = await ctx.runner.send({ chatId, text: 'And this', files: ctx.uploads.check([again.fileId], chatId) });
+  await next.done;
+  assert.equal(await readFile(join(filesDir, 'shot (2).png'), 'utf8'), 'second');
+  assert.equal(await readFile(join(filesDir, 'shot.png'), 'utf8'), 'png bytes');
+  const [, second] = await ctx.calls();
+  assert.ok(second.args.includes(join(filesDir, 'shot (2).png')));
+  assert.ok(!second.args.includes(paths[1]), 'only this message\'s files are handed over again');
+
+  // A file waiting for one chat cannot be sent with another, or with a new chat.
+  const stray = await ctx.uploads.add({ chatId, name: 'x.txt', data: b64('x') });
+  assert.throws(() => ctx.uploads.check([stray.fileId], null), { code: 'unknown_file' });
+});
+
+test('a refused turn keeps its files waiting: they are moved only once the turn has its slot', async t => {
+  const ctx = await setup(t, { control: { claude: { mode: 'hang' } } });
+  const running = await ctx.runner.send({ provider: 'claude', text: 'busy' });
+  const file = await ctx.uploads.add({ chatId: running.chatId, name: 'a.txt', data: b64('a') });
+  await assert.rejects(ctx.runner.send({ chatId: running.chatId, text: 'more', files: ctx.uploads.check([file.fileId], running.chatId) }),
+    { code: 'chat_too_many' });
+  assert.equal(ctx.uploads.waiting(), 1, 'still waiting, so the user can send it after Stop');
+  await ctx.runner.stop(running.chatId);
+  await running.done;
+});
+
+test('model lists: what each program reports, read live; a list that fails asks for a typed name', async t => {
+  const ctx = await setup(t, { control: { codex: { models: ['gpt-6.1-sol', 'gpt-6-luna'] }, claude: { models: ['fable', 'opus'] },
+    opencode: { models: ['ollama-cloud/deepseek-v4.1-flash:1017'] } } });
+  assert.deepEqual(await ctx.runner.models('codex'), { models: ['gpt-6.1-sol', 'gpt-6-luna'] });
+  assert.deepEqual(await ctx.runner.models('claude'), { models: ['fable', 'opus'] });
+  assert.deepEqual(await ctx.runner.models('opencode'), { models: ['ollama-cloud/deepseek-v4.1-flash:1017'] });
+  const opencodeList = (await ctx.listings()).find(entry => entry.provider === 'opencode');
+  assert.equal(JSON.parse(opencodeList.configContent).agent['fai-browser-chat'].tools['*'], false,
+    'OpenCode lists under the settings a turn uses');
+  await ctx.setControl({ codex: { listFail: true } });
+  await assert.rejects(ctx.runner.models('codex'), { code: 'models_unavailable' });
+  await assert.rejects(ctx.runner.models('nope'), { code: 'bad_request' });
+  const gone = await setup(t, { programs: { codex: { file: join(ctx.dir, 'missing'), prefix: [] } } });
+  await assert.rejects(gone.runner.models('codex'), { code: 'chat_not_installed' });
+});
+
+test('a chat\'s model changes from its next turn; no model argument until one is picked', async t => {
+  const ctx = await setup(t);
+  const first = await ctx.runner.send({ provider: 'claude', text: 'one' });
+  await first.done;
+  assert.equal((await ctx.runner.setModel(first.chatId, 'opus')).model, 'opus');
+  await (await ctx.runner.send({ chatId: first.chatId, text: 'two' })).done;
+  await ctx.runner.setModel(first.chatId, null);
+  await (await ctx.runner.send({ chatId: first.chatId, text: 'three' })).done;
+  const calls = await ctx.calls();
+  assert.ok(!calls[0].args.includes('--model'));
+  assert.equal(calls[1].args[calls[1].args.indexOf('--model') + 1], 'opus');
+  assert.ok(!calls[2].args.includes('--model'), 'back to the program\'s own default');
+  await assert.rejects(ctx.runner.setModel(first.chatId, '--help'), { code: 'bad_request' });
+  await assert.rejects(ctx.runner.setModel('c00000000000000000000', 'opus'), { code: 'unknown_chat' });
 });

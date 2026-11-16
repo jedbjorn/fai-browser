@@ -182,20 +182,53 @@ export function argumentSafe(value) {
   return typeof value === 'string' && value !== '' && !value.startsWith('-') && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
 }
 
+// OpenCode (spec #84 "Tools and files", decision #43): the user's own config folder stays, so their providers, models
+// and sign-ins are reachable. --pure leaves out every external plugin (FAI's mode 1 plugin too), project config is
+// off, and the turn runs a FAI agent whose tool switches and permission rules come last: FAI's tools only. Each MCP
+// server the user's config names is switched off by name; the names come from `opencode debug config` run under the
+// same settings just before the turn (opencodeServers).
+export const OPENCODE_AGENT = 'fai-browser-chat';
+
+/** The environment OpenCode runs a turn, a model list or a config read under. `disable`: the user's MCP server names. */
+export function opencodeEnv({ server, disable = [] }) {
+  const only = { tools: { '*': false, [`${SERVER_KEY}_*`]: true }, permission: { '*': 'deny', [`${SERVER_KEY}_*`]: 'allow' } };
+  // fromEntries defines own properties, so a server named __proto__ is switched off like any other.
+  const mcp = Object.fromEntries([...disable.filter(name => name !== SERVER_KEY).map(name => [name, { enabled: false }]),
+    [SERVER_KEY, { type: 'local', command: [server.command, ...server.args], enabled: true }]]);
+  const config = { $schema: 'https://opencode.ai/config.json', mcp, ...only,
+    agent: { [OPENCODE_AGENT]: { mode: 'primary', description: 'FAI Browser chat', ...only } } };
+  return { OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_CONFIG_CONTENT: JSON.stringify(config) };
+}
+
+/** The resolved-config read that names the user's MCP servers. */
+export const OPENCODE_CONFIG_ARGS = Object.freeze(['debug', 'config', '--pure']);
+
+/** The MCP server names in `opencode debug config` output, FAI's own excepted. Throws when it is not that output. */
+export function opencodeServers(stdout) {
+  const config = JSON.parse(stdout);
+  if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Not an OpenCode config');
+  const mcp = config.mcp ?? {};
+  if (typeof mcp !== 'object' || Array.isArray(mcp)) throw new Error('Not an OpenCode config');
+  return Object.keys(mcp).filter(name => name !== SERVER_KEY);
+}
+
 /**
  * The argument list and extra environment for one turn. `text`: the turn's text (always a FAI template, so it never
  * starts with "-"). `model`: only when the user picked one (D9). `conversationId`: the provider's id to continue (D4).
- * `filesDir`: the chat's files folder (the working folder). `root`: FAI-Local-Chats. `server`: FAI's MCP server
- * {command, args}. `tools`: FAI's tool names. `opencodeConfigDir`: an empty folder FAI owns (OpenCode isolation).
- * `env`: the child's environment so far (OpenCode's server gets the user's XDG_CONFIG_HOME back).
- * Returns { args, env }: env holds only the variables to add.
+ * `files`: absolute paths of this message's attached files, handed over by the program's own route (D10): Codex `-i`,
+ * OpenCode `-f`; Claude reads them with Read (the turn's text names them). `filesDir`: the chat's files folder (the
+ * working folder). `root`: FAI-Local-Chats. `server`: FAI's MCP server {command, args}. `tools`: FAI's tool names.
+ * `opencodeServers`: the user's OpenCode MCP server names, switched off. Returns { args, env }: env holds only the
+ * variables to add.
  */
-export function turnCommand(provider, { text, model = null, conversationId = null, filesDir, root, server, tools,
-  opencodeConfigDir, env = {}, platform = process.platform, home = homedir() }) {
+export function turnCommand(provider, { text, model = null, conversationId = null, files = [], filesDir, root, server,
+  tools, opencodeServers: disable = [], env = {}, platform = process.platform }) {
   // Both come from the chat's header; Codex resume takes the id as a bare positional, where a leading - is an option.
   for (const value of [model, conversationId]) {
     if (value !== null && !argumentSafe(value)) throw new Error('A model or conversation id is not a plain name.');
   }
+  // FAI's own absolute paths in the chat's files folder, but checked like any other value on a command line.
+  if (files.some(file => !argumentSafe(file))) throw new Error('A file path is not plain.');
   // Paths follow the target platform's rules (the same as this machine's outside tests).
   const pathJoin = (platform === 'win32' ? win32 : posix).join;
   if (provider === 'claude') {
@@ -216,8 +249,11 @@ export function turnCommand(provider, { text, model = null, conversationId = nul
       ? (conversationId ? ['-c', 'sandbox_mode="read-only"'] : ['--sandbox', 'read-only'])
       : ['-c', `permissions.fai.filesystem={${toml(':minimal')}="read",${toml(filesDir)}="read",`
         + `${toml(pathJoin(root, 'AGENTS.md'))}="read"}`, '-c', 'default_permissions="fai"'];
+    // -i takes several values: each one comes right after exec, so the next option (--json) ends the list and a
+    // resumed turn's id is never read as an image.
     return {
-      args: ['exec', ...(conversationId ? ['resume'] : []), '--json', '--ignore-user-config', '--skip-git-repo-check',
+      args: ['exec', ...(conversationId ? ['resume'] : []), ...files.flatMap(file => ['-i', file]), '--json',
+        '--ignore-user-config', '--skip-git-repo-check',
         ...(model ? ['-m', model] : []), ...CODEX_DISABLED.flatMap(feature => ['--disable', feature]),
         '-c', 'web_search="disabled"',
         '-c', `mcp_servers.${SERVER_KEY}.command=${toml(server.command)}`,
@@ -230,20 +266,59 @@ export function turnCommand(provider, { text, model = null, conversationId = nul
     };
   }
   if (provider === 'opencode') {
-    // XDG_CONFIG_HOME points OpenCode at an empty folder so the user's own MCP servers and plugins stay off. FAI's
-    // server gets the user's value back: on Linux FAI's own settings live under it (src/paths.js).
-    const mcp = { type: 'local', command: [server.command, ...server.args], enabled: true };
-    if (platform !== 'win32' && platform !== 'darwin') {
-      mcp.environment = { XDG_CONFIG_HOME: env.XDG_CONFIG_HOME || pathJoin(home, '.config') };
-    }
-    const config = { $schema: 'https://opencode.ai/config.json', mcp: { [SERVER_KEY]: mcp },
-      tools: { '*': false, [`${SERVER_KEY}_*`]: true }, permission: { '*': 'deny', [`${SERVER_KEY}_*`]: 'allow' } };
     return {
-      args: ['run', '--format', 'json', '-m', model, ...(conversationId ? ['--session', conversationId] : []), '--', text],
-      env: { XDG_CONFIG_HOME: opencodeConfigDir, OPENCODE_CONFIG_CONTENT: JSON.stringify(config) },
+      args: ['run', '--pure', '--format', 'json', '--agent', OPENCODE_AGENT, '-m', model,
+        ...(conversationId ? ['--session', conversationId] : []), ...files.flatMap(file => ['-f', file]), '--', text],
+      env: opencodeEnv({ server, disable }),
     };
   }
   throw new Error(`Unknown provider ${provider}`);
+}
+
+// --- model lists (D9, decision #30) ------------------------------------------------------------------------------
+
+export const MODEL_LIST_LIMIT = 1000;
+
+/** How a program lists its models: Codex's catalogue, Claude's help (it has no list), OpenCode's list. */
+export function modelsCommand(provider, { server }) {
+  if (provider === 'codex') return { args: ['debug', 'models'], env: {} };
+  if (provider === 'claude') return { args: ['--help'], env: {} };
+  if (provider === 'opencode') return { args: ['models', '--pure'], env: opencodeEnv({ server }) };
+  throw new Error(`Unknown provider ${provider}`);
+}
+
+// Claude's help: the quoted aliases in the --model option's description, up to the next option.
+function claudeAliases(stdout) {
+  const lines = stdout.split(/\r?\n/);
+  const start = lines.findIndex(line => /^\s*--model\b/.test(line));
+  if (start < 0) return [];
+  const end = lines.findIndex((line, index) => index > start && /^\s*-/.test(line));
+  const block = lines.slice(start, end < 0 ? undefined : end).join(' ');
+  return [...block.matchAll(/'([A-Za-z0-9][A-Za-z0-9._-]*)'/g)].map(match => match[1]);
+}
+
+// Codex's catalogue: the entries it lists (visibility "list"), in its own order.
+function codexModels(stdout) {
+  const models = JSON.parse(stdout)?.models;
+  if (!Array.isArray(models)) return [];
+  return models.filter(model => model?.visibility === 'list' && typeof model.slug === 'string')
+    .sort((a, b) => (Number.isFinite(a.priority) ? a.priority : Infinity) - (Number.isFinite(b.priority) ? b.priority : Infinity))
+    .map(model => model.slug);
+}
+
+// OpenCode: one provider/model per line.
+const opencodeModels = stdout => stdout.split(/\r?\n/).map(line => line.trim()).filter(line => /^[^\s/]+\/\S+$/.test(line));
+
+/**
+ * The model names a program's list output gives, as the picker shows them: plain names only, no repeats, at most
+ * MODEL_LIST_LIMIT. Throws when there are none (the picker then takes a typed name).
+ */
+export function parseModels(provider, stdout) {
+  const read = { codex: codexModels, claude: claudeAliases, opencode: opencodeModels }[provider];
+  if (!read) throw new Error(`Unknown provider ${provider}`);
+  const names = [...new Set(read(String(stdout ?? '')))].filter(name => argumentSafe(name) && name.length <= 200);
+  if (!names.length) throw new Error('No models listed');
+  return names.slice(0, MODEL_LIST_LIMIT);
 }
 
 // --- output (D5) -------------------------------------------------------------------------------------------------
