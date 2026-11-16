@@ -1,7 +1,8 @@
 // Watched reads through the daemon (spec #80 AC 3) and the panel's chat wake: a panel's `chat` event (through the fake
 // hub, as the extension sends it) starts a watch; only then does the session's long poll carry a chatRead; only that
 // session's own MCP server (its key) may post the read; the daemon keeps the newest 200 messages in memory and drops
-// them when the watch ends (chat_close, or 30 s without a panel read); nothing of a conversation reaches a log line.
+// them when the watch ends (30 s without a panel read); nothing of a conversation reaches a log line. Panel messages
+// follow the Sprint 3 panel contract: agent_chat and agent_send.
 // Browserless.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,12 +19,13 @@ import { EXTENSION_ID, FakeExtension, SECRET } from './helpers/fake-extension.js
 
 const SECRET_WORDS = 'the payroll figure is 98431';
 
-async function setup(t, { clock = null } = {}) {
+async function setup(t, { clock = null, chatFirstReadMs, chatSendWaitMs } = {}) {
   const home = await mkdtemp(join(tmpdir(), 'fai-chat-relay-'));
   const hub = createFakeHub();
   const lines = [];
   const daemon = createDaemon({ home, env: {}, port: 0, hub, isAlive: () => true, sweepIntervalMs: 60_000,
-    log: (event, fields) => lines.push(JSON.stringify({ event, ...fields })), ...(clock ? { now: () => clock.now } : {}) });
+    log: (event, fields) => lines.push(JSON.stringify({ event, ...fields })), ...(clock ? { now: () => clock.now } : {}),
+    chatFirstReadMs, chatSendWaitMs });
   await daemon.listen();
   t.after(async () => {
     await daemon.close();
@@ -48,7 +50,7 @@ const post = (ctx, session, body, headers = session.headers) => ctx.api('POST', 
 const panel = (ctx, type, fields) => ctx.hub.emit({ type, browserId: 'browser-1', ...fields });
 const message = (n, text = `message ${n}`, role = 'agent') => ({ id: String(n), role, text, at: new Date(1_800_000_000_000 + n).toISOString() });
 
-test('no chatRead without a watch; a panel read asks the session\'s poll, at once even when it is held', async t => {
+test('no chatRead without a watch; a panel read asks the session\'s poll at once and waits for the first read', async t => {
   const ctx = await setup(t);
   const session = await register(ctx);
   assert.deepEqual((await poll(ctx, session)).body, { wakes: [] }, 'nobody watches: no read');
@@ -56,33 +58,47 @@ test('no chatRead without a watch; a panel read asks the session\'s poll, at onc
     'a read nobody asked for is refused');
   const held = poll(ctx, session, 5_000);
   await new Promise(resolve => setTimeout(resolve, 50));
-  const first = await panel(ctx, 'chat', { sessionId: session.sessionId });
-  assert.deepEqual(first.chat, { sessionId: session.sessionId, host: 'claude', repo: 'my-repo', ended: false, busy: false,
-    readable: false, error: null, reset: false, messages: [], sends: [] });
+  const first = panel(ctx, 'agent_chat', { sessionId: session.sessionId });
   const answered = await held;
   assert.deepEqual(answered.body, { wakes: [], chatRead: { cursor: null } }, 'the held poll answered with a read');
   assert.deepEqual((await poll(ctx, session)).body, { wakes: [] }, 'one read per panel read');
   const posted = await post(ctx, session, { messages: [message(1, 'hello'), message(2, 'there', 'user')], busy: true, cursor: '120.1' });
   assert.deepEqual(posted.body, { taken: 2 });
-  const view = await panel(ctx, 'chat', { sessionId: session.sessionId });
-  assert.equal(view.chat.readable, true);
-  assert.equal(view.chat.busy, true);
-  assert.deepEqual(view.chat.messages.map(item => [item.role, item.text]), [['agent', 'hello'], ['user', 'there']]);
+  const view = await first;
+  assert.deepEqual(Object.keys(view).sort(), ['busy', 'cursor', 'ended', 'messages', 'readable', 'reset', 'sends']);
+  assert.deepEqual([view.readable, view.busy, view.ended, view.reset], [true, true, false, false]);
+  assert.deepEqual(view.messages.map(item => [item.role, item.text]), [['agent', 'hello'], ['user', 'there']]);
+  assert.equal(view.cursor, view.messages.at(-1).seq);
+  assert.deepEqual(Object.keys(view.messages[0]).sort(), ['at', 'id', 'role', 'seq', 'text']);
+  await panel(ctx, 'agent_chat', { sessionId: session.sessionId, after: view.cursor });
   assert.deepEqual((await poll(ctx, session)).body.chatRead, { cursor: '120.1' }, 'the next read resumes from the cursor');
-  // Only what is new after the panel's `after`; a message posted twice is kept once.
+  // Only what is new after the panel's cursor; a message posted twice is kept once.
   await post(ctx, session, { messages: [message(2, 'there', 'user'), message(3, 'more')], busy: false, cursor: '200.0' });
-  const after = view.chat.messages.at(-1).seq;
-  const next = await panel(ctx, 'chat', { sessionId: session.sessionId, after });
-  assert.deepEqual(next.chat.messages.map(item => item.text), ['more']);
-  assert.equal(next.chat.reset, false);
-  assert.equal(next.chat.busy, false);
+  const next = await panel(ctx, 'agent_chat', { sessionId: session.sessionId, after: view.cursor });
+  assert.deepEqual(next.messages.map(item => item.text), ['more']);
+  assert.deepEqual([next.reset, next.busy], [false, false]);
+  const same = await panel(ctx, 'agent_chat', { sessionId: session.sessionId, after: next.cursor });
+  assert.deepEqual([same.messages, same.cursor], [[], next.cursor], 'nothing new: the cursor stays');
+  // A read error is `readable: {code, host, version}`; sending still works.
+  await post(ctx, session, { error: { code: 'unreadable', version: '2.1.325' } });
+  assert.deepEqual((await panel(ctx, 'agent_chat', { sessionId: session.sessionId, after: same.cursor })).readable,
+    { code: 'unreadable', host: 'claude', version: '2.1.325' });
+});
+
+test('a new watch answers after CHAT_FIRST_READ_MS when no read comes', async t => {
+  const ctx = await setup(t, { chatFirstReadMs: 200 });
+  const session = await register(ctx);
+  const started = Date.now();
+  const view = await panel(ctx, 'agent_chat', { sessionId: session.sessionId });
+  assert.ok(Date.now() - started >= 150);
+  assert.deepEqual([view.messages, view.readable, view.ended, view.cursor], [[], true, false, 0]);
 });
 
 test('only the session\'s own MCP server posts its read: another session\'s key or id is refused', async t => {
-  const ctx = await setup(t);
+  const ctx = await setup(t, { chatFirstReadMs: 0 });
   const a = await register(ctx);
   const b = await register(ctx, { pid: 70003, host: 'codex', wake: 'codex-queue' });
-  await panel(ctx, 'chat', { sessionId: a.sessionId });
+  await panel(ctx, 'agent_chat', { sessionId: a.sessionId });
   assert.equal((await post(ctx, a, { messages: [message(1)] }, b.headers)).status, 403, 'B\'s header on A\'s route');
   assert.equal((await post(ctx, a, { messages: [message(1)] }, { 'X-Fai-Session': `${a.sessionId}:wrong` })).status, 403);
   assert.equal((await post(ctx, a, { messages: [message(1)] }, {})).status, 403);
@@ -90,10 +106,10 @@ test('only the session\'s own MCP server posts its read: another session\'s key 
   assert.equal((await call(ctx.daemon.port, 'POST', `/v1/sessions/${a.sessionId}/chat`, { messages: [] },
     { headers: a.headers })).status, 401, 'the client token is required too');
   assert.equal((await post(ctx, a, { messages: [], extra: 1 })).status, 400, 'closed keys');
-  assert.deepEqual((await panel(ctx, 'chat', { sessionId: a.sessionId })).chat.messages, []);
+  assert.deepEqual((await panel(ctx, 'agent_chat', { sessionId: a.sessionId })).messages, []);
 });
 
-test('the watch ends 30 s after the last panel read, or on chat_close; its messages are dropped', async () => {
+test('the watch ends 30 s after the last panel read; its messages are dropped', async () => {
   const clock = { now: 1_000_000 };
   const lines = [];
   const registry = createSessionRegistry({ now: () => clock.now, isAlive: () => true,
@@ -117,7 +133,7 @@ test('the watch ends 30 s after the last panel read, or on chat_close; its messa
   assert.throws(() => registry.postChat(session, { messages: [message(2)] }), { code: 'not_watched' });
   const read = await registry.poll(session, 0);
   assert.equal(read.chatRead, undefined, 'nothing is read while nobody watches');
-  // A new watch starts empty (from the start of the conversation's tail), and chat_close ends it at once.
+  // A new watch starts empty (from the start of the conversation's tail), and unwatchChat ends it at once.
   registry.watchChat(sessionId);
   assert.deepEqual(registry.chatView(sessionId).messages, []);
   assert.equal((await registry.poll(session, 0)).chatRead.cursor, null);
@@ -156,54 +172,73 @@ test('limits: the newest 200 messages, each clipped to 8,000 characters; unknown
   assert.equal(registry.chatView(sessionId).error.code, 'not_ready');
 });
 
-test('a session that ended is `ended` for the panel; chat_close needs no session', async t => {
-  const ctx = await setup(t);
+test('a session that ended is `ended` for the panel', async t => {
+  const ctx = await setup(t, { chatFirstReadMs: 0 });
   const session = await register(ctx);
-  await panel(ctx, 'chat', { sessionId: session.sessionId });
+  await panel(ctx, 'agent_chat', { sessionId: session.sessionId });
   await ctx.api('DELETE', `/v1/sessions/${session.sessionId}`, {}, { headers: session.headers });
-  const gone = await panel(ctx, 'chat', { sessionId: session.sessionId });
-  assert.equal(gone.chat.ended, true);
-  assert.deepEqual(gone.chat.messages, []);
-  assert.deepEqual(await panel(ctx, 'chat_close', { sessionId: 'ses_nobody' }), { closed: true });
+  const gone = await panel(ctx, 'agent_chat', { sessionId: session.sessionId, after: 7 });
+  assert.deepEqual([gone.ended, gone.messages, gone.cursor], [true, [], 7]);
+  assert.equal((await panel(ctx, 'agent_chat', { sessionId: 'ses_nobody' })).ended, true);
 });
 
-test('chat_send: the user\'s cleaned words as a chat wake on the session\'s own channel; limits and refusals', async t => {
-  const ctx = await setup(t);
-  const session = await register(ctx);
-  const sent = await panel(ctx, 'chat_send', { sessionId: session.sessionId, text: '  use the other\r\naccount page ​ ' });
-  assert.equal(sent.wake.state, 'queued');
-  const delivered = await poll(ctx, session);
-  assert.deepEqual(delivered.body.wakes.map(wake => [wake.kind, wake.userText]), [['chat', 'use the other\naccount page']]);
-  const view = await panel(ctx, 'chat', { sessionId: session.sessionId });
-  assert.deepEqual(view.chat.sends, [{ wakeId: sent.wake.wakeId, state: 'sent', error: null }]);
-  await ctx.api('POST', `/v1/sessions/${session.sessionId}/wakes/${sent.wake.wakeId}`, { outcome: 'delivered' },
-    { headers: session.headers });
-  assert.equal((await panel(ctx, 'chat', { sessionId: session.sessionId })).chat.sends[0].state, 'delivered');
+// Settle the session's next chat wake the way its MCP server would.
+async function settleNext(ctx, session, outcome) {
+  for (let n = 0; n < 40; n += 1) {
+    const { wakes } = (await poll(ctx, session)).body;
+    if (wakes.length) {
+      await ctx.api('POST', `/v1/sessions/${session.sessionId}/wakes/${wakes[0].wakeId}`, outcome, { headers: session.headers });
+      return wakes[0];
+    }
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error('no wake');
+}
 
-  assert.equal((await panel(ctx, 'chat_send', { sessionId: session.sessionId, text: 'x'.repeat(MAX_CHAT_TEXT + 1) })).error.code, 'too_long');
-  assert.ok((await panel(ctx, 'chat_send', { sessionId: session.sessionId, text: 'x'.repeat(MAX_CHAT_TEXT) })).wake);
-  assert.equal((await panel(ctx, 'chat_send', { sessionId: session.sessionId, text: ' ​\n ' })).error.code, 'empty');
-  assert.equal((await panel(ctx, 'chat_send', { sessionId: 'ses_nobody', text: 'hi' })).error.code, 'unknown_session');
+test('agent_send: the user\'s cleaned words as a chat wake; ok once delivered, the wake\'s error when not', async t => {
+  const ctx = await setup(t, { chatFirstReadMs: 0 });
+  const session = await register(ctx);
+  const sending = panel(ctx, 'agent_send', { sessionId: session.sessionId, text: '  use the other\r\naccount page ​ ' });
+  const wake = await settleNext(ctx, session, { outcome: 'delivered' });
+  assert.deepEqual([wake.kind, wake.userText], ['chat', 'use the other\naccount page']);
+  assert.deepEqual(await sending, { ok: true, wakeId: wake.wakeId });
+  const failing = panel(ctx, 'agent_send', { sessionId: session.sessionId, text: 'again' });
+  await settleNext(ctx, session, { outcome: 'failed', code: 'refused', message: 'The session refused it.' });
+  assert.deepEqual(await failing, { error: { code: 'refused', message: 'The session refused it.' } });
+  const view = await panel(ctx, 'agent_chat', { sessionId: session.sessionId });
+  assert.deepEqual(view.sends.map(item => item.state), ['delivered', 'failed']);
+});
+
+test('agent_send: still on its way after the wait is ok with its state; limits and refusals', async t => {
+  const ctx = await setup(t, { chatFirstReadMs: 0, chatSendWaitMs: 50 });
+  const session = await register(ctx);
+  const pending = await panel(ctx, 'agent_send', { sessionId: session.sessionId, text: 'hello' });
+  assert.deepEqual([pending.ok, pending.state], [true, 'queued']);
+  assert.equal((await panel(ctx, 'agent_send', { sessionId: session.sessionId, text: 'x'.repeat(MAX_CHAT_TEXT + 1) })).error.code, 'too_long');
+  assert.equal((await panel(ctx, 'agent_send', { sessionId: session.sessionId, text: 'x'.repeat(MAX_CHAT_TEXT) })).ok, true);
+  assert.equal((await panel(ctx, 'agent_send', { sessionId: session.sessionId, text: ' ​\n ' })).error.code, 'empty');
+  assert.equal((await panel(ctx, 'agent_send', { sessionId: 'ses_nobody', text: 'hi' })).error.code, 'unknown_session');
   const mute = await register(ctx, { wake: 'none', pid: 70001 });
-  assert.equal((await panel(ctx, 'chat_send', { sessionId: mute.sessionId, text: 'hi' })).error.code, 'cannot_wake');
+  assert.equal((await panel(ctx, 'agent_send', { sessionId: mute.sessionId, text: 'hi' })).error.code, 'cannot_wake');
   // A Codex session before its first FAI call has no thread to queue to.
   const early = await register(ctx, { host: 'codex', wake: 'none', pid: 70002 });
-  assert.equal((await panel(ctx, 'chat_send', { sessionId: early.sessionId, text: 'hi' })).error.code, 'cannot_wake');
+  assert.equal((await panel(ctx, 'agent_send', { sessionId: early.sessionId, text: 'hi' })).error.code, 'cannot_wake');
   for (let n = 2; n < CHAT_SENDS_PER_MINUTE; n += 1) {
-    assert.ok((await panel(ctx, 'chat_send', { sessionId: session.sessionId, text: `n${n}` })).wake);
+    assert.equal((await panel(ctx, 'agent_send', { sessionId: session.sessionId, text: `n${n}` })).ok, true);
   }
-  assert.equal((await panel(ctx, 'chat_send', { sessionId: session.sessionId, text: 'one more' })).error.code, 'rate_limited');
+  const limited = await panel(ctx, 'agent_send', { sessionId: session.sessionId, text: 'one more' });
+  assert.equal(limited.error.code, 'rate_limited');
+  assert.equal(typeof limited.error.message, 'string');
 });
 
 test('nothing of a conversation reaches the daemon\'s log or its files', async t => {
-  const ctx = await setup(t);
+  const ctx = await setup(t, { chatFirstReadMs: 0, chatSendWaitMs: 50 });
   const session = await register(ctx);
-  await panel(ctx, 'chat', { sessionId: session.sessionId });
+  await panel(ctx, 'agent_chat', { sessionId: session.sessionId });
   await post(ctx, session, { messages: [message(1, SECRET_WORDS, 'user')], busy: true, cursor: '5.1' });
-  await panel(ctx, 'chat_send', { sessionId: session.sessionId, text: SECRET_WORDS });
+  await panel(ctx, 'agent_send', { sessionId: session.sessionId, text: SECRET_WORDS });
   await poll(ctx, session);
-  await panel(ctx, 'chat', { sessionId: session.sessionId });
-  await panel(ctx, 'chat_close', { sessionId: session.sessionId });
+  await panel(ctx, 'agent_chat', { sessionId: session.sessionId });
   assert.ok(ctx.lines.length > 0);
   assert.doesNotMatch(ctx.lines.join('\n'), /payroll|98431/);
   const files = await readdir(ctx.home, { recursive: true });
@@ -241,29 +276,22 @@ test('MCP server: reads only on the daemon\'s chatRead, posts with its own key, 
   await new Promise(resolve => setTimeout(resolve, 400));
   assert.deepEqual(reads, [], 'no read while nobody watches');
   const sessionId = agent.sessionId;
-  await panel(ctx, 'chat', { sessionId });
-  let view = null;
-  for (let n = 0; n < 40 && !view?.chat.messages.length; n += 1) {
-    await new Promise(resolve => setTimeout(resolve, 50));
-    view = await panel(ctx, 'chat', { sessionId });
-  }
-  assert.deepEqual(view.chat.messages.map(item => item.text), ['I am on the cart page.']);
-  assert.equal(view.chat.busy, true);
+  const view = await panel(ctx, 'agent_chat', { sessionId });
+  assert.deepEqual(view.messages.map(item => item.text), ['I am on the cart page.'], 'the first read lands within the wait');
+  assert.equal(view.busy, true);
+  await panel(ctx, 'agent_chat', { sessionId, after: view.cursor });
+  for (let n = 0; n < 40 && reads.length < 2; n += 1) await new Promise(resolve => setTimeout(resolve, 50));
   assert.deepEqual(reads[0], { target: SES_A, cursor: null });
   assert.ok(reads.slice(1).every(read => read.cursor === 'msg_17'), 'later reads resume from the posted cursor');
-  const sent = await panel(ctx, 'chat_send', { sessionId, text: 'Use the other\naccount page.' });
-  assert.ok(sent.wake, JSON.stringify(sent));
+  const sent = await panel(ctx, 'agent_send', { sessionId, text: 'Use the other\naccount page.' });
+  assert.equal(sent.ok, true, JSON.stringify(sent));
+  assert.equal(sent.state, undefined, 'answered once delivered');
   for (let n = 0; n < 40 && !delivered.length; n += 1) await new Promise(resolve => setTimeout(resolve, 50));
   assert.equal(delivered[0].capability, 'opencode-plugin');
   assert.equal(delivered[0].opencodeSession, SES_A, 'to the session the panel reads');
   assert.equal(delivered[0].text, '[FAI Browser] The user sent you a message from the FAI chat panel (the user\'s own words): '
     + '"Use the other\\naccount page."');
-  let state = null;
-  for (let n = 0; n < 40 && state !== 'delivered'; n += 1) {
-    await new Promise(resolve => setTimeout(resolve, 50));
-    state = (await panel(ctx, 'chat', { sessionId })).chat.sends.find(item => item.wakeId === sent.wake.wakeId)?.state;
-  }
-  assert.equal(state, 'delivered');
+  assert.equal((await panel(ctx, 'agent_chat', { sessionId })).sends.find(item => item.wakeId === sent.wakeId)?.state, 'delivered');
 });
 
 test('MCP server: the chat target is its own session; with several OpenCode sessions lately, none (ambiguous)', async () => {
@@ -291,10 +319,10 @@ test('MCP server: the chat target is its own session; with several OpenCode sess
   assert.match(outcomes[0].message, /cannot tell which one/);
 });
 
-test('the real hub: chat, chat_send and chat_close over the paired WebSocket, validated', async t => {
+test('the real hub: agent_chat and agent_send over the paired WebSocket, validated', async t => {
   const home = await mkdtemp(join(tmpdir(), 'fai-chat-hub-'));
   const daemon = createDaemon({ home, env: { FAI_BRIDGE_SECRET: SECRET, FAI_EXTENSION_ID: EXTENSION_ID },
-    port: 0, sweepIntervalMs: 60_000 });
+    port: 0, sweepIntervalMs: 60_000, chatFirstReadMs: 0, chatSendWaitMs: 50 });
   await daemon.listen();
   const ext = await FakeExtension.connect({ port: daemon.port });
   t.after(async () => {
@@ -305,22 +333,21 @@ test('the real hub: chat, chat_send and chat_close over the paired WebSocket, va
   assert.equal((await ext.hello()).ok, true);
   const ctx = { api: (method, path, body, extra = {}) => call(daemon.port, method, path, body, { token: daemon.token, ...extra }) };
   const session = await register(ctx);
-  for (const [type, bad] of [['chat', {}], ['chat', { sessionId: 42 }], ['chat_close', { sessionId: 'x'.repeat(65) }],
-    ['chat_send', { sessionId: session.sessionId }], ['chat_send', { sessionId: session.sessionId, text: 7 }]]) {
+  for (const [type, bad] of [['agent_chat', {}], ['agent_chat', { sessionId: 42 }], ['agent_chat', { sessionId: 'x'.repeat(65) }],
+    ['agent_send', { sessionId: session.sessionId }], ['agent_send', { sessionId: session.sessionId, text: 7 }]]) {
     const refused = await ext.request(type, bad);
     assert.deepEqual([refused.ok, refused.error.code], [false, 'bad_request'], `${type} ${JSON.stringify(bad)}`);
   }
-  assert.equal((await ext.request('chat_send', { sessionId: session.sessionId, text: 'x'.repeat(16_001) })).error.code, 'too_long');
-  const watched = await ext.request('chat', { sessionId: session.sessionId, after: 'x' });
+  assert.equal((await ext.request('agent_send', { sessionId: session.sessionId, text: 'x'.repeat(16_001) })).error.code, 'too_long');
+  const watched = await ext.request('agent_chat', { sessionId: session.sessionId, after: 'x' });
   assert.equal(watched.ok, true);
-  assert.equal(watched.data.chat.ended, false);
+  assert.equal(watched.data.ended, false);
   assert.deepEqual((await poll(ctx, session)).body.chatRead, { cursor: null });
   await post(ctx, session, { messages: [message(1, 'hi there')], busy: false, cursor: '9.0' });
-  const read = await ext.request('chat', { sessionId: session.sessionId, after: 0 });
-  assert.deepEqual(read.data.chat.messages.map(item => item.text), ['hi there']);
-  const sent = await ext.request('chat_send', { sessionId: session.sessionId, text: 'go on' });
-  assert.equal(sent.data.wake.state, 'queued');
-  assert.equal((await ext.request('chat_send', { sessionId: session.sessionId, text: 'x'.repeat(MAX_CHAT_TEXT + 1) })).error.code, 'too_long');
-  assert.deepEqual((await ext.request('chat_close', { sessionId: session.sessionId })).data, { closed: true });
-  assert.equal((await post(ctx, session, { messages: [message(2)] })).status, 409, 'closed: no more reads taken');
+  const read = await ext.request('agent_chat', { sessionId: session.sessionId, after: 0 });
+  assert.deepEqual(read.data.messages.map(item => item.text), ['hi there']);
+  const sent = await ext.request('agent_send', { sessionId: session.sessionId, text: 'go on' });
+  assert.deepEqual([sent.ok, sent.data.ok, sent.data.state], [true, true, 'queued']);
+  const long = await ext.request('agent_send', { sessionId: session.sessionId, text: 'x'.repeat(MAX_CHAT_TEXT + 1) });
+  assert.deepEqual([long.ok, long.error.code], [false, 'too_long']);
 });

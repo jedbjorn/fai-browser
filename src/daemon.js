@@ -96,8 +96,11 @@ const CHALLENGE = /^[A-Za-z0-9_-]{16,64}$/;
 const SESSION_UPDATE_KEYS = new Set(['lastToolCallAt', 'hostSessionId', 'wake', 'wakeReason', 'maxMs']);
 // The MCP server's read of its own conversation for the chat panel (POST /v1/sessions/:id/chat).
 const SESSION_CHAT_KEYS = new Set(['messages', 'busy', 'cursor', 'error']);
-// The chat panel may send a session this many messages a minute.
+// The chat panel may send a session this many messages a minute. agent_send waits this long for the delivery (the
+// extension stops waiting for any answer at 10 s); a new watch waits this long for the first read.
 export const CHAT_SENDS_PER_MINUTE = 10;
+export const CHAT_SEND_WAIT_MS = 8_000;
+export const CHAT_FIRST_READ_MS = 3_000;
 const WAIT_KEYS = new Set(['requestId', 'runId', 'maxMs', 'afterStep', 'while', 'ask']);
 // An agent's ask for more on a request it holds (POST /v1/requests/:id/ask): a higher level, more origins, or both.
 const ASK_KEYS = new Set(['mode', 'origins']);
@@ -1533,35 +1536,54 @@ export function createDaemon(options = {}) {
     });
   }
 
+  // Wait up to `ms` for `predicate`, checking every 100 ms (chat posts and wake reports need no other signal).
+  async function settled(predicate, ms) {
+    const deadline = Date.now() + ms;
+    while (!predicate() && !shuttingDown && Date.now() < deadline) await delay(100);
+    return predicate();
+  }
+
   /**
-   * The FAI chat panel reads a live session's conversation (spec #80): each `chat` event starts or extends the watch
-   * (src/sessions.js watchChat; it ends 30 s after the last one, or on chat_close) and answers what the session's MCP
-   * server posted so far, newer than `after`, with the panel's chat wakes. A session that is gone is `ended`.
+   * The FAI chat panel reads a live session's conversation (spec #80; Sprint 3 panel contract `agent_chat`): each read
+   * starts or extends the watch (src/sessions.js watchChat; it ends 30 s after the last one) and answers what the
+   * session's MCP server posted, newer than `after`: {messages, busy, cursor, readable: true | {code, host, version},
+   * ended}. cursor is the `after` for the next read. Extra fields: reset (the panel's `after` is no longer kept: replace
+   * the list) and sends (the panel's chat wakes, for a delivery that outlived agent_send's answer). A new watch waits
+   * up to CHAT_FIRST_READ_MS for the first read. A session that is gone is `ended`.
    */
-  function onChatEvent(event) {
+  async function onAgentChatEvent(event) {
     sessions.sweep();
     const sessionId = typeof event.sessionId === 'string' ? event.sessionId : null;
-    const view = sessionId ? sessions.view(sessionId) : null;
-    if (!view) {
-      return replyTo(event, { chat: { sessionId, host: null, repo: null, ended: true, busy: false, readable: false,
-        error: null, reset: false, messages: [], sends: [] } });
+    const after = Number.isSafeInteger(event.after) && event.after > 0 ? event.after : 0;
+    if (!sessionId || !sessions.view(sessionId)) {
+      return replyTo(event, { messages: [], busy: false, cursor: after, readable: true, ended: true, reset: false, sends: [] });
     }
+    const fresh = !sessions.chatView(sessionId);
     sessions.watchChat(sessionId);
-    const read = sessions.chatView(sessionId, event.after);
-    return replyTo(event, { chat: { sessionId, host: view.host, repo: view.repo, ended: false, ...read,
-      sends: sessions.wakesOf(sessionId, 'chat').map(({ wakeId, state, error }) => ({ wakeId, state, error })) } });
-  }
-
-  function onChatCloseEvent(event) {
-    sessions.unwatchChat(typeof event.sessionId === 'string' ? event.sessionId : null);
-    return replyTo(event, { closed: true });
+    if (fresh) {
+      await settled(() => { const view = sessions.chatView(sessionId); return !view || view.readable || view.error; },
+        options.chatFirstReadMs ?? CHAT_FIRST_READ_MS);
+    }
+    const read = sessions.chatView(sessionId, after);
+    if (!read) return replyTo(event, { messages: [], busy: false, cursor: after, readable: true, ended: true, reset: false, sends: [] });
+    return replyTo(event, {
+      messages: read.messages,
+      busy: read.busy,
+      cursor: read.messages.length ? read.messages.at(-1).seq : after,
+      readable: read.error ?? true,
+      ended: false,
+      reset: read.reset,
+      sends: sessions.wakesOf(sessionId, 'chat').map(({ wakeId, state, error }) => ({ wakeId, state, error })),
+    });
   }
 
   /**
-   * The user's message from the chat panel: cleaned (line breaks kept), refused when empty or over MAX_CHAT_TEXT,
-   * and queued as a `chat` wake on the session's own channel. Its state shows in the next `chat` answer's sends.
+   * The user's message from the chat panel (`agent_send`): cleaned (line breaks kept), refused when empty or over
+   * MAX_CHAT_TEXT, and queued as a `chat` wake on the session's own channel. Answers {ok: true, wakeId} once the session
+   * delivered it, the wake's error when it failed, and {ok: true, wakeId, state} when it is still on its way after
+   * CHAT_SEND_WAIT_MS (the extension stops waiting at 10 s); agent_chat's sends then carry its outcome.
    */
-  function onChatSendEvent(event) {
+  async function onAgentSendEvent(event) {
     const fail = (code, message) => replyTo(event, { error: { code, message } });
     const sessionId = typeof event.sessionId === 'string' ? event.sessionId : null;
     const view = sessionId ? sessions.view(sessionId) : null;
@@ -1574,9 +1596,13 @@ export function createDaemon(options = {}) {
     if (sessions.wakesOf(sessionId, 'chat').filter(wake => t - wake.createdMs < 60_000).length >= CHAT_SENDS_PER_MINUTE) {
       return fail('rate_limited', 'Too many messages in a minute; wait a moment.');
     }
-    const wake = sessions.queueWake(sessionId, { kind: 'chat', userText: text });
-    if (!wake) return fail('cannot_wake', 'FAI cannot send messages to this agent session.');
-    return replyTo(event, { wake: { wakeId: wake.wakeId, state: wake.state, error: wake.error } });
+    const queued = sessions.queueWake(sessionId, { kind: 'chat', userText: text });
+    if (!queued) return fail('cannot_wake', 'FAI cannot send messages to this agent session.');
+    const done = wake => ['delivered', 'failed', 'skipped'].includes(wake?.state);
+    await settled(() => done(sessions.wake(queued.wakeId)), options.chatSendWaitMs ?? CHAT_SEND_WAIT_MS);
+    const wake = sessions.wake(queued.wakeId);
+    if (wake?.state === 'failed') return fail(wake.error?.code ?? 'wake_failed', wake.error?.message ?? 'The message was not delivered.');
+    return replyTo(event, { ok: true, wakeId: queued.wakeId, ...(done(wake) ? {} : { state: wake?.state ?? 'queued' }) });
   }
 
   /**
@@ -1979,12 +2005,16 @@ export function createDaemon(options = {}) {
           return onInviteCancelEvent(event);
         case 'agents':
           return onAgentsEvent(event);
-        case 'chat':
-          return onChatEvent(event);
-        case 'chat_close':
-          return onChatCloseEvent(event);
-        case 'chat_send':
-          return onChatSendEvent(event);
+        case 'agent_chat':
+          return onAgentChatEvent(event).catch(error => {
+            log('hub_event_error', { type: event.type, message: String(error?.message ?? error).slice(0, 200) });
+            replyTo(event, { error: { code: 'internal', message: 'Daemon error' } });
+          });
+        case 'agent_send':
+          return onAgentSendEvent(event).catch(error => {
+            log('hub_event_error', { type: event.type, message: String(error?.message ?? error).slice(0, 200) });
+            replyTo(event, { error: { code: 'internal', message: 'Daemon error' } });
+          });
         case 'usage':
           return saveKnownBrowsers(event.browsers);
         case 'approval':
