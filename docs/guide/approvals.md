@@ -48,7 +48,9 @@ Some actions are offered to the agent marked `needsApproval` ("asks the user"):
 | secret handle | `fill_secret`, `copy_secret` | always, whatever the settings |
 | committing Enter | An Enter the agent declares `commits: true`: sending a message, submitting an application, booking | always, whatever the settings (Test site: runs without asking) |
 
-When the agent acts on one, the call **blocks** and a small **"Approve this action?"** window opens with a red `!` badge. It shows:
+When the agent acts on one, the call **blocks** and a small **"Approve this action?"** window opens with a red `!` badge. The window always
+opens on its own, at the top right of the browser window that holds the agent's tab, also when that window is in front, so you
+do not need to open FAI Browser to see that the agent is waiting. The window shows:
 
 - the site and tab title (from the browser, not the page),
 - what kind of action it is,

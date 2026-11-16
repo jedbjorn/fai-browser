@@ -2742,29 +2742,46 @@ test('approve: the window, badge and card show the request; Approve once mints a
   assert.equal(h.pageArgs.filter(c => c.method === 'execute').length, executes);
 });
 
-test('approve: a supported toolbar popup keeps the same one-click approval without a standalone window', async () => {
-  // The driven tab's window (1) is the focused, last focused one: the popup opens over it.
+// Spec #86 acceptance 1: the driven tab's window is the focused and last focused one, and the browser supports
+// action.openPopup; the approval window still opens over it, and the toolbar popup is never tried.
+test('approve: with the tab\'s window focused, the approval window opens over it; the toolbar popup is never called', async () => {
   const h = await started({ level: 'full', actionOpenPopup: 'ok',
     lastWindow: { id: 1, type: 'normal', incognito: false, left: 100, top: 50, width: 1200, height: 800 } });
   const { id, entry } = await asked(h);
-  await h.until(() => h.actionPopupCalls.length === 1);
-  assert.equal(h.popupWindows.some(options => options.url.includes('approve.html?id=')), false);
+  await h.until(() => h.popupWindows.some(options => options.url.includes('approve.html?id=')));
+  assert.deepEqual(clone(h.popupWindows.filter(options => options.url.includes('approve.html'))), [{
+    url: `chrome-extension://ext/approve.html?id=${entry.id}`, type: 'popup', width: 440, height: 420, focused: true,
+    left: 100 + 1200 - 440 - 24, top: 50 + 90 }]);
+  assert.equal(h.actionPopupCalls.length, 0, 'never the toolbar popup for an action approval');
   const decided = await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
   assert.equal(decided.error, undefined, JSON.stringify(decided));
   const reply = await h.waitFor(m => m.type === 'result' && m.id === id);
   assert.equal(reply.result.decision, 'approved');
   assert.match(reply.result.approvalId, /^[0-9a-f-]{36}$/);
+  assert.equal(h.actionPopupCalls.length, 0);
+});
+
+// Spec #86 acceptance 3: the agent asks again for the same entry while its window is open: no second window.
+test('approve: asking twice for the same entry opens one window', async () => {
+  const h = await started({ level: 'full', actionOpenPopup: 'ok' });
+  const first = await asked(h, { waitMs: 20 });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === first.id)).result.decision, 'pending');
+  const second = await asked(h, { waitMs: 20 });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === second.id)).result.decision, 'pending');
+  assert.equal(second.entry.id, first.entry.id, 'the same entry');
+  assert.equal(h.popupWindows.filter(options => options.url.includes('approve.html')).length, 1);
+  assert.equal(h.actionPopupCalls.length, 0);
 });
 
 // Spec #79 "Window over the driven tab": the window opens inside the window that holds the approval's tab (window 1
-// here), not the last focused one (window 2), and the toolbar popup only when the tab's own window is focused.
+// here), not the last focused one (window 2).
 test('approve: the window opens over the driven tab\'s window, top right, not over the last focused window', async () => {
   const h = await started({ level: 'full', actionOpenPopup: 'ok',
     tabWindow: { type: 'normal', focused: false, state: 'normal', left: 2000, top: 100, width: 1000, height: 700 },
     lastWindow: { id: 2, type: 'normal', incognito: false, left: 0, top: 0, width: 1200, height: 800 } });
   const { entry } = await asked(h);
   await h.until(() => h.popupWindows.some(options => options.url.includes('approve.html?id=')));
-  assert.equal(h.actionPopupCalls.length, 0, 'the toolbar popup would open in the focused window, not the tab\'s');
+  assert.equal(h.actionPopupCalls.length, 0, 'never the toolbar popup for an action approval');
   const popup = h.popupWindows.find(options => options.url.includes('approve.html?id='));
   assert.deepEqual(clone(popup), { url: `chrome-extension://ext/approve.html?id=${entry.id}`, type: 'popup', width: 440,
     height: 420, focused: true, left: 2000 + 1000 - 440 - 24, top: 100 + 90 });
