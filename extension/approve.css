@@ -2,6 +2,8 @@
 .approval-card { border-left-color: #b3261e; }
 .approval-label, .approve-facts q { font-weight: 650; overflow-wrap: anywhere; }
 .approval-label { margin: 0 0 6px; font-size: 13px; }
+.page-text { font-style: italic; overflow-wrap: anywhere; }
+.page-changed { font-weight: 650; }
 .page-text-note { color: var(--muted, #6b6359); font-size: 11px; font-weight: 400; }
 .approve-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; margin: 10px 0; font-size: 12px; }
 .approve-facts dt { color: var(--muted, #6b6359); }

@@ -4,7 +4,7 @@
 // a total the page shows and the agent's one line (both untrusted, marked as such). Approve once or Deny; neither
 // button has focus at first, so no key press decides. It closes itself once the action no longer waits. Everything
 // an agent or a page wrote is rendered with textContent only.
-import { ENTER_COMMIT_TEXT, KIND_TEXT, SECRET_USE_TEXT, enterCommitLine, originText, secretUseLine } from './approval-card.js';
+import { ENTER_COMMIT_TEXT, KIND_TEXT, PAGE_CHANGED_TEXT, SECRET_USE_TEXT, directLine, enterCommitLine, originText, secretUseLine } from './approval-card.js';
 
 const id = new URLSearchParams(location.search).get('id');
 const approve = document.getElementById('approve');
@@ -41,6 +41,7 @@ function render(list) {
   document.getElementById('label').textContent = secretUse && entry.kind === 'copy_secret' ? (entry.secret?.label ?? '') : entry.label || '(unlabelled control)';
   show('total', entry.total ? `${entry.total} (as the page shows it)` : '');
   show('note', entry.note ? `${entry.note} (the agent's words, not checked)` : '');
+  show('changed', entry.pageChanged ? PAGE_CHANGED_TEXT : '');
   const minutes = Math.max(1, Math.round((entry.expiresAt - Date.now()) / 60_000));
   const wait = `This request waits about ${minutes} more minute${minutes === 1 ? '' : 's'}.`;
   if (secretUse) {
@@ -66,6 +67,7 @@ function render(list) {
     document.getElementById('detail').textContent = `Approve once lets the agent answer OK to the page's next confirm or prompt `
       + `(within a minute). The text above is the page's own. ${wait}`;
   } else {
+    document.getElementById('headline').replaceChildren(...directLine(entry));
     document.getElementById('detail').textContent = `Approve once lets the agent click this control one time, on the page as `
       + `it is now (within a minute). Nothing else is allowed. ${wait}`;
   }
