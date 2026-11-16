@@ -10,7 +10,7 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CHAT_CODES, chatTurnText, cleanChatText, clipProviderError, createChatRunner } from '../src/chat-runner.js';
-import { createChatStore } from '../src/chat-store.js';
+import { createChatStore, renameRetrying } from '../src/chat-store.js';
 import { turnCommand } from '../src/chat-providers.js';
 
 const STANDIN = join(import.meta.dirname, 'helpers', 'chat-standin.js');
@@ -262,4 +262,24 @@ test('close stops every running turn (daemon shutdown)', async t => {
   assert.equal((await turn.done).code, 'chat_stopped');
   await until(() => !alive(pid));
   await assert.rejects(ctx.runner.send({ provider: 'claude', text: 'late' }), { code: 'chat_start_failed' });
+});
+
+test('the transcript header\'s rename is retried while Windows refuses it (the panel reading the file), then gives up', async () => {
+  const refusing = (codes) => {
+    const seen = [];
+    return { seen, rename: async (from, to) => {
+      seen.push([from, to]);
+      const code = codes.shift();
+      if (code) throw Object.assign(new Error(code), { code });
+    } };
+  };
+  const flaky = refusing(['EPERM', 'EBUSY', 'EACCES']);
+  await renameRetrying('a.tmp', 'a', { rename: flaky.rename, waitMs: 1 });
+  assert.equal(flaky.seen.length, 4, 'three refusals, then it lands');
+  const missing = refusing(['ENOENT']);
+  await assert.rejects(renameRetrying('a.tmp', 'a', { rename: missing.rename, waitMs: 1 }), { code: 'ENOENT' });
+  assert.equal(missing.seen.length, 1, 'any other error is not retried');
+  const stuck = refusing(Array(10).fill('EPERM'));
+  await assert.rejects(renameRetrying('a.tmp', 'a', { rename: stuck.rename, tries: 3, waitMs: 1 }), { code: 'EPERM' });
+  assert.equal(stuck.seen.length, 3);
 });

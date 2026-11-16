@@ -4,7 +4,7 @@
 // `fai` line may add `code` and `providerText`). Writes to one chat run one after another; the header is rewritten
 // by a rename, never in place.
 import { randomBytes } from 'node:crypto';
-import { appendFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, readdir, rename as fsRename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -27,6 +27,24 @@ export function localChatsDir(env = process.env, platform = process.platform) {
 /** True for an id this store makes: it is also a safe folder name. */
 export function validChatId(chatId) {
   return typeof chatId === 'string' && CHAT_ID.test(chatId);
+}
+
+const RENAME_TRIES = 20;
+const RENAME_WAIT_MS = 50;
+
+/**
+ * Rename `from` over `to`, retrying for about a second while Windows refuses because another handle has `to` open
+ * (EPERM, EACCES, EBUSY: the panel reading the transcript while a turn rewrites its header).
+ */
+export async function renameRetrying(from, to, { rename = fsRename, tries = RENAME_TRIES, waitMs = RENAME_WAIT_MS } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await rename(from, to);
+    } catch (error) {
+      if (attempt >= tries || !['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error;
+      await new Promise(resolveWait => setTimeout(resolveWait, waitMs));
+    }
+  }
 }
 
 /** A new chat id. */
@@ -125,7 +143,12 @@ export function createChatStore({ root, now = Date.now }) {
         const header = { ...JSON.parse(content.slice(0, split)), ...patch, type: 'header' };
         const temporary = `${file}.${randomBytes(6).toString('hex')}.tmp`;
         await writeFile(temporary, `${JSON.stringify(header)}${content.slice(split)}`);
-        await rename(temporary, file);
+        try {
+          await renameRetrying(temporary, file);
+        } catch (error) {
+          await rm(temporary, { force: true });
+          throw error;
+        }
         return headerView(chatId, header);
       });
     },
@@ -189,7 +212,8 @@ export function createChatStore({ root, now = Date.now }) {
       return serial(chatId, async () => {
         const dir = dirOf(chatId);
         const existed = await stat(dir).then(() => true, () => false);
-        await rm(dir, { recursive: true, force: true });
+        // Retried like the header's rename: on Windows a transcript the panel is reading cannot be removed yet.
+        await rm(dir, { recursive: true, force: true, maxRetries: RENAME_TRIES, retryDelay: RENAME_WAIT_MS });
         nextIds.delete(chatId);
         return existed;
       });
