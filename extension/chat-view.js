@@ -1,7 +1,7 @@
 // The chat panel's pure rules (extension/panel.js): which provider and which open agent are chosen by default, the
 // fixed FAI-written line for each reason code, message limits, and how a sent message is matched to the one the host
 // later writes. No DOM and no browser API here, so the rules are tested directly (test/chat-panel.test.js).
-import { WAKE_REASON_TEXT } from './invite-card.js';
+import { HOST_NAMES, WAKE_REASON_TEXT } from './invite-card.js';
 
 // The order a new chat's provider is chosen in (spec #84 "Defaults"; FnB, 2026-11-16).
 export const PROVIDER_ORDER = Object.freeze(['codex', 'claude', 'opencode']);
@@ -20,22 +20,21 @@ export function providerName(provider) {
 }
 
 /**
- * FAI's own line for a reason code (spec #84 "Availability"): one fixed sentence naming the fix. `exit` is the exit
- * status of a turn the program failed. Unknown codes get a generic line; nothing the daemon sends is shown as the line.
+ * The panel's own line for a turn's reason code (spec #84 "Availability"), or null for a code it has no text for: the
+ * caller then shows the service's own message. Availability fix lines (not installed, signed out, version) are the
+ * service's `line` on each chat_providers entry, shown as is (Sprint 3 panel contract, amendment 1). `exit` is the exit
+ * status of a turn the program failed.
  */
 export function reasonLine(code, provider, { exit = null } = {}) {
   const name = providerName(provider);
   switch (code) {
-    case 'chat_not_installed': return `Install ${name} to chat with it here.`;
-    case 'chat_signed_out': return `Sign in to the ${name} command line once, then try again.`;
-    case 'chat_unsupported_version': return `Update ${name} to chat with it here.`;
     case 'chat_no_model': return 'Choose an OpenCode model in Settings to chat with OpenCode.';
     case 'chat_start_failed': return `${name} could not be started.`;
     case 'chat_stopped': return 'Stopped.';
     case 'chat_timed_out': return 'This turn ran for 30 minutes and was stopped.';
     case 'chat_too_many': return 'Three chats are already running. Wait for one to finish, or stop one.';
     case 'chat_turn_failed': return `${name} could not finish this turn${Number.isInteger(exit) ? ` (exit ${exit})` : ''}.`;
-    default: return 'Something went wrong. Try again.';
+    default: return null;
   }
 }
 
@@ -80,13 +79,31 @@ export function defaultAgent(sessions, requests, windowTabIds) {
  */
 export function agentBlockedLine(session) {
   if (['codex', 'opencode'].includes(session?.host) && session.ready === false) {
-    return 'This agent is not ready yet. Ask it to run any FAI command.';
+    return NOT_READY;
   }
   if (session?.wake === 'none' || (session?.wakeReason && session.wakeReason !== 'ok')) {
     return Object.hasOwn(WAKE_REASON_TEXT, session.wakeReason) && session.wakeReason !== 'ok'
       ? WAKE_REASON_TEXT[session.wakeReason] : 'FAI cannot send messages to this agent.';
   }
   return null;
+}
+
+const NOT_READY = 'This agent is not ready yet. Ask it to run any FAI command.';
+
+/**
+ * The line for agent_chat's `readable` when it is not true ({code, host, version}), and whether sending is closed too:
+ * not_ready (a Codex or OpenCode session before its first FAI call) and ambiguous_session (several OpenCode sessions on
+ * one server) neither read nor send; any other code is a reader that cannot read, and sending stays open (spec #80).
+ * Null when it reads.
+ */
+export function readableLine(readable, session) {
+  if (readable === true || readable === undefined || readable === null) return null;
+  if (readable?.code === 'not_ready') return { text: NOT_READY, blocks: true };
+  if (readable?.code === 'ambiguous_session') {
+    return { text: 'Several OpenCode sessions share one OpenCode server, so FAI cannot tell which one this is. Run one session per server to chat here.', blocks: true };
+  }
+  const host = HOST_NAMES[readable?.host] ?? HOST_NAMES[session?.host] ?? 'Agent';
+  return { text: unreadableLine(readable, host), blocks: false };
 }
 
 /** "Can't read this conversation (Codex 0.169.0). …": the line for a reader that cannot find or parse its source. */

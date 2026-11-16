@@ -8,7 +8,7 @@ import { chatApi } from './chat-api.js';
 import {
   agentBlockedLine, APPEARANCES, availableProviders, CHATS_PAGE, composerProblem, defaultAgent, defaultProvider,
   faiLine, formatSize, MAX_FILES, MAX_PROVIDER_TEXT, needsOpenCodeModel, PROVIDER_ORDER, providerName, reasonLine,
-  relativeTime, unmatchedPending, unreadableLine,
+  readableLine, relativeTime, unmatchedPending,
 } from './chat-view.js';
 import { agentLabel, HOST_NAMES } from './invite-card.js';
 import { element } from './ui.js';
@@ -180,7 +180,7 @@ async function readChat() {
   if (!chat) return;
   let reply;
   try {
-    reply = await chatApi.read(chat.chatId, state.cursor);
+    reply = await chatApi.history(chat.chatId, state.cursor);
   } catch (error) {
     if (state.chat === chat) setNotice(error.message);
     return;
@@ -214,12 +214,15 @@ async function readAgent() {
     return;
   }
   if (state.agent !== agent) return;
+  // `reset`: our cursor fell out of the service's 200-message window, so its messages replace ours.
+  if (reply.reset === true) state.agentMessages = [];
   const seen = new Set(state.agentMessages.map(message => message.id));
   state.agentMessages.push(...(Array.isArray(reply.messages) ? reply.messages : []).filter(message => !seen.has(message.id)));
   state.agentCursor = reply.cursor ?? state.agentCursor;
   state.busy = reply.busy === true;
   state.readable = reply.readable ?? true;
   state.ended = reply.ended === true;
+  applySends(Array.isArray(reply.sends) ? reply.sends : []);
   state.pending = unmatchedPending(state.pending, state.agentMessages);
   setNotice(null);
   render();
@@ -249,7 +252,7 @@ function readFile(file) {
 }
 
 function errorLine(error, provider) {
-  return typeof error?.code === 'string' && error.code.startsWith('chat_') ? reasonLine(error.code, provider) : error?.message;
+  return reasonLine(error?.code, provider) ?? error?.message;
 }
 
 async function sendChat(text) {
@@ -289,13 +292,28 @@ async function sendChat(text) {
   if (!ui.text.disabled) ui.text.focus();
 }
 
+// A chat wake still being delivered when agent_send answered: its outcome arrives in agent_chat's `sends`.
+function applySends(sends) {
+  for (const item of state.pending) {
+    const wake = item.wakeId ? sends.find(send => send.wakeId === item.wakeId) : null;
+    if (!wake || item.state !== 'sending') continue;
+    if (wake.state === 'delivered') item.state = 'sent';
+    else if (wake.state === 'failed') {
+      item.state = 'failed';
+      item.reason = wake.error?.message ?? 'the agent did not take it';
+    }
+  }
+}
+
 function sendAgent(item) {
   const agent = state.agent;
   item.state = 'sending';
   item.reason = null;
+  item.wakeId = null;
   render();
-  chatApi.agentSend(agent.sessionId, item.text).then(() => {
-    item.state = 'sent';
+  chatApi.agentSend(agent.sessionId, item.text).then(reply => {
+    item.wakeId = typeof reply.wakeId === 'string' ? reply.wakeId : null;
+    item.state = ['queued', 'sent'].includes(reply.state) && item.wakeId ? 'sending' : 'sent';
   }, error => {
     item.state = 'failed';
     item.reason = error.message;
@@ -618,7 +636,7 @@ function modelSetting(provider) {
     saveSettings({ models: { [provider]: select.value || null } });
   });
   let help;
-  if (!available) help = reasonLine(info?.code ?? 'chat_not_installed', provider);
+  if (!available) help = info?.line ?? '';
   else if (listed?.error) help = `${name} did not list its models. Type a model name.`;
   else if (!listed) help = 'Reading the list…';
   else help = provider === 'opencode' ? 'OpenCode needs a model to chat.' : `Empty: ${name} picks its own default.`;
@@ -686,9 +704,11 @@ function metaSelect(label, options, value, onChange) {
   return select;
 }
 
-function modelOptions(provider, current) {
+// `reported`: the model the program chose itself, as it named it in its output (spec #84 "Defaults").
+function modelOptions(provider, current, reported = null) {
   const listed = state.models[provider]?.models ?? [];
-  const options = [['', provider === 'opencode' ? 'Choose a model' : 'Default model']];
+  const fallback = provider === 'opencode' ? 'Choose a model' : 'Default model';
+  const options = [['', typeof reported === 'string' && reported ? `Default (${reported.slice(0, 60)})` : fallback]];
   for (const model of new Set([...listed, ...(current ? [current] : [])])) options.push([model, model]);
   return options;
 }
@@ -724,7 +744,7 @@ function renderHeader() {
     ensureModels(state.chat.provider);
     meta.push(element('span', 'meta-text', providerName(state.chat.provider)));
     // A chat keeps its provider; its model can change and applies from the next turn (spec #84).
-    meta.push(metaSelect('Model for this chat', modelOptions(state.chat.provider, state.chat.model), state.chat.model ?? '', value => {
+    meta.push(metaSelect('Model for this chat', modelOptions(state.chat.provider, state.chat.model, state.chat.reportedModel), state.chat.model ?? '', value => {
       const chat = state.chat;
       chat.model = value || null;
       chatApi.setModel(chat.chatId, value || null).catch(error => setNotice(error.message));
@@ -745,7 +765,7 @@ function messageNode(message, provider) {
     // FAI's own fixed line, then the program's own words for a turn it failed (decision #28): plain text, clipped,
     // and marked as the provider's.
     node.dataset.kind = 'error';
-    node.append(element('span', '', reasonLine(message.code, provider, { exit: message.exit })));
+    node.append(element('span', '', reasonLine(message.code, provider, { exit: message.exit }) ?? String(message.text || 'This turn failed.')));
     if (message.code === 'chat_turn_failed' && message.providerText) {
       node.append(element('span', 'provider-said-label', `${providerName(provider)} said:`),
         element('p', 'provider-said', String(message.providerText).slice(0, MAX_PROVIDER_TEXT)));
@@ -809,8 +829,9 @@ function emptyView() {
   for (const id of PROVIDER_ORDER) {
     const info = state.providers.find(item => item.provider === id);
     const row = element('li', 'provider-row');
-    row.append(element('span', 'provider-row-name', providerName(id)),
-      element('span', 'provider-row-fix', reasonLine(info?.code ?? 'chat_not_installed', id)));
+    // The service's own name and fixed fix line, shown as is.
+    row.append(element('span', 'provider-row-name', info?.name ?? providerName(id)),
+      element('span', 'provider-row-fix', info?.line ?? ''));
     list.append(row);
   }
   nodes.push(list);
@@ -826,7 +847,7 @@ function emptyView() {
 function renderComposer() {
   const agent = state.view === 'agent';
   const running = state.view === 'chat' && state.chat?.running === true;
-  const blocked = agent ? agentBlockedLine(state.agent) : null;
+  const blocked = agent ? agentBlockedLine(state.agent) ?? readableLine(state.readable, state.agent)?.blocks : null;
   const usable = ['new', 'chat', 'agent'].includes(state.view);
   ui.composer.hidden = !usable;
   // While a turn runs the composer is disabled and Stop replaces Send (spec #84 "Layout").
@@ -878,8 +899,9 @@ function render() {
     const lines = [];
     if (state.ended) lines.push('This agent session has ended.');
     else {
-      if (state.readable !== true) lines.push(unreadableLine(state.readable, HOST_NAMES[state.agent?.host] ?? 'Agent'));
       const blocked = agentBlockedLine(state.agent);
+      const unread = readableLine(state.readable, state.agent);
+      if (unread && unread.text !== blocked) lines.push(unread.text);
       if (blocked) lines.push(blocked);
     }
     if (lines.length) setNotice(lines.join(' '));

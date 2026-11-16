@@ -24,7 +24,7 @@ export function installFakeChrome(scenario) {
     agent(sessionId, change) { Object.assign(s.agentReads[sessionId] ??= { messages: [] }, change); },
   };
   const chatView = chat => ({ chatId: chat.chatId, title: chat.title, provider: chat.provider, model: chat.model ?? null,
-    running: Boolean(chat.running) });
+    ...(chat.reportedModel ? { reportedModel: chat.reportedModel } : {}), running: Boolean(chat.running) });
   const now = () => new Date().toISOString();
 
   function answer(message) {
@@ -33,7 +33,7 @@ export function installFakeChrome(scenario) {
     switch (message.type) {
       case 'state': return worker;
       case 'agents': return { ...worker, agents: { sessions: s.agents, invites: [] } };
-      case 'chat_providers': return { providers: s.providers };
+      case 'chat_providers': return { providers: s.providers, defaultProvider: s.providers.find(item => item.available)?.provider ?? null };
       case 'chat_settings': return { settings: s.settings };
       case 'chat_settings_set': s.settings = message.settings; return { settings: s.settings };
       case 'chat_models': {
@@ -46,7 +46,7 @@ export function installFakeChrome(scenario) {
         const next = message.offset + message.limit < sorted.length ? message.offset + message.limit : null;
         return { chats: page.map(chat => ({ ...chatView(chat), lastActiveAt: chat.lastActiveAt })), next };
       }
-      case 'chat_read': {
+      case 'chat_history': {
         const chat = s.chats.find(item => item.chatId === message.chatId);
         if (!chat) return fail('No such chat', 'unknown_chat');
         const all = s.transcripts[chat.chatId] ?? [];
@@ -101,10 +101,14 @@ export function installFakeChrome(scenario) {
       case 'agent_chat': {
         const read = s.agentReads[message.sessionId];
         if (!read) return fail('This agent session has ended.', 'session_ended');
-        const all = read.messages ?? [];
-        const after = Number.isInteger(message.after) ? message.after : 0;
+        const all = (read.messages ?? []).map((item, index) => ({ seq: index + 1, ...item }));
+        // A cursor older than the window (read.window) gets the window with reset, like the service's 200 messages.
+        let after = Number.isInteger(message.after) ? message.after : 0;
+        const floor = read.window ? Math.max(0, all.length - read.window) : 0;
+        const reset = after < floor;
+        if (reset) after = floor;
         return { messages: all.slice(after), cursor: all.length, busy: Boolean(read.busy), readable: read.readable ?? true,
-          ended: Boolean(read.ended) };
+          ended: Boolean(read.ended), ...(reset ? { reset: true } : {}), sends: read.sends ?? [] };
       }
       case 'agent_send': {
         if (s.agentSendError) return fail(s.agentSendError, 'wake_failed');
@@ -112,7 +116,13 @@ export function installFakeChrome(scenario) {
         if (read && s.echoMs !== undefined) {
           setTimeout(() => read.messages.push({ id: `u${Date.now()}`, role: 'user', text: message.text, at: now() }), s.echoMs);
         }
-        return { ok: true };
+        const wakeId = `wake_${sent.filter(item => item.type === 'agent_send').length}`;
+        // Delivery still running when the service answers: the outcome comes later in agent_chat's sends.
+        if (s.agentSendQueued && read) {
+          setTimeout(() => (read.sends ??= []).push({ wakeId, state: 'delivered', error: null }), s.agentSendQueued);
+          return { ok: true, wakeId, state: 'queued' };
+        }
+        return { ok: true, wakeId };
       }
       default: return fail('Unsupported control');
     }
@@ -145,14 +155,18 @@ export function fakeChromeSource(scenario) {
 
 const minutesAgo = minutes => new Date(Date.now() - minutes * 60_000).toISOString();
 export const ALL_PROVIDERS = [
-  { provider: 'codex', available: true, code: null, version: '0.169.0' },
-  { provider: 'claude', available: true, code: null, version: '2.1.325' },
-  { provider: 'opencode', available: true, code: null, version: '1.19.5' },
+  { provider: 'codex', name: 'Codex', available: true, code: null, version: '0.169.0', line: null },
+  { provider: 'claude', name: 'Claude', available: true, code: null, version: '2.1.325', line: null },
+  { provider: 'opencode', name: 'OpenCode', available: true, code: null, version: '1.19.5', line: null },
 ];
 export const NO_PROVIDERS = [
-  { provider: 'codex', available: false, code: 'chat_not_installed', version: null },
-  { provider: 'claude', available: false, code: 'chat_signed_out', version: '2.1.325' },
-  { provider: 'opencode', available: false, code: 'chat_unsupported_version', version: '1.12.0' },
+  // The service's own fixed lines (WU13/WU16 own the wording); the panel shows them as is.
+  { provider: 'codex', name: 'Codex', available: false, code: 'chat_not_installed', version: null,
+    line: 'Install the Codex command line, then reopen this panel.' },
+  { provider: 'claude', name: 'Claude', available: false, code: 'chat_signed_out', version: '2.1.325',
+    line: 'Sign in to the Claude command line once (run claude, then /login).' },
+  { provider: 'opencode', name: 'OpenCode', available: false, code: 'chat_unsupported_version', version: '1.12.0',
+    line: 'Update OpenCode to 1.19 or later in the 1.x series.' },
 ];
 export const MODELS = {
   codex: ['gpt-5.5-sol', 'gpt-5.5-sol-mini', 'gpt-5.4'],

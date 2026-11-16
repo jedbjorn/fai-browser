@@ -119,7 +119,7 @@ const RECOVERABLE = new Set(['stale', 'target_unavailable', 'capture_failed']);
 // The chat panel's messages (extension/chat-api.js has the contract): accepted only from panel.html and forwarded to
 // the service unchanged, as replies over the socket or on HTTP at /<type with dashes> (chat_list -> /chat-list).
 const PANEL_MESSAGES = new Set(['chat_providers', 'chat_settings', 'chat_settings_set', 'chat_models', 'chat_list',
-  'chat_read', 'chat_file', 'chat_send', 'chat_stop', 'chat_delete', 'chat_model', 'agent_chat', 'agent_send']);
+  'chat_history', 'chat_file', 'chat_send', 'chat_stop', 'chat_delete', 'chat_model', 'agent_chat', 'agent_send']);
 const REPLY_TYPES = new Set(['hello', 'lease', 'lease_level', 'deny', 'validate', 'settings', 'update', 'move',
   'invite', 'invite_cancel', 'agents', ...PANEL_MESSAGES]);
 const HTTP_PATHS = {

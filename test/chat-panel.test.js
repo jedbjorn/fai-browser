@@ -10,7 +10,7 @@ import { chromium } from 'playwright-core';
 import { headlessEnv } from '../scripts/headless-env.mjs';
 import { firefoxManifest } from '../scripts/build-firefox.mjs';
 import {
-  agentBlockedLine, composerProblem, defaultAgent, defaultProvider, faiLine, MAX_TEXT, needsOpenCodeModel, reasonLine,
+  agentBlockedLine, composerProblem, defaultAgent, defaultProvider, faiLine, MAX_TEXT, needsOpenCodeModel, readableLine, reasonLine,
   unmatchedPending,
 } from '../extension/chat-view.js';
 import {
@@ -48,15 +48,21 @@ test('the open agent chosen by default: the owner of a task tab in this window, 
   assert.equal(defaultAgent([], [task], [7]), null);
 });
 
-test('FAI\'s own lines are fixed per code; nothing the service sends becomes the line', () => {
-  const codes = ['chat_not_installed', 'chat_signed_out', 'chat_unsupported_version', 'chat_no_model', 'chat_start_failed',
-    'chat_stopped', 'chat_timed_out', 'chat_too_many', 'chat_turn_failed'];
+test('a turn\'s reason codes have fixed lines; provider fix lines and unknown codes are the service\'s own', () => {
+  const codes = ['chat_no_model', 'chat_start_failed', 'chat_stopped', 'chat_timed_out', 'chat_too_many', 'chat_turn_failed'];
   const lines = codes.map(code => reasonLine(code, 'claude', { exit: 2 }));
   assert.equal(new Set(lines).size, codes.length);
-  assert.equal(reasonLine('chat_signed_out', 'claude'), 'Sign in to the Claude command line once, then try again.');
   assert.equal(reasonLine('chat_stopped', 'codex'), 'Stopped.');
   assert.equal(reasonLine('chat_turn_failed', 'codex', { exit: 1 }), 'Codex could not finish this turn (exit 1).');
-  assert.equal(reasonLine('<b>made up</b>', 'codex'), 'Something went wrong. Try again.');
+  // The availability fix lines come from chat_providers' `line` (contract amendment 1): the panel writes none.
+  for (const code of ['chat_not_installed', 'chat_signed_out', 'chat_unsupported_version', 'unknown_chat', '<b>made up</b>']) {
+    assert.equal(reasonLine(code, 'codex'), null, code);
+  }
+  assert.equal(readableLine(true, CLAUDE_AGENT), null);
+  assert.deepEqual(readableLine({ code: 'unreadable', host: 'codex', version: '0.169.0' }, CLAUDE_AGENT),
+    { text: 'Can\'t read this conversation (Codex 0.169.0). Messages you send still reach the agent.', blocks: false });
+  assert.equal(readableLine({ code: 'not_ready' }, CODEX_AGENT).blocks, true);
+  assert.equal(readableLine({ code: 'ambiguous_session', host: 'opencode' }, CODEX_AGENT).blocks, true);
   assert.equal(faiLine('[FAI Browser] Approved tab request r12.\nMore'), 'FAI: Approved tab request r12.');
   assert.equal(agentBlockedLine(CODEX_AGENT), 'This agent is not ready yet. Ask it to run any FAI command.');
   assert.equal(agentBlockedLine(CLAUDE_AGENT), null);
@@ -165,9 +171,8 @@ test('no provider available: the three providers with their fix lines, and the o
   const page = await open(t, { providers: NO_PROVIDERS });
   const empty = await page.textContent('#empty');
   assert.match(empty, /No chat provider is ready/);
-  assert.match(empty, /Install Codex to chat with it here\./);
-  assert.match(empty, /Sign in to the Claude command line once/);
-  assert.match(empty, /Update OpenCode to chat with it here\./);
+  // Each provider's name and fix line are the service's, as is.
+  for (const provider of NO_PROVIDERS) assert.ok(empty.includes(`${provider.name}${provider.line}`), provider.provider);
   assert.match(empty, /Claude Code · fai-browser/);
   assert.equal(await page.isVisible('#composer'), false);
   await page.click('#empty [data-session-id="ses_1"]');
@@ -352,7 +357,7 @@ test('open agents: Not delivered with Retry, a session that ended, one that cann
   await page.waitForSelector('[data-pending="sent"]');
   assert.equal((await sent(page, 'agent_send')).length, 2, 'no automatic retry: one per click');
 
-  await page.evaluate(() => globalThis.__fake.agent('ses_1', { readable: { code: 'unreadable', version: '2.1.325' } }));
+  await page.evaluate(() => globalThis.__fake.agent('ses_1', { readable: { code: 'unreadable', host: 'claude', version: '2.1.325' } }));
   await page.waitForFunction(() => document.getElementById('notice').textContent.includes('Can\'t read'));
   assert.equal(await page.textContent('#notice'), 'Can\'t read this conversation (Claude Code 2.1.325). Messages you send still reach the agent.');
   assert.equal(await page.isEnabled('#text'), true, 'sending stays available');
@@ -366,6 +371,50 @@ test('open agents: Not delivered with Retry, a session that ended, one that cann
   await page.click('#agent-list [data-session-id="ses_2"]');
   await page.waitForFunction(() => document.getElementById('notice').textContent.includes('not ready'));
   assert.equal(await page.isDisabled('#text'), true);
+});
+
+test('open agents: a send still being delivered stays Sending… until agent_chat\'s sends say delivered; reset replaces the list', async t => {
+  const messages = Array.from({ length: 5 }, (_, i) => ({ id: `h${i}`, role: 'agent', text: `line ${i}`, at: new Date().toISOString() }));
+  const page = await open(t, { agentSendQueued: 600, agentReads: { ses_1: { messages } } });
+  await page.click('#drawer-toggle');
+  await page.click('#agent-list [data-session-id="ses_1"]');
+  await page.waitForFunction(() => document.querySelectorAll('#messages li').length === 5);
+  await page.fill('#text', 'queued one');
+  await page.click('#send');
+  await page.waitForSelector('[data-pending="sending"]');
+  await page.waitForTimeout(300);
+  assert.equal(await page.textContent('[data-pending] .message-state'), 'Sending…', 'queued: not Sent yet');
+  await page.waitForSelector('[data-pending="sent"]');
+  // The service's window moved past our cursor: its messages replace ours.
+  await page.evaluate(() => {
+    const read = globalThis.__scenario.agentReads.ses_1;
+    for (let i = 5; i < 12; i++) read.messages.push({ id: `h${i}`, role: 'agent', text: `line ${i}`, at: new Date().toISOString() });
+    read.window = 3;
+  });
+  await page.waitForFunction(() => document.querySelectorAll('#messages li:not([data-pending])').length === 3);
+  assert.deepEqual((await texts(page)).filter(text => text.startsWith('Claude Code')), ['Claude Codeline 9', 'Claude Codeline 10', 'Claude Codeline 11']);
+});
+
+test('open agents: not_ready and ambiguous_session close sending with their line', async t => {
+  const page = await open(t, { agentReads: { ses_1: { messages: [], readable: { code: 'ambiguous_session', host: 'opencode' } } } });
+  await page.click('#drawer-toggle');
+  await page.click('#agent-list [data-session-id="ses_1"]');
+  await page.waitForFunction(() => document.getElementById('notice').textContent.includes('Several OpenCode sessions'));
+  assert.equal(await page.isDisabled('#text'), true);
+  await page.evaluate(() => globalThis.__fake.agent('ses_1', { readable: { code: 'not_ready', host: 'claude' } }));
+  await page.waitForFunction(() => document.getElementById('notice').textContent === 'This agent is not ready yet. Ask it to run any FAI command.');
+  assert.equal(await page.isDisabled('#text'), true);
+});
+
+test('the model a program chose itself is shown, and a code the panel has no line for shows the service\'s message', async t => {
+  const page = await open(t, { chats: STORED_CHATS.map(chat => chat.chatId === 'chat_a' ? { ...chat, reportedModel: 'gpt-5.5-sol' } : chat),
+    sendError: { code: 'unknown_chat', message: 'This chat is no longer on disk.' } });
+  await openFromDrawer(page, 'chat_a');
+  await page.waitForFunction(() => document.querySelector('[aria-label="Model for this chat"] option')?.textContent === 'Default (gpt-5.5-sol)');
+  await page.fill('#text', 'hi');
+  await page.click('#send');
+  await page.waitForSelector('#composer-error:not([hidden])');
+  assert.equal(await page.textContent('#composer-error'), 'This chat is no longer on disk.');
 });
 
 test('with no agent in this window the panel opens a new chat; the only live session is first under Open agents', async t => {
