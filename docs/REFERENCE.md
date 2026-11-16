@@ -1069,7 +1069,7 @@ is missing when a turn starts.
 | Path | What it is |
 |---|---|
 | `README.txt` | What the folder is; that deleting a chat's folder deletes FAI's copy of that chat |
-| `AGENTS.md`, `CLAUDE.md` | The same fixed FAI guidance, read by Codex and OpenCode (`AGENTS.md`) and Claude (`CLAUDE.md`) from one level above the working folder: the agent was started from the FAI panel, works only through FAI's browser tools and the attached files, and answers in plain text. Setup rewrites them, and the daemon restores them before every turn (by a rename, so a link planted there is replaced, not followed): edits do not last |
+| `AGENTS.md`, `CLAUDE.md` | The same fixed FAI guidance, read by Claude (`CLAUDE.md`, one level above the working folder), Codex (`AGENTS.md`: a turn makes this folder Codex's project root with `project_root_markers`) and OpenCode (`AGENTS.md`, named in the turn's `instructions`): the agent was started from the FAI panel, works only through FAI's browser tools and the attached files, and answers in plain text. Setup rewrites them, and the daemon restores them before every turn (by a rename, so a link planted there is replaced, not followed): edits do not last |
 | `chats/<chatId>/chat.jsonl` | The chat's transcript |
 | `chats/<chatId>/files/` | The files attached in that chat, and the turn's working folder |
 
@@ -1167,8 +1167,8 @@ One turn is one provider process; nothing runs between turns.
 | Provider | Command line (FAI's MCP server only, approved, nothing else) |
 |---|---|
 | Claude | `claude -p <text> --output-format stream-json --verbose [--model <m>] --strict-mcp-config --mcp-config <FAI's server as "fai"> --tools Read --allowedTools mcp__fai__<each FAI tool> --permission-mode dontAsk [--resume <id>]` |
-| Codex | `codex exec [resume] [-i <file>]… --json --ignore-user-config --skip-git-repo-check [-m <m>] --disable <shell_tool, unified_exec, apps, plugins, browser_use, computer_use, image_generation, multi_agent and others> -c web_search="disabled" -c mcp_servers.fai.{command,args} -c mcp_servers.fai.default_tools_approval_mode="approve" -c mcp_servers.fai.env_vars=["FAI_CHAT_TURN_TOKEN", …] <sandbox> [<id>] <text>`; the sandbox is a read permission profile (`:minimal`, the chat's files folder and `FAI-Local-Chats/AGENTS.md`) on Linux and macOS, and `read-only` on Windows |
-| OpenCode | `opencode run --pure --format json --agent fai-browser-chat -m <m> [--session <id>] [-f <file>]… -- <text>` with `OPENCODE_DISABLE_PROJECT_CONFIG=1` and `OPENCODE_CONFIG_CONTENT` defining FAI's server and agent |
+| Codex | `codex exec [resume] [-i <file>]… --json --ignore-user-config --skip-git-repo-check [-m <m>] --disable <shell_tool, unified_exec, apps, plugins, browser_use, computer_use, image_generation and others> -c web_search="disabled" -c project_root_markers=["AGENTS.md"] -c tools.experimental_request_user_input.enabled=false -c mcp_servers.fai.{command,args} -c mcp_servers.fai.default_tools_approval_mode="approve" -c mcp_servers.fai.env_vars=["FAI_CHAT_TURN_TOKEN", …] <sandbox> [<id>] <text>`; the sandbox is a read permission profile (`:minimal`, the chat's files folder and `FAI-Local-Chats/AGENTS.md`) on Linux and macOS, and `read-only` on Windows |
+| OpenCode | `opencode run --pure --format json --agent fai-browser-chat -m <m> [--session <id>] [-f <file>]… -- <text>` with `OPENCODE_DISABLE_PROJECT_CONFIG=1` and `OPENCODE_CONFIG_CONTENT` defining FAI's server, FAI's agent and `instructions` (`FAI-Local-Chats/AGENTS.md`) |
 
 **Limits.** One running turn per chat and three across all chats; another is refused (`chat_too_many`). While a turn
 runs, the composer is disabled and **Stop** replaces **Send**; sending during a turn is not supported. **Stop** ends
@@ -1191,10 +1191,13 @@ never raises one. Its browser authority is the same as any other agent's: every 
   Each MCP server your configuration names is switched off by name: before each turn FAI reads OpenCode's resolved
   configuration (`opencode debug config --pure`, under the turn's settings) and keeps only those names, in memory. If
   that read fails, no turn starts (`chat_start_failed`).
-- **Codex:** some of its built-in tools cannot be switched off without losing MCP, so they remain on every OS:
+- **Codex:** some of its built-in tools cannot be switched off without losing MCP, so these remain on every OS:
   `exec` (code-mode JavaScript, the route FAI's tools run through; it cannot read files), `apply_patch` (writes are
-  blocked by the sandbox), `view_image`, `request_user_input`, the clock and MCP resource listing. Its shell, web
-  search, apps, plugins and the others listed above are off, and your own Codex configuration is ignored. On Linux and
+  blocked by the sandbox), `view_image`, the clock, MCP resource listing, and six collaboration tools (`spawn_agent`,
+  `send_message`, `wait_agent`, `followup_task`, `interrupt_agent`, `list_agents`), whose helper agents get the same
+  confined tools. `request_user_input` and `request_user_input_async` are switched off (nobody could answer them in a
+  chat turn), as are its shell, web search, apps, plugins and the others listed above, and your own Codex
+  configuration is ignored. On Linux and
   macOS a permission profile confines reads, `view_image` included, to the chat's `files` folder.
   **On Windows Codex's sandbox cannot confine reads to a folder, so `view_image` can read any image your user account
   can read.** It still has no shell, no writes and no way to read a file that is not an image.
