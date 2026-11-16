@@ -517,3 +517,24 @@ test('settings carry "Open requested pages right away" only when reported as a b
   assert.deepEqual(sanitizeSettings({ budget: null, openRightAway: 'yes' }), { budget: null });
   assert.deepEqual(sanitizeSettings({ budget: null }), { budget: null });
 });
+
+test('chat messages (the panel\'s FAI chats) reach the daemon as {op, args} and get its reply, over WebSocket and HTTP', async t => {
+  const setup = await daemon(t);
+  setup.hub.onEvent(event => {
+    if (event.type !== 'chat') return;
+    if (event.op === 'fail') event.reply({ error: { code: 'chat_no_model', message: 'Choose a model.' } });
+    else event.reply({ op: event.op, args: event.args, browser: Boolean(event.browserId) });
+  });
+  const ext = await setup.extension();
+  await ext.hello();
+  assert.deepEqual(await ext.request('chat', { op: 'list', args: { offset: 0 } }),
+    { v: 3, type: 'reply', ref: '2', ok: true, data: { op: 'list', args: { offset: 0 }, browser: true } });
+  const refused = await ext.request('chat', { op: 'fail' });
+  assert.equal(refused.ok, false);
+  assert.deepEqual(refused.error, { code: 'chat_no_model', message: 'Choose a model.' });
+  assert.equal((await ext.request('chat', { args: {} })).error.code, 'bad_request', 'op is required');
+  assert.deepEqual((await ext.request('chat', { op: 'get', args: [1] })).data.args, {}, 'args is an object or nothing');
+  const http = await setup.post('/chat', { v: 3, op: 'providers' });
+  assert.equal(http.status, 200);
+  assert.deepEqual(http.body, { op: 'providers', args: {}, browser: true });
+});

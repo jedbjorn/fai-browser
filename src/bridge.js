@@ -116,6 +116,7 @@ const HTTP_ROUTES = {
   '/agents': 'agents',
   '/agent-chat': 'agent_chat',
   '/agent-send': 'agent_send',
+  '/chat': 'chat',
   '/commands': 'commands',
 };
 const REPLY_HTTP_STATUS = {
@@ -1176,6 +1177,18 @@ export function createHub({
           reply,
         };
         if (!emit(event)) reply({ error: { code: 'unknown_invite', message: 'No such invite' } });
+        return;
+      }
+      case 'chat': {
+        // The chat panel's FAI chats (spec #84): {op, args}, answered by the daemon (src/daemon.js chatOp).
+        if (typeof message.op !== 'string' || message.op.length > 20) {
+          reply({ error: { code: 'bad_request', message: 'op is required' } });
+          return;
+        }
+        const args = message.args && typeof message.args === 'object' && !Array.isArray(message.args) ? message.args : {};
+        if (!emit({ type: 'chat', browserId, op: message.op, args, reply })) {
+          reply({ error: { code: 'not_ready', message: 'FAI chats need the FAI Browser service' } });
+        }
         return;
       }
       case 'agents': {

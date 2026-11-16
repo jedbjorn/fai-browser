@@ -1,0 +1,7 @@
+{"type": "thread.started", "thread_id": "<uuid>"}
+{"type": "turn.started"}
+{"type": "item.completed", "item": {"id": "<string len=6>", "type": "agent_message", "text": "<string len=90>"}}
+{"type": "item.started", "item": {"id": "<string len=6>", "type": "mcp_tool_call", "server": "fai", "tool": "fai_probe", "arguments": {}, "result": null, "error": null, "status": "in_progress"}}
+{"type": "item.completed", "item": {"id": "<string len=6>", "type": "mcp_tool_call", "server": "fai", "tool": "fai_probe", "arguments": {}, "result": {"content": [{"type": "text", "text": "<string len=28>"}], "structured_content": null}, "error": null, "status": "completed"}}
+{"type": "item.completed", "item": {"id": "<string len=6>", "type": "agent_message", "text": "<string len=436>"}}
+{"type": "turn.completed", "usage": {"input_tokens": 84284, "cached_input_tokens": 61440, "cache_write_input_tokens": 0, "output_tokens": 369, "reasoning_output_tokens": 0}}
