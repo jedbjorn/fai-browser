@@ -313,7 +313,9 @@ test('attachments: chips with names and image previews, the hint line, uploads b
 
 test('a file over 25 MB is refused before it is sent', async t => {
   const page = await open(t, {});
-  await page.setInputFiles('#file-input', [{ name: 'movie.mov', mimeType: 'video/quicktime', buffer: Buffer.alloc(25 * 1024 * 1024 + 1) }]);
+  // Moving 25 MB into the page takes longer than the 4 s page default on a CI runner.
+  await page.setInputFiles('#file-input', [{ name: 'movie.mov', mimeType: 'video/quicktime', buffer: Buffer.alloc(25 * 1024 * 1024 + 1) }],
+    { timeout: 60_000 });
   assert.equal(await page.textContent('#composer-error'), 'movie.mov is larger than 25 MB.');
   assert.equal(await page.locator('#chips li').count(), 0);
 });
