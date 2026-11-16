@@ -4,7 +4,7 @@
 // most recently active first; Delete removes the chat's folder. Stand-in provider programs. Browserless.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDaemon } from '../src/daemon.js';
@@ -19,12 +19,16 @@ const programs = Object.fromEntries(['claude', 'codex', 'opencode']
 async function setup(t) {
   const home = await mkdtemp(join(tmpdir(), 'fai-chat-daemon-'));
   await writeFile(join(home, 'control.json'), '{}');
+  // The user's own home: where the providers keep their configuration (~/.codex, ~/.claude, ~/.config/opencode).
+  const userHome = join(home, 'user-home');
+  await mkdir(userHome);
   t.after(() => rm(home, { recursive: true, force: true }));
   let daemon = null;
   let hub = null;
   const start = async () => {
     hub = createFakeHub();
-    daemon = createDaemon({ home, env: { ...process.env, STANDIN_DIR: home }, port: 0, hub, chatPrograms: programs,
+    daemon = createDaemon({ home, env: { ...process.env, STANDIN_DIR: home, HOME: userHome, USERPROFILE: userHome,
+      XDG_CONFIG_HOME: join(userHome, '.config') }, port: 0, hub, chatPrograms: programs,
       sweepIntervalMs: 60_000 });
     await daemon.listen();
   };
@@ -46,7 +50,8 @@ async function setup(t) {
       await delay(25);
     }
   };
-  return { home, chat, calls, settle, start, stop, daemon: () => daemon };
+  const control = value => writeFile(join(home, 'control.json'), JSON.stringify(value));
+  return { home, userHome, chat, calls, settle, start, stop, control, daemon: () => daemon };
 }
 
 test('chat messages: providers in order and the default; a turn; the history read in full or after a cursor', async t => {
@@ -165,4 +170,117 @@ test('chat_stop; delete stops a running turn first; shutdown stops running turns
   await ctx.stop();
   const transcript = await readFile(join(ctx.home, 'FAI-Local-Chats', 'chats', three.chatId, 'chat.jsonl'), 'utf8');
   assert.equal(JSON.parse(transcript.trim().split('\n').at(-1)).code, 'chat_stopped');
+});
+
+const b64 = text => Buffer.from(text).toString('base64');
+
+test('Browser Chat settings: kept in FAI\'s settings directory; the default provider and a new chat\'s model follow them', async t => {
+  const ctx = await setup(t);
+  assert.deepEqual(await ctx.chat('settings'), { settings: { defaultProvider: null,
+    models: { codex: null, claude: null, opencode: null }, appearance: 'system' } });
+  const set = await ctx.chat('settings_set', { settings: { defaultProvider: 'claude', models: { claude: 'opus' }, appearance: 'dark' } });
+  assert.deepEqual(set.settings, { defaultProvider: 'claude', models: { codex: null, claude: 'opus', opencode: null },
+    appearance: 'dark' });
+  assert.deepEqual(JSON.parse(await readFile(join(ctx.home, 'chat-settings.json'), 'utf8')), set.settings);
+  assert.equal((await ctx.chat('settings_set', { settings: { appearance: 'blue' } })).error.code, 'bad_request');
+  assert.equal((await ctx.chat('providers')).defaultProvider, 'claude', 'the picked provider, while it is available');
+  await ctx.control({ claude: { signedIn: false } });
+  assert.equal((await ctx.chat('providers')).defaultProvider, 'codex', 'else the first available');
+  await ctx.control({});
+
+  // A new chat without a model takes the provider's model from settings; one with a model keeps its own.
+  const picked = await ctx.chat('send', { provider: 'claude', text: 'one' });
+  await ctx.settle(picked.chatId);
+  const own = await ctx.chat('send', { provider: 'claude', model: 'sonnet', text: 'two' });
+  await ctx.settle(own.chatId);
+  const plain = await ctx.chat('send', { provider: 'codex', text: 'three' });
+  const plainDone = await ctx.settle(plain.chatId);
+  const turns = (await ctx.calls()).filter(entry => entry.args);
+  assert.equal(turns[0].args[turns[0].args.indexOf('--model') + 1], 'opus', 'a picked model reaches the command line');
+  assert.equal(turns[1].args[turns[1].args.indexOf('--model') + 1], 'sonnet');
+  assert.ok(!turns[2].args.includes('-m'), 'no model argument unless one was picked');
+  assert.equal(plainDone.chat.model, null);
+
+  // The settings survive a restart.
+  await ctx.stop();
+  await ctx.start();
+  assert.equal((await ctx.chat('settings')).settings.models.claude, 'opus');
+  // FAI writes no provider configuration (decision #30): the user's home is untouched.
+  assert.deepEqual(await readdir(ctx.userHome), []);
+});
+
+test('OpenCode alone: chat_no_model until a model is set in settings; then the model reaches the command line', async t => {
+  const ctx = await setup(t);
+  await ctx.control({ codex: { version: '0.1.0' }, claude: { signedIn: false } });
+  const { providers, defaultProvider } = await ctx.chat('providers');
+  assert.equal(defaultProvider, 'opencode');
+  assert.deepEqual(providers.map(item => item.available), [false, false, true]);
+  const refused = await ctx.chat('send', { provider: 'opencode', text: 'hi' });
+  assert.equal(refused.error.code, 'chat_no_model');
+  assert.equal(refused.error.message, 'Choose an OpenCode model in Browser Chat settings first.');
+  await ctx.control({ codex: { version: '0.1.0' }, claude: { signedIn: false }, opencode: { models: ['ollama-cloud/deepseek-v4.1-flash:1017'] } });
+  const { models } = await ctx.chat('models', { provider: 'opencode' });
+  assert.deepEqual(models, ['ollama-cloud/deepseek-v4.1-flash:1017'], 'the picker lists exactly what OpenCode reports');
+  await ctx.chat('settings_set', { settings: { models: { opencode: models[0] } } });
+  const sent = await ctx.chat('send', { provider: 'opencode', text: 'hi' });
+  await ctx.settle(sent.chatId);
+  const turn = (await ctx.calls()).find(entry => entry.args);
+  assert.equal(turn.args[turn.args.indexOf('-m') + 1], 'ollama-cloud/deepseek-v4.1-flash:1017');
+  assert.deepEqual(await readdir(ctx.userHome), [], 'no provider configuration file is written');
+});
+
+test('chat_models: each program\'s own list; a list that fails or a missing program is an error the panel turns into a typed name', async t => {
+  const ctx = await setup(t);
+  await ctx.control({ codex: { models: ['gpt-6.1-sol'] }, claude: { listFail: true } });
+  assert.deepEqual(await ctx.chat('models', { provider: 'codex' }), { models: ['gpt-6.1-sol'] });
+  assert.deepEqual(await ctx.chat('models', { provider: 'opencode' }), { models: ['p/m', 'q/n'] });
+  const failed = await ctx.chat('models', { provider: 'claude' });
+  assert.equal(failed.error.code, 'models_unavailable');
+  assert.match(failed.error.message, /Type a model name/);
+  assert.equal((await ctx.chat('models', { provider: 'gemini' })).error.code, 'bad_request');
+});
+
+test('chat_file and chat_send files: saved in the chat\'s files folder, named in the history; limits and stray ids refused', async t => {
+  const ctx = await setup(t);
+  const one = await ctx.chat('file', { chatId: null, name: '../escape/photo.png', mime: 'image/png', size: 3, data: b64('png') });
+  assert.match(one.fileId, /^f[a-f0-9]{20}$/);
+  const two = await ctx.chat('file', { name: 'notes.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    size: 4, data: b64('docx') });
+  const sent = await ctx.chat('send', { provider: 'claude', text: 'Look', files: [one.fileId, two.fileId] });
+  const done = await ctx.settle(sent.chatId);
+  assert.deepEqual(done.messages[0].files, [{ name: 'photo.png', size: 3, type: 'image/png' },
+    { name: 'notes.docx', size: 4, type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }]);
+  const filesDir = join(ctx.home, 'FAI-Local-Chats', 'chats', sent.chatId, 'files');
+  assert.equal(await readFile(join(filesDir, 'photo.png'), 'utf8'), 'png');
+  const turn = (await ctx.calls()).find(entry => entry.args);
+  assert.ok(turn.args.at(-1 - turn.args.slice().reverse().findIndex(arg => arg.startsWith('[FAI Browser]'))).includes(
+    JSON.stringify(join(filesDir, 'photo.png'))), 'the turn text names the file by its path');
+
+  // A file for an existing chat; one for another chat or no longer waiting is refused.
+  const later = await ctx.chat('file', { chatId: sent.chatId, name: 'more.txt', data: b64('more') });
+  assert.equal((await ctx.chat('send', { provider: 'claude', text: 'x', files: [later.fileId] })).error.code, 'unknown_file');
+  assert.ok((await ctx.chat('send', { chatId: sent.chatId, text: 'more', files: [later.fileId] })).turnId);
+  await ctx.settle(sent.chatId);
+  assert.equal((await ctx.chat('send', { chatId: sent.chatId, text: 'again', files: [later.fileId] })).error.code, 'unknown_file');
+  assert.equal((await ctx.chat('file', { chatId: 'c0123456789abcdef0123', name: 'a', data: b64('a') })).error.code, 'unknown_chat');
+  const ids = [];
+  for (let i = 0; i < 11; i++) ids.push((await ctx.chat('file', { name: `f${i}.txt`, data: b64('x') })).fileId);
+  assert.equal((await ctx.chat('send', { provider: 'claude', text: 'eleven', files: ids })).error.code, 'too_many_files');
+  const tooBig = await ctx.chat('file', { name: 'big.bin', data: Buffer.alloc(26 * 1024 * 1024).toString('base64') });
+  assert.equal(tooBig.error.code, 'file_too_large');
+});
+
+test('chat_model: a chat\'s model changes from its next turn', async t => {
+  const ctx = await setup(t);
+  const sent = await ctx.chat('send', { provider: 'codex', text: 'one' });
+  await ctx.settle(sent.chatId);
+  const changed = await ctx.chat('model', { chatId: sent.chatId, model: 'gpt-6.1-sol' });
+  assert.equal(changed.chat.model, 'gpt-6.1-sol');
+  assert.equal(changed.chat.provider, 'codex', 'a chat keeps its provider');
+  await ctx.chat('send', { chatId: sent.chatId, text: 'two' });
+  await ctx.settle(sent.chatId);
+  const turns = (await ctx.calls()).filter(entry => entry.args);
+  assert.equal(turns[1].args[turns[1].args.indexOf('-m') + 1], 'gpt-6.1-sol');
+  assert.equal((await ctx.chat('model', { chatId: sent.chatId, model: '-x' })).error.code, 'bad_request');
+  assert.equal((await ctx.chat('model', { chatId: sent.chatId, model: null })).chat.model, null);
 });

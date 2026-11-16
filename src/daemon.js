@@ -29,6 +29,8 @@ import { gitReleaseSource, scrubbedEnv } from './update-git.js';
 import { SessionError, SESSION_POLL_MAX_MS, createSessionRegistry } from './sessions.js';
 import { MAX_CHAT_TEXT, cleanChatText, cleanInviteText } from './wake.js';
 import { ChatError, createChatRunner } from './chat-runner.js';
+import { ChatFileError, createChatUploads } from './chat-files.js';
+import { ChatSettingsError, checkModelName, createChatSettings } from './chat-settings.js';
 import { PAGE_SIZE, createChatStore, validChatId } from './chat-store.js';
 import { writeLocalChats } from './local-chats.js';
 import { TOOL_NAMES } from './mcp.js';
@@ -452,12 +454,14 @@ export function createDaemon(options = {}) {
   // A daemon with its own home (FAI_HOME, tests) keeps its chats there too, and tells the MCP servers of its turns.
   const chatRoot = options.chatRoot ?? (paths.custom ? join(paths.home, LOCAL_CHATS_NAME) : localChatsDir(env));
   const chatStore = createChatStore({ root: chatRoot, now });
-  const chats = createChatRunner({ store: chatStore, root: chatRoot, log,
+  // Browser Chat settings in FAI's settings directory; attached files wait in the daemon's state folder until sent.
+  const chatSettings = createChatSettings({ file: join(paths.home, 'chat-settings.json') });
+  const chatUploads = createChatUploads({ dir: join(paths.stateDir, 'chat-uploads'), now });
+  const chats = createChatRunner({ store: chatStore, root: chatRoot, log, uploads: chatUploads,
     env: paths.custom ? { ...env, FAI_HOME: paths.home } : env,
     // Before every turn: the folder again if it is missing, and FAI's guidance files restored if they changed.
     prepare: () => writeLocalChats(chatRoot),
     server: { command: process.execPath, args: [join(PACKAGE_ROOT, 'src', 'mcp-main.js')] }, tools: TOOL_NAMES,
-    opencodeConfigDir: join(paths.stateDir, 'chat-opencode-config'),
     ...(options.chatPrograms ? { programs: options.chatPrograms } : {}),
     ...(options.chatTurnLimitMs ? { turnLimitMs: options.chatTurnLimitMs } : {}) });
   // Values filled into password inputs (testing level) by any run of this daemon: redacted from later results.
@@ -2043,6 +2047,11 @@ export function createDaemon(options = {}) {
         case 'chat_send':
         case 'chat_stop':
         case 'chat_delete':
+        case 'chat_settings':
+        case 'chat_settings_set':
+        case 'chat_models':
+        case 'chat_file':
+        case 'chat_model':
           return onChatEvent(event);
         default:
           return undefined;
@@ -2059,8 +2068,14 @@ export function createDaemon(options = {}) {
   //   chat_providers {} -> {providers: [{provider, name, available, code, line?, version}], defaultProvider}
   //   chat_list {offset, limit <= 50} -> {chats: [chat view + lastActiveAt], next}
   //   chat_history {chatId, after} -> {chat: chat view, messages: [after id], cursor}
-  //   chat_send {provider, model?, text} or {chatId, text} -> {chatId, turnId}
+  //   chat_send {provider, model?, text, files?} or {chatId, text, files?} -> {chatId, turnId}. A new chat without a
+  //     model takes the provider's model from Browser Chat settings (none: the program's own default).
   //   chat_stop {chatId} -> {stopped}; chat_delete {chatId} -> {deleted}
+  //   chat_settings {} -> {settings}; chat_settings_set {settings: any subset} -> {settings}, where settings is
+  //     {defaultProvider, models: {codex, claude, opencode}, appearance}
+  //   chat_models {provider} -> {models: [name]}, or models_unavailable (the panel takes a typed name)
+  //   chat_file {chatId | null, name, mime, size, data (base64)} -> {fileId}: one file waiting for chat_send's files
+  //   chat_model {chatId, model} -> {chat: chat view}: the chat's model from its next turn (null: the program's own)
   // A chat view is {chatId, title, provider, model, reportedModel, startedAt, running}. Refusals: {error: {code, message}}.
 
   const chatIdOf = args => {
@@ -2083,14 +2098,37 @@ export function createDaemon(options = {}) {
   async function chatOp(type, args) {
     switch (type) {
       case 'chat_providers': {
-        const providers = await chats.providers();
-        return { providers, defaultProvider: providers.find(item => item.available)?.provider ?? null };
+        const [providers, settings] = await Promise.all([chats.providers(), chatSettings.get()]);
+        const available = providers.filter(item => item.available).map(item => item.provider);
+        return { providers, defaultProvider: available.includes(settings.defaultProvider) ? settings.defaultProvider
+          : available[0] ?? null };
       }
       case 'chat_send': {
-        const { chatId, turnId } = await chats.send({ chatId: args.chatId === undefined || args.chatId === null ? null
-          : chatIdOf(args), provider: stringOf(args.provider, 'provider', 20), model: stringOf(args.model, 'model', 200),
-        text: stringOf(args.text, 'text', 20_000) });
-        return { chatId, turnId };
+        const chatId = args.chatId === undefined || args.chatId === null ? null : chatIdOf(args);
+        const provider = stringOf(args.provider, 'provider', 20);
+        let model = checkModelName(stringOf(args.model, 'model', 200));
+        if (!chatId && model === null) {
+          const { models } = await chatSettings.get();
+          if (Object.hasOwn(models, provider)) model = models[provider];
+        }
+        const files = chatUploads.check(args.files, chatId);
+        const sent = await chats.send({ chatId, provider, model, text: stringOf(args.text, 'text', 20_000), files });
+        return { chatId: sent.chatId, turnId: sent.turnId };
+      }
+      case 'chat_settings':
+        return { settings: await chatSettings.get() };
+      case 'chat_settings_set':
+        return { settings: await chatSettings.set(args.settings) };
+      case 'chat_models':
+        return chats.models(stringOf(args.provider, 'provider', 20));
+      case 'chat_file': {
+        const chatId = args.chatId === undefined || args.chatId === null ? null : chatIdOf(args);
+        if (chatId && !await chatStore.header(chatId)) throw new ChatError('unknown_chat', 'No such chat.');
+        return chatUploads.add({ chatId, name: args.name, mime: args.mime, data: args.data });
+      }
+      case 'chat_model': {
+        const header = await chats.setModel(chatIdOf(args), checkModelName(stringOf(args.model, 'model', 200)));
+        return { chat: chatView(header) };
       }
       case 'chat_stop':
         return { stopped: await chats.stop(chatIdOf(args)) };
@@ -2122,7 +2160,9 @@ export function createDaemon(options = {}) {
     try {
       replyTo(event, await chatOp(event.type, args));
     } catch (error) {
-      if (error instanceof ChatError) return replyTo(event, { error: { code: error.code, message: error.message } });
+      if (error instanceof ChatError || error instanceof ChatFileError || error instanceof ChatSettingsError) {
+        return replyTo(event, { error: { code: error.code, message: error.message } });
+      }
       log('chat_error', { type: event.type, message: String(error?.message ?? error).slice(0, 200) });
       replyTo(event, { error: { code: 'internal', message: 'Daemon error' } });
     }

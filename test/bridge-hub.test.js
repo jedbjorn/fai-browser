@@ -523,11 +523,14 @@ test('chat_* messages (the panel\'s FAI chats) reach the daemon with their own f
   setup.hub.onEvent(event => {
     if (!event.type.startsWith('chat_')) return;
     if (event.args.fail) event.reply({ error: { code: 'chat_no_model', message: 'Choose a model.' } });
+    // A whole attachment arrived: the reply only says how much (the daemon's is {fileId}).
+    else if (typeof event.args.data === 'string') event.reply({ type: event.type, received: event.args.data.length });
     else event.reply({ type: event.type, args: event.args, browser: Boolean(event.browserId) });
   });
   const ext = await setup.extension();
   await ext.hello();
-  for (const type of ['chat_providers', 'chat_list', 'chat_history', 'chat_send', 'chat_stop', 'chat_delete']) {
+  for (const type of ['chat_providers', 'chat_list', 'chat_history', 'chat_send', 'chat_stop', 'chat_delete', 'chat_settings',
+    'chat_settings_set', 'chat_models', 'chat_file', 'chat_model']) {
     const reply = await ext.request(type, { chatId: 'c1', after: 3 });
     assert.equal(reply.ok, true, type);
     assert.deepEqual(reply.data, { type, args: { chatId: 'c1', after: 3 }, browser: true }, 'v, type and ref are not arguments');
@@ -538,4 +541,15 @@ test('chat_* messages (the panel\'s FAI chats) reach the daemon with their own f
   const http = await setup.post('/chat-list', { v: 3, offset: 50 });
   assert.equal(http.status, 200);
   assert.deepEqual(http.body, { type: 'chat_list', args: { offset: 50 }, browser: true });
+
+  // chat_file carries a whole attachment (up to 25 MB, in base64): bigger than the other messages may be, on both routes.
+  const data = Buffer.alloc(25 * 1024 * 1024, 7).toString('base64');
+  const file = await ext.request('chat_file', { chatId: null, name: 'big.bin', mime: 'application/octet-stream', data });
+  assert.equal(file.ok, true);
+  assert.deepEqual(file.data, { type: 'chat_file', received: data.length });
+  const overHttp = await setup.post('/chat-file', { v: 3, name: 'big.bin', data });
+  assert.equal(overHttp.status, 200);
+  assert.deepEqual(overHttp.body, { type: 'chat_file', received: data.length });
+  const otherRoute = await setup.post('/chat-list', { v: 3, data });
+  assert.notEqual(otherRoute.status, 200, 'other HTTP routes keep their smaller limit');
 });
