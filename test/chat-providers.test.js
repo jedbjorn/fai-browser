@@ -7,7 +7,8 @@ import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs
 import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createOutputParser, findProgram, parseVersion, signedIn, turnCommand, versionSupported } from '../src/chat-providers.js';
+import { OPENCODE_CONFIG_ARGS, createOutputParser, findProgram, modelsCommand, opencodeServers, parseModels, parseVersion,
+  signedIn, turnCommand, versionSupported } from '../src/chat-providers.js';
 
 const FIXTURES = join(import.meta.dirname, 'fixtures', 'chat-output');
 
@@ -173,7 +174,7 @@ test('finding the program (D1) on Windows: a real .exe only, the npm platform pa
 const SERVER = { command: '/usr/bin/node', args: ['/fai/src/mcp-main.js'] };
 const TOOLS = ['fai_browser_open', 'fai_browser_act'];
 const BASE = { text: '[FAI Browser] hi', filesDir: '/home/u/FAI-Local-Chats/chats/c1/files', root: '/home/u/FAI-Local-Chats',
-  server: SERVER, tools: TOOLS, opencodeConfigDir: '/state/chat-opencode-config', home: '/home/u' };
+  server: SERVER, tools: TOOLS };
 
 test('Claude: the exact argument list; a model only when picked; --resume by id', () => {
   const config = '{"mcpServers":{"fai":{"command":"/usr/bin/node","args":["/fai/src/mcp-main.js"]}}}';
@@ -222,19 +223,73 @@ test('a header value that would read as an option or carries control characters 
   assert.ok(turnCommand('codex', { ...BASE, platform: 'linux', model: 'gpt-6.1-sol', conversationId: 'thread-1' }));
 });
 
-test('OpenCode: the exact argument list, its isolation settings, and --session by id', () => {
-  const linux = turnCommand('opencode', { ...BASE, platform: 'linux', model: 'ollama-cloud/deepseek-v4.1-flash:1017' });
-  assert.deepEqual(linux.args, ['run', '--format', 'json', '-m', 'ollama-cloud/deepseek-v4.1-flash:1017', '--', '[FAI Browser] hi']);
-  assert.equal(linux.env.XDG_CONFIG_HOME, '/state/chat-opencode-config');
-  assert.deepEqual(JSON.parse(linux.env.OPENCODE_CONFIG_CONTENT), {
+test('OpenCode: the exact argument list, its isolation settings (decision #43), and --session by id', () => {
+  const linux = turnCommand('opencode', { ...BASE, platform: 'linux', model: 'ollama-cloud/deepseek-v4.1-flash:1017',
+    opencodeServers: ['dev_browser', 'fai-browser', '__proto__'] });
+  assert.deepEqual(linux.args, ['run', '--pure', '--format', 'json', '--agent', 'fai-browser-chat',
+    '-m', 'ollama-cloud/deepseek-v4.1-flash:1017', '--', '[FAI Browser] hi']);
+  assert.equal(linux.env.XDG_CONFIG_HOME, undefined, 'the user\'s own config folder stays: their providers are kept');
+  assert.equal(linux.env.OPENCODE_DISABLE_PROJECT_CONFIG, '1');
+  const only = { tools: { '*': false, 'fai_*': true }, permission: { '*': 'deny', 'fai_*': 'allow' } };
+  const config = JSON.parse(linux.env.OPENCODE_CONFIG_CONTENT);
+  assert.deepEqual(config, {
     $schema: 'https://opencode.ai/config.json',
-    // FAI's own server gets the user's XDG_CONFIG_HOME back: FAI's settings live under it on Linux.
-    mcp: { fai: { type: 'local', command: ['/usr/bin/node', '/fai/src/mcp-main.js'], enabled: true,
-      environment: { XDG_CONFIG_HOME: '/home/u/.config' } } },
-    tools: { '*': false, 'fai_*': true }, permission: { '*': 'deny', 'fai_*': 'allow' } });
+    // Every MCP server of the user's is switched off by name; FAI's own is the one left on.
+    mcp: { dev_browser: { enabled: false }, 'fai-browser': { enabled: false }, ['__proto__']: { enabled: false },
+      fai: { type: 'local', command: ['/usr/bin/node', '/fai/src/mcp-main.js'], enabled: true } },
+    ...only, agent: { 'fai-browser-chat': { mode: 'primary', description: 'FAI Browser chat', ...only } } });
+  assert.ok(Object.hasOwn(config.mcp, '__proto__'), 'a server named __proto__ is switched off too');
   const windows = turnCommand('opencode', { ...BASE, platform: 'win32', model: 'p/m', conversationId: 'ses_1' });
-  assert.deepEqual(windows.args, ['run', '--format', 'json', '-m', 'p/m', '--session', 'ses_1', '--', '[FAI Browser] hi']);
-  assert.equal(JSON.parse(windows.env.OPENCODE_CONFIG_CONTENT).mcp.fai.environment, undefined);
-  assert.equal(JSON.parse(turnCommand('opencode', { ...BASE, platform: 'linux', model: 'p/m', env: { XDG_CONFIG_HOME: '/x' } })
-    .env.OPENCODE_CONFIG_CONTENT).mcp.fai.environment.XDG_CONFIG_HOME, '/x');
+  assert.deepEqual(windows.args, ['run', '--pure', '--format', 'json', '--agent', 'fai-browser-chat', '-m', 'p/m',
+    '--session', 'ses_1', '--', '[FAI Browser] hi']);
+  assert.deepEqual(Object.keys(JSON.parse(windows.env.OPENCODE_CONFIG_CONTENT).mcp), ['fai']);
+});
+
+test('OpenCode: the user\'s MCP server names come from its resolved config, FAI\'s own excepted; only names are kept', () => {
+  assert.deepEqual(opencodeServers(JSON.stringify({ provider: { x: { options: { apiKey: 'k' } } },
+    mcp: { dev_browser: { type: 'local' }, fai: { type: 'local' }, remote: { type: 'remote' } } })), ['dev_browser', 'remote']);
+  assert.deepEqual(opencodeServers('{"$schema":"x"}'), []);
+  assert.deepEqual(OPENCODE_CONFIG_ARGS, ['debug', 'config', '--pure']);
+  for (const bad of ['', 'not json', '[]', '{"mcp":[]}', 'null']) assert.throws(() => opencodeServers(bad));
+});
+
+test('attached files reach the program by its own route (D10): Codex -i, OpenCode -f, Claude reads the named path', () => {
+  const files = ['/home/u/FAI-Local-Chats/chats/c1/files/a.png', '/home/u/FAI-Local-Chats/chats/c1/files/b (2).pdf'];
+  const claude = turnCommand('claude', { ...BASE, platform: 'linux', files });
+  assert.deepEqual(claude, turnCommand('claude', { ...BASE, platform: 'linux' }), 'Claude: no extra argument, Read finds them');
+  // -i takes several values: it comes right after exec (or exec resume), and --json ends it, so a thread id is not one.
+  assert.deepEqual(turnCommand('codex', { ...BASE, platform: 'linux', files }).args.slice(0, 6),
+    ['exec', '-i', files[0], '-i', files[1], '--json']);
+  const resumed = turnCommand('codex', { ...BASE, platform: 'linux', files, conversationId: 'thread-1' }).args;
+  assert.deepEqual(resumed.slice(0, 7), ['exec', 'resume', '-i', files[0], '-i', files[1], '--json']);
+  assert.deepEqual(resumed.slice(-2), ['thread-1', '[FAI Browser] hi']);
+  assert.deepEqual(turnCommand('opencode', { ...BASE, platform: 'linux', model: 'p/m', conversationId: 's1', files }).args.slice(-8),
+    ['--session', 's1', '-f', files[0], '-f', files[1], '--', '[FAI Browser] hi']);
+  assert.throws(() => turnCommand('codex', { ...BASE, platform: 'linux', files: ['-x'] }));
+});
+
+test('model lists (decision #30): Codex\'s visible catalogue in its order, Claude\'s help aliases, OpenCode\'s list', () => {
+  assert.deepEqual(modelsCommand('codex', { server: SERVER }), { args: ['debug', 'models'], env: {} });
+  assert.deepEqual(modelsCommand('claude', { server: SERVER }), { args: ['--help'], env: {} });
+  const opencode = modelsCommand('opencode', { server: SERVER });
+  assert.deepEqual(opencode.args, ['models', '--pure'], 'listed under the settings a turn uses');
+  assert.equal(JSON.parse(opencode.env.OPENCODE_CONFIG_CONTENT).agent['fai-browser-chat'].permission['*'], 'deny');
+
+  assert.deepEqual(parseModels('codex', JSON.stringify({ models: [
+    { slug: 'gpt-6-astra', visibility: 'list', priority: 2 }, { slug: 'gpt-reserve', visibility: 'hide', priority: 5 },
+    { slug: 'gpt-6.1-sol', visibility: 'list', priority: 1 }, { slug: '-bad', visibility: 'list', priority: 3 }] })),
+  ['gpt-6.1-sol', 'gpt-6-astra']);
+  const help = ['Options:', '  --mcp-config <configs...>     Load MCP servers (\'a\')',
+    '  --model <model>                       Model for the current session. Provide',
+    '                                        an alias for the latest model (e.g.',
+    '                                        \'fable\', \'opus\', or \'sonnet\') or a',
+    '                                        model\'s full name.',
+    '  --permission-mode <mode>              Permission mode (\'default\')'].join('\n');
+  assert.deepEqual(parseModels('claude', help), ['fable', 'opus', 'sonnet'], 'Claude 2.1.325\'s help, read live');
+  assert.deepEqual(parseModels('opencode', 'opencode/big-pickle\nollama-cloud/deepseek-v4.1-flash:1017\nnot a model\n\nopencode/big-pickle\n'),
+    ['opencode/big-pickle', 'ollama-cloud/deepseek-v4.1-flash:1017']);
+  for (const [provider, output] of [['codex', 'not json'], ['codex', '{"models":[]}'], ['claude', 'Usage: claude'],
+    ['opencode', '']]) {
+    assert.throws(() => parseModels(provider, output), undefined, `${provider}: nothing listed, so the picker takes a typed name`);
+  }
 });
