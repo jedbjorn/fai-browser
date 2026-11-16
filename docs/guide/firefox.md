@@ -44,7 +44,9 @@ maintainer's AMO API key) and the `Release` workflow on a version tag, which als
 
 - **Access browser tabs** (`tabs`, from 0.12.0): Firefox shows this warning when you add FAI Browser. It lets the add-on
   read the address of the tab beside the chat panel, so a chat you start there is invited to that tab. The agent learns
-  nothing about the tab (address, title or page) until you click **Use** or **Act**. If you already have FAI Browser,
+  nothing about the tab (address, title or page) until you click **Use** or **Act**. After you approve a task, it also
+  lets the add-on tell the agent which site (only the site, never the page address) its tab went to when the task
+  pauses because the tab left the sites you approved. If you already have FAI Browser,
   Firefox asks you to accept the new permission when it updates to 0.12.0 (from its menu button); until you do, the
   previous version keeps running.
 - Firefox drops `activeTab` at a tab's **first navigation**. So the approval click also asks Firefox for the request's exact origins

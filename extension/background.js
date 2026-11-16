@@ -4305,8 +4305,11 @@ async function prepareModalApproval(message, sender) {
   const tab = await chrome.tabs.get(arm.tabId);
   // Without activeTab Chrome may omit url; with `tabs` Firefox reports about:blank (origin "null") until the page
   // commits. A freshly opened arm records its original origin; after permission is granted, approval always reads and
-  // verifies the actual tab URL, including pending navigations.
-  const origin = (tab.url && tab.url !== 'about:blank' ? originOf(tab.url) : null) || arm.origin || requestTarget(request)?.origin;
+  // verifies the actual tab URL, including pending navigations. A page seen off the request's origins (a redirect to
+  // another host) is refused as moved away, before any site-access prompt.
+  const seen = tab.url && tab.url !== 'about:blank' ? originOf(tab.url) : null;
+  if (seen && !originCovered(seen, request.origins) && !tab.incognito) throw new Error(MOVED_AWAY);
+  const origin = seen || arm.origin || requestTarget(request)?.origin;
   if (!origin || !originCovered(origin, request.origins) || tab.incognito) throw new Error(ARM_DECLINED);
   const pattern = taskOriginPattern(origin);
   const owned = !await hasSitePermission([pattern]);
@@ -4422,10 +4425,9 @@ async function finishModalApproval(message, sender, consentGuard = null) {
     if (tab.incognito) throw new Error('The page changed. Nothing was approved.');
     if (originOf(tab.url ?? '') !== intent.origin || (tab.pendingUrl && originOf(tab.pendingUrl) !== intent.origin)) {
       if (stillLoading) throw new Error(STILL_LOADING);
-      // Readable only with access to the new host: unreadable is a host this approval's access does not cover.
+      // Unreadable (no `tabs` and no access to the new host) or readable off the request's origins: moved away.
       const now = tab.pendingUrl ? originOf(tab.pendingUrl) : originOf(tab.url ?? '');
-      if (!now) throw new Error(MOVED_AWAY);
-      throw new Error(originCovered(now, fresh.request.origins) ? MOVED_ON_SITE : 'The page changed. Nothing was approved.');
+      throw new Error(now && originCovered(now, fresh.request.origins) ? MOVED_ON_SITE : MOVED_AWAY);
     }
     if (level === 'testing' && (!allListed(fresh.request.origins, testingOrigins) || !testingOrigins.includes(intent.origin))) {
       throw new Error('Testing mode needs every requested origin listed under Testing environments.');
@@ -4929,22 +4931,19 @@ chrome.tabs.onActivated.addListener(async info => {
   }
   endSession('paused', 'tab_changed');
 });
-// An armed tab's events: closed, or seen committing a page off its request's origins (the icon click re-checks, which
-// is the authoritative check). A finished load re-applies its look.
+// An armed tab's events: closed, or any change. A page committed off the request's origins keeps its arm: Use or Act
+// there says why nothing can be approved (MOVED_AWAY, logged) and the tab can still come back to the site; the click
+// re-checks the tab, which is the authoritative check.
 chrome.tabs.onRemoved?.addListener(async tabId => {
   await loadArms();
   if (armed.has(tabId)) ignore(disarm(tabId));
 });
-chrome.tabs.onUpdated?.addListener(async (tabId, info) => {
+chrome.tabs.onUpdated?.addListener(async tabId => {
   await loadArms();
   const arm = armed.get(tabId);
-  if (!arm) return;
-  const request = requests.find(item => item.requestId === arm.requestId);
-  const origin = info.url ? originOf(info.url) : null;
-  if (info.url && request && !(origin && originCovered(origin, request.origins))) ignore(disarm(tabId));
   // Any change (the commit, a title, the load completing): the browser may have reset the per-tab action values at the
   // commit (Firefox does, before the page has finished loading), so the armed look is applied again at once.
-  else ignore(showArm(arm));
+  if (arm) ignore(showArm(arm));
 });
 chrome.action?.onClicked?.addListener(tab => {
   // A stale per-tab toolbar configuration must never approve an old armed level.

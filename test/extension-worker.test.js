@@ -3372,7 +3372,7 @@ test('modal re-reads the bound tab after awaiting browser permissions', async ()
     return contains(value);
   };
   const reply = await h.send(message, MODAL_SENDER);
-  assert.match(reply.error, /page changed/);
+  assert.match(reply.error, /moved to an address this approval does not cover/);
   assert.equal(h.sent.some(m => m.type === 'lease'), false);
 });
 
@@ -3411,8 +3411,29 @@ test('modal approval during a redirect that lands off the approved origin still 
   const reply = h.send(message, MODAL_SENDER);
   await sleep(100);
   Object.assign(h.openedTabs.get(9), { url: 'https://unrequested.test/', pendingUrl: undefined, status: 'complete' });
-  assert.match((await reply).error, /page changed/);
+  assert.match((await reply).error, /moved to an address this approval does not cover/);
   assert.equal(h.sent.some(m => m.type === 'lease'), false);
+});
+
+// Firefox with `tabs` reports every commit of an armed tab, also on a host the add-on has no access to: a start page that
+// redirects off the request's origins keeps its arm and look, and the modal's prepare refuses it as moved away, logged.
+test('an armed tab that commits off its request\'s origins stays armed; arm_prepare refuses it as moved away', async () => {
+  const h = await openedRightAway();
+  const arm = h.session.armedTabs[0];
+  h.openedTabs.get(9).url = 'https://unrequested.test/landed';
+  h.chrome.tabs.onUpdated.emit(9, { status: 'loading', url: 'https://unrequested.test/landed' });
+  await sleep(50);
+  assert.equal(h.session.armedTabs.length, 1, 'the arm stays');
+  assert.equal(h.tabBadges.get(9), '?', 'the tab keeps its armed look');
+  assert.deepEqual(h.windowsRemoved, [], 'its prompt window stays open');
+  const prepared = await h.send({ type: 'arm_prepare', tabId: 9, requestId: arm.requestId, at: arm.at }, MODAL_SENDER);
+  assert.match(prepared.error, /moved to an address this approval does not cover/);
+  await h.until(() => h.sent.some(m => m.type === 'approval' && m.step === 'failed'));
+  assert.deepEqual(h.sent.filter(m => m.type === 'approval' && m.step === 'failed').map(m => m.reason), ['moved_away']);
+  // Back on the site the agent asked for: the same arm prepares.
+  h.openedTabs.get(9).url = `${SHOP}/cart`;
+  const again = await h.send({ type: 'arm_prepare', tabId: 9, requestId: arm.requestId, at: arm.at }, MODAL_SENDER);
+  assert.equal(again.approval?.pattern, `${SHOP}/*`, JSON.stringify(again));
 });
 
 // The modal's early click: Chrome's grant can land before arm_prepare, or with no approval at all. arm_track (the
