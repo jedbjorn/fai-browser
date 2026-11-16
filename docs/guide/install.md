@@ -1,15 +1,13 @@
 # Install
 
-FAI Browser is distributed for **Firefox**. There are two ways to get it, plus a from-source path for Chromium-family
-browsers:
+FAI Browser is for **Firefox** only. Chrome, Brave, Edge and the other Chromium browsers are not supported from v0.12.0. There are two ways to get it:
 
 | | What you get | For |
 |---|---|---|
 | **1. Download FAI Browser** (recommended) | Official Firefox with a separate **FAI** profile, the signed add-on preinstalled and paired | Most people: the agent never sees your everyday browsing |
 | **2. Add to your Firefox** | The signed add-on in a Firefox profile you already use | You want the agent in a profile you already have |
-| Chromium, from source | `extension/` loaded unpacked in Chrome, Brave, Edge, Vivaldi | Developers |
 
-All three need the local part (the FAI service and the MCP server) from this repository, Node 22 or newer, and Linux or
+Both need the local part (the FAI service and the MCP server) from this repository, Node 22 or newer, and Linux or
 macOS. On Windows, [one command](#windows) installs path 1 with everything it needs.
 
 ```sh
@@ -207,7 +205,9 @@ deliberately and use the lowest level. A separate profile (path 1) is safer.
 
 ## Chromium family, from source
 
-Chrome, Chromium, Brave, Edge and Vivaldi 116+ load the extension unpacked; there is no store listing.
+**Not supported from v0.12.0.** The unpacked Chromium extension is still in the repository until its code is removed;
+these steps load it for development only, and nothing in it is maintained for users. Chrome, Chromium, Brave, Edge
+and Vivaldi 116+ load it unpacked; there is no store listing.
 
 1. `npm run setup` installs the pairing helper for every Chromium-family browser it finds.
 2. Open `chrome://extensions` (`brave://extensions`, `edge://extensions`), turn on **Developer mode**, click
@@ -292,7 +292,7 @@ has local changes or unpushed commits, is on another branch, or does not come fr
 While it runs, new agent tab requests wait ("retry in a minute"). If the refresh or restart fails after the move it rolls
 back to the previous version; if it was interrupted, run `node src/cli.js update` again to finish it.
 
-- **Chromium, from source**: the extension reloads itself once the new service answers. Restart your coding agent.
+- **Chromium, from source** (not supported): the extension reloads itself once the new service answers. Restart your coding agent.
 - **Firefox (paths 1 and 2)**: Firefox updates the signed add-on by itself (its `update_url`); the updater only updates
   the clone and the service. If Firefox has not picked it up yet, install the new `.xpi` from the Releases page by hand.
   A temporary add-on from `dist/firefox/` needs `npm run build:firefox` and a reload.

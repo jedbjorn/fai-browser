@@ -1,7 +1,7 @@
 # The chat panel
 
-Click the **FAI Browser** button on the toolbar, then **Chat**. A panel opens beside the page: Chrome's side panel, or
-Firefox's sidebar (**FAI Chat**). It works on Windows, macOS and Linux. Type to an agent there instead of switching to
+Click the **FAI Browser** button on the toolbar, then **Chat**. A panel opens beside the page, in Firefox's sidebar
+(**FAI Chat**). It works on Windows, macOS and Linux. Type to an agent there instead of switching to
 its terminal or app, and follow what it does in the tab next to it.
 
 The menu (the button at the top left of the panel) lists:
@@ -44,9 +44,7 @@ cannot be switched off, and on Windows its image viewer can read any image your 
 
 - **The page beside the chat.** When you ask about the page you are on, the agent can join that tab. FAI's usual
   approval window opens: click **Use** or **Act**, or **Deny**. Nothing is granted before you click, and the agent
-  learns the site only after you do. A question that needs no page opens nothing. On Firefox the panel can offer
-  only a tab you clicked the FAI Browser icon on since it last navigated (opening the panel from **Chat** does that);
-  otherwise the agent asks for a site with an ordinary request.
+  learns the site only after you do. A question that needs no page opens nothing.
 - **Provider and model.** A new chat uses your default provider, or the first available of Codex, Claude and OpenCode;
   pick another before the first message. Each program uses its own default model unless you choose one in Settings,
   whose lists come from the programs themselves (or type a name). OpenCode always needs a model chosen. Changing the
@@ -56,8 +54,9 @@ cannot be switched off, and on Windows its image viewer can read any image your 
   agent is told where. FAI does not check the type; if the program cannot read it, the agent says so. Codex reads
   images only; Claude also reads PDF and text files; OpenCode reads images and text, and PDF only if its model does
   ([which formats](../REFERENCE.md#attachments)). Attached files go to the provider's service under your account.
-  If OpenCode refuses a file, it keeps it in its own session and every later message in that chat fails the same
-  way: start a new chat.
+  If OpenCode refuses a file, it keeps it in its own session and every later message in that chat would fail the same
+  way: click **Start a new chat** under the failed turn (same provider and model, your message ready to send again,
+  attachments not carried over).
 - **Stop** ends a running turn. A turn also stops after 30 minutes. Up to three chats can run at once.
 - **Come back later.** Open the chat from **Chats** and carry on: the agent continues the same conversation, also after
   a restart.

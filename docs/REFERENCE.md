@@ -4,7 +4,7 @@ The detailed manual for FAI Browser: setup, the daemon, the MCP server and CLI, 
 
 An agent opens a tab the user approved, reads a compact page and chooses one of the browser actions on offer; the extension runs it, and the agent gets back the next page, a verified outcome when it gave an expectation, annotated screenshots on request and a trace on disk. FAI makes no model or provider calls of its own.
 
-Requires Node 22+ and Chrome/Chromium 116+. The runtime has no npm dependencies, and everything runs locally except the daily [update check](#updates) (one GET to GitHub's releases API; `FAI_UPDATE_CHECK=0` turns it off). Commands below run from the package root.
+Requires Node 22+ and Firefox 140+. FAI Browser is Firefox only: Chrome, Brave, Edge and the other Chromium browsers are not supported from v0.12.0. The Chromium extension, its pairing and tests are still in the repository until they are removed, and the sections below that describe them are kept for that code only. The runtime has no npm dependencies, and everything runs locally except the daily [update check](#updates) (one GET to GitHub's releases API; `FAI_UPDATE_CHECK=0` turns it off). Commands below run from the package root.
 
 ## Contents
 
@@ -60,8 +60,8 @@ node examples/fake-demo.js   # in-memory bridge; observe, then act; prints a res
 ## One-time setup
 
 1. Run `npm run setup` in the package directory. It moves settings left in the checkout by an older version, saves the pairing secret to `.env.local` (mode `0600`) in the settings directory (see [The daemon](#the-daemon)), installs the [native messaging host](#native-messaging-pairing) for every browser it finds, starts or reloads the FAI service (the daemon), and offers to register FAI Browser with each coding agent on your `PATH` ("Register FAI Browser with Claude Code? [Y/n]"; user scope, through `install --host`). It creates the [`FAI-Local-Chats`](#the-folder) folder for FAI chats and prints its path. It ends with a three-step checklist, then which providers can start a [FAI chat](#fai-chats) now and the fix line for each that cannot. No key is needed. `--yes` registers every detected agent and takes the FAI profile offer without asking (also without a terminal), `--no-register` skips that; `--download-firefox` lets the profile offer download Mozilla's Firefox when no usable Firefox is installed; `--extension-id <id>` overrides the pinned ID for a re-keyed manifest. Other settings are preserved. On Windows setup sets up Firefox only (the pairing helper for Firefox and the FAI profile; Chromium-family browsers are not supported there), and the [Windows installer](guide/install.md#windows) runs it as `--yes --download-firefox`.
-2. Open `chrome://extensions` (`brave://extensions`, `edge://extensions`), turn on Developer mode, click **Load unpacked** and select `extension/`. The manifest `key` fixes the extension ID at `ikkpdnokohfcjhfidepcledkbepmkfcm`, so you don't need to copy it. The extension pairs by itself through the native host: nothing to paste.
-   Firefox: setup offers the FAI profile with the signed add-on (`node src/cli.js launch`), or install the signed `.xpi` from GitHub Releases in your own Firefox ([install guide](guide/install.md)). For development, `npm run build:firefox` writes `dist/firefox/`; load it from `about:debugging#/runtime/this-firefox` (**Load Temporary Add-on**, pick its `manifest.json`). [Firefox](#firefox) has the details.
+2. Firefox: setup offers the FAI profile with the signed add-on (`node src/cli.js launch`), or install the signed `.xpi` from GitHub Releases in your own Firefox ([install guide](guide/install.md)). For development, `npm run build:firefox` writes `dist/firefox/`; load it from `about:debugging#/runtime/this-firefox` (**Load Temporary Add-on**, pick its `manifest.json`). [Firefox](#firefox) has the details.
+   Chromium (not supported from v0.12.0; kept for the code until it is removed): open `chrome://extensions` (`brave://extensions`, `edge://extensions`), turn on Developer mode, click **Load unpacked** and select `extension/`. The manifest `key` fixes the extension ID at `ikkpdnokohfcjhfidepcledkbepmkfcm`, so you don't need to copy it. The extension pairs by itself through the native host: nothing to paste.
 3. Pin the FAI Browser icon (puzzle-piece menu, then the pin) for the popup's controls, invites and the toolbar approval; most requests can also be approved with **Approve** in the task tab's request modal. The popup shows how to pin it while it is not pinned.
 4. Restart your coding agent so it loads the MCP server and skill (or connect one by hand, [next section](#coding-agents-mcp-and-skill)), or use the CLI directly.
 
@@ -970,9 +970,8 @@ turn"; without a wake capability it keeps the `wait --until active` command ([Wa
 
 ## Chat panel
 
-The chat panel sits beside the page on Windows, macOS and Linux: Chrome's side panel (`side_panel`, Chrome 116+) and
-Firefox's sidebar (`sidebar_action`, titled **FAI Chat**; it does not open at install). The **Chat** button in the
-toolbar popup opens it in the current window. It has two modes, which share one layout:
+The chat panel sits beside the page on Windows, macOS and Linux, as Firefox's sidebar (`sidebar_action`, titled
+**FAI Chat**; it does not open at install). The **Chat** button in the toolbar popup opens it in the current window. It has two modes, which share one layout:
 
 - **Open agents**: talk to a Claude Code, Codex or OpenCode session you already run in a terminal or desktop app
   ([below](#open-agents)).
@@ -1175,7 +1174,8 @@ One turn is one provider process; nothing runs between turns.
 runs, the composer is disabled and **Stop** replaces **Send**; sending during a turn is not supported. **Stop** ends
 the turn's whole process tree (the process group on macOS and Linux, `taskkill /T` on Windows) and adds `Stopped.` to
 the transcript; the chat can be continued. A turn that runs 30 minutes is stopped (`chat_timed_out`). The daemon stops
-running turns when it shuts down. A failed turn adds its line to the conversation, and the chat stays usable.
+running turns when it shuts down. A failed turn adds its line to the conversation and offers **Start a new chat** ([below](#attachments)); the chat
+itself stays usable.
 
 #### Tools and files
 
@@ -1232,9 +1232,10 @@ newer program or another model may read more or less:
 | Codex | PNG, JPEG, GIF, WebP (images only) | PDF, text and Office files: with the shell off it has no route for them |
 | OpenCode | PNG, JPEG, WebP, TXT, MD, CSV, JSON | PDF and GIF on that model (it has no PDF input; its provider refused GIF); DOCX, XLSX, PPTX (OpenCode: "Cannot read binary file") |
 
-**OpenCode keeps a refused file.** When OpenCode or its model refuses an attached file (a GIF's `invalid image input`,
-say), the file stays in OpenCode's own session, so every later message in that chat fails the same way. Start a new
-chat. This is OpenCode's behaviour today, and may change.
+**A chat the provider will not continue.** When OpenCode or its model refuses an attached file (a GIF's `invalid image
+input`, say), the file stays in OpenCode's own session, so every later message in that chat fails the same way. A
+failed turn therefore offers **Start a new chat**: a new chat with the same provider and model, your last message
+already in the composer, and no attachments carried over.
 
 #### Stored chats and resuming
 
@@ -1277,11 +1278,9 @@ tab or a private window gets no invite: the agent asks for a site with an ordina
 Only the panel's own `chat_send` can make this invite (the worker accepts it from the panel page only); no client API
 route creates one.
 
-**Firefox.** The add-on has no `tabs` permission, so the sidebar can read the address of the tab beside it only while
-it has access to that tab: after you clicked the FAI Browser icon on it since its last navigation (as when you open
-the panel from the popup's **Chat**: the first message gets the invite), or for a site the add-on already has access
-to. After the tab navigates, or when you switch to another tab, a turn carries no invite, and the agent asks for a
-site with an ordinary tab request. On Chrome and Brave, `activeTab` keeps that access until the tab leaves its site.
+The add-on holds Firefox's `tabs` permission (a required permission, which Firefox asks you to accept when the add-on
+updates to a version that adds it), so the panel can see the address of the tab beside it on any visit and offer it.
+The invite still grants nothing: the tab's page is read only after your Use or Act.
 
 #### Wakes become turns
 
