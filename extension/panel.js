@@ -7,8 +7,8 @@
 import { chatApi } from './chat-api.js';
 import {
   agentBlockedLine, APPEARANCES, availableProviders, CHATS_PAGE, cleanChatText, composerProblem, defaultAgent, defaultProvider,
-  faiLine, formatSize, MAX_FILES, MAX_PROVIDER_TEXT, needsOpenCodeModel, PROVIDER_ORDER, providerName, reasonLine,
-  readableLine, relativeTime, unmatchedPending,
+  failedTurn, faiLine, formatSize, MAX_FILES, MAX_PROVIDER_TEXT, needsOpenCodeModel, PROVIDER_ORDER, providerName, reasonLine,
+  readableLine, relativeTime, retryText, unmatchedPending,
 } from './chat-view.js';
 import { agentLabel, HOST_NAMES } from './invite-card.js';
 import { element } from './ui.js';
@@ -133,19 +133,26 @@ function resetConversation() {
   state.composerError = null;
 }
 
-function newChat({ focus = false } = {}) {
+// `from`: a failed turn's way out (decision #48): the chat's provider and model when that provider is still available,
+// and its text in the composer. Attachments are not carried.
+function newChat({ focus = false, from = null } = {}) {
   resetConversation();
   clearFiles();
-  state.newProvider = defaultProvider(state.providers, state.settings);
-  state.newModel = state.newProvider ? state.settings.models[state.newProvider] ?? '' : '';
+  const same = Boolean(from) && availableProviders(state.providers).includes(from.provider);
+  state.newProvider = same ? from.provider : defaultProvider(state.providers, state.settings);
+  state.newModel = same ? from.model ?? '' : state.newProvider ? state.settings.models[state.newProvider] ?? '' : '';
   state.view = state.newProvider ? 'new' : 'none';
   closeDrawer({ restore: false });
   // OpenCode alone, with no model chosen: its model list first (spec #84 "Defaults").
-  if (needsOpenCodeModel(state.providers, state.settings)) {
+  if (!same && needsOpenCodeModel(state.providers, state.settings)) {
     openSettings({ note: 'OpenCode needs a model to chat. Choose one below, then start your chat.', focusProvider: 'opencode' });
     return;
   }
   closeSettings({ restore: false });
+  if (from) {
+    ui.text.value = from.text;
+    ui.text.dispatchEvent(new Event('input'));
+  }
   render();
   if (focus && state.view === 'new') ui.text.focus();
 }
@@ -881,6 +888,7 @@ function messageNode(message, provider) {
       node.append(element('span', 'provider-said-label', `${providerName(provider)} said:`),
         element('p', 'provider-said', String(message.providerText).slice(0, MAX_PROVIDER_TEXT)));
     }
+    if (failedTurn(message) && state.view === 'chat') node.append(newChatAction(message));
     return node;
   }
   if (node.dataset.role === 'fai') {
@@ -898,6 +906,22 @@ function messageNode(message, provider) {
     node.append(list);
   }
   return node;
+}
+
+// A failed turn's one action (decision #48). It reads the chat open when clicked: the row outlives the render that
+// built it.
+function newChatAction(message) {
+  const line = element('span', 'message-action');
+  const button = element('button', 'link-button', 'Start a new chat');
+  button.type = 'button';
+  button.dataset.part = 'new-chat';
+  button.addEventListener('click', () => {
+    const chat = state.chat;
+    if (!chat) return;
+    newChat({ focus: true, from: { provider: chat.provider, model: chat.model ?? null, text: retryText(state.messages, message.id) } });
+  });
+  line.append(button);
+  return line;
 }
 
 function pendingNode(item) {

@@ -10,8 +10,8 @@ import { chromium } from 'playwright-core';
 import { headlessEnv } from '../scripts/headless-env.mjs';
 import { firefoxManifest } from '../scripts/build-firefox.mjs';
 import {
-  agentBlockedLine, cleanChatText, composerProblem, defaultAgent, defaultProvider, faiLine, MAX_TEXT, needsOpenCodeModel, readableLine, reasonLine,
-  unmatchedPending,
+  agentBlockedLine, cleanChatText, composerProblem, defaultAgent, defaultProvider, failedTurn, faiLine, MAX_TEXT, needsOpenCodeModel, readableLine,
+  reasonLine, retryText, unmatchedPending,
 } from '../extension/chat-view.js';
 import {
   ALL_PROVIDERS, CLAUDE_AGENT, CODEX_AGENT, CONVERSATION, MODELS, NO_PROVIDERS, PNG, STORED_CHATS, installFakeChrome,
@@ -68,6 +68,21 @@ test('a turn\'s reason codes have fixed lines; provider fix lines and unknown co
   assert.equal(agentBlockedLine(CODEX_AGENT), 'This agent is not ready yet. Ask it to run any FAI command.');
   assert.equal(agentBlockedLine(CLAUDE_AGENT), null);
   assert.match(agentBlockedLine({ ...CLAUDE_AGENT, wake: 'none', wakeReason: 'claude_no_messaging' }), /messaging enabled/);
+});
+
+test('every failed turn offers a new chat with the user\'s last message before it; a stop is not a failure', () => {
+  for (const code of ['chat_turn_failed', 'chat_start_failed', 'chat_timed_out', 'chat_no_model', 'chat_some_new_code']) {
+    assert.equal(failedTurn({ role: 'fai', code }), true, code);
+  }
+  assert.equal(failedTurn({ role: 'fai', code: 'chat_stopped' }), false, 'the user chose to stop');
+  assert.equal(failedTurn({ role: 'fai', text: 'FAI: approved tab request r12' }), false, 'a FAI note is no turn');
+  assert.equal(failedTurn({ role: 'fai', code: 'wake_failed' }), false);
+  assert.equal(failedTurn({ role: 'agent', code: 'chat_turn_failed' }), false);
+  const messages = [...CONVERSATION, { id: 'f1', role: 'fai', code: 'chat_turn_failed' },
+    { id: 'm9', role: 'user', text: 'Try again' }, { id: 'f2', role: 'fai', code: 'chat_timed_out' }];
+  assert.equal(retryText(messages, 'f1'), 'Open the ThinkPad and check the delivery date.');
+  assert.equal(retryText(messages, 'f2'), 'Try again', 'each failed row carries its own turn\'s message');
+  assert.equal(retryText([{ id: 'f0', role: 'fai', code: 'chat_start_failed' }], 'f0'), '');
 });
 
 test('the composer refuses over 4,000 characters, more than 10 files and a file over 25 MB', () => {
@@ -294,6 +309,49 @@ test('a refused turn shows FAI\'s line and the chat stays usable; Stop ends a ru
   assert.equal((await sent(running, 'chat_stop')).length, 1);
   assert.equal((await texts(running)).at(-1), 'Stopped.');
   assert.equal(await running.isEnabled('#text'), true);
+});
+
+test('a failed turn offers "Start a new chat": same provider and model, the last message in the composer, no files', async t => {
+  const failed = (chatId, code) => ({ id: `f-${chatId}`, role: 'fai', text: '', code, exit: 1, at: new Date().toISOString() });
+  const page = await open(t, { transcripts: { chat_a: [...CONVERSATION, failed('chat_a', 'chat_timed_out')],
+    chat_c: [{ id: 'c1', role: 'user', text: 'Which flights leave before noon?', at: new Date().toISOString() }, failed('chat_c', 'chat_turn_failed')],
+    chat_b: [{ id: 'b1', role: 'user', text: 'stop this', at: new Date().toISOString() }, failed('chat_b', 'chat_stopped')] } });
+  // A stop the user chose offers nothing.
+  await openFromDrawer(page, 'chat_b');
+  assert.equal(await page.locator('[data-part="new-chat"]').count(), 0);
+
+  await openFromDrawer(page, 'chat_c');
+  await page.setInputFiles('#file-input', { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('hi') });
+  await page.waitForSelector('#chips li');
+  assert.equal(await page.textContent('[data-part="new-chat"]'), 'Start a new chat');
+  await page.click('[data-part="new-chat"]');
+  assert.equal(await page.textContent('#title'), 'New chat');
+  assert.equal(await page.inputValue('[aria-label="Provider for this chat"]'), 'opencode');
+  assert.equal(await page.inputValue('[aria-label="Model for this chat"]'), 'ollama-cloud/deepseek-v4.1-flash-1017');
+  assert.equal(await page.inputValue('#text'), 'Which flights leave before noon?');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'text');
+  assert.equal(await page.locator('#chips li').count(), 0, 'attachments are not carried');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => globalThis.__sent.some(message => message.type === 'chat_send'));
+  assert.deepEqual(await sent(page, 'chat_send'), [{ type: 'chat_send', provider: 'opencode',
+    model: 'ollama-cloud/deepseek-v4.1-flash-1017', text: 'Which flights leave before noon?', files: [] }]);
+
+  // A chat on the program's own default model starts one on it too, even when Settings now names a model.
+  const codex = await open(t, { settings: { ...SETTINGS, models: { codex: 'gpt-5.4', claude: null, opencode: null } },
+    transcripts: { chat_a: [...CONVERSATION, failed('chat_a', 'chat_timed_out')] } });
+  await openFromDrawer(codex, 'chat_a');
+  await codex.click('[data-part="new-chat"]');
+  assert.equal(await codex.inputValue('[aria-label="Provider for this chat"]'), 'codex');
+  assert.equal(await codex.inputValue('[aria-label="Model for this chat"]'), '');
+  assert.equal(await codex.inputValue('#text'), 'Open the ThinkPad and check the delivery date.');
+
+  // The chat's provider is no longer available: the default provider, with the text still carried.
+  const gone = await open(t, { providers: [ALL_PROVIDERS[0], ALL_PROVIDERS[1], NO_PROVIDERS[2]],
+    transcripts: { chat_c: [{ id: 'c1', role: 'user', text: 'Which flights leave before noon?', at: new Date().toISOString() }, failed('chat_c', 'chat_turn_failed')] } });
+  await openFromDrawer(gone, 'chat_c');
+  await gone.click('[data-part="new-chat"]');
+  assert.equal(await gone.inputValue('[aria-label="Provider for this chat"]'), 'codex');
+  assert.equal(await gone.inputValue('#text'), 'Which flights leave before noon?');
 });
 
 test('attachments: chips with names and image previews, the hint line, uploads before the turn, and the limits', async t => {
