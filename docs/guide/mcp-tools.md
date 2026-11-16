@@ -94,7 +94,9 @@ and need Act), `scroll down`, `wait`, `open https://...` (an allowed URL; not th
 `fill_secret "API key" <- secret:3 (...)` and `copy_secret secret:3 (...) to the clipboard`. An action marked **`needsApproval`** (description ends "(asks the user)") blocks the call
 while the user answers, at most 60 s per call: Approve once, Deny (`refused_action`, `next.kind: stop`, do not retry) or no
 answer in time (`needs_user` / `approval_pending`, `next.kind: approve`; the approval stays open 5 minutes and repeating the
-same act picks up a click given meanwhile). Uploads always ask. See [approvals.md](approvals.md).
+same act picks up a click given meanwhile). A session FAI can wake that ended its turn gets the decision as a wake
+("The user approved action a7 on tab request req_…" or "… denied action …"; see
+[Action approvals](../REFERENCE.md#action-approvals)). Uploads always ask. See [approvals.md](approvals.md).
 
 **Typed text and forms.** A form of four fields and a submit is one call: `{"fills": [{"actionId": "a2", "text": "Ada"},
 {"actionId": "a3", "text": "ada@example.com"}, ...], "submit": true, "commits": true, "expectation": {"textIncludes": "Thanks"}}`

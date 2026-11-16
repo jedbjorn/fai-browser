@@ -61,12 +61,15 @@ When the agent acts on one, the call **blocks** and a small **"Approve this acti
 Neither button has focus, so a stray keypress cannot approve it.
 
 - **Approve once:** the extension mints a random single-use id bound to the **tab, lease, page revision, exact control, class and a
-  hash of the label**, valid 60 seconds. The click runs immediately. A new revision voids it; the page script rechecks the
+  hash of the label**, valid 60 seconds (5 minutes when the agent had stopped waiting, see below). The click runs immediately. A new revision voids it; the page script rechecks the
   control and its label hash at dispatch. The agent cannot mint one.
 - **Deny:** the act ends with `refused_action`; the agent is told to stop and tell you, not retry.
 - **No answer:** the act returns `needs_user` / `approval_pending` after the wait (at most 60 s per call, so hosts that time
   a tool call out at 120 s never cut it off); the agent repeats the same act, and the approval stays open for 5 minutes. An
-  approval you give in the meantime is picked up at once.
+  approval you give in the meantime is picked up at once. If the agent ended its turn instead, your Approve once or Deny
+  wakes it (Claude Code, Codex and OpenCode): it gets a fixed FAI line with the action's id, never the page's text, and
+  continues, or stops and tells you after a Deny. An approval given this way stays usable for 5 minutes, for this page
+  only: if the page changed, the agent looks again and asks again.
 - **A committing Enter** asks once: every Enter the agent sends says whether it commits you (`commits`). With `true` (a
   message, a post, an application, a booking, a payment, agreeing to terms, deleting, publishing, transferring) it waits for
   your Approve once, and only that field's Enter can use it; with `false` (a search, a filter) it runs as before. The
