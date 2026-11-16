@@ -67,6 +67,19 @@ export function customHome(home, env = process.env, platform = process.platform)
   return resolve(home) !== resolve(defaultDirs(env, platform).config);
 }
 
+/**
+ * FAI-Local-Chats, the folder FAI chats run in (spec #84): in the user's home directory (%USERPROFILE% on Windows),
+ * or <FAI_HOME>/FAI-Local-Chats when FAI_HOME is set. Under `node --test` without FAI_HOME, in the test home.
+ */
+export const LOCAL_CHATS_NAME = 'FAI-Local-Chats';
+export function localChatsDir(env = process.env, platform = process.platform) {
+  if (env.FAI_HOME) return join(resolve(env.FAI_HOME), LOCAL_CHATS_NAME);
+  if (env.NODE_TEST_CONTEXT) return join(testHome(), LOCAL_CHATS_NAME);
+  // %USERPROFILE% on Windows even when a Unix-style shell sets HOME.
+  const home = platform === 'win32' ? env.USERPROFILE || homedir() : userHome(env);
+  return join(home, LOCAL_CHATS_NAME);
+}
+
 /** The local settings file written by `npm run setup` and loaded by the CLI. */
 export function envFilePath(env = process.env) {
   return resolve(faiHome(env), '.env.local');

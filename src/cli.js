@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // FAI Browser CLI: a thin client of the daemon (src/client.js auto-starts it). Stdout carries exactly one JSON line;
 // all diagnostics go to stderr. `--port` (or an options.json "port") always names the daemon port.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { parseArgs, parseEnv } from 'node:util';
 import { DEFAULT_PORT } from './bridge.js';
 import { RESULT_VERSION, agentResult, approvalSteps, buildVerdict, leanObserve, nextFor } from './result.js';
-import { envFilePath, faiHome } from './paths.js';
+import { envFilePath, faiHome, localChatsDir } from './paths.js';
 import { validateExpectation } from './expectation.js';
 import { LEVELS, normalizeAdditions } from './guardrails.js';
 import { requestStartUrl } from './origins.js';
@@ -40,7 +40,8 @@ const USAGE = `Usage (your agent chooses each action):
   fai-browser install --host claude|codex|opencode [--scope project|user] [--link] [--dry-run] [--force]
                       [--command-name] [--always-load]
   fai-browser uninstall --host claude|codex|opencode|all
-                      undo the user-scope registration (MCP entry, skill, OpenCode plugin) that setup made
+                      undo the user-scope registration (MCP entry, skill, OpenCode plugin) that setup made;
+                      FAI-Local-Chats (your FAI chats) stays
   fai-browser install-native [--browser chrome,brave,...] [--all] [--dry-run]
                       native messaging host for every detected browser (the extension pairs by itself)
   fai-browser uninstall-native    remove the native messaging host from every browser
@@ -972,6 +973,8 @@ async function main() {
       const results = [];
       for (const host of hosts) results.push(await unregisterHost(host));
       await emitLine({ uninstalled: results }, pretty);
+      // FAI-Local-Chats holds the user's chats: never removed, and said so.
+      if (existsSync(localChatsDir())) log(`your FAI chats stay in ${localChatsDir()}; delete that folder to remove them.`);
       return 0;
     }
     applyDaemonPortFlag(flags);
