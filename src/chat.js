@@ -30,8 +30,10 @@ const OPENCODE_ANSWER_MAX = 4 * 1024 * 1024;
 const FAI_PREFIX = '[FAI Browser] ';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ID = String.raw`([A-Za-z0-9][A-Za-z0-9._:-]{0,127})`;
-// The chat template (src/wake.js wakeText kind chat): the user's own words come back as a user message.
-const CHAT_TEXT = new RegExp(String.raw`^\[FAI Browser\] The user sent you a message from the FAI chat panel \(the user's own words\): ("(?:[^"\\]|\\.)*")$`);
+// The chat template (src/wake.js wakeText kind chat): the user's own words come back as a user message. No end anchor:
+// a host may add its own text after FAI's (Claude Code's peer-message trailer, "\n\nThis came from another Claude
+// session — …"); the JSON string ends at its first unescaped quote.
+const CHAT_TEXT = new RegExp(String.raw`^\[FAI Browser\] The user sent you a message from the FAI chat panel \(the user's own words\): ("(?:[^"\\]|\\.)*")`);
 // FAI's other wake texts become one short FAI-written line naming the event and its ids.
 const FAI_LINES = [
   [new RegExp(String.raw`^\[FAI Browser\] The user approved action ${ID} on tab request ${ID}\.`), m => `FAI: approved action ${m[1]} on tab request ${m[2]}`],

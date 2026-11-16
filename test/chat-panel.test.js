@@ -64,6 +64,7 @@ test('a turn\'s reason codes have fixed lines; provider fix lines and unknown co
   assert.equal(readableLine({ code: 'not_ready' }, CODEX_AGENT).blocks, true);
   assert.equal(readableLine({ code: 'ambiguous_session', host: 'opencode' }, CODEX_AGENT).blocks, true);
   assert.equal(faiLine('[FAI Browser] Approved tab request r12.\nMore'), 'FAI: Approved tab request r12.');
+  assert.equal(faiLine('FAI: approved tab request r12'), 'FAI: approved tab request r12', 'one prefix, never two');
   assert.equal(agentBlockedLine(CODEX_AGENT), 'This agent is not ready yet. Ask it to run any FAI command.');
   assert.equal(agentBlockedLine(CLAUDE_AGENT), null);
   assert.match(agentBlockedLine({ ...CLAUDE_AGENT, wake: 'none', wakeReason: 'claude_no_messaging' }), /messaging enabled/);
@@ -269,6 +270,7 @@ test('everything is text: markup in a reply stays text, and a provider\'s own er
   await openFromDrawer(page, 'chat_a');
   assert.equal(await page.locator('#messages img, #messages a, #messages b').count(), 0);
   assert.match(await page.textContent('#messages'), /<b>bold<\/b> <a href="https:\/\/evil\.example">link<\/a>/);
+  assert.equal(await page.textContent('#messages li[data-role="fai"]:not([data-kind])'), 'FAI: approved tab request r12', 'one FAI prefix');
   assert.match(await page.textContent('[data-kind="error"]'), /^Codex could not finish this turn \(exit 1\)\.Codex said:/);
   assert.equal((await page.textContent('.provider-said')).length, 1000);
   assert.equal(await page.evaluate(() => globalThis.__pwned), undefined);

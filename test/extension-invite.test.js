@@ -225,3 +225,13 @@ test('approval window: an ordinary request still opens its page from the window 
   await page.waitForFunction(() => __sent.some(message => message.type === 'open' || message.type === 'start'));
   assert.equal(await page.evaluate(() => __sent.find(message => ['open', 'start'].includes(message.type)).type), 'open');
 });
+
+test('popup: a FAI chat\'s joined invite card shows the approved level, never "null"', async t => {
+  const joined = { ...CHAT_REQUEST, state: 'active', mode: 'full', lease: { tabId: 7 },
+    invite: { ...CHAT_REQUEST.invite, state: 'joined', joinedBy: { host: 'codex', repo: 'FAI-Local-Chats' } } };
+  const page = await popup(t, { sessions: [], requests: [joined] });
+  await page.waitForSelector('#invite .invite-status');
+  assert.equal(await page.textContent('#invite .invite-status .card-label'), 'INVITED AGENT');
+  assert.equal(await page.textContent('#invite .invite-status .request-age'), 'Act');
+  assert.doesNotMatch(await page.textContent('#invite'), /null/);
+});

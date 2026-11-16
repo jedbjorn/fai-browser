@@ -117,6 +117,20 @@ test('Claude Code: an interruption ends the turn; a file it cannot find or read 
   assert.equal((await reader.read({ target: CLAUDE_SESSION, cursor: after.cursor })).error.code, 'unreadable');
 });
 
+test('Claude Code 2.1.325: a peer message\'s trailer after FAI\'s text still gives the user\'s words and FAI lines', async t => {
+  const { env, path } = await claudeHome(t);
+  const reader = createChatReader({ host: 'claude', env, version: '2.1.325' });
+  const first = await reader.read({ target: CLAUDE_SESSION });
+  await appendFile(path, await readFile(fixture('claude-code-2.1.325.jsonl')));
+  const read = await reader.read({ target: CLAUDE_SESSION, cursor: first.cursor });
+  assert.deepEqual(brief(read.messages), [
+    ['user', 'Open the "Billing" tab.\nThen stop.'],
+    ['fai', 'FAI: approved tab request req_fixture3'],
+  ]);
+  assert.doesNotMatch(JSON.stringify(read.messages), /This came from another Claude session|a FAI Browser message/);
+  assert.equal(read.busy, true, 'a peer message starts a turn');
+});
+
 test('Codex: user and agent messages only, injected AGENTS.md and environment never; busy from task_started', async t => {
   const { env, path } = await codexHome(t);
   assert.equal(await findCodexRollout(CODEX_THREAD, { env }), path, 'the newest day that holds the thread');

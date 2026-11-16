@@ -10,6 +10,8 @@ Each record keeps its own keys and flags (`isMeta`, `isSidechain`, `origin`, `is
   from the chat panel, `-finish` ends it). Holds a real example of each kind the reader must hide: local command
   wrappers, a skill body, a system reminder, a task notification, a sidechain prompt, an image note, a compact summary,
   tool calls and results, thinking, a queue record, a cut record and an unknown record type.
+  `claude-code-2.1.325.jsonl` holds two FAI peer messages as Claude Code 2.1.325 stores them, with its trailer
+  ("This came from another Claude session — …") after FAI's text.
 - `codex*.jsonl`: one `sessions/YYYY/MM/DD/rollout-<timestamp>-<threadId>.jsonl`: developer instructions, the injected
   AGENTS.md and environment items, tool calls, reasoning, commentary and final answers, a cut record, an unknown type.
   `-abort` is a real `turn_aborted` event.

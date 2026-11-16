@@ -7,7 +7,7 @@ import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs
 import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { OPENCODE_CONFIG_ARGS, createOutputParser, findProgram, modelsCommand, opencodeServers, parseModels, parseVersion,
+import { OPENCODE_CONFIG_ARGS, createOutputParser, findProgram, modelsCommand, opencodeEnv, opencodeServers, parseModels, parseVersion,
   signedIn, turnCommand, versionSupported } from '../src/chat-providers.js';
 
 const FIXTURES = join(import.meta.dirname, 'fixtures', 'chat-output');
@@ -191,6 +191,8 @@ const CODEX_FEATURES = ['--disable', 'shell_tool', '--disable', 'unified_exec', 
   '--disable', 'browser_use', '--disable', 'browser_use_external', '--disable', 'computer_use', '--disable',
   'image_generation', '--disable', 'multi_agent', '--disable', 'multi_agent_v2', '--disable', 'goals', '--disable',
   'sleep_tool', '--disable', 'tool_suggest', '--disable', 'skill_search', '-c', 'web_search="disabled"',
+  // FAI-Local-Chats is the project root, so Codex loads its AGENTS.md; no request_user_input tools.
+  '-c', 'project_root_markers=["AGENTS.md"]', '-c', 'tools.experimental_request_user_input.enabled=false',
   '-c', 'mcp_servers.fai.command="/usr/bin/node"', '-c', 'mcp_servers.fai.args=["/fai/src/mcp-main.js"]',
   '-c', 'mcp_servers.fai.default_tools_approval_mode="approve"'];
 
@@ -237,12 +239,18 @@ test('OpenCode: the exact argument list, its isolation settings (decision #43), 
     // Every MCP server of the user's is switched off by name; FAI's own is the one left on.
     mcp: { dev_browser: { enabled: false }, 'fai-browser': { enabled: false }, ['__proto__']: { enabled: false },
       fai: { type: 'local', command: ['/usr/bin/node', '/fai/src/mcp-main.js'], enabled: true } },
-    ...only, agent: { 'fai-browser-chat': { mode: 'primary', description: 'FAI Browser chat', ...only } } });
+    ...only, instructions: ['/home/u/FAI-Local-Chats/AGENTS.md'],
+    agent: { 'fai-browser-chat': { mode: 'primary', description: 'FAI Browser chat', ...only } } });
   assert.ok(Object.hasOwn(config.mcp, '__proto__'), 'a server named __proto__ is switched off too');
   const windows = turnCommand('opencode', { ...BASE, platform: 'win32', model: 'p/m', conversationId: 'ses_1' });
   assert.deepEqual(windows.args, ['run', '--pure', '--format', 'json', '--agent', 'fai-browser-chat', '-m', 'p/m',
     '--session', 'ses_1', '--', '[FAI Browser] hi']);
   assert.deepEqual(Object.keys(JSON.parse(windows.env.OPENCODE_CONFIG_CONTENT).mcp), ['fai']);
+  assert.deepEqual(JSON.parse(turnCommand('opencode', { ...BASE, root: 'C:\\Users\\u\\FAI-Local-Chats', platform: 'win32',
+    model: 'p/m' }).env.OPENCODE_CONFIG_CONTENT).instructions, ['C:\\Users\\u\\FAI-Local-Chats\\AGENTS.md'],
+  'FAI-Local-Chats/AGENTS.md by its absolute path: OpenCode does not look above the working folder for it');
+  // A model list or config read carries no instructions.
+  assert.equal(JSON.parse(opencodeEnv({ server: SERVER }).OPENCODE_CONFIG_CONTENT).instructions, undefined);
 });
 
 test('OpenCode: the user\'s MCP server names come from its resolved config, FAI\'s own excepted; only names are kept', () => {

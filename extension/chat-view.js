@@ -141,9 +141,12 @@ export function relativeTime(at, now = Date.now()) {
   return new Date(time).toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-/** A FAI wake text as one short line: "[FAI Browser] Approved …" -> "FAI: Approved …". */
+/**
+ * A FAI row as one short line with one "FAI: " prefix: "[FAI Browser] Approved …" -> "FAI: Approved …", and a line the
+ * service already wrote ("FAI: approved tab request …", src/chat.js faiMessage) stays as it is.
+ */
 export function faiLine(text) {
-  const line = String(text ?? '').replace(/^\[FAI Browser\]\s*/, '').split('\n')[0].trim();
+  const line = String(text ?? '').replace(/^(?:\[FAI Browser\]|FAI:)\s*/, '').split('\n')[0].trim();
   return `FAI: ${line}`;
 }
 

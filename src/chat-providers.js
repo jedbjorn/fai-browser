@@ -189,13 +189,18 @@ export function argumentSafe(value) {
 // same settings just before the turn (opencodeServers).
 export const OPENCODE_AGENT = 'fai-browser-chat';
 
-/** The environment OpenCode runs a turn, a model list or a config read under. `disable`: the user's MCP server names. */
-export function opencodeEnv({ server, disable = [] }) {
+/**
+ * The environment OpenCode runs a turn, a model list or a config read under. `disable`: the user's MCP server names.
+ * `instructions`: FAI-Local-Chats/AGENTS.md for a turn. Project config is off, which also stops OpenCode looking for
+ * AGENTS.md above the working folder (checked on 1.19.5), so the turn names the file in its config.
+ */
+export function opencodeEnv({ server, disable = [], instructions = null }) {
   const only = { tools: { '*': false, [`${SERVER_KEY}_*`]: true }, permission: { '*': 'deny', [`${SERVER_KEY}_*`]: 'allow' } };
   // fromEntries defines own properties, so a server named __proto__ is switched off like any other.
   const mcp = Object.fromEntries([...disable.filter(name => name !== SERVER_KEY).map(name => [name, { enabled: false }]),
     [SERVER_KEY, { type: 'local', command: [server.command, ...server.args], enabled: true }]]);
   const config = { $schema: 'https://opencode.ai/config.json', mcp, ...only,
+    ...(instructions ? { instructions: [instructions] } : {}),
     agent: { [OPENCODE_AGENT]: { mode: 'primary', description: 'FAI Browser chat', ...only } } };
   return { OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_CONFIG_CONTENT: JSON.stringify(config) };
 }
@@ -256,6 +261,12 @@ export function turnCommand(provider, { text, model = null, conversationId = nul
         '--ignore-user-config', '--skip-git-repo-check',
         ...(model ? ['-m', model] : []), ...CODEX_DISABLED.flatMap(feature => ['--disable', feature]),
         '-c', 'web_search="disabled"',
+        // Codex reads AGENTS.md from its project root down to the working folder, and with no Git repository the root
+        // is the working folder itself. AGENTS.md as the root marker makes FAI-Local-Chats the root, so its AGENTS.md
+        // is loaded (an attached file is never named AGENTS.md: src/chat-files.js).
+        '-c', 'project_root_markers=["AGENTS.md"]',
+        // Drops request_user_input and request_user_input_async: nobody answers them in a chat turn.
+        '-c', 'tools.experimental_request_user_input.enabled=false',
         '-c', `mcp_servers.${SERVER_KEY}.command=${toml(server.command)}`,
         '-c', `mcp_servers.${SERVER_KEY}.args=${tomlArray(server.args)}`,
         '-c', `mcp_servers.${SERVER_KEY}.default_tools_approval_mode="approve"`,
@@ -269,7 +280,7 @@ export function turnCommand(provider, { text, model = null, conversationId = nul
     return {
       args: ['run', '--pure', '--format', 'json', '--agent', OPENCODE_AGENT, '-m', model,
         ...(conversationId ? ['--session', conversationId] : []), ...files.flatMap(file => ['-f', file]), '--', text],
-      env: opencodeEnv({ server, disable }),
+      env: opencodeEnv({ server, disable, instructions: pathJoin(root, 'AGENTS.md') }),
     };
   }
   throw new Error(`Unknown provider ${provider}`);
