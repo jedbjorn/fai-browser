@@ -10,7 +10,7 @@ export function installFakeChrome(scenario) {
     connected: true, pollMs: 100, windowTabs: [7], requests: [], agents: [], providers: [], models: {},
     settings: { defaultProvider: null, models: { codex: null, claude: null, opencode: null }, appearance: 'system' },
     chats: [], transcripts: {}, agentReads: {}, sendError: null, agentSendError: null, reply: null, replyMs: 300,
-    turnFailure: null, stuck: false, ...scenario,
+    turnFailure: null, stuck: false, delays: {}, ...scenario,
   };
   const sent = [];
   const fail = (error, code) => ({ error, code });
@@ -26,6 +26,9 @@ export function installFakeChrome(scenario) {
   const chatView = chat => ({ chatId: chat.chatId, title: chat.title, provider: chat.provider, model: chat.model ?? null,
     ...(chat.reportedModel ? { reportedModel: chat.reportedModel } : {}), running: Boolean(chat.running) });
   const now = () => new Date().toISOString();
+  // The service cleans a user's text before the host or the chat runner writes it (main src/wake.js cleanChatText).
+  const clean = text => String(text).replace(/\r\n?|[\u2028\u2029]/g, '\n').replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]+/g, ' ').replace(/[^\S\n]+/g, ' ').trim();
 
   function answer(message) {
     sent.push(structuredClone(message));
@@ -67,7 +70,7 @@ export function installFakeChrome(scenario) {
           s.chats.push(chat);
         }
         const fileMeta = (message.files ?? []).map(id => files.get(id)).filter(Boolean);
-        (s.transcripts[chat.chatId] ??= []).push({ id: `m${Date.now()}`, role: 'user', text: message.text, at: now(), files: fileMeta });
+        (s.transcripts[chat.chatId] ??= []).push({ id: `m${Date.now()}`, role: 'user', text: clean(message.text), at: now(), files: fileMeta });
         chat.running = true;
         chat.lastActiveAt = now();
         if (!s.stuck) {
@@ -114,7 +117,7 @@ export function installFakeChrome(scenario) {
         if (s.agentSendError) return fail(s.agentSendError, 'wake_failed');
         const read = s.agentReads[message.sessionId];
         if (read && s.echoMs !== undefined) {
-          setTimeout(() => read.messages.push({ id: `u${Date.now()}`, role: 'user', text: message.text, at: now() }), s.echoMs);
+          setTimeout(() => read.messages.push({ id: `u${Date.now()}`, role: 'user', text: clean(message.text), at: now() }), s.echoMs);
         }
         const wakeId = `wake_${sent.filter(item => item.type === 'agent_send').length}`;
         // Delivery still running when the service answers: the outcome comes later in agent_chat's sends.
@@ -141,7 +144,12 @@ export function installFakeChrome(scenario) {
       id: 'fake',
       getManifest: () => ({ version: '0.11.0' }),
       getURL: path => `${location.origin}/${path}`,
-      async sendMessage(message) { return answer(message); },
+      // delays: {type: ms} holds that reply back, as a slow upload does.
+      async sendMessage(message) {
+        const reply = answer(message);
+        const ms = s.delays[message.type];
+        return ms ? new Promise(resolve => setTimeout(() => resolve(reply), ms)) : reply;
+      },
     },
     sidePanel: { async open(options) { sidePanelOpened.push(options); } },
   };

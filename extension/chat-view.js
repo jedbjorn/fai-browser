@@ -148,14 +148,31 @@ export function faiLine(text) {
 }
 
 /**
- * Messages sent from the panel that the host has not written yet (spec #80 "Sending"): a pending message is dropped
- * once a user message with the same text appears in `messages` after it was sent, so it never shows twice.
+ * A chat message as the service cleans it before it reaches the host (main src/wake.js cleanChatText, which the FAI
+ * chat runner uses too): line breaks made \n, zero-width and direction characters removed, other control characters and
+ * runs of spaces within a line made one space, trimmed. The host writes this form, so a sent message is matched on it.
+ */
+export function cleanChatText(text) {
+  if (typeof text !== 'string') return '';
+  return text
+    .replace(/\r\n?|[\u2028\u2029]/g, '\n')
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]+/g, ' ')
+    .replace(/[^\S\n]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Messages sent from the panel that the host has not written yet (spec #80 "Sending"): a sent message is dropped once
+ * a user message with the same cleaned text appears that was not in the list when it was sent (`before`, the message
+ * ids then), so it never shows twice and an earlier message with the same words does not hide it.
  */
 export function unmatchedPending(pending, messages) {
-  const written = (messages ?? []).filter(message => message.role === 'user').map(message => message.text);
+  const written = (messages ?? []).filter(message => message.role === 'user');
   return (pending ?? []).filter(item => {
     if (item.state !== 'sent') return true;
-    const index = written.indexOf(item.text);
+    const text = cleanChatText(item.text);
+    const index = written.findIndex(message => !item.before.has(message.id) && cleanChatText(message.text) === text);
     if (index < 0) return true;
     written.splice(index, 1);
     return false;

@@ -10,7 +10,7 @@ import { chromium } from 'playwright-core';
 import { headlessEnv } from '../scripts/headless-env.mjs';
 import { firefoxManifest } from '../scripts/build-firefox.mjs';
 import {
-  agentBlockedLine, composerProblem, defaultAgent, defaultProvider, faiLine, MAX_TEXT, needsOpenCodeModel, readableLine, reasonLine,
+  agentBlockedLine, cleanChatText, composerProblem, defaultAgent, defaultProvider, faiLine, MAX_TEXT, needsOpenCodeModel, readableLine, reasonLine,
   unmatchedPending,
 } from '../extension/chat-view.js';
 import {
@@ -78,11 +78,22 @@ test('the composer refuses over 4,000 characters, more than 10 files and a file 
 });
 
 test('a message sent to an open agent shows once: the pending copy goes when the host writes it', () => {
-  const pending = [{ key: 'p1', text: 'go on', state: 'sent' }, { key: 'p2', text: 'and then', state: 'sending' }];
-  assert.deepEqual(unmatchedPending(pending, [{ role: 'agent', text: 'go on' }]).map(item => item.key), ['p1', 'p2']);
-  assert.deepEqual(unmatchedPending(pending, [{ role: 'user', text: 'go on' }]).map(item => item.key), ['p2']);
-  assert.deepEqual(unmatchedPending(pending, [{ role: 'user', text: 'and then' }]).map(item => item.key), ['p1', 'p2'],
-    'a message still sending is kept');
+  const before = new Set(['old']);
+  const pending = [{ key: 'p1', text: 'go on', state: 'sent', before }, { key: 'p2', text: 'and then', state: 'sending', before }];
+  const keys = messages => unmatchedPending(pending, messages).map(item => item.key);
+  assert.deepEqual(keys([{ id: 'a', role: 'agent', text: 'go on' }]), ['p1', 'p2']);
+  assert.deepEqual(keys([{ id: 'a', role: 'user', text: 'go on' }]), ['p2']);
+  assert.deepEqual(keys([{ id: 'a', role: 'user', text: 'and then' }]), ['p1', 'p2'], 'a message still sending is kept');
+  // The host writes the service's cleaned text: spaces and tabs run together, zero-width characters go.
+  const typed = [{ key: 'p3', text: 'Go to settings.  Then\tclick\u200b Save.\r\n  next', state: 'sent', before }];
+  assert.deepEqual(unmatchedPending(typed, [{ id: 'a', role: 'user', text: 'Go to settings. Then click Save.\n next' }]), []);
+  // A message with the same words that was there before this one was sent is not its copy.
+  assert.deepEqual(keys([{ id: 'old', role: 'user', text: 'go on' }]), ['p1', 'p2']);
+});
+
+test('the panel cleans a message the way the service does', () => {
+  assert.equal(cleanChatText('  a \t b\u200b\u2028c\u0007d  '), 'a b\nc d');
+  assert.equal(cleanChatText(null), '');
 });
 
 test('manifests: Chrome\'s side panel and Firefox\'s sidebar are panel.html', async () => {
@@ -320,6 +331,58 @@ test('a file over 25 MB is refused before it is sent', async t => {
   assert.equal(await page.locator('#chips li').count(), 0);
 });
 
+test('a message goes to the chat it was written in, even when another chat is opened while its file uploads', async t => {
+  const page = await open(t, { delays: { chat_file: 600 }, stuck: true });
+  await page.setInputFiles('#file-input', [{ name: 'shot.png', mimeType: 'image/png', buffer: PNG }]);
+  await page.fill('#text', 'What is in this screenshot?');
+  await page.click('#send');
+  await page.click('#drawer-toggle');
+  await page.click('[data-chat-id="chat_b"]');
+  await page.waitForFunction(() => globalThis.__sent.some(message => message.type === 'chat_send'));
+  const [body] = await sent(page, 'chat_send');
+  assert.deepEqual(body, { type: 'chat_send', provider: 'codex', model: null, text: 'What is in this screenshot?', files: ['file_1'] });
+  assert.equal((await sent(page, 'chat_file'))[0].chatId, null);
+  // The open chat is untouched: no bubble, not running, the composer usable.
+  await page.waitForSelector('#send:not([disabled])');
+  assert.equal(await page.textContent('#title'), STORED_CHATS[1].title);
+  assert.equal(await page.locator('#messages li').count(), 0);
+  assert.equal(await page.isVisible('#stop'), false);
+  // The new chat is listed and holds the message.
+  await page.waitForSelector('[data-chat-id="chat_4"]', { state: 'attached' });
+});
+
+test('a sent message shows once though the service cleans its spaces, in a FAI chat and to an open agent', async t => {
+  const page = await open(t, { agentReads: { ses_1: { messages: [] } }, echoMs: 200 });
+  await page.fill('#text', 'Go to settings.  Then\tclick Save.');
+  await page.click('#send');
+  await page.waitForFunction(() => [...document.querySelectorAll('#messages li')].some(li => li.textContent.startsWith('Codex')));
+  assert.deepEqual((await texts(page)).filter(text => text.includes('Then')).length, 2, 'the message and the reply quoting it');
+  assert.equal((await texts(page)).filter(text => text === 'Go to settings. Then click Save.').length, 1);
+  await page.click('#drawer-toggle');
+  await page.click('#agent-list [data-session-id="ses_1"]');
+  await page.fill('#text', 'Go to settings.  Then click Save.');
+  await page.click('#send');
+  await page.waitForFunction(() => document.querySelector('#messages li') && !document.querySelector('[data-pending]'));
+  assert.deepEqual(await texts(page), ['Go to settings. Then click Save.']);
+});
+
+test('a message to an open agent with the same words as an earlier one stays shown until the host writes it', async t => {
+  const page = await open(t, { agentReads: { ses_1: { busy: true, messages: [
+    { id: 'c1', role: 'user', text: 'continue', at: new Date().toISOString() }] } } });
+  await page.click('#drawer-toggle');
+  await page.click('#agent-list [data-session-id="ses_1"]');
+  await page.waitForSelector('#messages li');
+  await page.fill('#text', 'continue');
+  await page.click('#send');
+  await page.waitForSelector('[data-pending="sent"]');
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator('[data-pending="sent"]').count(), 1, 'not dropped against the earlier "continue"');
+  await page.evaluate(() => globalThis.__fake.agent('ses_1', { messages: [...globalThis.__scenario.agentReads.ses_1.messages,
+    { id: 'c2', role: 'user', text: 'continue', at: new Date().toISOString() }] }));
+  await page.waitForFunction(() => !document.querySelector('[data-pending]'));
+  assert.deepEqual(await texts(page), ['continue', 'continue']);
+});
+
 test('open agents (spec #80): the agent working in this window is chosen, Browsing… while busy, Sending… then Sent', async t => {
   const reads = { ses_1: { busy: true, messages: [{ id: 'a1', role: 'agent', text: 'Working on <i>it</i>', at: new Date().toISOString() }] } };
   const page = await open(t, { requests: [{ requestId: 'r1', state: 'active', lease: { tabId: 7 }, owner: { sessionId: 'ses_1' } }],
@@ -510,6 +573,30 @@ test('keyboard: every control in the conversation, drawer and settings is reache
   await page.keyboard.press('Escape');
   await page.waitForSelector('#settings', { state: 'hidden' });
   assert.equal(await page.evaluate(() => document.activeElement.id), 'text', 'Escape returns to the composer');
+});
+
+test('keyboard: a settings change keeps focus on its control, so arrows step through Appearance and a select', async t => {
+  const page = await open(t, {});
+  await page.click('#drawer-toggle');
+  await page.click('#open-settings');
+  await page.waitForFunction(() => document.activeElement?.id === 'settings-title');
+  const focused = () => page.evaluate(() => document.activeElement?.dataset.setting ?? document.activeElement?.tagName);
+  const saves = () => page.evaluate(() => globalThis.__sent.filter(message => message.type === 'chat_settings_set').length);
+  await page.focus('input[name="appearance"][value="system"]');
+  await page.keyboard.press('ArrowRight');
+  await page.waitForFunction(() => document.getElementById('settings-status').textContent === 'Saved.');
+  assert.equal(await focused(), 'appearance-light');
+  await page.keyboard.press('ArrowRight');
+  await page.waitForFunction(count => globalThis.__sent.filter(message => message.type === 'chat_settings_set').length > count, 1);
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
+  assert.equal(await focused(), 'appearance-dark');
+  const before = await saves();
+  await page.focus('[data-setting="default-provider"]');
+  await page.keyboard.press('ArrowDown');
+  await page.waitForFunction(count => globalThis.__sent.filter(message => message.type === 'chat_settings_set').length > count, before);
+  await page.waitForFunction(() => document.getElementById('settings-status').textContent === 'Saved.');
+  assert.equal((await sent(page, 'chat_settings_set')).at(-1).settings.defaultProvider, 'claude');
+  assert.equal(await focused(), 'default-provider');
 });
 
 test('the popup\'s Chat button opens the side panel in its window', async t => {

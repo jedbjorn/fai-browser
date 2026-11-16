@@ -6,7 +6,7 @@
 // clickable. The rules (defaults, reason lines, limits) are in chat-view.js.
 import { chatApi } from './chat-api.js';
 import {
-  agentBlockedLine, APPEARANCES, availableProviders, CHATS_PAGE, composerProblem, defaultAgent, defaultProvider,
+  agentBlockedLine, APPEARANCES, availableProviders, CHATS_PAGE, cleanChatText, composerProblem, defaultAgent, defaultProvider,
   faiLine, formatSize, MAX_FILES, MAX_PROVIDER_TEXT, needsOpenCodeModel, PROVIDER_ORDER, providerName, reasonLine,
   readableLine, relativeTime, unmatchedPending,
 } from './chat-view.js';
@@ -38,6 +38,7 @@ const state = {
   chats: [], chatsNext: null,
   agents: [], requests: [], suggested: null,
   view: 'loading',     // loading | offline | none | new | chat | agent
+  opened: 0,           // counts conversations opened, so work that outlives one does not land on the next
   newProvider: null, newModel: '',
   chat: null, messages: [], cursor: null,
   agent: null, agentMessages: [], agentCursor: null, busy: false, readable: true, ended: false, pending: [],
@@ -118,6 +119,7 @@ function normalizeSettings(value) {
 // --- views ----------------------------------------------------------------------------------------------------------
 
 function resetConversation() {
+  state.opened += 1;
   state.chat = null;
   state.messages = [];
   state.cursor = null;
@@ -191,9 +193,10 @@ async function readChat() {
   const messages = Array.isArray(reply.messages) ? reply.messages : [];
   const seen = new Set(state.messages.map(message => message.id));
   const fresh = messages.filter(message => !seen.has(message.id));
-  // A message sent from here shows at once; the stored one replaces it when the transcript has it.
-  const written = new Set(fresh.filter(message => message.role === 'user').map(message => message.text));
-  state.messages = [...state.messages.filter(message => !(message.local && written.has(message.text))), ...fresh];
+  // A message sent from here shows at once; the stored one (cleaned by the service) replaces it when the transcript has
+  // it. `fresh` holds only messages read after it was sent.
+  const written = new Set(fresh.filter(message => message.role === 'user').map(message => cleanChatText(message.text)));
+  state.messages = [...state.messages.filter(message => !(message.local && written.has(cleanChatText(message.text)))), ...fresh];
   state.cursor = reply.cursor ?? state.cursor;
   setNotice(null);
   render();
@@ -255,9 +258,15 @@ function errorLine(error, provider) {
   return reasonLine(error?.code, provider) ?? error?.message;
 }
 
+// The message goes to the conversation it was written in (spec #84 "A turn"): the chat, or a new one on the provider and
+// model shown, taken once here. Its bubble and the composer change only while that conversation is still open.
 async function sendChat(text) {
-  const provider = state.chat?.provider ?? state.newProvider;
+  const opened = state.opened;
+  const chat = state.chat;
+  const provider = chat?.provider ?? state.newProvider;
+  const model = state.newModel || null;
   const files = state.files.map(item => item.file);
+  const here = () => state.opened === opened;
   state.sending = true;
   state.composerError = null;
   render();
@@ -265,31 +274,31 @@ async function sendChat(text) {
     const fileIds = [];
     for (const file of files) {
       const data = await readFile(file);
-      const reply = await chatApi.file(state.chat?.chatId ?? null, { name: file.name, mime: file.type, size: file.size, data });
+      const reply = await chatApi.file(chat?.chatId ?? null, { name: file.name, mime: file.type, size: file.size, data });
       fileIds.push(reply.fileId);
     }
-    const body = state.chat
-      ? { chatId: state.chat.chatId, text, files: fileIds }
-      : { provider, model: state.newModel || null, text, files: fileIds };
+    const body = chat ? { chatId: chat.chatId, text, files: fileIds } : { provider, model, text, files: fileIds };
     const sent = { id: `local-${Date.now()}`, role: 'user', text, at: new Date().toISOString(), local: true,
       files: files.map(file => ({ name: file.name, size: file.size, type: file.type })) };
     const reply = await chatApi.send(body);
-    if (!state.chat) {
-      state.chat = { chatId: reply.chatId, title: text.slice(0, 60) || 'Chat', provider, model: state.newModel || null, running: true };
+    loadChats().then(renderDrawer);
+    if (!here()) return;
+    if (!chat) {
+      state.chat = { chatId: reply.chatId, title: text.slice(0, 60) || 'Chat', provider, model, running: true };
       state.view = 'chat';
-    } else state.chat.running = true;
+    } else chat.running = true;
     state.messages.push(sent);
     ui.text.value = '';
     clearFiles({ keepPreviews: true });
-    loadChats().then(renderDrawer);
   } catch (error) {
-    state.composerError = errorLine(error, provider);
+    if (here()) state.composerError = errorLine(error, provider);
   } finally {
     state.sending = false;
     render();
   }
+  if (!here()) return;
   await readChat();
-  if (!ui.text.disabled) ui.text.focus();
+  if (here() && !ui.text.disabled) ui.text.focus();
 }
 
 // A chat wake still being delivered when agent_send answered: its outcome arrives in agent_chat's `sends`.
@@ -310,6 +319,8 @@ function sendAgent(item) {
   item.state = 'sending';
   item.reason = null;
   item.wakeId = null;
+  // Only a user message that arrives after this send can be its copy (unmatchedPending).
+  item.before = new Set(state.agentMessages.map(message => message.id));
   render();
   chatApi.agentSend(agent.sessionId, item.text).then(reply => {
     item.wakeId = typeof reply.wakeId === 'string' ? reply.wakeId : null;
@@ -618,10 +629,12 @@ function modelSetting(provider) {
   typed.autocomplete = 'off';
   typed.placeholder = provider === 'opencode' ? 'provider/model' : 'Model name';
   typed.setAttribute('aria-label', `${name} model name`);
+  typed.dataset.setting = `typed-${provider}`;
   typed.value = current;
   typed.addEventListener('change', () => saveSettings({ models: { [provider]: typed.value.trim() || null } }));
   const select = element('select');
   select.dataset.modelProvider = provider;
+  select.dataset.setting = `model-${provider}`;
   const models = listed?.models ?? [];
   const isOther = Boolean(current) && !models.includes(current);
   select.append(option('', provider === 'opencode' ? 'None chosen' : `${name}'s own default`, !current));
@@ -651,6 +664,9 @@ function modelSetting(provider) {
 
 function renderSettings() {
   if (!state.settingsOpen) return;
+  // Every control is rebuilt; the one that had focus gets it back, so a keyboard user can keep stepping through a
+  // radio group or a select (spec #84 "Appearance and quality").
+  const focused = ui.settingsBody.contains(document.activeElement) ? document.activeElement.dataset.setting : null;
   const nodes = [];
   if (state.settingsNote) {
     const note = element('p', 'notice', state.settingsNote);
@@ -659,6 +675,7 @@ function renderSettings() {
   }
   const available = availableProviders(state.providers);
   const provider = element('select');
+  provider.dataset.setting = 'default-provider';
   if (available.length) {
     const chosen = defaultProvider(state.providers, state.settings);
     for (const id of available) provider.append(option(id, providerName(id), id === chosen));
@@ -679,6 +696,7 @@ function renderSettings() {
     input.type = 'radio';
     input.name = 'appearance';
     input.value = value;
+    input.dataset.setting = `appearance-${value}`;
     input.checked = state.settings.appearance === value;
     input.addEventListener('change', () => saveSettings({ appearance: value }));
     label.append(input, element('span', '', value[0].toUpperCase() + value.slice(1)));
@@ -687,6 +705,7 @@ function renderSettings() {
   appearance.append(group);
   nodes.push(appearance);
   ui.settingsBody.replaceChildren(...nodes);
+  if (focused) ui.settingsBody.querySelector(`[data-setting="${focused}"]`)?.focus();
 }
 
 // --- rendering ------------------------------------------------------------------------------------------------------
