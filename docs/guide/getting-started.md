@@ -133,5 +133,6 @@ node examples/fake-demo.js     # an in-memory bridge; observe, then act; prints 
 ## Next
 
 - [MCP tools](mcp-tools.md): what your agent can call.
+- [The chat panel](chat.md): talk to your agent beside the page, or start one from the browser.
 - [Secret redaction](secret-redaction.md) and [approvals](approvals.md): what is hidden and what asks.
 - [Troubleshooting](troubleshooting.md).
