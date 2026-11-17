@@ -500,8 +500,8 @@ async function clickPopup(ctx, requestId, level) {
   }, 15_000);
 }
 
-// The user's click on a waiting action approval (the Approve gate): in the approval window (approve.html), or on the
-// toolbar popup's card when the browser opened the popup instead. Returns the surface used, or null.
+// The user's click on a waiting action approval (the Approve gate) in its approval window (approve.html): approvals
+// always open their own window, never the toolbar popup (spec #86, spec #87). Returns the surface used, or null.
 async function decideAction(ctx, decision, beforeClick = () => {}) {
   return until(async () => {
     for (const handle of await ctx.handles()) {
@@ -517,15 +517,7 @@ async function decideAction(ctx, decision, beforeClick = () => {}) {
       await ctx.marionette.send('WebDriver:ElementClick', { id: Object.values(found.value ?? found)[0] });
       return { surface: 'window', headline };
     }
-    const onCard = code => ctx.chrome(`const browser = browserWindows().flatMap(w => [...w.document.querySelectorAll('browser[webextension-view-type="popup"]')])[0];
-      const card = browser?.contentDocument?.querySelector('.approval-card');
-      if (!card) return null;
-      ${code}`, [decision]).catch(() => null);
-    const headline = await onCard("return card.querySelector('.approval-label')?.textContent ?? '';");
-    if (headline === null) return null;
-    beforeClick();
-    await onCard("card.querySelector(arguments[0] === 'approve' ? '.primary-button' : '.secondary-button').click(); return true;");
-    return { surface: 'popup', headline };
+    return null;
   }, 30_000);
 }
 

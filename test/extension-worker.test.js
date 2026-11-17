@@ -3516,6 +3516,89 @@ test('bundle: closing the window leaves it pending; a repeat, a join or Show reo
   assert.deepEqual(h.session.bundles, []);
 });
 
+// Spec #87 "Expiry and closing", AC 9, flag #18: while a bundle is open the agent's calls never reach the worker (the
+// daemon answers each with the approval_open receipt); the request snapshot's count of them (pausedCallSeq) does. A rise
+// brings a window the user closed back once; one still open, answered or expired stays as it is.
+function pausedSnapshot(h, seq, ask = null) {
+  h.push({ type: 'requests', requests: [{ requestId: 'req_1', state: 'active', origins: [ORIGIN], mode: 'reversible',
+    ...(seq ? { pausedCallSeq: seq } : {}),
+    ...(ask ? { ask: { id: 'ask-1', level: 'full', origins: [], access: [], at: new Date().toISOString(), ...ask } } : {}) }] });
+}
+
+test('bundle: after the user closed its window, the next paused repeat, wait or join reopens it once; never while open', async () => {
+  const h = await started({ level: 'reversible', hostGrants: [`${ORIGIN}/*`] });
+  gatedControls(h);
+  pausedSnapshot(h, 0);
+  await sleep(20);
+  await pendingEntry(h);
+  await h.until(() => approveWindows(h).length === 1);
+  const [bundle] = h.session.bundles;
+  // Still open: a paused call opens nothing more.
+  pausedSnapshot(h, 1);
+  await sleep(30);
+  assert.equal(approveWindows(h).length, 1, 'no second window while it is open');
+  // Closed by hand: pending, and nothing reopens by itself.
+  h.userClose(31);
+  await sleep(20);
+  assert.equal(h.session.bundles[0].shown, false);
+  pausedSnapshot(h, 1);
+  await sleep(30);
+  assert.equal(approveWindows(h).length, 1, 'no rise, no window');
+  // The agent repeats its act (paused at the daemon): back once, the same bundle and version.
+  pausedSnapshot(h, 2);
+  await h.until(() => approveWindows(h).length === 2);
+  assert.ok(approveWindows(h)[1].url.endsWith(`bundle=${bundle.id}`));
+  assert.equal(h.session.bundles[0].version, bundle.version);
+  assert.equal(approveWindows(h)[1].focused, true);
+  // Closed again: no loop. The agent's wait (paused): back once.
+  h.userClose(32);
+  await sleep(20);
+  pausedSnapshot(h, 2);
+  await sleep(30);
+  assert.equal(approveWindows(h).length, 2, 'closing again keeps it closed until the next call');
+  pausedSnapshot(h, 3);
+  await h.until(() => approveWindows(h).length === 3);
+  await sleep(30);
+  assert.equal(approveWindows(h).length, 3, 'once per rise');
+  // Closed again: the agent's open asking for more joins (its ask and the count's rise in one snapshot): back once.
+  h.userClose(33);
+  await sleep(20);
+  pausedSnapshot(h, 4, {});
+  await h.until(() => approveWindows(h).length === 4);
+  await sleep(30);
+  assert.equal(approveWindows(h).length, 4, 'one window for the join and its paused call');
+  assert.equal(h.session.bundles[0].ask?.id, 'ask-1');
+  // Answered (Deny): a later paused call brings nothing back.
+  const shown = h.session.bundles[0];
+  const reply = await h.send({ type: 'bundle_decision', bundleId: shown.id, version: shown.version, decision: 'deny' }, APPROVE_PAGE);
+  assert.equal(reply.error, undefined, JSON.stringify(reply));
+  await h.until(() => h.session.bundles.length === 0);
+  pausedSnapshot(h, 5);
+  await sleep(30);
+  assert.equal(approveWindows(h).length, 4, 'nothing after an answer');
+  assert.deepEqual(h.session.bundles, []);
+});
+
+test('bundle: a paused call after its bundle expired, with the window closed, reopens nothing', async () => {
+  const clock = { offset: 0 };
+  const h = await started({ level: 'full', clock });
+  gatedControls(h);
+  pausedSnapshot(h, 0);
+  await sleep(20);
+  await pendingEntry(h, {}, Date.now() + 30_000);
+  await h.until(() => approveWindows(h).length === 1);
+  h.userClose(31);
+  await sleep(20);
+  clock.offset += 5 * 60_000 + 1000;
+  pausedSnapshot(h, 1);
+  await h.until(() => bridged(h, 'bundle_decision').length === 1);
+  assert.equal(bridged(h, 'bundle_decision')[0].decision, 'expired');
+  pausedSnapshot(h, 2);
+  await sleep(30);
+  assert.equal(approveWindows(h).length, 1, 'no window after the expiry');
+  assert.deepEqual(h.session.bundles, []);
+});
+
 test('approve: never at read-only, purchases only from full, off when the user turned the setting off, class from the page', async () => {
   const readOnly = await started();
   const ro = readOnly.command('approve', { target: '1', expectedRevision: 'doc:1', cls: 'secret', waitMs: 10 });

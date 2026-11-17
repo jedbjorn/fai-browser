@@ -3169,7 +3169,8 @@ async function waitTabComplete(tabId, ms) {
 // --- Approve gate (docs/REFERENCE.md "Approve gate") ----------------------------------------------------------
 // An agent's act on a gated control (purchase, secret, delete, submit) sends an `approve` command first. The worker
 // reads the control from the page itself (page.js approvalInfo: label, label hash, gate class, a detected total),
-// adds it to its tab's approval bundle (its window over the tab, a red badge, a popup card) and waits for the user's click. Approve once
+// adds it to its tab's approval bundle (its approval window over the tab, a red badge, a popup card; never the toolbar
+// popup) and waits for the user's click. Approve once
 // mints a random single-use approvalId bound to the tab, lease, document, revision, target, class and label hash, valid
 // for 60 s (5 min when no act waited for the click: the agent is woken to use it); Deny refuses. The execute that
 // follows carries the id: only an id this worker minted, unused, unexpired and
@@ -3258,8 +3259,9 @@ function expireApprovals(leaseId = null) {
 // and are never refused. A bundle's version changes when an item joins or leaves: Approve and Deny carry the version
 // the user saw, and a changed bundle refuses them (bundle_changed). A bundle stays open 5 min from its newest item and
 // 10 min at most, and its items do not expire on their own. Closing its window is not an answer: the bundle stays
-// pending (badge, popup card) and the window comes back when an item joins, the agent repeats an item, or the user
-// clicks Show approval window on the card. The daemon gets `bundle_open` when the window opens and whenever its items
+// pending (badge, popup card) and the window comes back once when an item joins, when the agent's next call is paused
+// (the daemon raises its request's pausedCallSeq: a repeat act, observe, wait or open), or when the user clicks Show
+// approval window on the card. The daemon gets `bundle_open` when the window opens and whenever its items
 // change, then one `bundle_decision` (approved, denied or expired) after every item was applied here. When the lease,
 // the request or the site ends, the bundle goes with it and no decision is sent.
 const BUNDLE_IDLE_MS = 5 * 60_000;
@@ -3268,7 +3270,7 @@ const BUNDLE_CHANGED = 'Updated: the agent added an item. Check the list again.'
 const BUNDLE_GONE = 'This approval is no longer waiting.';
 const ASKS_KEPT = 100;
 // `leaseId|tabId` -> { id, key, leaseId, tabId, requestId, host, version, entryIds, askId, openedAt, newestAt, windowId,
-// opening, dismissed, announced, deciding }
+// opening, dismissed, announced, deciding, pausedSeen }
 const bundles = new Map();
 // The tab each ask joined (ask id -> tab id), and the asks answered or expired in a bundle (never bundled again).
 const askTabs = new Map();
@@ -3301,6 +3303,13 @@ function askBundled(request) {
 // The requests as the popup sees them: an ask a bundle shows is marked, so the popup shows no second card for it.
 function requestsView() {
   return requests.map(item => (askBundled(item) ? { ...item, askBundled: true } : item));
+}
+
+// The daemon's count of the request's paused calls (0 before the first), or null when this browser has no view of it.
+function pausedCalls(requestId) {
+  const request = requests.find(item => item.requestId === requestId);
+  if (!request) return null;
+  return Number.isInteger(request.pausedCallSeq) ? request.pausedCallSeq : 0;
 }
 
 function bundleExpiry(bundle) {
@@ -3377,7 +3386,8 @@ function syncBundles() {
     if (!bundle) {
       bundle = { id: randomId(), key, leaseId: found.leaseId, tabId: found.tabId, requestId: found.requestId,
         host: found.host ?? hostOf(session?.origin ?? ''), version: 0, entryIds: [], askId: null, openedAt: now,
-        newestAt: now, windowId: null, opening: false, dismissed: false, announced: false, deciding: false };
+        newestAt: now, windowId: null, opening: false, dismissed: false, announced: false, deciding: false,
+        pausedSeen: pausedCalls(found.requestId) };
       bundles.set(key, bundle);
     }
     const joined = found.entryIds.some(id => !bundle.entryIds.includes(id)) || (found.askId !== null && found.askId !== bundle.askId);
@@ -3394,6 +3404,14 @@ function syncBundles() {
   }
   for (const bundle of [...bundles.values()]) {
     if (!bundle.deciding && now > bundleExpiry(bundle)) expireBundle(bundle);
+  }
+  // The agent's call was paused since the last snapshot: a window the user closed comes back, once per rise (one
+  // still open stays as it is; an answered or expired bundle is gone).
+  for (const bundle of bundles.values()) {
+    const seen = pausedCalls(bundle.requestId);
+    if (seen === null || bundle.deciding) continue;
+    if (bundle.pausedSeen !== null && seen > bundle.pausedSeen) bundle.dismissed = false;
+    bundle.pausedSeen = seen;
   }
   // Items do not expire on their own while in a bundle: a pending answer names the bundle's time.
   for (const bundle of bundles.values()) {

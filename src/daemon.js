@@ -665,6 +665,9 @@ export function createDaemon(options = {}) {
       ...(record.browserNote ? { browserNote: record.browserNote } : {}),
       activeRunId: record.activeRunId,
       lastRunId: record.lastRunId,
+      // How many of the owner's calls a combined approval paused (pauseCheck): it rises on each one, and the extension
+      // opens again a bundle window the user closed (spec #87 "Expiry and closing"). A count only.
+      ...(record.pausedCallSeq ? { pausedCallSeq: record.pausedCallSeq } : {}),
       // How a pending request is approved (`page`: its page opened by itself, the icon click on it approves; `window`:
       // Open in the FAI Browser window first); null once it is no longer pending.
       approval: record.state === 'pending' ? approvalOf(record) : null,
@@ -1404,8 +1407,14 @@ export function createDaemon(options = {}) {
     const known = record.actionApprovals.get(entryId);
     if (!asked) {
       if (known) known.settled = true;
-      // The act picked the answer up itself: a bundle holding only its entry is over.
-      if (raw.code !== 'approval_pending') endSingleBundles(record, { entryId });
+      // The act picked the answer up itself: a bundle holding only its entry is over, and a larger one holding it was
+      // answered to that call (its decision may arrive after the act ended: it wakes nobody).
+      if (raw.code !== 'approval_pending') {
+        endSingleBundles(record, { entryId });
+        for (const bundle of bundles.values()) {
+          if (bundle.requestId === record.requestId && bundle.entryIds.includes(entryId)) bundle.answeredToCall = true;
+        }
+      }
       return;
     }
     if (!known) {
@@ -1448,7 +1457,7 @@ export function createDaemon(options = {}) {
       at: t });
   }
 
-  // --- combined approvals (spec #87; the bridge contract is Planner decision #51) ------------------------------
+  // --- combined approvals (spec #87; the bridge contract is the Planner's, decision #42) ------------------------
   //
   // The extension shows everything its agent waits on for one task tab in one window (a bundle: the request's ask for
   // more and the tab's pending action approvals) and tells the daemon: bundle_open when the window opens or its items
@@ -1493,9 +1502,10 @@ export function createDaemon(options = {}) {
   /**
    * Before a paused route runs (PAUSED_ROUTES): throws the approval_open receipt when one of the caller's bundles is
    * open. Some calls go on: the call that opened the bundle finishing (following its own running act, the open's wait
-   * for its own ask and the observe after it), a zero-length wait on a request (a read of its state, which the MCP
-   * server's open and act make first), and an ask on the bundle's own request, which joins the bundle first (the
-   * extension adds it to the window) and then gets the receipt.
+   * for its own ask and the observe after it, only while an ask is in the bundle or a wait for it holds: never on the
+   * caller's flag alone), a zero-length wait on a request (a read of its state, which the MCP server's open and act
+   * make first), and an ask on the bundle's own request, which joins the bundle first (the extension adds it to the
+   * window) and then gets the receipt. Every paused call from the bundle's owner raises its request's pausedCallSeq.
    */
   function pauseCheck(route, body, caller) {
     const run = route.name === 'wait' && typeof body.runId === 'string' ? runs.get(body.runId)
@@ -1504,15 +1514,27 @@ export function createDaemon(options = {}) {
       : typeof body.requestId === 'string' ? body.requestId : null;
     const bundle = pausingBundle(caller, requestId);
     if (!bundle) return;
+    const record = requests.get(bundle.requestId);
     if (route.name === 'wait' && run && run.state !== 'done') return;
     if (route.name === 'wait' && !run && body.maxMs === 0 && body.ask !== true) return;
-    if (route.name === 'wait' && body.ask === true && body.requestId === bundle.requestId) return;
-    if (route.name === 'observe' && body.afterAsk === true && body.requestId === bundle.requestId) return;
+    const asking = body.requestId === bundle.requestId && (bundle.ask !== null || record.askWaiters > 0);
+    if (route.name === 'wait' && body.ask === true && asking) return;
+    if (route.name === 'observe' && body.afterAsk === true && asking) return;
     if (route.name === 'requests.ask' && route.param === bundle.requestId) {
       const asked = askRoute(route.param, body, caller);
       log('bundle_join', { requestId: bundle.requestId, asked: asked.asked });
     }
+    notePausedCall(record, caller);
     throw pausedReceipt(bundle);
+  }
+
+  // A call of the bundle's owner (its session; any caller of a request no session owns) was paused: the request's
+  // pausedCallSeq rises, so the extension opens again a bundle window the user closed (spec #87 "Expiry and closing",
+  // flag #18). Another session's call on the request is paused too, but brings no window back.
+  function notePausedCall(record, caller) {
+    if (record.ownerSession && record.ownerSession !== caller?.sessionId) return;
+    record.pausedCallSeq = (record.pausedCallSeq ?? 0) + 1;
+    changed();
   }
 
   // What the bundle's ask asks for, by id and number only (its level, how many sites).
