@@ -31,6 +31,13 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 - **Windows: attachment names like `con .txt`** (a device name followed by spaces) are renamed like other reserved names; before, Codex hung on them until Stop.
 - **A closed approval window comes back** (flag #18): it was not reopened until the entry expired. Now the agent's next paused call brings it back.
 
+### Verification
+
+- **Chat panel and FAI chats, live.** macOS (`mac-test`): all three providers (Claude Code, Codex, OpenCode), open agents and FAI chats. Windows 10: setup with `install.ps1`, pairing, FAI chat process launch, chat folders and Stop, message delivery on the Windows channels to the Claude Code, Codex and OpenCode command lines (Claude also while busy), tool confinement, `AGENTS.md` loading and the tab invite with the `tabs` permission. Not run live on Windows (the shared code passed on macOS and in Windows CI): the Claude desktop Code tab and ChatGPT's Codex mode for chat, reading an attached file with Claude and OpenCode, and Stop for Claude and OpenCode. Not re-run on macOS after the last fixes (shared code). **Linux: not yet verified** (the maintainer checks it after release).
+- **Combined approvals and one FAI group, live on Windows 10** with Claude on Sonnet in the desktop Code tab: one window for a two-item approval with its labels, the paused receipt, a closed window coming back on the agent's next call, Approve (one wake, the delete ran once), Deny (one wake, the agent stopped), expiry (one `bundle_expired` wake), and one FAI group titled `FAI ?` then `FAI`. The exact level-plus-delete window (`Act on <site> and click "Delete account"?`) was checked in Firefox 160 with the real service on Linux. macOS and Linux run the same add-on and service code.
+- **Known limits.** On Windows, Codex's image viewer can read any image your account can read. If an `opencode.jsonc` already exists, setup does not register OpenCode by itself; it prints the snippet and plugin step to add by hand. In Firefox, the site-access prompt after **Use** in the toolbar popup can open under the popup ([troubleshooting](docs/guide/troubleshooting.md)).
+- All live runs used a pre-release build of the add-on loaded by hand; the signed 0.12.0 add-on was not checked live.
+
 ## 0.11.0 (2026-11-16)
 
 ### Changed
