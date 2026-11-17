@@ -978,6 +978,8 @@ function updateBadge() {
   } catch {
     // The action API is unavailable in some test contexts.
   }
+  // The same changes (an approval or ask waiting or answered, a pause) can change FAI's group titles.
+  retitleFaiGroups();
 }
 
 async function setStatus(value, { preserveVault = false } = {}) {
@@ -996,58 +998,178 @@ async function setStatus(value, { preserveVault = false } = {}) {
   updateBadge();
 }
 
-// --- the driven tab's mark: a tab group titled FAI (FAI ⏸ while paused), nothing in the page ------------------------
+// --- FAI's tab group: one per normal window, holding every tab FAI arms or drives (spec #88), nothing in the page --
 
-const MARK_TITLE = { active: 'FAI', paused: 'FAI ⏸' };
+// Titled by the most urgent state of FAI's tabs in it: FAI ? (a tab waits for the user), FAI ⏸ (paused), else FAI.
+const MARK_TITLE = { waiting: 'FAI ?', paused: 'FAI ⏸', active: 'FAI' };
+const MARK_TITLES = Object.values(MARK_TITLE);
 const MARK_COLOR = 'grey';
 const NO_GROUP = -1; // chrome.tabGroups.TAB_GROUP_ID_NONE
-// Group changes run one at a time, so a stop followed by a new session's start never interleave.
+// Group changes run one at a time, so joins, leaves and retitles never interleave.
 let markChain = Promise.resolve();
+// windowId -> the group this extension made there, also in storage.session.faiGroups so a restarted worker finds it.
+// FAI only ever uses a group by an id it recorded, never by its title.
+let faiGroups = null;
+let retitleQueued = false;
 
-// Puts an active or paused session's tab in this extension's group (made once, retitled on pause) and takes it out
-// when the session stops. A tab already in a group the user made is left alone (no mark). The group id is kept in
-// storage.session so a restarted worker can take back a mark its predecessor left (unmarkLeftover).
-function markTab(target) {
-  markChain = markChain.then(async () => {
-    if (!chrome.tabGroups || !chrome.tabs.group) return;
-    const title = MARK_TITLE[target.status];
-    const tab = await chrome.tabs.get(target.tabId).catch(() => null);
-    if (!tab) return;
-    if (!title || session !== target) {
-      await unmark(target, tab);
-      return;
+async function loadFaiGroups() {
+  if (faiGroups) return faiGroups;
+  const { faiGroups: stored } = (await chrome.storage.session?.get?.(['faiGroups'])) ?? {};
+  faiGroups ??= new Map(Object.entries(stored ?? {}).filter(([, groupId]) => Number.isInteger(groupId))
+    .map(([windowId, groupId]) => [Number(windowId), groupId]));
+  return faiGroups;
+}
+
+function saveFaiGroups() {
+  return chrome.storage.session?.set?.({ faiGroups: Object.fromEntries(faiGroups) });
+}
+
+// The window's FAI group id, or null. A recorded group that is gone (the browser removes an empty group) or that the
+// user renamed is forgotten.
+async function windowGroup(windowId) {
+  const groups = await loadFaiGroups();
+  const groupId = groups.get(windowId);
+  if (groupId === undefined) return null;
+  const group = await chrome.tabGroups.get(groupId).catch(() => null);
+  if (group && group.windowId === windowId && MARK_TITLES.includes(group.title)) return groupId;
+  groups.delete(windowId);
+  await saveFaiGroups();
+  return null;
+}
+
+// The one read of "this tab waits for the user" (FAI ?): an armed tab, an action approval pending on it, or the
+// request's open ask for more while its session is on it. Spec #87's bundles are made of exactly these items.
+function waitsForUser(tabId) {
+  if (armed.has(tabId)) return true;
+  if ([...approvals.values()].some(entry => entry.status === 'pending' && entry.tabId === tabId)) return true;
+  return session?.tabId === tabId && requests.some(item => item.requestId === session.requestId && item.ask
+    && ['active', 'paused'].includes(item.state) && here(item));
+}
+
+// Tabs FAI holds now -> 'armed' | 'active' | 'paused': armed tabs, and every tab of an active or paused session.
+function heldTabs() {
+  const held = new Map();
+  if (session && ['active', 'paused'].includes(session.status)) {
+    for (const tabId of [session.tabId, session.homeTabId, ...(session.tabs ?? []).map(entry => entry.tabId)]) {
+      if (Number.isInteger(tabId)) held.set(tabId, session.status);
     }
-    if (target.groupId != null && tab.groupId === target.groupId) {
-      await chrome.tabGroups.update(target.groupId, { title });
-      return;
-    }
-    if ((tab.groupId ?? NO_GROUP) !== NO_GROUP) return;
-    // The tab's own window, named: Firefox otherwise moves the tab into the last focused window (a prompt popup).
-    target.groupId = await chrome.tabs.group({ tabIds: [target.tabId], createProperties: { windowId: tab.windowId } });
-    await chrome.tabGroups.update(target.groupId, { title, color: MARK_COLOR, collapsed: false });
-    await chrome.storage.session?.set?.({ markedTab: { tabId: target.tabId, groupId: target.groupId } });
+  }
+  for (const tabId of armed.keys()) held.set(tabId, 'armed');
+  return held;
+}
+
+// The title rule for a set of held tabs: any waiting gives FAI ?, else any paused FAI ⏸, else FAI.
+function titleFor(tabIds, held = heldTabs()) {
+  const states = tabIds.map(tabId => (waitsForUser(tabId) ? 'waiting' : held.get(tabId)));
+  return states.includes('waiting') ? MARK_TITLE.waiting : states.includes('paused') ? MARK_TITLE.paused : MARK_TITLE.active;
+}
+
+// The title a FAI group gets from the tabs FAI holds in it.
+async function groupTitle(groupId) {
+  const held = heldTabs();
+  const members = [];
+  for (const tabId of held.keys()) {
+    if ((await chrome.tabs.get(tabId).catch(() => null))?.groupId === groupId) members.push(tabId);
+  }
+  return titleFor(members, held);
+}
+
+// Every window's FAI group gets the title its tabs give it now (inside the chain).
+async function retitleAll() {
+  await loadArms();
+  for (const windowId of [...(await loadFaiGroups()).keys()]) {
+    const groupId = await windowGroup(windowId);
+    if (groupId === null) continue;
+    const title = await groupTitle(groupId);
+    const group = await chrome.tabGroups.get(groupId).catch(() => null);
+    if (group && group.title !== title) await chrome.tabGroups.update(groupId, { title });
+  }
+}
+
+// After a status change (a pause, an approval or ask waiting or answered, an arm): one retitle is queued at a time.
+function retitleFaiGroups() {
+  if (!chrome.tabGroups?.get || retitleQueued) return;
+  retitleQueued = true;
+  markChain = markChain.then(() => {
+    retitleQueued = false;
+    return retitleAll();
   }).catch(() => {});
 }
 
-async function unmark(target, tab) {
-  if (target.groupId == null) return;
-  const groupId = target.groupId;
-  target.groupId = null;
-  const ids = [...new Set([tab?.id, ...(target.tabs ?? []).map(entry => entry.tabId)].filter(Number.isInteger))];
-  for (const id of ids) {
-    const member = await chrome.tabs.get(id).catch(() => null);
-    if (member?.groupId === groupId) await chrome.tabs.ungroup([id]);
+// Puts a tab FAI holds into its window's FAI group, made only when the window has none (inside the chain). A tab
+// already in a group (one the user made) is left there. Returns the FAI group the tab is in, or null.
+async function joinFaiGroup(tabId) {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab) return null;
+  let groupId = await windowGroup(tab.windowId);
+  if ((tab.groupId ?? NO_GROUP) !== NO_GROUP) return tab.groupId === groupId ? groupId : null;
+  if (groupId !== null) {
+    await chrome.tabs.group({ groupId, tabIds: [tabId] });
+  } else {
+    // The tab's own window, named: Firefox otherwise moves the tab into the last focused window (a prompt popup).
+    const title = titleFor([tabId]);
+    groupId = await chrome.tabs.group({ tabIds: [tabId], createProperties: { windowId: tab.windowId } });
+    await chrome.tabGroups.update(groupId, { title, color: MARK_COLOR, collapsed: false });
+    (await loadFaiGroups()).set(tab.windowId, groupId);
+    await saveFaiGroups();
   }
-  await chrome.storage.session?.set?.({ markedTab: null });
+  await retitleAll();
+  return groupId;
 }
 
+// Takes one tab out of its window's FAI group (inside the chain) unless FAI still holds it; the group and its other
+// tabs stay. A tab the user moved elsewhere is left where it is.
+async function leaveFaiGroup(tabId) {
+  if (heldTabs().has(tabId)) return;
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab || (tab.groupId ?? NO_GROUP) === NO_GROUP || tab.groupId !== await windowGroup(tab.windowId)) return;
+  await chrome.tabs.ungroup([tabId]);
+}
+
+// The live session's tabs in FAI's group, for a restarted worker to take back (unmarkLeftover).
+function saveMarked() {
+  const live = session && ['active', 'paused'].includes(session.status) && session.groupId != null ? session : null;
+  return chrome.storage.session?.set?.({ markedTab: live
+    ? { tabId: live.homeTabId ?? live.tabId, tabIds: (live.tabs ?? []).map(entry => entry.tabId), groupId: live.groupId }
+    : null });
+}
+
+// An active or paused session's tab joins FAI's group once (a tab the user drags out stays out); every status
+// change retitles the group; when the session stops (or another takes its place) its tabs leave.
+function markTab(target) {
+  markChain = markChain.then(async () => {
+    if (!chrome.tabGroups || !chrome.tabs.group) return;
+    if (session !== target || !['active', 'paused'].includes(target.status)) {
+      await unmark(target);
+      return;
+    }
+    if (target.groupId == null) target.groupId = await joinFaiGroup(target.tabId);
+    else await retitleAll();
+    await saveMarked();
+  }).catch(() => {});
+}
+
+async function unmark(target) {
+  if (target.groupId == null) return;
+  target.groupId = null;
+  const ids = new Set([target.tabId, target.homeTabId, ...(target.tabs ?? []).map(entry => entry.tabId)]);
+  for (const id of ids) if (Number.isInteger(id)) await leaveFaiGroup(id);
+  await retitleAll();
+  await saveMarked();
+}
+
+// A restarted worker: no session survives it, so the previous session's tabs leave FAI's group; armed tabs (kept in
+// storage.session.armedTabs) stay in it, and the group record stays for them.
 function unmarkLeftover() {
   markChain = markChain.then(async () => {
     const { markedTab, badgeTab } = (await chrome.storage.session?.get?.(['markedTab', 'badgeTab'])) ?? {};
     if (Number.isInteger(badgeTab) && badgeTab !== badgeTabId) ignore(chrome.action.setBadgeText({ tabId: badgeTab, text: null }));
-    if (!Number.isInteger(markedTab?.tabId)) return;
-    const tab = await chrome.tabs.get(markedTab.tabId).catch(() => null);
-    await unmark({ groupId: markedTab.groupId, tabs: (markedTab.tabIds ?? []).map(tabId => ({ tabId })) }, tab);
+    if (!chrome.tabGroups || !chrome.tabs.group) return;
+    await loadArms();
+    const ids = Number.isInteger(markedTab?.tabId) ? new Set([markedTab.tabId, ...(markedTab.tabIds ?? [])]) : new Set();
+    for (const id of ids) if (Number.isInteger(id)) await leaveFaiGroup(id);
+    await retitleAll();
+    if (markedTab) await saveMarked();
   }).catch(() => {});
 }
 
@@ -2729,25 +2851,30 @@ function sessionAllows(url) {
   return session.scope === 'domain' && originCovered(next, session.sites ?? []);
 }
 
-// Only tabs recorded in this lease can join its group. Personal tabs are never adopted by group membership.
-async function groupLeaseTab(current, tabId) {
-  if (!chrome.tabs.group || !chrome.tabGroups) return;
-  await markChain;
-  if (session !== current || current.status !== 'active' || current.tabMode !== 'multiple') return;
-  const home = await chrome.tabs.get(current.homeTabId).catch(() => null);
-  if (!home || current.groupId == null || home.groupId !== current.groupId) return;
-  const tab = await chrome.tabs.get(tabId).catch(() => null);
-  if (!tab || (tab.groupId ?? NO_GROUP) !== NO_GROUP) return;
-  if (session !== current || current.status !== 'active' || current.tabMode !== 'multiple') return;
-  // A popup window's tab stays in its window (the browser moves and groups only tabs of normal windows).
-  const win = tab.windowId !== home.windowId ? await chrome.windows.get(tab.windowId).catch(() => null) : null;
-  if (win && win.type !== 'normal') return;
-  if (session !== current || current.status !== 'active' || current.tabMode !== 'multiple') return;
-  if (tab.windowId !== home.windowId) await chrome.tabs.move(tabId, { windowId: home.windowId, index: -1 });
-  if (session !== current || current.status !== 'active' || current.tabMode !== 'multiple') return;
-  await chrome.tabs.group({ groupId: current.groupId, tabIds: [tabId] });
-  if (session !== current || current.status !== 'active' || current.tabMode !== 'multiple') return;
-  await chrome.storage.session?.set?.({ markedTab: { tabId: current.homeTabId, tabIds: current.tabs.map(entry => entry.tabId), groupId: current.groupId } });
+// Only tabs recorded in this lease can join FAI's group, and only while the lease's home tab is in it. Personal tabs
+// are never adopted by group membership. On the one markChain, like every group change.
+function groupLeaseTab(current, tabId) {
+  if (!chrome.tabs.group || !chrome.tabGroups) return Promise.resolve();
+  const live = () => session === current && current.status === 'active' && current.tabMode === 'multiple';
+  const step = markChain.then(async () => {
+    if (!live()) return;
+    const home = await chrome.tabs.get(current.homeTabId).catch(() => null);
+    if (!home || current.groupId == null || home.groupId !== current.groupId) return;
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab || (tab.groupId ?? NO_GROUP) !== NO_GROUP) return;
+    if (!live()) return;
+    // A popup window's tab stays in its window (the browser moves and groups only tabs of normal windows).
+    const win = tab.windowId !== home.windowId ? await chrome.windows.get(tab.windowId).catch(() => null) : null;
+    if (win && win.type !== 'normal') return;
+    if (!live()) return;
+    if (tab.windowId !== home.windowId) await chrome.tabs.move(tabId, { windowId: home.windowId, index: -1 });
+    if (!live()) return;
+    await joinFaiGroup(tabId);
+    if (!live()) return;
+    await saveMarked();
+  });
+  markChain = step.catch(() => {});
+  return step;
 }
 
 async function openLeaseTab(url) {
@@ -4048,7 +4175,7 @@ async function bindSession(message, given) {
   // The same request resumed: the site access its earlier session held stays with it.
   if (own && previous === own) for (const kept of own.patterns ?? []) if (!session.patterns.includes(kept)) session.patterns.push(kept);
   session.reachable = await reachableOrigins(session);
-  // An armed tab's FAI ? group becomes the session's FAI mark (markTab retitles it).
+  // An armed tab already in FAI's group stays in it as the session's tab (markTab retitles the group).
   if (Number.isInteger(given?.armGroupId)) session.groupId = given.armGroupId;
   else if (keptTabs && Number.isInteger(own.groupId)) session.groupId = own.groupId;
   // Other tabs armed for this request (Open clicked twice) are done: it is served now.
@@ -4087,9 +4214,8 @@ async function bindSession(message, given) {
 // { tabId, requestId, level, scope, patterns, client, at, groupId, promptWindowId } here and in
 // storage.session.armedTabs (a worker restart keeps it; `patterns`: the roots' host permissions a domain arm holds
 // until it is approved or ends; `promptWindowId`: the prompt window of a page that opened by itself). An armed tab
-// opens the Use/Act popup and shows a ? badge and the FAI ? group. Explicit approval ends the arm.
+// opens the Use/Act popup, shows a ? badge and joins its window's FAI group (titled FAI ?). Explicit approval ends the arm.
 const ARM_MS = 10 * 60_000;
-const ARM_TITLE = 'FAI ?';
 const POPUP_PAGE = 'popup.html';
 const ARM_DECLINED = 'The request was no longer waiting or this tab left its site: nothing was approved.';
 const armed = new Map();
@@ -4186,7 +4312,7 @@ function closePrompt(arm) {
   ignore(chrome.windows.remove(id));
 }
 
-// The armed tab opens the Use/Act popup, with ? badge and a FAI ? group.
+// The armed tab opens the Use/Act popup, with ? badge, in its window's FAI group.
 async function showArm(arm) {
   // Each step only while the arm is still current: a tab update landing as the tab is approved (disarmed) must not
   // put the "?" look back on the session's tab.
@@ -4202,19 +4328,19 @@ async function showArm(arm) {
   } catch {
     // The tab closed meanwhile.
   }
+  // It joins its window's FAI group once (titled FAI ? while it waits); a tab the user drags out stays out.
   markChain = markChain.then(async () => {
     if (!chrome.tabGroups || !chrome.tabs.group || armed.get(arm.tabId) !== arm) return;
-    const tab = await chrome.tabs.get(arm.tabId).catch(() => null);
-    if (!tab || (arm.groupId != null && tab.groupId === arm.groupId)) return;
-    if ((tab.groupId ?? NO_GROUP) !== NO_GROUP) return;
-    arm.groupId = await chrome.tabs.group({ tabIds: [arm.tabId], createProperties: { windowId: tab.windowId } });
-    await chrome.tabGroups.update(arm.groupId, { title: ARM_TITLE, color: MARK_COLOR, collapsed: false });
+    if (arm.groupId != null) return retitleAll();
+    const groupId = await joinFaiGroup(arm.tabId);
+    if (groupId === null || armed.get(arm.tabId) !== arm) return;
+    arm.groupId = groupId;
     saveArms();
   }).catch(() => {});
 }
 
-// Ends an arm: the popup comes back on that tab, the per-tab title and badge go, and the FAI ? group goes unless
-// `keepGroup` (a lease is about to take it over as the FAI mark). `notice` is what the popup then says on that tab.
+// Ends an arm: the popup comes back on that tab, the per-tab title and badge go, and the tab leaves FAI's group unless
+// `keepGroup` (a lease is about to take it over). `notice` is what the popup then says on that tab.
 async function disarm(tabId, { notice = null, keepGroup = false } = {}) {
   const arm = armed.get(tabId);
   if (!arm) return null;
@@ -4242,10 +4368,12 @@ async function disarm(tabId, { notice = null, keepGroup = false } = {}) {
   if (session?.tabId === tabId) updateBadge();
   if (!keepGroup && (arm.patterns?.length || arm.grants?.length)) ignore(reconcileSites());
   if (notice) await ignore(chrome.storage.session?.set?.({ openNotice: { tabId, requestId: arm.requestId, message: notice } }));
-  if (!keepGroup && arm.groupId != null) {
+  // Only this tab leaves FAI's group; the group keeps FAI's other tabs and its title follows them. Queued even before
+  // the arm's join finished: the chain runs it after that join.
+  if (!keepGroup && chrome.tabGroups && chrome.tabs.group) {
     markChain = markChain.then(async () => {
-      const tab = await chrome.tabs.get(tabId).catch(() => null);
-      if (tab?.groupId === arm.groupId) await chrome.tabs.ungroup([tabId]);
+      await leaveFaiGroup(tabId);
+      await retitleAll();
     }).catch(() => {});
   }
   return arm;
