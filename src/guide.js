@@ -84,7 +84,7 @@ const CODE_DO = {
     + 'runs at once). Until then your calls return approval_open.',
   approval_open: 'Paused: the user has an approval of yours open (one window per tab: your asks for actions, a level '
     + 'or sites, one Approve or Deny for all). Nothing ran. End your turn: the user\'s answer wakes you once. '
-    + 'Status, guide, release and fai_browser_wait {maxMs: 0} still work.',
+    + 'Status, guide, release and fai_browser_wait {requestId, maxMs: 0} still work.',
   ask_pending: 'You asked for a level or site on this request; the user has not answered. Relay it, then end your '
     + 'turn: on an active request your session is paused (calls return approval_open) until the user answers in the '
     + 'approval window, and the answer wakes you.',
@@ -264,9 +264,9 @@ const TOPICS = {
     'Use approves read-only navigation in one task tab; Act approves full actions and multiple task tabs. '
       + 'Legacy modes remain call limits, clamped to the grant.',
     ...LEVELS.map(level => `- ${level} (${LEVEL_NAMES[level].replace(/ \((.+)\)$/, ', $1')}): ${LEVEL_DOES[level]}.`),
-    'Raise it on the same request: a result with needs.level means relay needs.message, tell the user "click Act '
-      + 'for this task in FAI Browser", then fai_browser_open with the requestId and mode = '
-      + 'needs.level. Same tab and page. When the grant already covers it (next.kind observe), observe with that mode.',
+    'Raise it on the same request: a result with needs.level means relay needs.message, then fai_browser_open with '
+      + 'the requestId and mode = needs.level; the user approves it in the FAI Browser approval window. Same tab and '
+      + 'page. When the grant already covers it (next.kind observe), observe with that mode.',
     'controls_need_reversible:<n> (read-only): n buttons or fields need reversible; ask at once if the task needs one.',
     'Asks the user (Approve once, next.kind approve): from reversible, a submit or delete above the granted level may be '
       + 'offered as "asks the user" instead of refused; a purchase from full; secrets and uploads each time. If the user '

@@ -349,3 +349,34 @@ test('an ask for a site no page showed is not refused, and ask_pending says so; 
   assert.equal(guessed.code, 'ask_pending');
   assert.match(guessed.needs.message, /No page of this task showed that site/);
 });
+
+test('ask texts name the approval window; first-request, pause and tab texts keep Use or Act (spec #87 AC 14)', async () => {
+  const { outcomeResult } = await import('../src/result.js');
+  const { levelRefusalText } = await import('../src/oversight.js');
+  const { readFileSync } = await import('node:fs');
+  const window = /approve[s]? it in the FAI Browser approval window/;
+  const asks = {
+    ask_pending: outcomeResult('ask_pending').needs.message,
+    levelRefusal: levelRefusalText({ granted: 'read-only', needed: 'full' }),
+    testingRefusal: levelRefusalText({ granted: 'full', needed: 'testing' }),
+    relay: directNext({ code: 'refused_action', status: 'needs_user', needs: { level: 'full', who: 'user' } }, { requestId: 'r1' }).text,
+    levels: guideText('levels'),
+  };
+  for (const [name, text] of Object.entries(asks)) {
+    assert.match(text, window, name);
+    assert.doesNotMatch(text, /Use or Act|click Act|test-only option/, name);
+  }
+  assert.match(asks.ask_pending, /on a paused task: the "agent asks for more" card/);
+  assert.match(asks.relay, /^Relay needs\.message\. Then call fai_browser_open with requestId r1 and mode "full" \(same tab and page\); the user approves it in the FAI Browser approval window\.$/);
+  assert.match(guideCode('approval_open'), /fai_browser_wait \{requestId, maxMs: 0\}/);
+  const skill = readFileSync(new URL('../skills/fai-browser/SKILL.md', import.meta.url), 'utf8');
+  assert.match(skill, /^\| `relay` \|[^\n]*`mode` = `needs\.level`, which the user approves in the FAI Browser approval window/m);
+  assert.doesNotMatch(skill, /click Act/);
+  assert.match(skill, /^\| `end_turn` \|[^\n]*`fai_browser_wait \{requestId, maxMs: 0\}`/m);
+  // Answered in the request window: the first request, a paused task and a tab change keep Use or Act.
+  assert.match(outcomeResult('select_tab').needs.message, /Use or Act in the FAI Browser request window/);
+  assert.match(guideCode('tab_changed'), /Use or Act to resume/);
+  assert.match(directNext({ code: 'paused', status: 'needs_user', needs: {} }, { requestId: 'r1' }).text, /choose Use or Act to resume/);
+  const wait = TOOLS.find(tool => tool.name === 'fai_browser_wait').description;
+  assert.doesNotMatch(wait, /; [A-Z]/, 'no capital after a semicolon');
+});
