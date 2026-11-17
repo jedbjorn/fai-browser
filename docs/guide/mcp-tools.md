@@ -94,7 +94,7 @@ and need Act), `scroll down`, `wait`, `open https://...` (an allowed URL; not th
 `fill_secret "API key" <- secret:3 (...)` and `copy_secret secret:3 (...) to the clipboard`. An action marked **`needsApproval`** (description ends "(asks the user)") blocks the call
 while the user answers, at most 60 s per call: Approve once, Deny (`refused_action`, `next.kind: stop`, do not retry) or no
 answer in time (`needs_user` / `approval_pending`, `next.kind: approve`: relay it and end your turn). Until the user
-answers, your session is paused: every observe, act, open, wait (except `maxMs: 0`) and evidence call returns
+answers, your session is paused: every observe, act, open, wait (except a `requestId` wait with `maxMs: 0`) and evidence call returns
 `approval_open` (`next.kind: end_turn`, "Paused: the user has an approval open (tab request req_…). Nothing ran. End
 your turn now; the user's answer wakes you.") and does nothing; status, guide and release still work. An open on the
 same request that asks for more joins the approval and returns the same receipt. Everything you wait on for one tab is
@@ -152,8 +152,8 @@ link is an ordinary click.
 ### `fai_browser_wait`
 
 Wait for a pending tab request (`requestId`) or a still-running act (`runId`). Returns within `maxMs` (0 to 45 000, default
-30 000). `maxMs: 0` returns at once with the current state and is never paused by an open approval; any other wait
-then returns the `approval_open` receipt. Use when `next.kind` is `wait`, and in place of ending the turn when you cannot be woken (a subagent: FAI's wake
+30 000). With `requestId`, `maxMs: 0` returns at once with the current state and is never paused by an open approval; a
+`runId` wait on the act that is still running is not paused either. Any other wait then returns the `approval_open` receipt. Use when `next.kind` is `wait`, and in place of ending the turn when you cannot be woken (a subagent: FAI's wake
 goes to the main session; a script). The first wait repeats the full relay; still pending after that, it says so in one
 short `wait` line: call it again (that is waiting, not a repeated call).
 
