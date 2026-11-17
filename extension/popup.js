@@ -294,7 +294,8 @@ function approveAsk(request, wanted, level, own) {
 
 function requestCard(request, { serving }) {
   if (!serving && !here(request)) return elsewhereCard(request);
-  if (request.ask && ['active', 'paused'].includes(request.state)) return askCard(request);
+  // An ask the tab's approval bundle shows (approve.html and its card above) gets no second card here.
+  if (request.ask && !request.askBundled && ['active', 'paused'].includes(request.state)) return askCard(request);
   const card = element('article', 'request-card');
   card.dataset.requestId = request.requestId;
   card.dataset.state = serving ? 'active' : request.state;
@@ -687,16 +688,16 @@ function render() {
   const servingId = active ? view.session?.requestId ?? null : null;
   const visible = (view.requests ?? []).filter(request => {
     // An active invited tab has its own card (extension/invite-card.js), unless its agent asks for more on it.
-    if (request.invite && request.state === 'active' && !request.ask) return false;
+    if (request.invite && request.state === 'active' && (!request.ask || request.askBundled)) return false;
     if (request.requestId === servingId) return true;
     // The approval window is for new requests only (and the agent's asks on its task): a paused task is resumed from
     // the toolbar popup (issue #13: its Open button there looked like the new request's and took the click meant for it).
-    if (windowMode) return request.state === 'pending' || Boolean(request.ask && here(request));
+    if (windowMode) return request.state === 'pending' || Boolean(request.ask && !request.askBundled && here(request));
     // Another browser's paused request stays there; its pending ones are listed with Open here.
     return request.state === 'pending' || (request.state === 'paused' && here(request));
   });
   if (windowMode && !closing && view.connection
-    && !visible.some(request => (request.state === 'pending' || request.ask) && here(request))) {
+    && !visible.some(request => (request.state === 'pending' || (request.ask && !request.askBundled)) && here(request))) {
     // Approved, denied or expired: nothing left for this window.
     closing = true;
     window.close();

@@ -140,13 +140,12 @@ async function activeRequest(env, { mode = null, tabMode = 'multiple', origins =
   return requestId;
 }
 
-// The FAI Browser window (popup.html?window=1) in a window of its own, as the worker opens it for a request or an ask.
-async function faiWindow(env) {
-  const cdp = await env.context.browser()?.newBrowserCDPSession?.().catch(() => null);
-  assert.ok(cdp, 'a CDP session to open the FAI Browser window');
-  await cdp.send('Target.createTarget', { url: `chrome-extension://${env.extensionId}/popup.html?window=1`, newWindow: true });
-  const page = await until(() => env.context.pages().find(item => item.url().includes('popup.html')));
-  assert.ok(page, 'the FAI Browser window opened');
+// The approval window (approve.html) the worker opens for the tab's bundle (spec #87 "Combined approvals"): the agent's
+// ask for more on the task shows there, one line per item, and its Approve applies it.
+async function bundleWindow(env) {
+  const page = await until(() => env.context.pages().find(item => !item.isClosed() && item.url().includes('/approve.html')));
+  assert.ok(page, 'the approval window opened');
+  await page.waitForSelector('.bundle-line', { timeout: 5000 });
   return page;
 }
 
@@ -230,20 +229,10 @@ test('#30 an unapproved origin: refused up front, asked on the same request, app
   assert.match(refused.needs.message, /fai_browser_open with this requestId and http:\/\/localhost:\d+ in origins/);
   const asked = await env.client.ask(requestId, { origins: [env.partner] });
   assert.equal(asked.asked, true);
-  // The user approves the ask on its card in the FAI Browser window (a window of its own, as the worker opens it).
-  const cdp = await env.context.browser()?.newBrowserCDPSession?.().catch(() => null);
-  let card = null;
-  if (cdp) {
-    await cdp.send('Target.createTarget', { url: `chrome-extension://${env.extensionId}/popup.html?window=1`, newWindow: true });
-    card = await until(() => env.context.pages().find(page => page.url().includes('popup.html')));
-  }
-  if (card) {
-    await card.waitForSelector('.ask-approve[data-level="read-only"]:not([disabled])', { timeout: 5000 });
-    assert.match(await card.locator('.ask-meta').innerText(), /Same task and tab: add http:\/\/localhost:\d+/);
-    await card.click('.ask-approve[data-level="read-only"]');
-  } else {
-    assert.fail('the FAI Browser window with the ask card did not open');
-  }
+  // The user approves the ask in the approval window the worker opened for the tab (spec #87).
+  const card = await bundleWindow(env);
+  assert.match(await card.locator('.bundle-line').innerText(), /^SITES Also work on 1 more site: http:\/\/localhost:\d+$/);
+  await card.click('#approve');
   assert.ok(await until(async () => !(await env.client.getRequest(requestId)).ask), 'the ask is answered');
   const view = await env.client.getRequest(requestId);
   assert.deepEqual([view.state, view.lease.leaseId, view.lease.tabId], ['active', leaseId, tabId], 'same request, lease and tab');
@@ -295,18 +284,20 @@ test('#31 a command for a lease whose approval is still finishing is not answere
 });
 
 // Re-review item 4: an ask card whose ask changed under the user is marked and its Approve is held for a moment.
-test('#30 an ask that changes while its card is open: marked updated, Approve held about a second', async t => {
+test('#30 an ask that changes while its window is open: marked updated, Approve held about a second', async t => {
   const env = await launch(t);
   const requestId = await activeRequest(env, { mode: 'reversible', tabMode: 'single' });
   await env.client.ask(requestId, { origins: [env.partner] });
-  const card = await faiWindow(env);
-  await card.waitForSelector('.ask-approve[data-level="read-only"]:not([disabled])', { timeout: 5000 });
-  assert.equal(await card.locator('.ask-changed').count(), 0);
-  await env.client.ask(requestId, { mode: 'interactive' });
-  await card.waitForSelector('.ask-changed', { timeout: 5000 });
-  assert.equal(await card.locator('.ask-approve[disabled]').count(), 2, 'both approval choices are held right after the change');
-  assert.match(await card.locator('.ask-meta').innerText(), /allow Act/);
-  await card.waitForSelector('.ask-approve[data-level="read-only"]:not([disabled])', { timeout: 3000 });
+  const card = await bundleWindow(env);
+  await card.waitForSelector('#approve:not([disabled])', { timeout: 5000 });
+  assert.equal(await card.isHidden('#updated'), true);
+  // The window is open, so the session is paused (spec #87 AC7): the ask joins the bundle, then the call gets the receipt.
+  await assert.rejects(env.client.ask(requestId, { mode: 'interactive' }), { code: 'approval_open' });
+  await card.waitForSelector('#updated:not([hidden])', { timeout: 5000 });
+  assert.equal(await card.textContent('#updated'), 'Updated: the agent added an item. Check the list again.');
+  assert.equal(await card.locator('#approve[disabled], #deny[disabled]').count(), 2, 'both buttons are held right after the change');
+  assert.match(await card.locator('.bundle-items').innerText(), /LEVEL Act on 127\.0\.0\.1:\d+: also search and filter on this task/);
+  await card.waitForSelector('#approve:not([disabled])', { timeout: 3000 });
 });
 
 // Review item 3, the reviewer's probe: a tab the user opened from the task page before any request existed has that
@@ -332,7 +323,7 @@ test('#30 a personal tab opened from the task page before the request is never a
 });
 
 // Review item 4: the ask on an active invited tab is approvable from the UI (the FAI Browser window shows its card).
-test('#30 an ask on an invited tab: its card shows in the FAI Browser window and its Approve adds the origin', async t => {
+test('#30 an ask on an invited tab: it shows in the approval window and its Approve adds the origin', async t => {
   const env = await launch(t);
   // The user's Invite click on the task page (startSession with an invite, as the popup's Invite does).
   const invited = await env.worker.evaluate(async url => {
@@ -348,12 +339,11 @@ test('#30 an ask on an invited tab: its card shows in the FAI Browser window and
   assert.equal((await api('POST', `/v1/invites/${invited.inviteId}/join`, {}, headers)).status, 200);
   const asked = await api('POST', `/v1/requests/${invited.requestId}/ask`, { origins: [env.partner] }, headers);
   assert.equal(asked.body.asked, true, JSON.stringify(asked.body));
-  const card = await faiWindow(env);
-  await card.waitForSelector('.ask-approve[data-level="read-only"]:not([disabled])', { timeout: 5000 });
-  assert.match(await card.locator('.ask-meta').innerText(), /add http:\/\/localhost:\d+/);
-  await card.click('.ask-approve[data-level="read-only"]');
+  const card = await bundleWindow(env);
+  assert.match(await card.locator('.bundle-line').innerText(), /Also work on 1 more site: http:\/\/localhost:\d+/);
+  await card.click('#approve');
   assert.ok(await until(async () => !(await api('GET', `/v1/requests/${invited.requestId}`, undefined, headers)).body.ask),
-    'the ask is answered from the card');
+    'the ask is answered from the window');
   const view = (await api('GET', `/v1/requests/${invited.requestId}`, undefined, headers)).body;
   assert.equal(view.state, 'active');
   assert.ok(view.origins.includes(env.partner), JSON.stringify(view.origins));
@@ -397,11 +387,15 @@ test('#30 + #35: links to a reachable lease origin, an unlisted one and an unrea
   assert.deepEqual([askD.asked, askD.request.ask.origins, askD.request.ask.access], [true, [], [env.far]]);
   await env.worker.evaluate(requestId => send('deny', { requestId, ask: true }), requestId);
   assert.ok(await until(async () => !(await env.client.getRequest(requestId)).ask), 'declined');
-  // C asked on the same request and approved on its card: the link becomes an ordinary click, followed in the same tab.
+  // Its bundle ended with the ask: its window closed.
+  assert.ok(await until(() => !env.context.pages().some(item => !item.isClosed() && item.url().includes('/approve.html'))),
+    'the approval window for D closed');
+  // C asked on the same request and approved in the approval window: the link becomes an ordinary click, followed in
+  // the same tab.
   await env.client.ask(requestId, { origins: [env.third] });
-  const card = await faiWindow(env);
-  await card.waitForSelector('.ask-approve[data-level="read-only"]:not([disabled])', { timeout: 5000 });
-  await card.click('.ask-approve[data-level="read-only"]');
+  const card = await bundleWindow(env);
+  await card.waitForSelector('#approve:not([disabled])', { timeout: 5000 });
+  await card.click('#approve');
   assert.ok(await until(async () => !(await env.client.getRequest(requestId)).ask), 'the ask is answered');
   const view = await env.client.getRequest(requestId);
   assert.deepEqual([view.state, view.lease.leaseId, view.lease.tabId], ['active', leaseId, tabId]);

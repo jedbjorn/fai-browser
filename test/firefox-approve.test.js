@@ -585,3 +585,73 @@ test('Firefox: a committing Enter (commits: true) asks once, runs only after App
   await sleep(1000);
   assert.equal(sent(), 1, 'a denied Enter sends nothing');
 });
+
+// Runs `script` in the approval window (approve.html) once it shows a bundle (spec #87); null until then.
+async function inApproveWindow(ctx, script) {
+  for (const handle of await ctx.handles()) {
+    await ctx.marionette.send('WebDriver:SwitchToWindow', { handle, focus: false });
+    const url = await ctx.marionette.send('WebDriver:GetCurrentURL');
+    if (!String(url.value ?? url).includes('/approve.html')) continue;
+    const ready = await ctx.marionette.execute('return Boolean(document.getElementById("detail").textContent);');
+    if (ready) return { handle, value: await ctx.marionette.execute(script) };
+  }
+  return null;
+}
+
+// Spec #87 acceptance 10: the agent's ask for another site joins the tab's approval bundle; the window's Approve asks
+// Firefox for that site's access inside the click. Refused in Firefox's prompt, nothing is approved; allowed, the ask
+// applies on the same request.
+test('Firefox: an ask that adds a site asks for its access inside the approval window\'s Approve; refused, nothing is approved', { skip, timeout: 150_000 }, async t => {
+  const ctx = await setup(t);
+  // The task's own site allowed by hand, so Act needs no prompt; the added site is not.
+  await ctx.marionette.setContext('chrome');
+  await ctx.marionette.execute(`const done = arguments[arguments.length - 1];
+    const { ExtensionPermissions } = ChromeUtils.importESModule('resource://gre/modules/ExtensionPermissions.sys.mjs');
+    const extension = WebExtensionPolicy.getByID(${JSON.stringify(GECKO_ID)}).extension;
+    ExtensionPermissions.add(${JSON.stringify(GECKO_ID)}, { permissions: [], origins: ['http://127.0.0.1/*'] }, extension)
+      .then(() => done(true), error => done(error.message));`, [], { async: true });
+  await ctx.marionette.setContext('content');
+  const { requestId } = await ctx.client.requestTab({ origins: [ctx.origin], mode: 'full', reason: 'Tidy the notes', url: `${ctx.origin}/compose` });
+  assert.ok(await ctx.armWindow(), 'the request modal opened');
+  assert.ok(await until(() => ctx.chrome(`return browserWindows().some(w => w.gBrowser.tabs.some(t =>
+    t.linkedBrowser.currentURI.spec.includes('/compose') && !t.hasAttribute('busy')));`), 10_000), 'the page loaded');
+  await clickIcon(ctx, '/compose');
+  assert.ok(await clickPopup(ctx, requestId, 'full'), 'Act approves the task');
+  await sleep(1000);
+  await allowPrompt(ctx).catch(() => false);
+  assert.equal((await ctx.client.wait({ requestId, maxMs: 15_000 })).state, 'active');
+
+  const other = ctx.origin.replace('127.0.0.1', 'localhost');
+  await ctx.client.ask(requestId, { origins: [other] });
+  const shown = await until(() => inApproveWindow(ctx, `return [...document.querySelectorAll('.bundle-line')].map(n => n.textContent);`), 20_000);
+  assert.ok(shown, 'the ask opened the approval window');
+  assert.deepEqual(shown.value, [`SITES Also work on 1 more site: ${other}`]);
+  const click = async () => {
+    await ctx.marionette.send('WebDriver:SwitchToWindow', { handle: shown.handle, focus: false });
+    const found = await ctx.marionette.send('WebDriver:FindElement', { using: 'css selector', value: '#approve:not([disabled])' });
+    await ctx.marionette.send('WebDriver:ElementClick', { id: Object.values(found.value ?? found)[0] });
+  };
+
+  // Refused in Firefox's prompt: nothing approved, the window says so, the ask still waits.
+  await click();
+  assert.ok(await until(() => promptOpen(ctx), 10_000), 'Firefox asked for the site inside the click');
+  assert.ok(await ctx.chrome(`const found = permissionNote(); if (!found) return false;
+    found.note.secondaryActions[0].callback({ source: 'button' }); found.win.PopupNotifications.remove(found.note); return true;`));
+  const status = await until(async () => {
+    await ctx.marionette.send('WebDriver:SwitchToWindow', { handle: shown.handle, focus: false });
+    return ctx.marionette.execute('return document.getElementById("status").textContent || null;');
+  }, 10_000);
+  assert.equal(status, 'Browser site access was not granted. Nothing was approved.');
+  const refused = await ctx.stateOf(requestId);
+  assert.deepEqual(refused.origins, [ctx.origin]);
+  assert.ok(refused.ask, 'the ask still waits');
+
+  // Allowed: the ask applies on the same request.
+  await click();
+  assert.ok(await until(() => promptOpen(ctx), 10_000));
+  assert.ok(await allowPrompt(ctx));
+  assert.ok(await until(async () => (await ctx.stateOf(requestId))?.origins?.includes(other), 15_000), 'the site joined the task');
+  const approved = await ctx.stateOf(requestId);
+  assert.equal(approved.state, 'active');
+  assert.equal(approved.ask, undefined);
+});

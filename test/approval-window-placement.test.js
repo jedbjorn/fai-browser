@@ -130,7 +130,7 @@ test('approval window: opens over the task tab\'s unfocused window with the dire
   const shown = await until(approvalWindow);
   assert.ok(shown, 'the approval window opened (not the toolbar popup of the focused window)');
   const [ask] = await worker.evaluate(() => globalThis.popupAsks);
-  assert.match(ask?.url ?? '', /\/approve\.html\?id=/);
+  assert.match(ask?.url ?? '', /\/approve\.html\?bundle=/);
   const within = ask.left >= taskWindow.left && ask.top >= taskWindow.top
     && ask.left + ask.width <= taskWindow.left + taskWindow.width && ask.top + ask.height <= taskWindow.top + taskWindow.height;
   assert.ok(within, `inside the task window: ${JSON.stringify({ ask, taskWindow })}`);

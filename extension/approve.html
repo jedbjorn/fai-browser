@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="popup.css">
   <link rel="stylesheet" href="approve.css">
-  <title>FAI Browser: approve this action?</title>
+  <title>FAI Browser: approve this?</title>
 </head>
 <body class="arm-page">
   <main class="arm approve" aria-live="polite">
     <header class="arm-topline">
       <span class="brand-mark" aria-hidden="true">F</span>
-      <span class="eyebrow">AGENT ACTION, NOT APPROVED YET</span>
+      <span class="eyebrow">AGENT ASKS, NOT APPROVED YET</span>
     </header>
-    <h1 id="headline" class="arm-headline">Approve this action?</h1>
-    <dl class="approve-facts">
+    <h1 id="headline" class="arm-headline">Approve this?</h1>
+    <dl id="facts" class="approve-facts">
       <dt>Site</dt><dd id="origin"></dd>
       <dt>Tab</dt><dd id="title"></dd>
       <dt>Kind</dt><dd id="kind"></dd>
@@ -22,8 +22,12 @@
       <dt id="total-term" hidden>Total</dt><dd id="total" hidden></dd>
       <dt id="note-term" hidden>Agent says</dt><dd id="note" hidden></dd>
     </dl>
+    <div id="items" hidden></div>
+    <p id="updated" class="arm-detail page-changed" hidden></p>
     <p id="changed" class="arm-detail page-changed" hidden></p>
     <p id="detail" class="arm-detail"></p>
+    <p id="summary" class="arm-detail bundle-summary" hidden></p>
+    <p id="queue" class="arm-detail bundle-queue" hidden></p>
     <div class="arm-actions approve-actions">
       <button id="approve" class="primary-button" type="button">Approve once</button>
       <button id="deny" class="secondary-button" type="button">Deny</button>
