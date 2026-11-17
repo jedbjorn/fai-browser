@@ -42,12 +42,15 @@ function readVersion() {
 }
 
 export class FaiClientError extends Error {
-  constructor(status, code, message, { retryable = false } = {}) {
+  constructor(status, code, message, { retryable = false, requestId, next } = {}) {
     super(message);
     this.name = 'FaiClientError';
     this.status = status;
     this.code = code;
     this.retryable = retryable;
+    // The approval_open receipt (a combined approval is open, spec #87): the request it is on and next (end_turn).
+    if (requestId !== undefined) this.requestId = requestId;
+    if (next !== undefined) this.next = next;
   }
 }
 
@@ -349,7 +352,8 @@ export class FaiBrowserClient {
     if (response.status >= 400) {
       const detail = response.body?.error ?? {};
       throw new FaiClientError(response.status, detail.code ?? 'internal', detail.message ?? `HTTP ${response.status}`,
-        { retryable: Boolean(detail.retryable) });
+        { retryable: Boolean(detail.retryable), ...(detail.code === 'approval_open' && typeof detail.requestId === 'string'
+          ? { requestId: detail.requestId, next: { kind: 'end_turn', text: String(detail.message ?? '') } } : {}) });
     }
     return response.body;
   }

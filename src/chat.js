@@ -39,6 +39,11 @@ const FAI_LINES = [
   [new RegExp(String.raw`^\[FAI Browser\] The user approved action ${ID} on tab request ${ID}\.`), m => `FAI: approved action ${m[1]} on tab request ${m[2]}`],
   [new RegExp(String.raw`^\[FAI Browser\] The user denied action ${ID} on tab request ${ID}\.`), m => `FAI: denied action ${m[1]} on tab request ${m[2]}`],
   [new RegExp(String.raw`^\[FAI Browser\] The user approved tab request ${ID} `), m => `FAI: approved tab request ${m[1]}`],
+  // Spec #87: a combined approval answered or expired, and a declined ask.
+  [new RegExp(String.raw`^\[FAI Browser\] The user approved all (\d{1,2}) items on tab request ${ID}:`), m => `FAI: approved all ${m[1]} items on tab request ${m[2]}`],
+  [new RegExp(String.raw`^\[FAI Browser\] The user denied all (\d{1,2}) items on tab request ${ID}:`), m => `FAI: denied all ${m[1]} items on tab request ${m[2]}`],
+  [new RegExp(String.raw`^\[FAI Browser\] Your approval on tab request ${ID} \(`), m => `FAI: the approval on tab request ${m[1]} expired`],
+  [new RegExp(String.raw`^\[FAI Browser\] The user declined your ask for more on tab request ${ID};`), m => `FAI: declined your ask on tab request ${m[1]}`],
   [new RegExp(String.raw`^\[FAI Browser\] The user resumed tab request ${ID}:`), m => `FAI: resumed tab request ${m[1]}`],
   [new RegExp(String.raw`^\[FAI Browser\] The user invited you to work in a browser tab they have open \(invite ${ID},`), m => `FAI: invited you to a browser tab (invite ${m[1]})`],
 ];

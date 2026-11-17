@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { createDaemon } from '../src/daemon.js';
 import { chatInviteText, wakeText } from '../src/wake.js';
 import { controlText } from '../src/mcp.js';
+import { faiMessage } from '../src/chat.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { ORIGIN } from './runtime-fixtures.js';
 
@@ -415,6 +416,51 @@ test('wakes as turns: all five kinds, one turn each, in order, after the running
   // The popup reads the owner's last wake as usual.
   const view = (await ctx.api('GET', `/v1/requests/${requestId}`)).body;
   assert.deepEqual([view.ownerWake.kind, view.ownerWake.state], ['resume', 'delivered']);
+});
+
+test('wakes as turns (spec #87): a combined approval\'s one wake and a declined ask are turns with their templates', async t => {
+  const ctx = await setup(t);
+  const sent = await ctx.chat('send', { provider: 'claude', text: 'tidy my workspace' });
+  const session = ctx.sessionOf(await ctx.register((await ctx.turn(1)).token));
+  const created = await ctx.api('POST', '/v1/requests', { origins: [ORIGIN], reason: 'Tidy', mode: 'reversible' },
+    { headers: session.headers });
+  const requestId = created.body.requestId;
+  await ctx.lease(requestId, { tabId: 1, level: 'reversible' });
+  await ctx.control({});
+  await ctx.release();
+  await ctx.turn(2);
+  await ctx.idle(sent.chatId);
+  ctx.hub.bridgeForTab(1).approve = async () => ({ decision: 'pending', entryId: ENTRY });
+  const offer = (await ctx.api('POST', '/v1/observe', { requestId }, { headers: session.headers })).body;
+  const save = offer.actions.find(action => /Save changes/.test(action.description));
+  assert.equal((await ctx.api('POST', '/v1/act', { requestId, actionId: save.id, revision: offer.revision },
+    { headers: session.headers })).body.result.code, 'approval_pending');
+  await ctx.api('POST', `/v1/requests/${requestId}/ask`, { mode: 'full' }, { headers: session.headers });
+  let askId = (await ctx.api('GET', `/v1/requests/${requestId}`)).body.ask.id;
+  const bundle = { browserId: BROWSER, requestId, tabId: 1, bundleId: 'b1', version: 1, askId, entryIds: [ENTRY] };
+  await ctx.hub.emit({ type: 'bundle_open', ...bundle });
+  await ctx.hub.emit({ type: 'deny', requestId, ask: true, bundled: true, browserId: BROWSER });
+  await ctx.hub.emit({ type: 'bundle_decision', ...bundle, decision: 'denied' });
+  const denied = await ctx.turn(3);
+  assert.equal(ctx.turnText(denied), wakeText({ kind: 'bundle_denied', requestId, items: [{ type: 'level', level: 'full' },
+    { type: 'action', actionId: save.id, revision: offer.revision }] }));
+  await ctx.idle(sent.chatId);
+  // A bundle of one: the ask declined on its own wakes with ask_declined.
+  await ctx.api('POST', `/v1/requests/${requestId}/ask`, { mode: 'full' }, { headers: session.headers });
+  askId = (await ctx.api('GET', `/v1/requests/${requestId}`)).body.ask.id;
+  await ctx.hub.emit({ type: 'bundle_open', ...bundle, bundleId: 'b2', askId, entryIds: [] });
+  await ctx.hub.emit({ type: 'deny', requestId, ask: true, browserId: BROWSER });
+  const declined = await ctx.turn(4);
+  assert.equal(ctx.turnText(declined), wakeText({ kind: 'ask_declined', requestId }));
+  const done = await ctx.idle(sent.chatId);
+  assert.deepEqual(done.messages.filter(message => message.role === 'fai').map(message => message.text).slice(-2), [
+    `FAI: denied all 2 items on tab request ${requestId}`,
+    `FAI: declined your ask on tab request ${requestId}`,
+  ]);
+  assert.deepEqual(faiMessage(wakeText({ kind: 'bundle_approved', requestId: 'r1', items: [{ type: 'sites', count: 1 },
+    { type: 'action', actionId: 'a1', revision: 'v1' }] })), { role: 'fai', text: 'FAI: approved all 2 items on tab request r1' });
+  assert.deepEqual(faiMessage(wakeText({ kind: 'bundle_expired', requestId: 'r1', items: [{ type: 'sites', count: 1 }] })),
+    { role: 'fai', text: 'FAI: the approval on tab request r1 expired' });
 });
 
 test('wakes as turns: a wake that cannot start a turn fails with FAI\'s reason code; one already seen is skipped', async t => {

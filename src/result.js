@@ -285,6 +285,13 @@ const OUTCOMES = {
     reason: 'The action waits for the user to approve it in the FAI Browser window',
     message: 'This action needs the user\'s approval: ask them to click Approve once on it in the FAI Browser window.',
   },
+  // A combined approval (spec #87) is open for the agent's session: nothing ran; the user's answer wakes it.
+  approval_open: {
+    status: 'needs_user',
+    who: 'user',
+    reason: 'The user has an approval open in FAI Browser',
+    message: 'Paused: the user has an approval open. Nothing ran. End your turn now; the user\'s answer wakes you.',
+  },
   blocked_risky: {
     status: 'needs_user',
     who: 'user',
@@ -365,6 +372,22 @@ const OUTCOMES = {
     message: 'See the error detail in reason.',
   },
 };
+
+/**
+ * The receipt every paused call gets while one of its session's combined approvals is open (spec #87 "The agent is
+ * paused"): `requestId` names the request whose approval is open.
+ */
+export function approvalOpenText(requestId) {
+  return `Paused: the user has an approval open (tab request ${requestId}). Nothing ran. End your turn now; the user's `
+    + 'answer wakes you.';
+}
+
+/** That receipt as a lean result: outcome approval_open, needs_user, next end_turn. */
+export function approvalOpenResult(requestId) {
+  const text = approvalOpenText(requestId);
+  return { status: 'needs_user', code: 'approval_open', requestId, needs: { who: 'user', message: text },
+    next: { kind: 'end_turn', text } };
+}
 
 /** Every outcome code a result may carry (the guide's states topic and its code lookup cover each one). */
 export const OUTCOME_CODES = Object.freeze(Object.keys(OUTCOMES));
@@ -895,7 +918,7 @@ function leanPoint(point, resolved) {
 // ---------------------------------------------------------------------------------------------------------------
 
 // The next kinds a host sees (directNext), and the oversight a verdict implies for each.
-export const NEXT_KINDS = Object.freeze(['answer', 'choose', 'observe', 'relay', 'approve', 'stop']);
+export const NEXT_KINDS = Object.freeze(['answer', 'choose', 'observe', 'relay', 'approve', 'stop', 'end_turn']);
 
 const OVERSIGHT_FOR_NEXT = {
   answer: 'none',
@@ -904,6 +927,7 @@ const OVERSIGHT_FOR_NEXT = {
   relay: 'user',
   approve: 'approve',
   stop: 'user',
+  end_turn: 'approve',
 };
 // Codes after which the host observes again and chooses.
 const OBSERVE_CODES = new Set([
@@ -1180,9 +1204,10 @@ function directApproveText(origin, requestId, approval, resume) {
 }
 
 // The label is page text (redacted, clipped, quotes and line breaks removed), quoted inside a trusted sentence.
-// `waitMs`: how long one act waits for the click (the MCP server's gate wait); the approval itself stays open for
-// APPROVAL_PENDING_MS, and the same act repeated meanwhile picks up a click given in between.
-function approvalPendingText(result, waitMs = null) {
+// While the approval is open the agent's session is paused (spec #87): every call returns approval_open, so the text
+// ends the turn; the user's answer wakes it (bundle or action wake) with the act to repeat. Without a wake channel the
+// user tells it, and the act named here, repeated, runs under the approval.
+function approvalPendingText(result) {
   const label = String(result.needs?.control?.label ?? '').replace(/["'\u2018\u2019\u201c\u201d\s]+/g, ' ').trim().slice(0, 60);
   const pending = result.needs?.approval ?? {};
   const again = (pending.actionId && pending.revision
@@ -1191,12 +1216,8 @@ function approvalPendingText(result, waitMs = null) {
     + (pending.kind === 'enter_commit' ? ' and commits: true' : '');
   const level = typeof result.needs?.level === 'string'
     ? ` Or ask for ${result.needs.level}: tell the user "click Act${result.needs.level === 'testing' ? ' with the test-only option' : ''} for this task in FAI Browser", then fai_browser_open with the requestId and mode "${result.needs.level}".` : '';
-  const seconds = Number.isFinite(waitMs) && waitMs > 0 ? Math.round(waitMs / 1000) : null;
-  const wait = seconds
-    ? `; it returns at once if they already approved, else waits up to ${seconds} s (the approval stays open for 5 minutes: repeat the call if it returns pending again)`
-    : '; it returns at once if they already approved (the approval stays open for 5 minutes)';
-  return `Tell the user to approve '${label || 'this action'}' (page text) in the FAI Browser window (Approve once), then call `
-    + `${again}${wait}.${level}`;
+  return `Tell the user to approve '${label || 'this action'}' (page text) in the FAI Browser window (Approve once); `
+    + `once approved, ${again} runs it.${level} End your turn now; the user's answer wakes you.`;
 }
 
 /** The trusted next step `{kind, text}` of a host-driven (Agent direct) result: choose, observe, answer, relay, approve, stop. */
@@ -1222,7 +1243,7 @@ function directNextStep(result, context = {}) {
       + `needed${offered ? ' unless the task needs more actions' : ''}.` };
   }
   if (code === 'select_tab') return { kind: 'relay', text: directApproveText(context.origin, ref, context.approval ?? result.approval, resumeOf(context)) };
-  if (code === 'approval_pending') return { kind: 'approve', text: approvalPendingText(result, context.gateWaitMs) };
+  if (code === 'approval_pending') return { kind: 'approve', text: approvalPendingText(result) };
   // An act or a point on a link to another site (src/other-site.js): the agent requests that origin itself.
   if (code === 'cross_origin' && result.needs?.message === OTHER_SITE_TEXT) return { kind: 'relay', text: OTHER_SITE_NEXT };
   // Any other way off the approved sites (a url act, a click that led there): nothing ran there; the same request asks.
