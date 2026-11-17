@@ -1,6 +1,6 @@
 # Site media and benchmark data
 
-The PNG and MP4 files are copies of the genuine captures in `docs/media/`. Do not replace them
+The PNG and MP4 files (except the promo poster) are copies of the genuine captures in `docs/media/`. Do not replace them
 with illustrative product screenshots or footage of personal browser sessions.
 
 | File | Use | Provenance |
@@ -12,6 +12,7 @@ with illustrative product screenshots or footage of personal browser sessions.
 | `redacted-screenshot.png` | Available redaction capture | Firefox page beside the actual FAI-redacted MCP image; fake fixture data |
 | `firefox-launcher.png` | Available launcher capture | Actual signed 0.3.0 add-on in the dedicated FAI profile |
 | `social-preview.png` | Open Graph and Twitter card | Project social graphic, 1280 × 640 |
+| `promo-poster.jpg` | Poster for the YouTube film in `#film` | End card of the 60-second promo film (frame at 55 s), 1280 × 720; the film itself is served from YouTube only after the visitor presses play |
 
 The full capture record, limitations and media hashes are in `docs/guide/demo.md` and
 `docs/media/manifest.json`. Dark site themes do not recolour the light product captures.
