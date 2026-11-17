@@ -37,9 +37,9 @@ Results: `next`, `revision`, `page.digest`, `actions` (`a3  click "About"`).
 | `choose` | Answer from `page.digest` if it can; else act. |
 | `observe` | The page changed or the act did not land: `fai_browser_observe`, then choose. |
 | `answer` | Verified: report it. |
-| `relay` | Tell the user `needs.message`. With `needs.level`: "click Act on the FAI Browser request", then `fai_browser_open` with the `requestId` and `mode` = `needs.level` (same tab and id; a still-pending one gets a successor: `requestId <new> replaces <old>`). Paused/pending: end your turn if FAI wakes you (ignore OpenCode's `_faiHostSession`), else (subagent, script) `fai_browser_wait`. |
+| `relay` | Tell the user `needs.message`. With `needs.level`: `fai_browser_open` with the `requestId` and `mode` = `needs.level`, which the user approves in the FAI Browser approval window (same tab and id; a still-pending one gets a successor: `requestId <new> replaces <old>`). Paused/pending: end your turn if FAI wakes you (ignore OpenCode's `_faiHostSession`), else (subagent, script) `fai_browser_wait`. |
 | `approve` | Relay `next.text`, then end your turn: the answer wakes you with the act to repeat (subagent, script: repeat it once the user answered). |
-| `end_turn` | `approval_open`: paused until the user answers, nothing ran. End your turn (status, guide, release, `fai_browser_wait {maxMs: 0}` still work). |
+| `end_turn` | `approval_open`: paused until the user answers, nothing ran. End your turn (status, guide, release, `fai_browser_wait {requestId, maxMs: 0}` still work). |
 | `wait` | `fai_browser_wait` with the `requestId` (or `runId`); again while pending (not a repeat). |
 | `stop` | Report `next.text` (`refused_action`, `error_page`); no retry. |
 

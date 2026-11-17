@@ -312,8 +312,8 @@ const OUTCOMES = {
     status: 'needs_user',
     who: 'user',
     reason: 'The user has not approved the added level or site yet',
-    message: 'Ask the user to choose Use or Act on this task in the FAI Browser window. The task keeps '
-      + 'its tab and page.',
+    message: 'Ask the user to approve it in the FAI Browser approval window (on a paused task: the "agent asks for '
+      + 'more" card). The task keeps its tab and page.',
   },
   ask_declined: {
     status: 'needs_host',
@@ -1215,7 +1215,7 @@ function approvalPendingText(result) {
     : 'fai_browser_act again with the same actionId and revision')
     + (pending.kind === 'enter_commit' ? ' and commits: true' : '');
   const level = typeof result.needs?.level === 'string'
-    ? ` Or ask for ${result.needs.level}: tell the user "click Act${result.needs.level === 'testing' ? ' with the test-only option' : ''} for this task in FAI Browser", then fai_browser_open with the requestId and mode "${result.needs.level}".` : '';
+    ? ` Or ask for ${result.needs.level}: fai_browser_open with the requestId and mode "${result.needs.level}"; the user approves it in the same FAI Browser approval window.` : '';
   return `Tell the user to approve '${label || 'this action'}' (page text) in the FAI Browser window (Approve once); `
     + `once approved, ${again} runs it.${level} End your turn now; the user's answer wakes you.`;
 }
@@ -1268,8 +1268,8 @@ function directNextStep(result, context = {}) {
     if (result.needs?.who === 'host') {
       return { kind: 'observe', text: `The grant already covers ${level}: call fai_browser_observe with mode "${level}", then choose.` };
     }
-    return { kind: 'relay', text: `Relay needs.message; tell the user "click Act${level === 'testing' ? ' with the test-only option' : ''} for this task `
-      + `in FAI Browser". Then call fai_browser_open with requestId ${ref} and mode "${level}" (same tab and page).` };
+    return { kind: 'relay', text: `Relay needs.message. Then call fai_browser_open with requestId ${ref} and mode "${level}" `
+      + '(same tab and page); the user approves it in the FAI Browser approval window.' };
   }
   if (code === 'refused_action') return { kind: 'stop', text: `${refusalStopText(result)} Do not retry it.` };
   if (code === 'error_page') return { kind: 'stop', text: stopText(result).replace(/ and do not retry the same link\./, '; do not retry the same link.') };

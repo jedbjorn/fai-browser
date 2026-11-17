@@ -215,7 +215,7 @@ the JSON `error` object in their text block. See [the host research and design](
 | `choose` | Answer from `page.digest` if it answers the task; else `fai_browser_act` with one `actions[].id` and the given revision |
 | `observe` | The page changed or the action could not land: `fai_browser_observe`, then choose |
 | `answer` | Verified; report from `page.digest` |
-| `relay` | Tell the user `needs.message`. With `needs.level`: "click Act for this task in FAI Browser", then `fai_browser_open` with the same `requestId` and that `mode` (same tab, page and id; only a request still waiting for approval gets a successor, named in a `requestId <new> replaces <old>` line). A pause (`child_tab`, `tab_changed`, ...) waits for the user's approval to resume: end your turn when FAI wakes you, else `fai_browser_wait` |
+| `relay` | Tell the user `needs.message`. With `needs.level`: `fai_browser_open` with the same `requestId` and that `mode`, which the user approves in the FAI Browser approval window (same tab, page and id; only a request still waiting for approval gets a successor, named in a `requestId <new> replaces <old>` line). A pause (`child_tab`, `tab_changed`, ...) waits for the user's approval to resume: end your turn when FAI wakes you, else `fai_browser_wait` |
 | `approve` | A `needsApproval` action waits for the user's click: relay `next.text`, then end your turn; the answer wakes you with the act to repeat (a caller FAI cannot wake repeats it once the user says they answered) |
 | `end_turn` | `approval_open`: the user has an approval open and nothing ran. End your turn; the answer wakes you |
 | `wait` | `fai_browser_wait` with the `requestId`; again while it says pending |

@@ -43,7 +43,7 @@ cannot be switched off, and on Windows its image viewer can read any image your 
 ([Tools and files](../REFERENCE.md#tools-and-files)).
 
 - **The page beside the chat.** When you ask about the page you are on, the agent can join that tab. FAI's usual
-  approval window opens: click **Use** or **Act**, or **Deny**. Nothing is granted before you click, and the agent
+  request window opens: click **Use** or **Act**, or **Deny**. Nothing is granted before you click, and the agent
   learns the site only after you do. A question that needs no page opens nothing.
 - **Provider and model.** A new chat uses your default provider, or the first available of Codex, Claude and OpenCode;
   pick another before the first message. Each program uses its own default model unless you choose one in Settings,
