@@ -73,13 +73,13 @@ act an `expectation`.
 | `actionId` | string | one of | An id from `actions[]` (`a3  click "About"`) |
 | `revision` | string | for `needsApproval`, secrets, `point` | From the result the action came from (single-use); optional otherwise |
 | `text` | string (<= 5000) | with a fill | For `fill "Search" (act with text)`: the text to type. Never passwords or codes (never offered for password, payment or secret fields) |
-| `submit` | boolean | no | After `text` or `fills`: press Enter in the (last) field, gated as its form's submit (search at Use, other forms at Act) |
+| `submit` | boolean | no | After `text` or `fills`: press Enter in the (last) field, gated as its form's submit (search and other forms both need Act) |
 | `commits` | boolean | with every Enter | Required with `submit`, `key: "Enter"` and a `press Enter in` action; refused otherwise. `true` when the Enter commits the user (a purchase or payment, agreeing to terms, sending a message or post, submitting an application or form for them, a booking or registration, deleting, publishing, transferring): the user approves it once first. `false` for search, filter, navigation or text that stays on the page: it runs as before and warns `enter_non_committing`. Missing: refused before anything runs |
 | `fills` | `[{actionId, text?}]` (<= 20) | one of | Several fields in one call, in order; a `with supplied` fill takes no `text` |
 | `url` | string | one of | Open an address on the granted origins (any level) that the user gave or a result showed, never a guessed one; another origin is `cross_origin`. An address no page of the request showed and `allowedUrls` does not list still opens on an approved origin, and `next.text` says so once; on another origin nothing runs and the result says to find the link instead |
 | `nav` | `back` / `forward` / `reload` | one of | The tab's own history |
-| `key` | string | one of | Escape, Tab, Shift+Tab, arrows, Home, End, PageUp, PageDown, Space (Use and up), in `actionId`'s control if given; Enter only as a filled field's submit; Ctrl/Cmd+letter at Act |
-| `hover` | boolean | no | With `actionId`: rest the pointer on that control (menus); Use and up |
+| `key` | string | one of | Escape, Tab, Shift+Tab, arrows, Home, End, PageUp, PageDown, Space (these need Act), in `actionId`'s control if given; Enter only as a filled field's submit; Ctrl/Cmd+letter at Act |
+| `hover` | boolean | no | With `actionId`: rest the pointer on that control (menus); Act |
 | `tab` | `t0`, `t1`, ... | one of | Switch to a tab of this request (`tabs` in the result: a popup or new tab it followed) |
 | `path` | string | with an upload | For `upload a file to "Avatar" (act with path)` (Act, Test site): a file in your workspace (no `..` or symlink out, <= 10 MB); the user approves name, size and site |
 | `dialog` | `accept` / `dismiss` | one of | Test site: the answer to the page's next confirm or prompt (`text`: a prompt's value) |
@@ -89,8 +89,7 @@ act an `expectation`.
 | `requestId`, `returnImages` | | no | As above |
 
 Action descriptions you will see: `click "About"`, `fill "Search" with supplied query`, `select "Large" in "Size"`,
-`press Enter in "Search" (search)` (submits a filled field; a search field submits at Use, other forms say "submits its form"
-and need Act), `scroll down`, `wait`, `open https://...` (an allowed URL; not the page the tab is already on), and, when a secret handle exists,
+`press Enter in "Search" (search)` (submits a filled field; needs Act, as every fill does; other forms say "submits its form"), `scroll down`, `wait`, `open https://...` (an allowed URL; not the page the tab is already on), and, when a secret handle exists,
 `fill_secret "API key" <- secret:3 (...)` and `copy_secret secret:3 (...) to the clipboard`. An action marked **`needsApproval`** (description ends "(asks the user)") blocks the call
 while the user answers, at most 60 s per call: Approve once, Deny (`refused_action`, `next.kind: stop`, do not retry) or no
 answer in time (`needs_user` / `approval_pending`, `next.kind: approve`: relay it and end your turn). Until the user
