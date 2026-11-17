@@ -24,6 +24,14 @@ test('file names: the last path component, cleaned for every OS, never empty, ne
     ['AGENTS.md', 'attached-AGENTS.md'], ['claude.md', 'attached-claude.md'], ['CLAUDE.local.md', 'attached-CLAUDE.local.md'],
     ['opencode.jsonc', 'attached-opencode.jsonc'], ['a,b<c>:d|e?f*g".pdf', 'a_b_c__d_e_f_g_.pdf'],
     ['evil\u202egnp.exe', 'evilgnp.exe'], ['tab\there\nnew', 'tabherenew'], ['café.txt', 'café.txt'],
+
+    // A device name followed by spaces or dots before the extension is still the device on Windows.
+    ['con .txt', 'attached-con .txt'], ['CON  .txt', 'attached-CON .txt'], ['lpt1 .x', 'attached-lpt1 .x'],
+    ['nul. .txt', 'attached-nul. .txt'], ['aux . .md', 'attached-aux . .md'], ['com\u00b9 .log', 'attached-com\u00b9 .log'],
+    ['prn ', 'attached-prn'],
+    // Near misses stay as they are.
+    ['console.txt', 'console.txt'], ['con-x.txt', 'con-x.txt'], ['icon .txt', 'icon .txt'], ['con x.txt', 'con x.txt'],
+    ['com10 .txt', 'com10 .txt'], ['nully .txt', 'nully .txt'],
   ];
   for (const [name, expected] of cases) assert.equal(cleanFileName(name), expected, JSON.stringify(name));
   const long = cleanFileName(`${'x'.repeat(300)}.png`);

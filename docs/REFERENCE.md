@@ -1108,8 +1108,9 @@ When a provider cannot run a turn, the panel and setup show it as unavailable wi
 The other fixed codes are about a turn: `chat_no_model` (OpenCode has no model chosen: choose one in Settings),
 `chat_start_failed` (the program could not be started), `chat_stopped` ("Stopped."), `chat_timed_out` (the turn ran
 for 30 minutes and was stopped), `chat_too_many` (this chat is already running a turn, or three chats are) and
-`chat_turn_failed`. With no provider available, the panel's first view lists the three providers with their fix lines,
-and **Open agents** if there are any.
+`chat_turn_failed`. `chat_token_refused` is not shown in the panel: it is the daemon's answer to an MCP server that
+presents a turn token it no longer accepts ([Wakes become turns](#wakes-become-turns)). With no provider available,
+the panel's first view lists the three providers with their fix lines, and **Open agents** if there are any.
 
 A turn the program itself fails (a refused model, an unreadable file, a sign-in or service error) shows
 `chat_turn_failed` with the exit status, followed by "<Provider> said:" and the program's own error as plain text
@@ -1295,7 +1296,11 @@ when it pauses the request: `leftOrigin` (an `origin_changed` pause, [Output, st
 
 The MCP server started inside a turn registers with its turn token. The daemon accepts a token once, only while the
 turn it started is still running, and marks that session as the chat's, with the wake capability `fai-chat`. A token
-that is reused, unknown, or whose turn has ended is refused. Tab requests opened in a chat belong to the chat: when the
+that is reused, unknown, or whose turn has ended is refused with `chat_token_refused` (403), and the MCP server then
+runs that turn with no agent session (its log says "the FAI chat turn token was refused; invites and wakes are off"):
+it cannot join the chat's invite (`session_required`), its tab requests are not the chat's, and no wake starts a turn
+for them. The panel shows no separate message; the turn runs and ends as usual, without the chat's tab. The chat's
+next message starts a new turn with a new token. Tab requests opened in a chat belong to the chat: when the
 next turn's server registers, they move to it, and a request is not ended because a turn's process exited (its lease
 keeps its own expiry rules).
 
@@ -1739,7 +1744,7 @@ One active tab lease per browser; approving another request in the same browser 
 **compat.js** ([extension/compat.js](../extension/compat.js)) loads first in the Firefox event page and only fills in what is missing, so the rest of the extension keeps calling `chrome.*` (Firefox's `chrome` namespace returns promises in MV3):
 
 - `chrome.offscreen`: Firefox's background is a page with a DOM, so the offscreen document is a hidden `<iframe src="offscreen.html">` in it. The same `offscreen.js` runs there and answers the same `annotate` message, so screenshot drawing, action-id tags and [secret boxes](#secret-redaction) are one code path in both browsers.
-- Exact-origin keeper. Chrome keeps `activeTab` until the tab leaves its origin; Firefox drops it at any navigation, after which the worker could neither read the tab's URL nor run `page.js`, and paused the lease (`origin_changed`). In the Firefox build an explicit **Use** or **Act** click in the popup or request modal asks, inside that click, for the request's exact origins as host permissions (`https://host/*`, port dropped; domain roots keep their own prompt). Firefox shows its permission prompt once per new site. The keeper records each pattern Firefox reports added after such a click (`chrome.storage.local.compatGrantedOrigins`) and removes it once no pending, active or paused request in `chrome.storage.session.requests` needs it; a site the user allowed by hand is never recorded, so never removed. An Act or direct-open approval requires this site access; declining it grants no session. Answer Firefox's prompt within 45 s: after that the attempt is given up and a late answer approves nothing ("This approval waited too long for the browser's site-access prompt and was given up: nothing was approved. Choose Use or Act again."). Opening the toolbar alone neither requests site access nor approves a task.
+- Exact-origin keeper. Chrome keeps `activeTab` until the tab leaves its origin; Firefox drops it at any navigation, after which the worker could neither read the tab's URL nor run `page.js`, and paused the lease (`origin_changed`). In the Firefox build an explicit **Use** or **Act** click in the popup or request modal asks, inside that click, for the request's exact origins as host permissions (`https://host/*`, port dropped; domain roots keep their own prompt). Firefox shows its permission prompt once per new site. The keeper records each pattern Firefox reports added after such a click (`chrome.storage.local.compatGrantedOrigins`) and removes it once no pending, active or paused request in `chrome.storage.session.requests` needs it; a site the user allowed by hand is never recorded, so never removed. An Act or direct-open approval requires this site access; declining it grants no session. Firefox can open that prompt under a still-open toolbar popup, with its Allow button covered: close the popup, choose Allow, then open the popup and press Use again (the approval window does not have this problem). Answer Firefox's prompt within 45 s: after that the attempt is given up and a late answer approves nothing ("This approval waited too long for the browser's site-access prompt and was given up: nothing was approved. Choose Use or Act again."). Opening the toolbar alone neither requests site access nor approves a task.
 - Feature-detected as in Chrome: `tabGroups` (the tab mark; without it the badge and title remain), `action.getUserSettings` (the pin hint), `storage.local.setAccessLevel` (absent in Firefox, where `storage.local` is also readable by the add-on's own content scripts; `page.js` runs isolated from the page, so a page still cannot read it). The same in both: `storage.session`, `scripting.executeScript` with `func`/`args` (Firefox returns no `documentId`, so the injection retry targets the tab), `action.setPopup`/`onClicked`, `windows.create({type: 'popup'})`, `commands` (`_execute_action`, Ctrl+Shift+Y), `alarms`, `runtime.sendNativeMessage`.
 
 `chrome.tabs.group` names the tab's own window (`createProperties.windowId`): Firefox otherwise moved the tab into the last focused window, the prompt popup, and closing the prompt then closed the leased tab. Chrome already grouped the tab in its own window.

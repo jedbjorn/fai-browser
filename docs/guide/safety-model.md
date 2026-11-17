@@ -13,8 +13,8 @@ in one task tab, or **Act** for actions and up to eight task tabs. Neither butto
 or browser-internal pages. A child tab pauses a Use task; an Act task follows only task tabs on approved origins.
 
 - Origins are exact (`https://app.example.com`). For a task that spans subdomains of one site the agent may ask for a
-  **domain root** (`https://*.example.com`); you see it as "all of example.com", and Chrome asks you to allow the site too.
-  Matching follows the Public Suffix List.
+  **domain root** (`https://*.example.com`); you see it as "all of example.com", and Firefox asks you to allow FAI Browser access to your data for sites in
+  the example.com domain too. Matching follows the Public Suffix List.
 - Leaving the approved origins pauses the session (the result names the origin the tab went to). Redirects to other
   sites do not carry the grant.
 - **Frames are a boundary too.** A frame from another origin inside the approved page is read only when its own
