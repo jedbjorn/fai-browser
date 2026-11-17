@@ -80,6 +80,11 @@ const CODE_DO = {
   select_tab: 'The request waits for the user\'s Use or Act click: the request modal on the task page FAI opened, the FAI Browser '
     + 'window or the toolbar icon on that tab. After a failed attempt the text says "toolbar icon" (the icon on the task '
     + 'tab gets past it); after the user declined the browser\'s site-access prompt it says so: do not push. Then observe.',
+  approval_pending: 'Relay next.text and end your turn: the user\'s answer wakes you with the act to repeat (it then '
+    + 'runs at once). Until then your calls return approval_open.',
+  approval_open: 'Paused: the user has an approval of yours open (one window per tab: your asks for actions, a level '
+    + 'or sites, one Approve or Deny for all). Nothing ran. End your turn: the user\'s answer wakes you once. '
+    + 'Status, guide, release and fai_browser_wait {maxMs: 0} still work.',
   ask_pending: 'You asked for a level or site on this request; the user has not answered. Relay it, then observe '
     + 'with the requestId; the tab keeps working at the granted level meanwhile.',
   time_budget: 'The act ran out of time before its page settled. Observe, then choose; for late content, waitFor.',
@@ -281,7 +286,11 @@ const TOPICS = {
       + 'is unclear or the user says something changed.',
     '- fai_browser_wait: waits for a pending or paused request (requestId) or an act still running (runId, when '
       + 'next.kind is wait), up to 45 s a call; call it again while it says pending. Not needed when FAI wakes your '
-      + 'session and you can end your turn; a subagent or script cannot, so it waits with this.',
+      + 'session and you can end your turn; a subagent or script cannot, so it waits with this. maxMs 0 reads the state '
+      + 'at once.',
+    '- While an approval of yours is open (one window per tab, one Approve or Deny for all you asked there), every call '
+      + 'but status, guide, release and wait with maxMs 0 returns approval_open and does nothing: end your turn; the '
+      + 'user\'s answer wakes you once.',
     '- fai_browser_evidence: an act\'s screenshot (image) or trace (JSON) by runId: to show the user what happened, '
       + 'or for a bug report.',
     '- fai_browser_release: ends FAI\'s access to a request. Only when the user asks, or for your own requests '

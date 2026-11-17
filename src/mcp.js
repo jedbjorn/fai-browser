@@ -356,7 +356,8 @@ export const TOOLS = [
   {
     name: 'fai_browser_wait',
     title: 'Wait for a run or tab',
-    description: 'Wait for a pending tab request (requestId) or a still-running act (runId). Returns within maxMs.',
+    description: 'Wait for a pending tab request (requestId) or a still-running act (runId). Returns within maxMs; '
+      + 'maxMs 0 returns the current state at once, also while an approval is open.',
     inputSchema: objectSchema({
       runId: RUN_ID,
       requestId: REQUEST_ID,

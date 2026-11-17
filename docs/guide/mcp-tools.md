@@ -93,10 +93,17 @@ Action descriptions you will see: `click "About"`, `fill "Search" with supplied 
 and need Act), `scroll down`, `wait`, `open https://...` (an allowed URL; not the page the tab is already on), and, when a secret handle exists,
 `fill_secret "API key" <- secret:3 (...)` and `copy_secret secret:3 (...) to the clipboard`. An action marked **`needsApproval`** (description ends "(asks the user)") blocks the call
 while the user answers, at most 60 s per call: Approve once, Deny (`refused_action`, `next.kind: stop`, do not retry) or no
-answer in time (`needs_user` / `approval_pending`, `next.kind: approve`; the approval stays open 5 minutes and repeating the
-same act picks up a click given meanwhile). A session FAI can wake that ended its turn gets the decision as a wake
-("The user approved action a7 on tab request req_…" or "… denied action …"; see
-[Action approvals](../REFERENCE.md#action-approvals)). Uploads always ask. See [approvals.md](approvals.md).
+answer in time (`needs_user` / `approval_pending`, `next.kind: approve`: relay it and end your turn). Until the user
+answers, your session is paused: every observe, act, open, wait (except `maxMs: 0`) and evidence call returns
+`approval_open` (`next.kind: end_turn`, "Paused: the user has an approval open (tab request req_…). Nothing ran. End
+your turn now; the user's answer wakes you.") and does nothing; status, guide and release still work. An open on the
+same request that asks for more joins the approval and returns the same receipt. Everything you wait on for one tab is
+one window for the user with one Approve and one Deny ([Combined approvals](../REFERENCE.md#combined-approvals)). The
+answer wakes you once: "The user approved action a7 on tab request req_…" or "… denied action …" for one item, or "The
+user approved all 2 items on tab request req_…: level Act (full), action a7. Run each approved action with
+fai_browser_act, …" (also `bundle_denied`, `bundle_expired`, and `ask_declined` for a declined ask; see
+[Action approvals](../REFERENCE.md#action-approvals)). Then repeat the act it names: it runs at once. Uploads always
+ask. See [approvals.md](approvals.md).
 
 **Typed text and forms.** A form of four fields and a submit is one call: `{"fills": [{"actionId": "a2", "text": "Ada"},
 {"actionId": "a3", "text": "ada@example.com"}, ...], "submit": true, "commits": true, "expectation": {"textIncludes": "Thanks"}}`
@@ -145,7 +152,8 @@ link is an ordinary click.
 ### `fai_browser_wait`
 
 Wait for a pending tab request (`requestId`) or a still-running act (`runId`). Returns within `maxMs` (0 to 45 000, default
-30 000). Use when `next.kind` is `wait`, and in place of ending the turn when you cannot be woken (a subagent: FAI's wake
+30 000). `maxMs: 0` returns at once with the current state and is never paused by an open approval; any other wait
+then returns the `approval_open` receipt. Use when `next.kind` is `wait`, and in place of ending the turn when you cannot be woken (a subagent: FAI's wake
 goes to the main session; a script). The first wait repeats the full relay; still pending after that, it says so in one
 short `wait` line: call it again (that is waiting, not a repeated call).
 
@@ -208,7 +216,8 @@ the JSON `error` object in their text block. See [the host research and design](
 | `observe` | The page changed or the action could not land: `fai_browser_observe`, then choose |
 | `answer` | Verified; report from `page.digest` |
 | `relay` | Tell the user `needs.message`. With `needs.level`: "click Act for this task in FAI Browser", then `fai_browser_open` with the same `requestId` and that `mode` (same tab, page and id; only a request still waiting for approval gets a successor, named in a `requestId <new> replaces <old>` line). A pause (`child_tab`, `tab_changed`, ...) waits for the user's approval to resume: end your turn when FAI wakes you, else `fai_browser_wait` |
-| `approve` | A `needsApproval` action waits for the user's click: relay `next.text`, then repeat the act unchanged (each call waits up to 60 s) |
+| `approve` | A `needsApproval` action waits for the user's click: relay `next.text`, then end your turn; the answer wakes you with the act to repeat (a caller FAI cannot wake repeats it once the user says they answered) |
+| `end_turn` | `approval_open`: the user has an approval open and nothing ran. End your turn; the answer wakes you |
 | `wait` | `fai_browser_wait` with the `requestId`; again while it says pending |
 | `stop` | Report `next.text` (`refused_action`, `error_page`); never retry a refused action |
 

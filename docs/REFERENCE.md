@@ -41,6 +41,7 @@ Requires Node 22+ and Firefox 140+. FAI Browser is Firefox only: Chrome, Brave, 
   - [Firefox](#firefox)
   - [Guardrails](#guardrails)
   - [Approve gate](#approve-gate)
+  - [Combined approvals](#combined-approvals)
   - [Secret redaction](#secret-redaction)
   - [Secret handles](#secret-handles)
   - [Offered actions](#offered-actions)
@@ -419,7 +420,10 @@ The request keeps its id, tab, page and lease; nothing is granted until the user
   `leftOrigin` names). A second ask while one waits replaces it, with both, under a new `id`. `POST /v1/wait
   {requestId, ask: true}` also waits while the ask is open. Without `requestId` the MCP server still opens a
   new request for origins the latest one does not cover.
-- **Approval.** The ask shows as an **AGENT ASKS FOR MORE** card (the approval window opens for it once; the
+- **Approval.** On an active request the ask joins the approval window of the tab its lease is on, with any
+  action approvals pending there, as one list with one **Approve** and one **Deny**
+  ([Combined approvals](#combined-approvals)); while it waits the agent's session is paused. On a paused request it
+  shows as an **AGENT ASKS FOR MORE** card (the request window opens for it once; the
   badge counts it): "Same task and tab: add `<origin>` · allow `<level>`", with direct **Use** and **Act**
   approval buttons and **Decline**. Invited tabs show it too. Approve asks the browser for site access to the asked exact origins
   inside the click, then sends the lease message with `ask: true` and the `askId` the card showed: the daemon
@@ -439,7 +443,9 @@ The request keeps its id, tab, page and lease; nothing is granted until the user
   with several exact sites therefore lets the agent move between them in the tab: the request card says so.
 - **Results.** The open that asked returns the page once the user approved. If the user did not answer within
   the call it returns `needs_user` / `ask_pending` (relay; the ask stays open); after a Decline, once,
-  `needs_host` / `ask_declined` (`next.kind: "observe"`: continue at the granted level).
+  `needs_host` / `ask_declined` (`next.kind: "observe"`: continue at the granted level). An answer after the call
+  ended wakes the agent: `approved`, or `ask_declined` after a Decline, or the bundle's wake when the ask shared a
+  window with action approvals ([Combined approvals](#combined-approvals)).
 
 CLI equivalents are `act --request ID --open-tab URL --revision R` and
 `act --request ID --tab t0 --revision R`; the SDK accepts `client.act({requestId, openTab, ...})`.
@@ -742,7 +748,7 @@ Loop stoppers: each `requestId` has a call budget (`maxCalls` act/observe calls 
 
 The user can bring a connected coding agent to a tab they already have open, and FAI wakes an idle agent when the user
 approves or resumes its tab, or decides an action it asked about after its act stopped waiting
-([action approvals](#action-approvals)). Claude Code, Codex and OpenCode (1.19 to 1.x, through FAI's plugin) can be woken; any
+([action approvals](#action-approvals)), or answers a [combined approval](#combined-approvals) or lets it expire. Claude Code, Codex and OpenCode (1.19 to 1.x, through FAI's plugin) can be woken; any
 other host gets the copy-text fallback. The channels work on Linux, macOS and native Windows. Windows channel tests
 run in CI. In live acceptance on Windows 10, the Claude desktop app's Code tab and Codex in the ChatGPT app each
 started a new turn by themselves for an invite, an Approve and a Resume. OpenCode Desktop 1.19.5 could not be
@@ -833,12 +839,16 @@ line under it, as for Claude Code. OpenCode lists as
 "not ready: ask it to run any FAI command" until its first tagged call; the server instructions ask it to call
 `fai_browser_status` once early. `FAI_WAKE=0` in OpenCode's environment also turns the plugin off.
 
-**Wake texts.** The daemon queues fields only (`kind`, `requestId`, `inviteId`, `level`, the user's invite text, and
-for an action decision `actionId` and `revision`); the MCP server writes the text from fixed templates in
-`src/wake.js`, prefixed `[FAI Browser]`: an invite ("The user invited you … Call fai_browser_open with
+**Wake texts.** The daemon queues fields only (`kind`, `requestId`, `inviteId`, `level`, the user's invite text, for
+an action decision `actionId` and `revision`, and for a combined approval its `items`: `{type: "level", level}`,
+`{type: "sites", count}`, `{type: "action", actionId, revision, commits}`); the MCP server writes the text from fixed
+templates in `src/wake.js`, prefixed `[FAI Browser]`: an invite ("The user invited you … Call fai_browser_open with
 {"inviteId": "inv-…"}", then the user's words on one labelled line), an approval ("The user approved tab request req_…
-at level …"), a resume ("The user resumed tab request req_…"), an action decision (below), each naming the tool to
-call next, or a message you typed in the [chat panel](#chat-panel) (kind `chat`: your own words as one JSON string). A wake never contains a page title, URL, origin, control label or page text; an id that is not one is
+at level …"), a declined ask (`ask_declined`: "The user declined your ask for more on tab request req_…; it keeps what
+it had. Call fai_browser_observe with requestId req_… and continue within it, or tell the user."), a resume ("The user
+resumed tab request req_…"), an action decision and a combined approval's answer or expiry (below), each naming the
+tool to call next, or a message you typed in the [chat panel](#chat-panel) (kind `chat`: your own words as one JSON
+string). A wake never contains a page title, URL, origin, control label or page text; an id that is not one is
 written as `unknown`. It reports `delivered` (written to the channel: Claude Code's socket answers nothing, not even to a wrong
 token or a message `crossSessionInbound` holds or refuses, checked on 2.1.319, so this means sent, not received, and the
 popup says "Sent to …"; anything the socket does write back is kept as the wake's `detail`; for Codex, `codex queue`
@@ -846,7 +856,7 @@ exited 0; for OpenCode, OpenCode accepted the prompt), `failed` (`no_socket`, `c
 `unknown_thread`, `no_codex`, `codex_failed`; OpenCode adds `unknown_session` and `ambiguous_session`, and a `refused`
 carries the plugin's reason in its message: a wrong token, a session that never used FAI, a text that is not a FAI
 wake, or OpenCode not queuing the turn) or `skipped` (a call already waiting on that request returns the page itself;
-tab approvals and resumes only); a wake no poll picks up fails after 10 s (`not_polling`), one never reported after
+tab approvals, declined asks and resumes only); a wake no poll picks up fails after 10 s (`not_polling`), one never reported after
 25 s (`no_report`).
 
 #### Action approvals
@@ -871,6 +881,28 @@ or one for an entry a later act already picked up, wakes nobody; the MCP server 
 request with no owner session (the CLI, the SDK) or a session that cannot be woken gets no wake; a failed one shows
 "Could not wake … Tell it to continue." in the popup, as for a tab approval. Failed wakes are not retried.
 
+While the approval is open the agent's session is paused: every other FAI call it makes gets the
+[paused receipt](#the-paused-receipt) and does nothing, so it ends its turn and the answer wakes it.
+
+**Combined approvals.** When the window held two or more items ([Combined approvals](#combined-approvals)), one wake
+covers them all, with the items as ids and fixed words only (`level <Use|Act|Test site> (<level>)`, `<k> more
+site(s)`, `action <actionId>`):
+
+- `bundle_approved`: `[FAI Browser] The user approved all <n> items on tab request <requestId>: <items>. Run each
+  approved action with fai_browser_act, requestId <requestId>: <runs>. Then continue the task.` `<runs>` is `actionId
+  <actionId> and revision "<revision>"` per action (with ` and commits: true` after an Enter), joined with `; `; a
+  bundle with no nameable action (a Test site dialog) has only the last sentence. Example: `[FAI Browser] The user
+  approved all 2 items on tab request r12: level Act (full), action a7. Run each approved action with fai_browser_act,
+  requestId r12: actionId a7 and revision "rv9". Then continue the task.`
+- `bundle_denied`: `[FAI Browser] The user denied all <n> items on tab request <requestId>: <items>. Nothing was granted
+  or run. Do not retry them; tell the user.`
+- `bundle_expired`: `[FAI Browser] Your approval on tab request <requestId> (<items>) expired without an answer.
+  Nothing was granted or run. Tell the user; ask again only if they want it.`
+
+A bundle of one wakes with its item's own text (`action_approved`, `action_denied`, `approved` or `ask_declined`), and
+its expiry wakes nobody. No wake is sent when the call that opened the bundle was still waiting and got the answer.
+OpenCode's plugin accepts these texts by the same exact-template rule as the others.
+
 An approval given while no act waited stays usable for **5 minutes from the click** (instead of 60 s), so a queued
 Codex turn or a busy session that starts late can still use it. It stays single-use and bound to the tab, lease,
 revision, target, class and label hash: if the page changed, the act fails `stale`, and the agent observes and asks
@@ -885,7 +917,8 @@ background `wait --until active` command ([Waking the agent on Resume](#running-
 relay (how to approve or resume, the guide topic for a pause); every later one gives a short `next` of kind `wait`,
 the same each time: "Still pending after 45 s: the user has not approved the request yet. ... call fai_browser_wait
 with requestId req_… again (that is waiting, not a repeated call)." (a paused task folded away in the popup still says
-where its Resume is); `maxMs: 0` reads the state and always gets the full relay. The MCP server cannot tell a
+where its Resume is); `maxMs: 0` reads the state and always gets the full relay, and is never paused by an open
+approval ([The paused receipt](#the-paused-receipt)): it returns at once with the current state. The MCP server cannot tell a
 subagent's call from its main session's (they share one server), so the text names both.
 
 **Invite agent.** In the toolbar popup on any normal http(s) tab, the **Invite an agent to this tab** card lists the
@@ -1304,8 +1337,8 @@ next message starts a new turn with a new token. Tab requests opened in a chat b
 next turn's server registers, they move to it, and a request is not ended because a turn's process exited (its lease
 keeps its own expiry rules).
 
-A wake addressed to a chat's request (an invite, a resume, an approval, and an action approved or denied) starts a new
-turn in that chat whose text is the wake's fixed template, shown in the transcript as one short `fai` line. Wakes run
+A wake addressed to a chat's request (an invite, a resume, an approval, a declined ask, an action approved or denied,
+and a combined approval approved, denied or expired) starts a new turn in that chat whose text is the wake's fixed template, shown in the transcript as one short `fai` line. Wakes run
 in order, each after the running turn ends. One that cannot start a turn reports the turn's reason code, and the popup
 shows its usual "Could not wake …" line.
 
@@ -1359,6 +1392,11 @@ Stdout is exactly one JSON line (`--pretty` indents it). `act` prints the lean a
 | `needs_user` | The user must act (for `refused_action` with `needs.level`: approve that level on the same request) | `select_tab`, `paused`, `approval_pending`, `blocked`, `js_dialog`, `cross_origin`, `child_tab`, `tab_changed`, `origin_changed`, `session_inactive`, `disconnected`, `blocked_risky`, `refused_action`, `ask_pending`, `ask_declined` | 2 |
 | `needs_host` | The host agent must decide | `fill_not_kept`, `line_break_input`, `stale`, `target_unavailable`, `unsupported`, `no_control`, `point_outside`, `tab_not_ready`, `request_closed` | 2 |
 | `stopped` | The user pressed Stop or denied the request, or Ctrl+C | `stopped`, `denied`, `cancelled`, `interrupted` | 2 |
+
+**Paused by an open approval.** While a [combined approval](#combined-approvals) of the request is open, a command
+that observes, acts, opens, waits (except `--max-ms 0`) or reads evidence on it does nothing and fails with code
+`approval_open` (HTTP 409) and the receipt text as its message ([The paused receipt](#the-paused-receipt)). Run it
+again after the user answers.
 
 **Which pause, truthfully** (issue #31). `stopped` ("The user pressed Stop and released the tab") is reported only
 for a request the user stopped (the extension's status `stopped` with reason `stopped`); a request ended any other
@@ -1609,15 +1647,15 @@ Some actions are worth doing for the user but not without their say-so. With you
 
 Never approvable: a label the user forbade (`policy`, `config.json`), a page outside the approved origins, browser-internal pages, anything at `read-only`, sign-in and password or card fields outside `testing`, consent accepts below `full`. A bridge without `approve` is never offered a credential action: page.js refuses one at dispatch without an approval.
 
-**The exchange.** `fai_browser_act` on a `needsApproval` action sends an `approve` command to the extension and blocks, with progress notifications, up to `FAI_MCP_APPROVAL_WAIT_MS` (default 60 s, at most 60 s per call; daemon `POST /v1/act` `approvalWaitMs`, at most 120 s). The worker reads the control from the page itself (`approvalInfo`: label, label hash, class, a detected total), refuses a class the page script does not see (`class_mismatch`), and shows a small approval window, a red `!` badge and a card in the popup: the site and tab title (from the browser), what kind of action it is, the control's label in quotes marked as page text, the total the page shows and **"Agent says: …"** (the act's optional `reason`, marked as not checked). Neither button has focus.
+**The exchange.** `fai_browser_act` on a `needsApproval` action sends an `approve` command to the extension and blocks, with progress notifications, up to `FAI_MCP_APPROVAL_WAIT_MS` (default 60 s, at most 60 s per call; daemon `POST /v1/act` `approvalWaitMs`, at most 120 s). The worker reads the control from the page itself (`approvalInfo`: label, label hash, class, a detected total), refuses a class the page script does not see (`class_mismatch`), and shows it in the tab's approval window ([Combined approvals](#combined-approvals): one window per task tab, holding everything the agent waits on there), a red `!` badge and a card in the popup: the site and tab title (from the browser), what kind of action it is, the control's label in quotes marked as page text, the total the page shows and **"Agent says: …"** (the act's optional `reason`, marked as not checked). Neither button has focus.
 
-**Where the window opens.** Over the driven tab: inside the browser window that holds the task tab, at its top right below the toolbar (440×420, the request prompt's inset), not over whichever window was focused last. It always opens there, also when the task tab's window is the focused one; an action approval never uses the toolbar popup, which the browser closes at the first click elsewhere (the badge and the popup's card remain a second place to answer). A second ask for the same action while its window is open opens no second window. A minimized window, or bounds the browser refuses (a window mostly off screen), gets the browser's own placement; on Linux Wayland the window manager may ignore the position, and the window still opens focused. The same holds on Chromium and Firefox. Its header, and the card's line, for a click is the direct line `Click "<label>" on <site>?`: the label in quotes, marked as page text, and `<site>` the tab's host as the browser reported it when the agent asked (a purchase keeps its total line; secret uses, uploads and dialog accepts keep their own lines). The window stays open while the task tab navigates or redirects on the approved site and then adds **"The page has changed since the agent asked."**; the approval stays bound to the revision it was asked on, so an act after the change fails `stale` and the agent observes and asks again. It closes on the decision, on expiry (5 minutes) or when the lease ends; leaving the approved site pauses the session, which closes it too.
+**Where the window opens.** Over the driven tab: inside the browser window that holds the task tab, at its top right below the toolbar (440×420, the request prompt's inset), not over whichever window was focused last. It always opens there, also when the task tab's window is the focused one; an action approval never uses the toolbar popup, which the browser closes at the first click elsewhere (the badge and the popup's card remain a second place to answer). A second ask for the same action, or any other ask on the same tab, while its window is open opens no second window: it joins that window's list. Only one approval window is on screen per browser; another tab's waits ([Combined approvals](#combined-approvals)). A minimized window, or bounds the browser refuses (a window mostly off screen), gets the browser's own placement; on Linux Wayland the window manager may ignore the position, and the window still opens focused. The same holds on Chromium and Firefox. Its header, and the card's line, for a click is the direct line `Click "<label>" on <site>?`: the label in quotes, marked as page text, and `<site>` the tab's host as the browser reported it when the agent asked (a purchase keeps its total line; secret uses, uploads and dialog accepts keep their own lines). The window stays open while the task tab navigates or redirects on the approved site and then adds **"The page has changed since the agent asked."**; the approval stays bound to the revision it was asked on, so an act after the change fails `stale` and the agent observes and asks again. It closes on the decision, on expiry (5 minutes from its newest item, 10 minutes at most) or when the lease ends; leaving the approved site pauses the session, which closes it too. Closing it yourself is not an answer: the approval stays pending and the window comes back ([Combined approvals](#combined-approvals)).
 
 Answers:
 
 - **Approve once**: the worker mints a random single-use `approvalId` (`crypto.randomUUID`) bound to the tab, lease, revision, target, class and label hash (SHA-256 of the label, first 128 bits as hex, computed in plain JavaScript so plain-http pages can be approved too), valid 60 s (5 minutes from the click when no act was waiting for it: [action approvals](#action-approvals)); the act runs the click with it at once (no model guard second-guesses it, and it is never re-resolved on another revision). The worker spends the id before dispatch and page.js rechecks the target's class and label hash itself. A new revision voids it (`stale`), and an id the worker did not mint (a daemon cannot) is refused (`blocked_risky`).
 - **Deny**: `refused_action`, `why: approval:denied`, `next.kind: stop` ("The user denied this action in the FAI Browser window. Tell the user; do not retry it.").
-- **No click in time**: `needs_user` / `approval_pending`, `next.kind: approve`: "Tell the user to approve '<label>' (page text) in the FAI Browser window (Approve once), then call fai_browser_act again with actionId a7 and revision "…"; it returns at once if they already approved, else waits up to 60 s (the approval stays open for 5 minutes: repeat the call if it returns pending again)." (`needs.approval {class, actionId, revision}`; for a submit or delete also "Or ask for full: ..."). One act waits at most 60 s (`GATE_MAX_WAIT_MS`); the revision stays usable, the approval stays open 5 minutes, and an approval given meanwhile is picked up by the next act at once. A decision given after the wait ended wakes the agent that asked ([action approvals](#action-approvals)).
+- **No click in time**: `needs_user` / `approval_pending`, `next.kind: approve`: "Tell the user to approve '<label>' (page text) in the FAI Browser window (Approve once); once approved, fai_browser_act again with actionId a7 and revision "…" runs it. End your turn now; the user's answer wakes you." (`needs.approval {class, actionId, revision}`; for a submit or delete also "Or ask for full: ..." before the last sentence, left out when the request's open ask already asks for that level, since that ask is in the same window). One act waits at most 60 s (`GATE_MAX_WAIT_MS`). From then until the user answers, the agent's session is paused: its other FAI calls get the [paused receipt](#the-paused-receipt) and do nothing. The answer wakes it ([action approvals](#action-approvals), [bundle wakes](#combined-approvals)), and the act it names then runs at once under the approval. A caller FAI cannot wake repeats that act after the user tells it they answered.
 
 **Uploads and dialog accepts** ask too: an [upload](#uploads) always (the card names the file, its size and the site), and on a Test site accepting a JavaScript dialog whose text names a delete or purchase ([dialogs](#dev-logs-and-javascript-dialogs); the card shows the dialog's text).
 
@@ -1628,6 +1666,102 @@ Answers:
 **Point clicks** on a control the offer marks `needsApproval` ask the same way: the runtime locates the control first (nothing runs), asks with the control's id, and the approved click runs by that id (never re-resolved, never by pixels); `why` carries `act:point_approved`. A control the observation left out (ref `"point"`) has no id to bind and is refused as before.
 
 **Time.** The wait for the click is not the agent's: the act's result carries `approvalMs` (trusted), and the MCP server leaves it out of the request's time budget (`maxMs`), as it does a tab approval wait.
+
+### Combined approvals
+
+Everything an agent waits on for **one task tab** is asked in **one** approval window, with one **Approve** and one
+**Deny** (spec #87). The window, the extension's `approve.html`, never the toolbar popup, lists each item on its own
+line. No tab ever gets two approval windows.
+
+**What one window holds (a bundle).** A bundle belongs to one task tab of one lease in one browser. Its items are
+every pending action approval on that tab ([Approve gate](#approve-gate): click classes `purchase`, `secret`, `delete`,
+`submit`; kinds `enter_commit`, `fill_secret`, `copy_secret`, `upload`, `dialog`) plus the request's open ask for more
+([More on the same request](#more-on-the-same-request): a higher level and/or more sites) while its lease is active;
+the ask joins the bundle of the tab the lease was on when it was asked. Items on another tab, request, lease or
+browser never join it. A new tab request or invite that is not yet approved is never in a bundle: it keeps the
+request window and the request modal ([Open and approve](#open-and-approve)). A bundle of one is the single-item
+window above, with its text, its **Approve once** and **Deny**, and its own wakes; nothing changes for an agent that
+asks for one thing.
+
+**One tab at a time.** One approval window is on screen per browser. A bundle on another task tab (another tab
+under Act, or another agent's tab) waits in a queue and is never refused; it opens when the one on screen is answered
+or expires. The window on screen then says `1 more approval waits on another tab.` (or `<n> more approvals wait on
+other tabs.`).
+
+**Labels.** Title `FAI Browser: approve this?` (one item) or `FAI Browser: approve <n> things?`; eyebrow `AGENT ASKS,
+NOT APPROVED YET`. The headline is one item's line, `<first> and <second>?` for two (lowercase verbs: `Act on
+shop.example and click "Delete account"?`), or `<first> and <n−1> more?`. Items are listed level first, then sites,
+then actions in the order asked, each with a tag:
+
+| Item | Line | Tag |
+|---|---|---|
+| Ask: level | `Act on <site>: save, send, submit and delete on this task` (full); `Act on <site>: buttons and fields on this task` (reversible); `Act on <site>: also search and filter on this task` (interactive), then `This also changes what the agent may do without asking on this task.` | `LEVEL` |
+| Ask: sites | `Also work on <k> more sites: <origin>, <origin>` (or `Allow site access on <k> sites: …` for listed sites the browser has not given access to yet) | `SITES` |
+| Click | `Click "<label>" on <site>`; a purchase adds `Total: <total> (as the page shows it)` | `DELETE`, `SUBMIT`, `PURCHASE`, `CREDENTIAL` |
+| Enter | `Press Enter in "<label>" on <site>`, then `Agent says this commits you.` | `COMMITS` |
+| Secret use | the secret handle's line ([Secret handles](#secret-handles)) | `SECRET` |
+| Upload | `Upload <name> (<size>) to <site>` | `UPLOAD` |
+| Dialog (Test site) | `Accept the dialog "<text>" on <site>` | `DIALOG` |
+
+Page text is in quotes and marked `(text from the page)`; `<site>` is the tab's host from the browser. `DELETE`,
+`PURCHASE`, `CREDENTIAL`, `SECRET` and `COMMITS` are in the warning colour. Each action keeps its **"Agent says: …
+(not checked)"** line and, after a navigation on the site, "The page has changed since the agent asked." Above the
+buttons: `Approve covers all <n> items, once each. Deny refuses all <n>.` The buttons are **Approve** and **Deny**
+(**Approve once** and **Deny** for one item); neither has focus. The toolbar popup shows the same bundle as one card
+with the same lines, **Approve**, **Deny** and **Show approval window**, a second place to answer it.
+
+**Approve and Deny.** Approve applies every item shown, once each, in one step: the ask as the ask card applies it
+(the lease message with `ask: true` and the shown ask id, with the browser's site access for added sites asked inside
+the same click on Chromium and Firefox; Firefox shows its own prompt once per new site), and each action entry gets
+its own single-use `approvalId` under the usual bindings (tab, lease, revision, target, class, label hash) and use
+windows (60 s while a call waits, 5 minutes after a wake). If the browser's site-access prompt is refused, nothing in
+the bundle is approved and the window says `Browser site access was not granted. Nothing was approved.` Deny refuses
+every item: the ask is declined and each entry is denied (`refused_action`, `why: approval:denied`). There is no
+answering items one by one: Deny stops it all.
+
+**Changed under the user.** The window shows a bundle version; Approve and Deny carry the version the user saw. If an
+item joined or left since, the click is refused, the window re-renders with `Updated: the agent added an item. Check
+the list again.`, and both buttons stay disabled for a second. An item that expires or goes stale before the answer
+leaves the bundle; with none left, the window closes.
+
+**Expiry and closing.** A bundle stays open 5 minutes from its newest item and at most 10 minutes from when it opened;
+its items do not expire on their own meanwhile. **Closing the window is not an answer.** The bundle stays pending with
+the red `!` badge and the popup card, and the window opens again when an item joins or one of its actions is asked
+again, or from the card's **Show approval window**. The lease ending, the request ending or the tab leaving the
+approved site ends the bundle without a decision; the agent gets the usual pause or end results, not a bundle wake.
+An expired bundle's ask ends with it (it is not a decline).
+
+**The daemon's part.** The extension tells the daemon `bundle_open {requestId, tabId, bundleId, version, askId,
+entryIds}` when the window opens and whenever its items change, and `bundle_decision` (`approved`, `denied` or
+`expired`) once, after every item was applied; ids only. While a bundle is open its request's owner session is
+paused ([The paused receipt](#the-paused-receipt)); the decision ends the pause and wakes the owner once.
+
+#### The paused receipt
+
+From the moment a bundle opens until it is answered or expires, the agent's whole **session** is paused (a caller
+without a session, such as the CLI or SDK, is paused per request):
+
+- **The call that opened it** (an act, or an open that asks) waits up to 60 s as before. If the user answers in that
+  time, the call gets the answer and no wake is sent. Otherwise it returns `approval_pending` (an act; its text ends
+  `End your turn now; the user's answer wakes you.`) or `ask_pending` (an open).
+- **Every later FAI call from that session** does nothing and returns the receipt, on any request:
+  `fai_browser_observe`, `fai_browser_act`, `fai_browser_open`, `fai_browser_wait` and `fai_browser_evidence`. Status
+  `needs_user`, code `approval_open`, `next.kind: end_turn`, text: `Paused: the user has an approval open (tab
+  request <requestId>). Nothing ran. End your turn now; the user's answer wakes you.`
+- **Exceptions.** An open on the **same request** that asks for a higher level or more sites joins the bundle (it shows
+  in the window) and then returns the receipt. `fai_browser_wait` with `maxMs: 0` is not paused: it returns at once
+  with the request's current state. The opening call finishing (its own running act, an open's wait for its own ask)
+  is not paused. `fai_browser_status`, `fai_browser_guide` and `fai_browser_release` always work.
+- **Over HTTP** the receipt is a `409` error with code `approval_open`, its message the receipt text, plus `requestId`,
+  `status` and `next` (routes `POST /v1/observe`, `/v1/act`, `/v1/wait`, `GET /v1/runs/:id/evidence`, `POST
+  /v1/requests` and `/v1/requests/:id/ask`). The SDK throws `FaiClientError` with `code: "approval_open"`,
+  `requestId` and `next: {kind: "end_turn", text}`; the MCP server returns it as a result, not an error.
+
+**Wakes.** One wake per bundle, to the request's owner session, only when no call was waiting for the answer
+([Wake texts](#invites-and-wakes)). A bundle of two or more items wakes with `bundle_approved`, `bundle_denied` or
+`bundle_expired`; a bundle of one keeps its item's own wake (`action_approved`, `action_denied`, `approved`, or
+`ask_declined`) and its expiry wakes nobody. After `bundle_approved`, repeating an item's act runs it at once under its
+approval. Chat and non-chat agents use this one system: in a [FAI chat](#fai-chats) one bundle is one turn.
 
 ### Secret redaction
 
@@ -1734,7 +1868,7 @@ One active tab lease per browser; approving another request in the same browser 
 
 ### Approval window and tab mark
 
-- **Approval window.** When the daemon's request list shows a new pending request, the worker opens the popup page in a small window of its own (`chrome.windows.create` with `popup.html?window=1`, `type: 'popup'`, 420×620, focused), so the user need not notice the badge. Each request id opens it at most once, also across service-worker restarts (the ids shown are kept in `chrome.storage.session.shownRequests`, the last 100). Only one exists at a time (`chrome.storage.session.approvalWindowId`): a new request while it is open focuses it, and its page re-renders from `chrome.storage.session.requests`. It is not opened when the setting is off, the extension is not paired, or the live session already serves that request. In the window there is no current tab (the card at the top reads **AGENT REQUEST**), so every card uses **Open <host>** (or **Approve on the FAI tab** for a request the live session's tab already covers); a request with no start URL cannot be approved there, and its card says to open a page it asked for and approve with the icon. The window closes itself after a successful open, and when no pending or paused request is left (approved, denied or expired). With **Open requested pages right away** on (the default), a request whose page opened by itself gets no approval window: its prompt window (`arm.html`, see [Open and approve](#open-and-approve)) stands in; a Full or Testing request still gets the approval window.
+- **Approval window.** Action approvals and an active request's ask for more open the tab's combined approval window ([Combined approvals](#combined-approvals)). The **request window** described here is for requests not yet approved and for an ask on a paused request; it is always a window of its own, never the toolbar popup. When the daemon's request list shows a new pending request, the worker opens the popup page in a small window of its own (`chrome.windows.create` with `popup.html?window=1`, `type: 'popup'`, 420×620, focused), so the user need not notice the badge. Each request id opens it at most once, also across service-worker restarts (the ids shown are kept in `chrome.storage.session.shownRequests`, the last 100). Only one exists at a time (`chrome.storage.session.approvalWindowId`): a new request while it is open focuses it, and its page re-renders from `chrome.storage.session.requests`. It is not opened when the setting is off, the extension is not paired, or the live session already serves that request. In the window there is no current tab (the card at the top reads **AGENT REQUEST**), so every card uses **Open <host>** (or **Approve on the FAI tab** for a request the live session's tab already covers); a request with no start URL cannot be approved there, and its card says to open a page it asked for and approve with the icon. The window closes itself after a successful open, and when no pending or paused request is left (approved, denied or expired). With **Open requested pages right away** on (the default), a request whose page opened by itself gets no approval window: its prompt window (`arm.html`, see [Open and approve](#open-and-approve)) stands in; a Full or Testing request still gets the approval window.
 - **Tab mark.** Every tab FAI holds sits in **one** grey tab group per normal browser window, made by the extension (`chrome.tabs.group`, `chrome.tabGroups.update`): armed tabs waiting for Use or Act (opened with **Open <host>**), the session's tab (also one approved with **Approve this tab** or invited from the popup), Act's extra task tabs and the tabs of FAI chats. The first FAI tab in a window makes the group; every later one joins it by its id. Its title shows the most urgent state of FAI's tabs in it: `FAI ?` while any of them waits for you (an armed tab, an action approval or the request's ask for more), else `FAI ⏸` while one is paused, else `FAI`; it is recomputed on every join, leave and status change. The extension finds a window's group only by the id it recorded for that window (`chrome.storage.session.faiGroups`), never by its title: a group you made, even one titled `FAI`, is never used, and a recorded group you rename is forgotten (the next FAI tab there gets a new one). A tab already in a group you made stays there and gets no mark. A tab leaves the group when FAI is done with it (its arm ends, its session stops, the daemon ends or supersedes the lease, or a new session takes over); only that tab is ungrouped, never one FAI still holds, and the group with its other tabs stays. The browser removes the group with its last tab. A tab you drag out of the group stays out. A tab in another window gets that window's FAI group; FAI does not move tabs between windows to gather them, except that an Act task tab a page opened in another normal window is moved next to its request's first tab. A restarted worker ungroups the tabs of the session it lost (`chrome.storage.session.markedTab`; no session survives a restart) and keeps armed tabs grouped (they survive in `armedTabs`), with the group record, so no second group is made. All group changes run one at a time. The toolbar badge shows `ON` (active) or `Ⅱ` (paused) only on the session's tab (per-tab badge text, visible while it is the selected tab), cleared when the session ends; the pending `?` and a paused request without a session show on every tab. Nothing is injected into the page and its title is never changed (run expectations read titles; screenshots are evidence). Popup-type windows have no tab strip, which is one reason the opened tab gets a normal window. The `tabGroups` permission this needs shows the install warning "View and manage your tab groups"; `chrome.tabs.group` and `ungroup` need no `tabs` permission.
 
 ### Firefox

@@ -56,7 +56,9 @@ at every level including Test site. Nothing removes one.
 Some actions are worth doing but not without you: purchases, deletions, credential actions (generate, reveal or copy a key,
 password, token), secret handle uses, and submits above the granted level. They are offered marked `needsApproval`
 ("asks the user"), and acting on one opens a window you must answer. Single-use, bound to tab, page revision, control and label
-hash, 60 seconds, no "always allow". [approvals.md](approvals.md).
+hash, 60 seconds, no "always allow". Everything the agent waits on for one tab, its ask for more included, is one window that
+lists every item on its own line, costly ones marked; one Approve covers each item once, and the agent is paused until you
+answer. [approvals.md](approvals.md).
 
 Never approvable, whatever you click: sign-in or password/card fields outside Test site, a label you forbade, a page outside the
 approved origins, actions at Use.

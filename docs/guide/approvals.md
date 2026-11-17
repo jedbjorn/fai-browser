@@ -48,8 +48,8 @@ Some actions are offered to the agent marked `needsApproval` ("asks the user"):
 | secret handle | `fill_secret`, `copy_secret` | always, whatever the settings |
 | committing Enter | An Enter the agent declares `commits: true`: sending a message, submitting an application, booking | always, whatever the settings (Test site: runs without asking) |
 
-When the agent acts on one, the call **blocks** and a small **"Approve this action?"** window opens with a red `!` badge. The window always
-opens on its own, at the top right of the browser window that holds the agent's tab, also when that window is in front, so you
+When the agent acts on one, the call **blocks** and a small **"FAI Browser: approve this?"** window opens with a red `!` badge. Approvals
+are always this window, never only the toolbar popup. The window always opens on its own, at the top right of the browser window that holds the agent's tab, also when that window is in front, so you
 do not need to open FAI Browser to see that the agent is waiting. The window shows:
 
 - the site and tab title (from the browser, not the page),
@@ -67,11 +67,11 @@ Neither button has focus, so a stray keypress cannot approve it.
   control and its label hash at dispatch. The agent cannot mint one.
 - **Deny:** the act ends with `refused_action`; the agent is told to stop and tell you, not retry.
 - **No answer:** the act returns `needs_user` / `approval_pending` after the wait (at most 60 s per call, so hosts that time
-  a tool call out at 120 s never cut it off); the agent repeats the same act, and the approval stays open for 5 minutes. An
-  approval you give in the meantime is picked up at once. If the agent ended its turn instead, your Approve once or Deny
-  wakes it (Claude Code, Codex and OpenCode): it gets a fixed FAI line with the action's id, never the page's text, and
-  continues, or stops and tells you after a Deny. An approval given this way stays usable for 5 minutes, for this page
-  only: if the page changed, the agent looks again and asks again.
+  a tool call out at 120 s never cut it off) and the agent ends its turn. Until you answer, the agent is **paused**: any
+  other FAI call it makes does nothing and tells it to end its turn (`approval_open`). Your Approve once or Deny wakes it
+  (Claude Code, Codex, OpenCode and FAI chats): it gets a fixed FAI line with the action's id, never the page's text, and
+  runs the action, or stops and tells you after a Deny. An approval given this way stays usable for 5 minutes, for this
+  page only: if the page changed, the agent looks again and asks again. An agent FAI cannot wake waits for you to tell it.
 - **A committing Enter** asks once: every Enter the agent sends says whether it commits you (`commits`). With `true` (a
   message, a post, an application, a booking, a payment, agreeing to terms, deleting, publishing, transferring) it waits for
   your Approve once, and only that field's Enter can use it; with `false` (a search, a filter) it runs as before. The
@@ -81,6 +81,30 @@ Neither button has focus, so a stray keypress cannot approve it.
   JavaScript dialog whose text names a delete or purchase asks too, with the dialog's text on the card.
 
 There is no "always allow" and nothing is approved in advance. Time spent waiting for you does not count against the agent's time budget.
+
+### Several things at once: one window per tab
+
+Everything the agent waits on for one tab is asked in **one** window: its ask for more (a higher level, more sites) and
+every action waiting for your approval on that tab. A typical case: the agent at Act clicks "Delete account" and asks for
+a higher level to do it. You see one window, not two:
+
+- the title `FAI Browser: approve 2 things?` and a headline such as `Act on shop.example and click "Delete account"?`;
+- each item on its own line with a tag, level first, then sites, then actions in the order asked: `LEVEL`, `SITES`,
+  `DELETE`, `SUBMIT`, `PURCHASE`, `CREDENTIAL`, `COMMITS`, `SECRET`, `UPLOAD`, `DIALOG`. `DELETE`, `PURCHASE`,
+  `CREDENTIAL`, `SECRET` and `COMMITS` are in the warning colour; page text is in quotes and marked `(text from the page)`;
+- `Approve covers all <n> items, once each. Deny refuses all <n>.` above **Approve** and **Deny**.
+
+**Approve** applies every item once: the level or sites, and each action with its own single-use approval, bound as
+above. If you refuse the browser's site-access prompt for an added site, nothing is approved. **Deny** refuses them all:
+there is no approving part of the list. If the agent adds an item while you read, the click is refused and the window
+says `Updated: the agent added an item. Check the list again.` One item alone shows the usual window with **Approve
+once** and **Deny**.
+
+While the window is open the agent is paused and does nothing else; your answer wakes it once with what you decided, or,
+after 5 minutes without an answer (10 at most), with the news that it expired and nothing ran. **Closing the window is
+not an answer**: the approval stays waiting with the red `!` badge and a card in the popup, whose **Show approval
+window** brings it back. Only one approval window is on screen at a time; another tab's approval waits and opens after
+you answer this one (`1 more approval waits on another tab.`).
 
 ### Settings
 

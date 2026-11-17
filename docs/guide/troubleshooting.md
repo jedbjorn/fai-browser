@@ -37,8 +37,10 @@ Or ask your agent to call `fai_browser_status`. Reference: [REFERENCE.md: The da
 | The agent says you declined site access | You declined the browser's site-access prompt, so nothing was approved. Approve again and allow site access only if you want the task to go on |
 | The approval window did not appear | Popup, Advanced: **Show a window when an agent asks** and **Open requested pages right away** must be on; otherwise look for the `?` badge on the icon |
 | Firefox asks for "Access your data for sites in the example.com domain" | Domain-root requests (`*.example.com`) trigger Firefox's site-access prompt. Allow it, or have the agent ask for the exact origin. **Allow on all sites** (popup, Advanced) asks once for every site instead |
-| The agent asks for a higher level | `needs.level` in the result: approve the **agent asks for more** card on the same task (click Act); the task keeps its tab and page. Or lower the task |
-| `approval_pending` after an Approve-gate request | You did not click **Approve once** in time. The agent repeats the same act; the request waits 5 minutes |
+| The agent asks for a higher level | `needs.level` in the result: approve its `LEVEL` line in the approval window (on a paused task, the **agent asks for more** card: click Act); the task keeps its tab and page. Or lower the task |
+| `approval_pending` after an Approve-gate request | You did not click **Approve once** in time. The agent ends its turn; your answer in the approval window (up to 5 minutes from its newest item) wakes it |
+| `approval_open` on every call | The agent is paused while an approval window of yours is open. Answer it (Approve or Deny); a window you closed comes back from the popup card's **Show approval window**. Closing it is not an answer |
+| Two things to approve for one tab | They are one window with one **Approve** and one **Deny**, each item on its own line. Deny refuses them all; approve only if every line is fine |
 | Deny / `refused_action` | By design: the agent must tell you, not retry. Ask it to do it another way, or do it yourself |
 | `stale` / "revision spent" | The page changed or the revision was used already. The agent should `fai_browser_observe` and choose again |
 | `line_break_input` | A fill with a line break was aimed at a single-line field, where Enter would submit the form. The agent fills without the line break, then submits with `submit_field` |
