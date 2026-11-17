@@ -5,10 +5,13 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
-## Unreleased
+## 0.12.0 (2026-11-17)
 
 ### Changed
 
+- **Firefox only.** FAI Browser supports Firefox only from this release. Chrome, Brave, Edge and the other Chromium browsers are no longer supported; the unpacked Chromium extension stays in the repository, unmaintained, until its code is removed.
+- **The add-on asks for the `tabs` permission.** Firefox shows "Access browser tabs" and holds the update until you accept it. FAI needs it to invite the tab beside the chat panel on any visit. Nothing about a tab (its site, address or title) reaches the agent before you choose **Use** or **Act**. After that, when an approved task tab or a tab its page opened goes to a site the request does not list, the agent is told that site's origin (`leftOrigin`, `childOrigin`), never the path or query.
+- **An approved tab that moves to another site stays armed.** **Use** then refuses with `MOVED_AWAY` and says why; bring the tab back to the site and **Use** approves it.
 - **Combined approvals: one window per tab.** Everything an agent waits on for one task tab, its ask for more (a higher level, more sites) and every action waiting for Approve once there, is asked in one approval window: each item on its own line with a tag (`LEVEL`, `SITES`, `DELETE`, `SUBMIT`, `PURCHASE`, `CREDENTIAL`, `COMMITS`, `SECRET`, `UPLOAD`, `DIALOG`; the costly ones in the warning colour; page text quoted and marked), a headline such as `Act on shop.example and click "Delete account"?`, and one **Approve** and one **Deny** (`Approve covers all <n> items, once each. Deny refuses all <n>.`). Approve applies each item once, every action with its own single-use, bound approval; Deny refuses them all. A list that changed while you read refuses the click and says so. A single item keeps today's window, buttons and wakes. Before, the same situation opened two windows that stacked, listed the action twice and took two answers that could contradict each other.
 - **Approvals are always popups.** The approval window and the request window always open as their own windows; the request window no longer tries the toolbar popup first. Only one approval window is on screen per browser: another tab's waits and opens after it (`1 more approval waits on another tab.`).
 - **The agent is paused while you decide.** While its approval window is open, the agent's other FAI calls (observe, act, open, wait, evidence) do nothing and return a receipt, code `approval_open` (`next.kind: end_turn`): `Paused: the user has an approval open (tab request <requestId>). Nothing ran. End your turn now; the user's answer wakes you.` An open asking for more on the same request joins the window first. Status, guide, release and `fai_browser_wait` on a request with `maxMs: 0` (which returns its current state at once) keep working. Over HTTP the receipt is a 409 `approval_open` error; the SDK's `FaiClientError` carries its `requestId` and `next`. `approval_pending` now tells the agent to end its turn instead of repeating the act.
@@ -18,10 +21,14 @@ Version 0.2.0 was the first published state; the 0.3 series introduces the defau
 
 ### Added
 
+- **The chat panel.** Click the FAI Browser toolbar button, then **Chat**: a panel in Firefox's sidebar, on Windows, macOS and Linux. Under **Open agents**, read and type to a Claude Code, Codex or OpenCode session you already run, on the same channel FAI uses to wake it (Sending…, Sent, or Not delivered with Retry). Messages only, no tool calls; **Browsing…** while the agent works. Light, dark or system appearance.
+- **FAI chats: start an agent from the browser.** Type in the panel and a coding program already installed and signed in on this computer (Codex, Claude Code or OpenCode) answers. It works in the browser only through FAI: no shell, no file writes, and it reads only the files you attach (up to 10 a message, 25 MB each). Codex is the one exception: some of its built-in tools cannot be switched off, and on Windows its image viewer can read any image your account can read. The agent can join the tab beside the chat only after you click **Use** or **Act**. Default provider and a model per provider in Settings; chats are kept in `FAI-Local-Chats` (setup creates it, uninstall leaves it) and reopen from **Chats**. **Stop** ends a turn; a turn stops after 30 minutes; up to three chats run at once. Wakes (an invite, an Approve) arrive in a FAI chat as turns.
+- **Start a new chat.** A failed FAI chat turn offers **Start a new chat**: same provider and model, your message ready to send again (attachments are not carried over).
 - **Four new wakes.** One wake per answered or expired combined approval, ids and fixed words only: `bundle_approved` (with each approved act to run), `bundle_denied` and `bundle_expired`. A declined ask for more now wakes with its own `ask_declined` text instead of the approved text. An approval of one item keeps its own wake when answered and wakes `bundle_expired` when it expires. None is sent while the call that asked still waits for the answer. All four reach Claude Code, Codex, OpenCode (the plugin's matcher accepts them) and FAI chats, where one approval is one turn.
 
 ### Fixed
 
+- **Windows: attachment names like `con .txt`** (a device name followed by spaces) are renamed like other reserved names; before, Codex hung on them until Stop.
 - **A closed approval window comes back** (flag #18): it was not reopened until the entry expired. Now the agent's next paused call brings it back.
 
 ## 0.11.0 (2026-11-16)
