@@ -103,7 +103,7 @@ once** and **Deny**.
 While the window is open the agent is paused and does nothing else; your answer wakes it once with what you decided, or,
 after 5 minutes without an answer (10 at most), with the news that it expired and nothing ran. **Closing the window is
 not an answer**: the approval stays waiting with the red `!` badge and a card in the popup, whose **Show approval
-window** brings it back. Only one approval window is on screen at a time; another tab's approval waits and opens after
+window** brings it back. It also comes back by itself, once, when the agent tries its next call; otherwise it expires. Only one approval window is on screen at a time; another tab's approval waits and opens after
 you answer this one (`1 more approval waits on another tab.`).
 
 ### Settings

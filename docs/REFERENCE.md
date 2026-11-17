@@ -900,8 +900,11 @@ site(s)`, `action <actionId>`):
 - `bundle_expired`: `[FAI Browser] Your approval on tab request <requestId> (<items>) expired without an answer.
   Nothing was granted or run. Tell the user; ask again only if they want it.`
 
-A bundle of one wakes with its item's own text (`action_approved`, `action_denied`, `approved` or `ask_declined`), and
-its expiry wakes nobody. No wake is sent when the call that opened the bundle was still waiting and got the answer.
+An answered bundle of one wakes with its item's own text (`action_approved`, `action_denied`, `approved` or
+`ask_declined`); an expired one wakes `bundle_expired` with its one item, like a larger bundle (`[FAI Browser] Your
+approval on tab request r12 (action a7) expired without an answer. Nothing was granted or run. Tell the user; ask again
+only if they want it.`). No wake is sent while a call still waits for the answer (the act that asked, or the open's
+wait for its ask), nor for a bundle whose answer an act of the agent already picked up itself.
 OpenCode's plugin accepts these texts by the same exact-template rule as the others.
 
 An approval given while no act waited stays usable for **5 minutes from the click** (instead of 60 s), so a queued
@@ -1727,8 +1730,10 @@ leaves the bundle; with none left, the window closes.
 
 **Expiry and closing.** A bundle stays open 5 minutes from its newest item and at most 10 minutes from when it opened;
 its items do not expire on their own meanwhile. **Closing the window is not an answer.** The bundle stays pending with
-the red `!` badge and the popup card, and the window opens again when an item joins or one of its actions is asked
-again, or from the card's **Show approval window**. The lease ending, the request ending or the tab leaving the
+the red `!` badge and the popup card. The window opens again, once and focused, when an item joins, when the agent's
+next call is paused (a repeat act, observe, wait or open: the daemon raises the request's `pausedCallSeq` in the request
+view, and the extension reopens the window on each rise), or from the card's **Show approval window**; otherwise the
+bundle expires. Another session's paused call on the request brings no window back. The lease ending, the request ending or the tab leaving the
 approved site ends the bundle without a decision; the agent gets the usual pause or end results, not a bundle wake.
 An expired bundle's ask ends with it (it is not a decline).
 
@@ -1750,7 +1755,9 @@ without a session, such as the CLI or SDK, is paused per request):
   `needs_user`, code `approval_open`, `next.kind: end_turn`, text: `Paused: the user has an approval open (tab
   request <requestId>). Nothing ran. End your turn now; the user's answer wakes you.`
 - **Exceptions.** An open on the **same request** that asks for a higher level or more sites joins the bundle (it shows
-  in the window) and then returns the receipt. `fai_browser_wait` with a `requestId` and `maxMs: 0` is not paused: it
+  in the window) and then returns the receipt. The open's own wait for its ask (`wait {ask: true}`) and the observe after
+  it (`observe {afterAsk: true}`) are exempt only while that request's ask is in the bundle or a wait for it already
+  holds, never on the flag alone. `fai_browser_wait` with a `requestId` and `maxMs: 0` is not paused: it
   returns at once with the request's current state; a `runId` wait on a finished run is paused whatever its `maxMs`.
   The opening call finishing (a `runId` wait on its own running act, an open's wait for its own ask) is not paused. `fai_browser_status`, `fai_browser_guide` and `fai_browser_release` always work.
 - **Over HTTP** the receipt is a `409` error with code `approval_open`, its message the receipt text, plus `requestId`,
@@ -1760,8 +1767,8 @@ without a session, such as the CLI or SDK, is paused per request):
 
 **Wakes.** One wake per bundle, to the request's owner session, only when no call was waiting for the answer
 ([Wake texts](#invites-and-wakes)). A bundle of two or more items wakes with `bundle_approved`, `bundle_denied` or
-`bundle_expired`; a bundle of one keeps its item's own wake (`action_approved`, `action_denied`, `approved`, or
-`ask_declined`) and its expiry wakes nobody. After `bundle_approved`, repeating an item's act runs it at once under its
+`bundle_expired`; an answered bundle of one keeps its item's own wake (`action_approved`, `action_denied`, `approved`,
+or `ask_declined`), and an expired one wakes `bundle_expired` too. After `bundle_approved`, repeating an item's act runs it at once under its
 approval. Chat and non-chat agents use this one system: in a [FAI chat](#fai-chats) one bundle is one turn.
 
 ### Secret redaction
