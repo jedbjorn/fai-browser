@@ -1564,9 +1564,9 @@ export function createDaemon(options = {}) {
     const record = requests.get(bundle.requestId);
     log('bundle_decision', { requestId: bundle.requestId, decision: event.decision, members: memberCount(event) });
     if (!record || record.state !== 'active' || record.lease?.leaseId !== bundle.leaseId) return;
-    // A bundle of one keeps today's messages and their wakes (the item's own lease, deny or action_decision); only an
-    // expiry, which has no message of its own, wakes from here.
-    if (event.decision !== 'expired' && memberCount(event) <= 1) return;
+    // A bundle of one keeps today's messages and their wakes (the item's own lease, deny or action_decision): its
+    // decision only ends the pause and never wakes, an expiry included (Planner ruling, Sprint 5 message #365).
+    if (memberCount(event) <= 1) return;
     const ask = event.askId && event.askId === bundle.askId ? bundle.ask : null;
     const pending = { kind: `bundle_${event.decision}`, ask, entryIds: event.entryIds };
     // Its entries are decided now: no action_decision follows, and a late one wakes nobody.

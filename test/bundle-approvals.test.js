@@ -242,6 +242,16 @@ test('AC8: an expired bundle wakes once with bundle_expired; the pause ends', as
   assert.equal((await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }, ctx.as(ctx.owner))).status, 200);
 });
 
+test('AC8: a bundle of one only ends the pause when it is decided; it never wakes, an expiry included', async t => {
+  const ctx = await setup(t);
+  assert.equal((await ctx.act()).code, 'approval_pending');
+  await ctx.open();
+  assertPaused(await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }, ctx.as(ctx.owner)), ctx.requestId, 'observe');
+  await ctx.decide('expired');
+  assert.deepEqual(await ctx.poll(ctx.owner), []);
+  assert.equal((await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }, ctx.as(ctx.owner))).status, 200);
+});
+
 test('AC8: no wake when the act that opened the bundle still waited and got the answer; one when it had ended pending', async t => {
   for (const ending of ['approved', 'pending']) {
     const ctx = await setup(t);
