@@ -12,7 +12,9 @@ When an agent calls `fai_browser_open`, a card appears in the extension (and a `
   as the agent’s words and rendered as text.
 - **Use:** one click approves reading, links, navigation, scrolling and waiting in one task tab.
 - **Act:** one click approves actions and up to eight task tabs on approved sites. Save, send, submit,
-  delete and cookie acceptance remain subject to the task, origin and action guardrails.
+  delete and cookie acceptance then run without asking again, within the approved origins and any `forbid`
+  phrases. Purchases, credential actions, uploads and a committing Enter still ask. See
+  [Guardrails by level](safety-model.md#guardrails-by-level).
 
 The request card, request modal, resume and invite controls use the same two buttons. There is no Read/View
 choice, level dropdown, default-level setting or separate tab-access setting. Both buttons are available even
