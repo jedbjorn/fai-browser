@@ -434,15 +434,72 @@ export function cleanChatText(text) {
     .trim();
 }
 
+// The words of a level in a bundle's item list (spec #87 "Wakes"): `level Act (full)`.
+const BUNDLE_LEVEL_WORDS = { 'read-only': 'Use', reversible: 'Act', interactive: 'Act', full: 'Act', testing: 'Test site' };
+export const BUNDLE_WAKE_KINDS = Object.freeze(['bundle_approved', 'bundle_denied', 'bundle_expired']);
+
+/**
+ * A bundle's items as wakes carry them (spec #87, ids and fixed words only): `{type: 'level', level}`,
+ * `{type: 'sites', count}`, `{type: 'action', actionId, revision, commits}`. Anything else is dropped; at most 21 items
+ * (the ask's two lines and the 20 entries the Approve gate allows a tab). Ids stay strings here; the text writes only
+ * well-formed ones (any other is `unknown`, as in the action wakes).
+ */
+export function cleanBundleItems(items) {
+  if (!Array.isArray(items)) return [];
+  const clean = [];
+  for (const item of items.slice(0, 21)) {
+    if (item?.type === 'level' && Object.hasOwn(BUNDLE_LEVEL_WORDS, item.level)) clean.push({ type: 'level', level: item.level });
+    else if (item?.type === 'sites' && Number.isInteger(item.count) && item.count > 0 && item.count <= 20) {
+      clean.push({ type: 'sites', count: item.count });
+    } else if (item?.type === 'action') {
+      clean.push({ type: 'action', actionId: String(item.actionId ?? '').slice(0, 128),
+        revision: String(item.revision ?? '').slice(0, 128), commits: item.commits === true });
+    }
+  }
+  return clean;
+}
+
+function bundleItemWords(item) {
+  if (item.type === 'level') return `level ${BUNDLE_LEVEL_WORDS[item.level]} (${item.level})`;
+  if (item.type === 'sites') return `${item.count} more site${item.count === 1 ? '' : 's'}`;
+  return `action ${safeId(item.actionId)}`;
+}
+
+function bundleText(kind, requestId, rawItems) {
+  const prefix = '[FAI Browser] ';
+  const id = safeId(requestId);
+  const items = cleanBundleItems(rawItems);
+  const list = items.map(bundleItemWords).join(', ');
+  if (kind === 'bundle_expired') {
+    return `${prefix}Your approval on tab request ${id} (${list}) expired without an answer. Nothing was granted or `
+      + 'run. Tell the user; ask again only if they want it.';
+  }
+  if (kind === 'bundle_denied') {
+    return `${prefix}The user denied all ${items.length} items on tab request ${id}: ${list}. Nothing was granted or `
+      + 'run. Do not retry them; tell the user.';
+  }
+  const runs = items.filter(item => item.type === 'action')
+    .map(item => `actionId ${safeId(item.actionId)} and revision "${safeId(item.revision)}"${item.commits ? ' and commits: true' : ''}`);
+  // A bundle with no action the daemon can name (a Test site dialog has no actionId): only the continue sentence.
+  const run = runs.length ? ` Run each approved action with fai_browser_act, requestId ${id}: ${runs.join('; ')}.` : '';
+  return `${prefix}The user approved all ${items.length} items on tab request ${id}: ${list}.${run} Then continue the task.`;
+}
+
 /**
  * The wake text for each event. `kind`: invite (the user invited this session to a tab: join with inviteId), resume
  * (the user resumed a paused tab it holds), approved (the user approved its pending request), action_approved and
  * action_denied (the user decided an action's Approve once after the act that asked stopped waiting: actionId and
- * revision name it), chat (the user's message from the FAI chat panel, as one JSON string). Ids and the user's own
- * words only, never a label, page text or URL.
+ * revision name it), ask_declined (the user declined its ask for more), bundle_approved, bundle_denied and
+ * bundle_expired (one combined approval answered or expired: `items`, see cleanBundleItems), chat (the user's message
+ * from the FAI chat panel, as one JSON string). Ids and the user's own words only, never a label, page text or URL.
  */
-export function wakeText({ kind, inviteId, requestId, level, userText, actionId, revision }) {
+export function wakeText({ kind, inviteId, requestId, level, userText, actionId, revision, items }) {
   const prefix = '[FAI Browser] ';
+  if (BUNDLE_WAKE_KINDS.includes(kind)) return bundleText(kind, requestId, items);
+  if (kind === 'ask_declined') {
+    return `${prefix}The user declined your ask for more on tab request ${safeId(requestId)}; it keeps what it had. `
+      + `Call fai_browser_observe with requestId ${safeId(requestId)} and continue within it, or tell the user.`;
+  }
   if (kind === 'action_approved') {
     return `${prefix}The user approved action ${safeId(actionId)} on tab request ${safeId(requestId)}. Call `
       + `fai_browser_act with requestId ${safeId(requestId)}, actionId ${safeId(actionId)} and revision `

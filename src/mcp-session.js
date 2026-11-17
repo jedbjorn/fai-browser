@@ -382,13 +382,13 @@ export class AgentSession {
     const client = this.client;
     const task = (async () => {
       let outcome;
-      // A tab approval or resume a call already saw needs no wake. An action decision is never skipped here: the
-      // extension sends one only when no act waited for it, and the daemon only once per approval.
-      if ((wake.kind === 'approved' || wake.kind === 'resume') && this.waiting(wake)) {
+      // A tab approval, resume or declined ask a call already saw needs no wake. An action or bundle decision is never
+      // skipped here: the daemon queues one only when no call waited for it, and only once per approval.
+      if (['approved', 'resume', 'ask_declined'].includes(wake.kind) && this.waiting(wake)) {
         outcome = { outcome: 'skipped' };
       } else {
         const text = wakeText({ kind: wake.kind, inviteId: wake.inviteId, requestId: wake.requestId, level: wake.level,
-          userText: wake.userText, actionId: wake.actionId, revision: wake.revision });
+          userText: wake.userText, actionId: wake.actionId, revision: wake.revision, items: wake.items });
         const capability = this.capability;
         // OpenCode: Approve and Resume go to the session whose call made (or joined) that request, never a guess; an
         // invite or a chat message to the only session that used FAI lately (the one the chat panel reads).

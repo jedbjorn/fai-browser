@@ -309,15 +309,15 @@ test('forbid applies to composed acts: a forbidden field is never offered for te
   assert.equal(find(page, /"Search"/), undefined, page.text);
 });
 
-test('approve-gate wording states the real wait and how to resume; no direct text names fai_browser_run', () => {
+test('approve-gate wording ends the turn (the answer wakes it) and names the act to repeat; no direct text names fai_browser_run', () => {
   const pending = { status: 'needs_user', code: 'approval_pending',
     needs: { control: { label: 'Buy now' }, approval: { actionId: 'a4', revision: 'r9', expiresInMs: 300000 } } };
   const next = directNext(pending, { requestId: 'req-1', gateWaitMs: 60_000 });
   assert.equal(next.kind, 'approve');
-  assert.match(next.text, /waits up to 60 s/);
-  assert.match(next.text, /returns at once if they already approved/);
+  // Spec #87: while the approval is open every call gets the paused receipt, so the text ends the turn.
+  assert.ok(next.text.endsWith('End your turn now; the user\'s answer wakes you.'), next.text);
   assert.match(next.text, /actionId a4 and revision "r9"/);
-  assert.doesNotMatch(next.text, /waits up to 5 minutes/);
+  assert.doesNotMatch(next.text, /waits up to|repeat the call/);
   const level = levelRefusalText({ granted: 'full', needed: 'interactive' });
   assert.match(level, /fai_browser_observe with mode "interactive"/);
   assert.doesNotMatch(level, /fai_browser_run/);

@@ -53,6 +53,23 @@ const INVITED = new RegExp(String.raw`${PREFIX}The user invited you to work in a
   + String.raw`Call fai_browser_open with \{"inviteId": "${ID}"\} `
   + String.raw`to get the page, then follow its next\.\n(?:The user typed no task: read the page, then ask them what to do\.|`
   + String.raw`What the user typed in the FAI popup \(the user's own words\): ("(?:[^"\\\u0000-\u001f]|\\.)*"))$`);
+// The user declined the agent's ask for more on an approved request: the request id twice.
+const ASK_DECLINED = new RegExp(String.raw`${PREFIX}The user declined your ask for more on tab request ${ID}; it keeps what `
+  + String.raw`it had\. Call ${NEXT_TOOL} with requestId ${ID} and continue within it, or tell the user\.$`);
+// One combined approval answered or expired (spec #87): a comma list of fixed item words and ids; an approval also lists
+// how to run each action. wakeTextOk checks the count and that the runs name the listed actions, in order.
+const ID_NC = String.raw`[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`;
+const ITEM = String.raw`(?:level (?:Use|Act|Test site) \((?:read-only|reversible|interactive|full|testing)\)|`
+  + String.raw`(?:1 more site|(?:[2-9]|1[0-9]|20) more sites)|action ${ID_NC})`;
+const ITEMS = String.raw`(${ITEM}(?:, ${ITEM}){0,20})`;
+const RUN = String.raw`actionId ${ID_NC} and revision "${ID_NC}"(?: and commits: true)?`;
+const BUNDLE_APPROVED = new RegExp(String.raw`${PREFIX}The user approved all ([1-9][0-9]?) items on tab request ${ID}: `
+  + String.raw`${ITEMS}\.(?: Run each approved action with fai_browser_act, requestId ${ID}: (${RUN}(?:; ${RUN}){0,19})\.)? `
+  + String.raw`Then continue the task\.$`);
+const BUNDLE_DENIED = new RegExp(String.raw`${PREFIX}The user denied all ([1-9][0-9]?) items on tab request ${ID}: `
+  + String.raw`${ITEMS}\. Nothing was granted or run\. Do not retry them; tell the user\.$`);
+const BUNDLE_EXPIRED = new RegExp(String.raw`${PREFIX}Your approval on tab request ${ID} \(${ITEMS}\) expired without an `
+  + String.raw`answer\. Nothing was granted or run\. Tell the user; ask again only if they want it\.$`);
 // The chat panel's message (src/wake.js wakeText kind chat): the user's own words, line breaks kept inside the string.
 const CHAT = new RegExp(String.raw`${PREFIX}The user sent you a message from the FAI chat panel \(the user's own words\): `
   + String.raw`("(?:[^"\\\u0000-\u001f]|\\.)*")$`);
@@ -121,6 +138,19 @@ function wakeTextOk(text) {
   match = ACTION_APPROVED.exec(text);
   if (match) return match[1] === match[4] && match[2] === match[3];
   if (ACTION_DENIED.test(text)) return true;
+  match = ASK_DECLINED.exec(text);
+  if (match) return match[1] === match[2];
+  if (BUNDLE_EXPIRED.test(text)) return true;
+  match = BUNDLE_DENIED.exec(text);
+  if (match) return Number(match[1]) === match[3].split(', ').length;
+  match = BUNDLE_APPROVED.exec(text);
+  if (match) {
+    const [, count, requestId, list, again, runs] = match;
+    const actions = list.split(', ').filter(item => item.startsWith('action ')).map(item => item.slice(7));
+    const ran = runs === undefined ? [] : runs.split('; ').map(run => run.split(' ')[1]);
+    return Number(count) === list.split(', ').length && (runs === undefined || again === requestId)
+      && ran.length === actions.length && ran.every((id, index) => id === actions[index]);
+  }
   match = CHAT.exec(text);
   if (match) {
     try {

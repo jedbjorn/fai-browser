@@ -22,9 +22,9 @@ const NEXT_LINES = {
   answer: 'verified (verification.passed true): report it; no call needed.',
   relay: 'the user must act: tell them needs.message, then do what next.text says (end your turn when it says FAI wakes '
     + 'you; a subagent: fai_browser_wait).',
-  approve: 'an action waits for the user\'s Approve once in the FAI Browser window: relay next.text, then repeat the '
-    + 'same act unchanged.',
+  approve: 'an action waits for the user\'s Approve once: relay next.text, then end your turn.',
   stop: 'report next.text to the user; do not retry.',
+  end_turn: 'approval open, nothing ran: end your turn; the answer wakes you.',
   wait: 'fai_browser_wait with the runId or requestId it names; again while pending (not a repeat).',
 };
 
@@ -45,12 +45,12 @@ const STATUS_LINES = {
 // The outcome codes by what happens next. Every code in result.js OUTCOMES is in exactly one group (tested), so the
 // states topic names each one; the code lookup explains it.
 const CODE_GROUPS = [
-  ['Paused: the user chooses Use or Act to resume, then you observe with the same requestId',
+  ['Paused: after the user\'s Use or Act, observe the same requestId',
     ['paused', 'tab_changed', 'child_tab', 'origin_changed', 'session_inactive', 'disconnected']],
-  ['The user approves in FAI Browser', ['select_tab', 'ask_pending', 'approval_pending']],
-  ['The user handles it in the tab, then you observe', ['login', 'blocked', 'js_dialog', 'blocked_risky']],
+  ['The user approves in FAI Browser', ['select_tab', 'ask_pending', 'approval_pending', 'approval_open']],
+  ['The user handles it in the tab; then observe', ['login', 'blocked', 'js_dialog', 'blocked_risky']],
   ['Ask on the same request, or as next says (topics origins, levels)', ['cross_origin', 'refused_action']],
-  ['You observe again and choose', ['stale', 'target_unavailable', 'capture_failed', 'unsupported', 'no_control',
+  ['Observe again and choose', ['stale', 'target_unavailable', 'capture_failed', 'unsupported', 'no_control',
     'point_outside', 'point_frame', 'tab_not_ready', 'fill_not_kept', 'line_break_input', 'ask_declined',
     'time_budget', 'expectation_failed', 'step_complete']],
   ['Report and stop', ['task_budget', 'error_page', 'stopped', 'denied', 'request_closed', 'cancelled', 'interrupted',

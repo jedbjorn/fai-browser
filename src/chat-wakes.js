@@ -1,5 +1,6 @@
-// FAI chats (spec #84 "Approvals and wakes"): a wake addressed to a chat starts a turn in that chat. The five kinds
-// (invite, resume, approved, action_approved, action_denied) each become one turn whose text is the wake's fixed
+// FAI chats (spec #84 "Approvals and wakes"): a wake addressed to a chat starts a turn in that chat. The kinds
+// (invite, resume, approved, action_approved, action_denied, and spec #87's ask_declined, bundle_approved, bundle_denied
+// and bundle_expired) each become one turn whose text is the wake's fixed
 // template (src/wake.js wakeText). A chat's wakes run in order, each after the turn running before it has ended. The
 // transcript shows each as one short FAI line (src/chat.js faiMessage), as spec #80 shows wakes.
 //
@@ -8,9 +9,10 @@
 // reason code (chat_signed_out, chat_too_many …) and FAI's line for it, or skipped.
 import { randomBytes } from 'node:crypto';
 import { faiMessage } from './chat.js';
-import { wakeText } from './wake.js';
+import { cleanBundleItems, wakeText } from './wake.js';
 
-export const CHAT_WAKE_KINDS = Object.freeze(['invite', 'resume', 'approved', 'action_approved', 'action_denied']);
+export const CHAT_WAKE_KINDS = Object.freeze(['invite', 'resume', 'approved', 'action_approved', 'action_denied',
+  'ask_declined', 'bundle_approved', 'bundle_denied', 'bundle_expired']);
 // Settled wakes are kept this long for the popup's views, as session wakes are.
 const WAKE_KEEP_MS = 10 * 60_000;
 
@@ -87,14 +89,15 @@ export function createChatWakes({ runner, skip = () => false, now = Date.now, lo
   }
 
   /**
-   * Queue a wake for chat `chatId`: {kind, requestId, inviteId, level, actionId, revision, userText (an invite's words
-   * from the popup)}. Returns its view at once; its turn starts when the chat is free.
+   * Queue a wake for chat `chatId`: {kind, requestId, inviteId, level, actionId, revision, items (a bundle's),
+   * userText (an invite's words from the popup)}. Returns its view at once; its turn starts when the chat is free.
    */
   function queue(chatId, { kind, requestId = null, inviteId = null, level = null, actionId = null, revision = null,
-    userText = '' }) {
+    items = null, userText = '' }) {
     for (const [id, old] of wakes) if (old.settledAt && now() - old.settledAt >= WAKE_KEEP_MS) wakes.delete(id);
     const wake = { wakeId: `wake_${randomBytes(8).toString('base64url')}`, chatId, kind, requestId, inviteId, level,
-      actionId, revision, userText: typeof userText === 'string' ? userText : '', state: 'queued', error: null, createdAt: now(), settledAt: null };
+      actionId, revision, items: items ? cleanBundleItems(items) : null, userText: typeof userText === 'string' ? userText : '',
+      state: 'queued', error: null, createdAt: now(), settledAt: null };
     wakes.set(wake.wakeId, wake);
     log('chat_wake_queued', { chatId, kind, requestId, inviteId });
     if (closed) {

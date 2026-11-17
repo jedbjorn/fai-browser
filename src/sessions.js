@@ -9,7 +9,7 @@
 // back are kept here, in memory only, the newest CHAT_KEEP of them, until the watch ends. They never reach a log.
 import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { CHAT_KEEP, clipText } from './chat.js';
-import { WAKE_REASONS } from './wake.js';
+import { WAKE_REASONS, cleanBundleItems } from './wake.js';
 
 export const SESSION_POLL_MAX_MS = 25_000;
 // A session that has not polled for this long (and has no poll open) is gone.
@@ -249,6 +249,7 @@ export function createSessionRegistry(options = {}) {
       return { wakes: list.map(wake => ({ wakeId: wake.wakeId, kind: wake.kind, requestId: wake.requestId ?? null,
         inviteId: wake.inviteId ?? null, level: wake.level ?? null, at: iso(wake.createdAt),
         ...(wake.actionId ? { actionId: wake.actionId, revision: wake.revision } : {}),
+        ...(wake.items ? { items: wake.items } : {}),
         ...(wake.userText ? { userText: wake.userText } : {}) })), ...(chatRead ? { chatRead } : {}) };
     };
     if (pendingFor(session).length || session.chat?.want || maxMs <= 0) return Promise.resolve(deliver());
@@ -284,19 +285,20 @@ export function createSessionRegistry(options = {}) {
   }
 
   /**
-   * Queue a wake for `sessionId`: `kind` (invite, resume, approved, action_approved, action_denied, chat), the ids (an
-   * action decision: its actionId and revision), the level and, for an invite or a chat message, the user's own words.
+   * Queue a wake for `sessionId`: `kind` (invite, resume, approved, action_approved, action_denied, ask_declined,
+   * bundle_approved, bundle_denied, bundle_expired, chat), the ids (an action decision: its actionId and revision; a
+   * bundle: its items, src/wake.js cleanBundleItems), the level and, for an invite or a chat message, the user's own words.
    * Returns the wake view, or null when the session is unknown or cannot be woken (its capability is none): the caller
    * then shows the copy fallback.
    */
   function queueWake(sessionId, { kind, requestId = null, inviteId = null, level = null, userText = '', actionId = null,
-    revision = null }) {
+    revision = null, items = null }) {
     const session = sessions.get(sessionId);
     // A chat's session is woken through its chat (the daemon starts a turn), never through this queue.
     if (!session || session.wake === 'none' || session.chatId) return null;
     const wake = { wakeId: `wake_${randomBytes(8).toString('base64url')}`, sessionId, kind, requestId, inviteId, level,
-      actionId, revision, userText: typeof userText === 'string' ? userText : '', state: 'queued', error: null,
-      createdAt: now(), sentAt: null, settledAt: null };
+      actionId, revision, items: items ? cleanBundleItems(items) : null, userText: typeof userText === 'string' ? userText : '',
+      state: 'queued', error: null, createdAt: now(), sentAt: null, settledAt: null };
     wakes.set(wake.wakeId, wake);
     log('wake_queued', { sessionId, kind, requestId, inviteId });
     answerPoll(session);

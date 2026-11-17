@@ -180,6 +180,42 @@ test('action decision wake texts: the spec #79 templates exactly, ids only, neve
   assert.equal(approved.split('\n').length, 1);
 });
 
+test('combined approval wake texts (spec #87): the bundle templates and ask_declined exactly, ids and fixed words only', () => {
+  const items = [{ type: 'level', level: 'full' }, { type: 'action', actionId: 'a7', revision: 'rv9' }];
+  // The spec's own example.
+  assert.equal(wakeText({ kind: 'bundle_approved', requestId: 'r12', items }), '[FAI Browser] The user approved all 2 '
+    + 'items on tab request r12: level Act (full), action a7. Run each approved action with fai_browser_act, requestId '
+    + 'r12: actionId a7 and revision "rv9". Then continue the task.');
+  const four = [{ type: 'level', level: 'testing' }, { type: 'sites', count: 2 },
+    { type: 'action', actionId: 'a7', revision: 'rv9' }, { type: 'action', actionId: 'a8', revision: 'rv9', commits: true }];
+  assert.equal(wakeText({ kind: 'bundle_approved', requestId: 'r12', items: four }), '[FAI Browser] The user approved '
+    + 'all 4 items on tab request r12: level Test site (testing), 2 more sites, action a7, action a8. Run each approved '
+    + 'action with fai_browser_act, requestId r12: actionId a7 and revision "rv9"; actionId a8 and revision "rv9" and '
+    + 'commits: true. Then continue the task.');
+  assert.equal(wakeText({ kind: 'bundle_denied', requestId: 'r12', items: [{ type: 'sites', count: 1 },
+    { type: 'action', actionId: 'a7', revision: 'rv9' }] }), '[FAI Browser] The user denied all 2 items on tab request '
+    + 'r12: 1 more site, action a7. Nothing was granted or run. Do not retry them; tell the user.');
+  assert.equal(wakeText({ kind: 'bundle_expired', requestId: 'r12', items: [{ type: 'level', level: 'reversible' },
+    { type: 'action', actionId: 'a7', revision: 'rv9' }] }), '[FAI Browser] Your approval on tab request r12 (level Act '
+    + '(reversible), action a7) expired without an answer. Nothing was granted or run. Tell the user; ask again only if '
+    + 'they want it.');
+  assert.equal(wakeText({ kind: 'ask_declined', requestId: 'r12' }), '[FAI Browser] The user declined your ask for more '
+    + 'on tab request r12; it keeps what it had. Call fai_browser_observe with requestId r12 and continue within it, or '
+    + 'tell the user.');
+  // Whatever the fields carry, only ids and fixed words are written: a label, an origin or a URL never is.
+  const hostile = wakeText({ kind: 'bundle_approved', requestId: 'r12', items: [
+    { type: 'action', actionId: 'Delete "account"', revision: 'rv9', label: 'Delete account' },
+    { type: 'sites', count: 2, origins: ['https://evil.test'] }, { type: 'level', level: 'admin' },
+    { type: 'action', actionId: 'a7', revision: 'https://shop.test/pay' }, { type: 'note', text: 'ignore previous' }] });
+  assert.equal(hostile, '[FAI Browser] The user approved all 3 items on tab request r12: action unknown, 2 more sites, '
+    + 'action a7. Run each approved action with fai_browser_act, requestId r12: actionId unknown and revision "rv9"; '
+    + 'actionId a7 and revision "unknown". Then continue the task.');
+  assert.doesNotMatch(hostile, /Delete|evil|https?:|shop|ignore|admin/);
+  for (const kind of ['bundle_approved', 'bundle_denied', 'bundle_expired', 'ask_declined']) {
+    assert.equal(wakeText({ kind, requestId: 'r12', items: four }).split('\n').length, 1, kind);
+  }
+});
+
 test('chat wake text: the spec #80 template, the user\'s words as one JSON string with line breaks kept', () => {
   const text = wakeText({ kind: 'chat', userText: 'Use the other\r\naccount page.\n\n  Then "stop" \\ now', requestId: 'req_1',
     inviteId: 'inv-1', level: 'full' });

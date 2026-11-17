@@ -113,6 +113,8 @@ const HTTP_ROUTES = {
   '/used': 'used',
   '/approval': 'approval',
   '/action-decision': 'action_decision',
+  '/bundle-open': 'bundle_open',
+  '/bundle-decision': 'bundle_decision',
   '/move': 'move',
   '/invite': 'invite',
   '/invite-cancel': 'invite_cancel',
@@ -167,6 +169,26 @@ export function actionDecision(message) {
   if (typeof message?.entryId !== 'string' || !ENTRY_ID.test(message.entryId)) return null;
   if (message.decision !== 'approved' && message.decision !== 'denied') return null;
   return { entryId: message.entryId, decision: message.decision };
+}
+
+// A combined approval (spec #87, Planner bridge contract decision #51): the extension's bundle window for one task tab.
+// bundle_open {requestId, tabId, bundleId, version, askId|null, entryIds} when it opens and whenever its items change;
+// bundle_decision with decision approved, denied or expired once, after every item was applied. Ids only: anything else
+// a message carries is dropped. Null when it is not one.
+const BUNDLE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+export const BUNDLE_DECISIONS = Object.freeze(['approved', 'denied', 'expired']);
+export function bundleEvent(message, { decision = false } = {}) {
+  if (typeof message?.requestId !== 'string' || !/^[\w-]{1,64}$/.test(message.requestId)) return null;
+  if (!Number.isInteger(message.tabId) || message.tabId < 0) return null;
+  if (typeof message.bundleId !== 'string' || !BUNDLE_ID.test(message.bundleId)) return null;
+  if (!Number.isInteger(message.version) || message.version < 0) return null;
+  if (message.askId !== null && message.askId !== undefined
+    && (typeof message.askId !== 'string' || !/^[0-9a-f]{1,64}$/.test(message.askId))) return null;
+  if (!Array.isArray(message.entryIds) || message.entryIds.length > 20
+    || !message.entryIds.every(id => typeof id === 'string' && ENTRY_ID.test(id))) return null;
+  if (decision && !BUNDLE_DECISIONS.includes(message.decision)) return null;
+  return { requestId: message.requestId, tabId: message.tabId, bundleId: message.bundleId, version: message.version,
+    askId: message.askId ?? null, entryIds: [...new Set(message.entryIds)], ...(decision ? { decision: message.decision } : {}) };
 }
 
 /**
@@ -1071,6 +1093,15 @@ export function createHub({
         if (message.ref !== undefined || via === 'http') answer(true, { ok: true });
         return;
       }
+      case 'bundle_open':
+      case 'bundle_decision': {
+        // A combined approval window opened or changed (the daemon pauses the agent's session), or was answered or
+        // expired (the pause ends, and the daemon may wake the agent once).
+        const event = bundleEvent(message, { decision: message.type === 'bundle_decision' });
+        if (event) emit({ type: message.type, browserId, ...event });
+        if (message.ref !== undefined || via === 'http') answer(true, { ok: Boolean(event) });
+        return;
+      }
       case 'move': {
         // The popup's "Open here": the user wants a request that waits in another browser in this one.
         const requestId = typeof message.requestId === 'string' ? message.requestId : null;
@@ -1136,6 +1167,8 @@ export function createHub({
           ask: message.ask === true,
           // Which ask the user's card showed: only that exact ask is applied.
           askId: typeof message.askId === 'string' ? message.askId.slice(0, 64) : null,
+          // The ask was one item of a combined approval (spec #87): the bundle's decision wakes the agent, not this.
+          ...(message.ask === true && message.bundled === true ? { bundled: true } : {}),
           // The browser the user approved in: the lease, and every command of it, belong to it.
           browserId,
           browser: browserRef(),
@@ -1261,7 +1294,9 @@ export function createHub({
       case 'deny': {
         const requestId = typeof message.requestId === 'string' ? message.requestId : null;
         // `ask`: the user declined only what the agent asked for on top of an approved request.
-        const event = { type: 'deny', requestId, browserId, reply, ...(message.ask === true ? { ask: true } : {}) };
+        // `bundled`: that ask was one item of a combined approval (spec #87); the bundle's decision wakes the agent.
+        const event = { type: 'deny', requestId, browserId, reply, ...(message.ask === true ? { ask: true } : {}),
+          ...(message.ask === true && message.bundled === true ? { bundled: true } : {}) };
         if (!emit(event)) reply({ error: { code: 'no_request', message: 'No tab request is pending' } });
         return;
       }

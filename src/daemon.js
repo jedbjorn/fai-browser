@@ -9,7 +9,8 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { APPROVAL_PENDING_MS, BrowserRuntime, actionLabels, checkActChoice, redactionMeta } from './runtime.js';
 import { checkDeclarative, validateExpectation } from './expectation.js';
 import { setTimeout as delay } from 'node:timers/promises';
-import { agentResult, applyLeaseMessage, approvalSteps, createResult, isKnownCode, outcomeResult, setOutcome } from './result.js';
+import { agentResult, applyLeaseMessage, approvalOpenResult, approvalSteps, createResult, isKnownCode, outcomeResult,
+  setOutcome } from './result.js';
 import { hostInfo, imageSize, toAgentResult, writeRun } from './trace.js';
 import { prune, retentionConfig } from './retention.js';
 import { INSTALLER_UPDATE_HINT, LOCAL_CHATS_NAME, PACKAGE_ROOT, installedByInstaller, localChatsDir } from './paths.js';
@@ -98,6 +99,11 @@ const INVITE_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
 const INVITE_KEEP_MS = 60 * 60_000;
 // How long a decision for an approval entry no act recorded yet waits for that act's pending answer.
 const EARLY_DECISION_MS = 30_000;
+// A combined approval (spec #87) stays open at most 10 minutes; the extension expires it and says so. A bundle the
+// daemon still holds a minute after that (the extension went away without a word) is dropped, with no wake.
+const BUNDLE_MAX_MS = 11 * 60_000;
+// The calls a session makes while one of its bundles is open, and the receipt they get (spec #87 "The agent is paused").
+const PAUSED_ROUTES = new Set(['observe', 'act', 'wait', 'runs.evidence', 'requests.create', 'requests.ask']);
 const SESSION_KEYS = new Set(['host', 'hostSessionId', 'repo', 'pid', 'startedAt', 'wake', 'wakeReason', 'client', 'previous',
   'chatTurnToken']);
 const CHALLENGE = /^[A-Za-z0-9_-]{16,64}$/;
@@ -138,18 +144,20 @@ function readPackageVersion() {
 // ---------------------------------------------------------------------------------------------------------------
 
 export class HttpError extends Error {
-  constructor(status, code, message, { retryable = false } = {}) {
+  constructor(status, code, message, { retryable = false, extra = null } = {}) {
     super(message);
     this.status = status;
     this.code = code;
     this.retryable = retryable;
+    // Fields the error body carries besides code, message and retryable (the approval_open receipt's requestId, next).
+    this.extra = extra;
   }
 }
 
 const badOptions = message => new HttpError(400, 'invalid_options', message);
 
-function errorBody(code, message, retryable = false) {
-  return { error: { code, message, retryable } };
+function errorBody(code, message, retryable = false, extra = null) {
+  return { error: { code, message, retryable, ...extra } };
 }
 
 /** Clamp a client wait to [0, max]; undefined gives the default. */
@@ -449,6 +457,8 @@ export function createDaemon(options = {}) {
   const invites = new Map();
   // Action decisions that arrived before the act's pending answer recorded their entry (onActionDecision).
   const earlyDecisions = new Map();
+  // Combined approvals open in a browser (spec #87), by browser and bundle id; see onBundleOpen.
+  const bundles = new Map();
   // The live coding-agent sessions (one per MCP server process) and their wakes (src/sessions.js).
   const sessions = options.sessions ?? createSessionRegistry({ now, log, isAlive: options.isAlive,
     onChange: () => changed() });
@@ -1121,6 +1131,8 @@ export function createDaemon(options = {}) {
       record.undo = { leaseId: reply.leaseId, at: now(), prior, expired: expireReplaced(record) };
       if (asked) {
         delete record.askDeclined;
+        if (event.bundled) noteBundledAsk(record, asked.id);
+        else endSingleBundles(record, { ask: true });
         log('request_ask_approved', { requestId: record.requestId, level: record.grant?.level, origins: asked.origins.length });
         changed();
       }
@@ -1150,8 +1162,9 @@ export function createDaemon(options = {}) {
       hub.setLeaseOrigins?.(record.lease.leaseId, event.origin, origins);
       record.lastCallAt = now();
       log('lease_regranted', { requestId: record.requestId, level: grant.level, scope });
-      // The agent waits for this approval of its ask (fai_browser_open): wake it as for any approval.
-      if (event.ask === true) wakeOwner(record, 'approved');
+      // The agent waits for this approval of its ask (fai_browser_open): wake it as for any approval. An ask that was one
+      // item of a combined approval wakes with its bundle (onBundleDecision), not here.
+      if (event.ask === true && !event.bundled) wakeOwner(record, 'approved');
       changed();
       return { leaseId: record.lease.leaseId, requestId: record.requestId, origins: [...origins], grant: { ...grant } };
     }
@@ -1364,7 +1377,7 @@ export function createDaemon(options = {}) {
    */
   function skipChatWake(wake) {
     if (wake.kind === 'invite') return invites.get(wake.inviteId)?.state !== 'open';
-    if (wake.kind !== 'approved' && wake.kind !== 'resume') return false;
+    if (wake.kind !== 'approved' && wake.kind !== 'resume' && wake.kind !== 'ask_declined') return false;
     const record = requests.get(wake.requestId);
     return Boolean(record && record.lastCallAt > wake.createdAt);
   }
@@ -1379,8 +1392,11 @@ export function createDaemon(options = {}) {
     if (typeof entryId !== 'string') return;
     const t = now();
     record.actionApprovals ??= new Map();
+    // An entry in an open bundle does not expire on its own (spec #87: the bundle's expiry decides).
+    const bundled = new Set([...bundles.values()].filter(bundle => bundle.requestId === record.requestId)
+      .flatMap(bundle => bundle.entryIds));
     for (const [id, item] of record.actionApprovals) {
-      if (t - item.at > APPROVAL_PENDING_MS) record.actionApprovals.delete(id);
+      if (t - item.at > APPROVAL_PENDING_MS && !bundled.has(id)) record.actionApprovals.delete(id);
     }
     // Only an ask the agent can act on again by id (a Test site dialog accept has none: nothing to wake it for).
     const pending = raw.code === 'approval_pending' ? raw.needs?.approval : null;
@@ -1388,6 +1404,8 @@ export function createDaemon(options = {}) {
     const known = record.actionApprovals.get(entryId);
     if (!asked) {
       if (known) known.settled = true;
+      // The act picked the answer up itself: a bundle holding only its entry is over.
+      if (raw.code !== 'approval_pending') endSingleBundles(record, { entryId });
       return;
     }
     if (!known) {
@@ -1416,6 +1434,7 @@ export function createDaemon(options = {}) {
       if (item.settled || now() - item.at > APPROVAL_PENDING_MS || record.state !== 'active'
         || record.lease?.leaseId !== item.leaseId || !sameBrowser(record, event.browserId)) return;
       item.settled = true;
+      endSingleBundles(record, { entryId: event.entryId });
       const kind = event.decision === 'approved' ? 'action_approved' : 'action_denied';
       const wake = wakeOwner(record, kind, { actionId: item.actionId, revision: item.revision });
       log('action_decision', { requestId: record.requestId, decision: event.decision, wake: wake ? 'queued' : 'none' });
@@ -1427,6 +1446,168 @@ export function createDaemon(options = {}) {
     if (earlyDecisions.size >= 100) return;
     earlyDecisions.set(event.entryId, { entryId: event.entryId, decision: event.decision, browserId: event.browserId,
       at: t });
+  }
+
+  // --- combined approvals (spec #87; the bridge contract is Planner decision #51) ------------------------------
+  //
+  // The extension shows everything its agent waits on for one task tab in one window (a bundle: the request's ask for
+  // more and the tab's pending action approvals) and tells the daemon: bundle_open when the window opens or its items
+  // change, bundle_decision once, after it applied every item (approved, denied or expired). While a bundle is open its
+  // request's owner session is paused: every observe, act, open, wait and evidence call gets the approval_open receipt
+  // and does nothing (pauseCheck). The decision ends the pause and wakes the owner once, unless a call waited for the
+  // answer. The lease ending, the request ending or the tab leaving the site drops the bundle without a wake.
+
+  const bundleKey = (browserId, bundleId) => `${browserId ?? ''}\u0000${bundleId}`;
+  const memberCount = ({ askId, entryIds }) => (askId ? 1 : 0) + entryIds.length;
+
+  // A bundle still counts while its request holds the same active lease and it is not older than BUNDLE_MAX_MS; any
+  // other is dropped here (no decision follows it).
+  function liveBundle(bundle) {
+    const record = requests.get(bundle.requestId);
+    if (record?.state === 'active' && record.lease?.leaseId === bundle.leaseId && now() - bundle.openedAt <= BUNDLE_MAX_MS) {
+      return record;
+    }
+    bundles.delete(bundle.key);
+    log('bundle_dropped', { requestId: bundle.requestId, bundleId: bundle.bundleId });
+    return null;
+  }
+
+  // The open bundle that pauses a call from `caller` (its owner session) or on request `requestId` (a caller without
+  // a session is paused per request), or null.
+  function pausingBundle(caller, requestId) {
+    for (const bundle of [...bundles.values()]) {
+      const record = liveBundle(bundle);
+      if (!record) continue;
+      if (bundle.requestId === requestId) return bundle;
+      if (caller && record.ownerSession && record.ownerSession === caller.sessionId) return bundle;
+    }
+    return null;
+  }
+
+  function pausedReceipt(bundle) {
+    const receipt = approvalOpenResult(bundle.requestId);
+    return new HttpError(409, 'approval_open', receipt.next.text, { extra: { requestId: bundle.requestId,
+      status: receipt.status, next: receipt.next } });
+  }
+
+  /**
+   * Before a paused route runs (PAUSED_ROUTES): throws the approval_open receipt when one of the caller's bundles is
+   * open. Some calls go on: the call that opened the bundle finishing (following its own running act, the open's wait
+   * for its own ask and the observe after it), a zero-length wait on a request (a read of its state, which the MCP
+   * server's open and act make first), and an ask on the bundle's own request, which joins the bundle first (the
+   * extension adds it to the window) and then gets the receipt.
+   */
+  function pauseCheck(route, body, caller) {
+    const run = route.name === 'wait' && typeof body.runId === 'string' ? runs.get(body.runId)
+      : route.name === 'runs.evidence' ? runs.get(route.param) : null;
+    const requestId = route.name === 'requests.ask' ? route.param : run ? run.requestId
+      : typeof body.requestId === 'string' ? body.requestId : null;
+    const bundle = pausingBundle(caller, requestId);
+    if (!bundle) return;
+    if (route.name === 'wait' && run && run.state !== 'done') return;
+    if (route.name === 'wait' && !run && body.maxMs === 0 && body.ask !== true) return;
+    if (route.name === 'wait' && body.ask === true && body.requestId === bundle.requestId) return;
+    if (route.name === 'observe' && body.afterAsk === true && body.requestId === bundle.requestId) return;
+    if (route.name === 'requests.ask' && route.param === bundle.requestId) {
+      const asked = askRoute(route.param, body, caller);
+      log('bundle_join', { requestId: bundle.requestId, asked: asked.asked });
+    }
+    throw pausedReceipt(bundle);
+  }
+
+  // What the bundle's ask asks for, by id and number only (its level, how many sites).
+  function askSnapshot(ask) {
+    const sites = (ask?.origins?.length ?? 0) + (ask?.access?.length ?? 0);
+    return { level: ask?.level ?? null, sites };
+  }
+
+  function onBundleOpen(event) {
+    const record = requests.get(event.requestId);
+    if (!record || record.state !== 'active' || record.lease?.tabId !== event.tabId || !sameBrowser(record, event.browserId)) {
+      log('bundle_refused', { requestId: event.requestId });
+      return;
+    }
+    const key = bundleKey(event.browserId, event.bundleId);
+    const old = bundles.get(key);
+    if (old && old.version > event.version) return;
+    const ask = event.askId && record.ask?.id === event.askId ? askSnapshot(record.ask)
+      : event.askId && old?.askId === event.askId ? old.ask : null;
+    bundles.set(key, { key, bundleId: event.bundleId, requestId: record.requestId, browserId: event.browserId ?? null,
+      tabId: event.tabId, leaseId: record.lease.leaseId, version: event.version, askId: event.askId, ask,
+      entryIds: event.entryIds, openedAt: old?.openedAt ?? now(), answeredToCall: old?.answeredToCall ?? false });
+    log('bundle_open', { requestId: record.requestId, version: event.version, ask: Boolean(event.askId),
+      entries: event.entryIds.length });
+  }
+
+  // A single item's own message (today's lease, deny or action_decision) answered the only item of a bundle: that
+  // bundle is over (its decision, when the extension sends one too, finds nothing).
+  function endSingleBundles(record, { entryId = null, ask = false } = {}) {
+    for (const bundle of [...bundles.values()]) {
+      if (bundle.requestId !== record.requestId || memberCount(bundle) !== 1) continue;
+      if ((ask && bundle.askId) || (entryId && bundle.entryIds[0] === entryId)) bundles.delete(bundle.key);
+    }
+  }
+
+  // The bundled ask was answered while the open that asked still waited for it: that call got the answer.
+  function noteBundledAsk(record, askId) {
+    if (!(record.askWaiters > 0)) return;
+    for (const bundle of bundles.values()) {
+      if (bundle.requestId === record.requestId && bundle.askId && (!askId || bundle.askId === askId)) bundle.answeredToCall = true;
+    }
+  }
+
+  function onBundleDecision(event) {
+    const key = bundleKey(event.browserId, event.bundleId);
+    const bundle = bundles.get(key);
+    if (!bundle) return;
+    bundles.delete(key);
+    const record = requests.get(bundle.requestId);
+    log('bundle_decision', { requestId: bundle.requestId, decision: event.decision, members: memberCount(event) });
+    if (!record || record.state !== 'active' || record.lease?.leaseId !== bundle.leaseId) return;
+    // A bundle of one keeps today's messages and their wakes (the item's own lease, deny or action_decision); only an
+    // expiry, which has no message of its own, wakes from here.
+    if (event.decision !== 'expired' && memberCount(event) <= 1) return;
+    const ask = event.askId && event.askId === bundle.askId ? bundle.ask : null;
+    const pending = { kind: `bundle_${event.decision}`, ask, entryIds: event.entryIds };
+    // Its entries are decided now: no action_decision follows, and a late one wakes nobody.
+    for (const entryId of event.entryIds) {
+      const item = record.actionApprovals?.get(entryId);
+      if (item) item.settled = true;
+      earlyDecisions.delete(entryId);
+    }
+    if (bundle.answeredToCall) return;
+    // The act that opened the bundle may still be waiting for the answer: it decides when it ends (finishRun).
+    if (record.activeRunId) {
+      record.bundleWake = pending;
+      return;
+    }
+    sendBundleWake(record, pending);
+  }
+
+  function sendBundleWake(record, { kind, ask, entryIds }) {
+    const items = [];
+    if (ask?.level) items.push({ type: 'level', level: ask.level });
+    if (ask?.sites > 0) items.push({ type: 'sites', count: ask.sites });
+    for (const entryId of entryIds) {
+      const item = record.actionApprovals?.get(entryId);
+      if (!item) continue;
+      item.settled = true;
+      items.push({ type: 'action', actionId: item.actionId, revision: item.revision, commits: item.kind === 'enter_commit' });
+    }
+    if (!items.length) return null;
+    const wake = wakeOwner(record, kind, { items });
+    log('bundle_wake', { requestId: record.requestId, kind, items: items.length, wake: wake ? 'queued' : 'none' });
+    changed();
+    return wake;
+  }
+
+  // The act that was running when its bundle was decided ended: an act still pending did not get the answer, so the
+  // owner is woken now; any other ending (it ran, was refused, the lease went) means the call had the answer.
+  function settleBundleWake(record, raw) {
+    const pending = record.bundleWake;
+    if (!pending) return;
+    delete record.bundleWake;
+    if (raw?.code === 'approval_pending' && record.state === 'active') sendBundleWake(record, pending);
   }
 
   // The last Approve or Resume wake of a request's owner, for the popup: a failed one shows "tell your agent".
@@ -1799,10 +1980,17 @@ export function createDaemon(options = {}) {
     // The user declined the agent's ask for more: the request keeps what it had (it is not released).
     if (event.ask === true) {
       if (!record.ask) return replyTo(event, { error: { code: 'request_not_pending', message: 'Nothing is asked on this request' } });
+      const askId = record.ask.id;
       record.ask = null;
       record.askDeclined = now();
-      log('request_ask_declined', { requestId: record.requestId });
-      if (record.ownerSession && LEASED.has(record.state)) wakeOwner(record, record.state === 'active' ? 'approved' : 'resume');
+      log('request_ask_declined', { requestId: record.requestId, bundled: Boolean(event.bundled) });
+      // Its own wake (spec #87 ask_declined); a bundled one wakes with its bundle's decision.
+      if (event.bundled) {
+        noteBundledAsk(record, askId);
+      } else {
+        endSingleBundles(record, { ask: true });
+        if (LEASED.has(record.state)) wakeOwner(record, 'ask_declined');
+      }
       changed();
       return replyTo(event, { requestId: record.requestId, state: record.state });
     }
@@ -2130,6 +2318,10 @@ export function createDaemon(options = {}) {
           return onApprovalEvent(event);
         case 'action_decision':
           return onActionDecision(event);
+        case 'bundle_open':
+          return onBundleOpen(event);
+        case 'bundle_decision':
+          return onBundleDecision(event);
         case 'chat_providers':
         case 'chat_list':
         case 'chat_history':
@@ -2458,6 +2650,9 @@ export function createDaemon(options = {}) {
 
   async function finishRun(run, record, raw, spec) {
     if (run.operation === 'act') noteActApproval(record, raw);
+    // The request's ask for that level joins this action's approval window (spec #87): its text does not ask again.
+    if (raw?.code === 'approval_pending' && typeof raw.needs?.level === 'string' && record.ask?.level
+      && levelRank(record.ask.level) >= levelRank(raw.needs.level)) delete raw.needs.level;
     // An act that reached the page ends any run of tab_not_ready answers (settledLease counts them in a row).
     if (!LEASE_CODES.has(raw?.code) && raw?.code !== 'tab_not_ready') record.notReady = 0;
     if (LEASE_CODES.has(raw?.code)) {
@@ -2496,6 +2691,7 @@ export function createDaemon(options = {}) {
     run.finishedAt = now();
     if (record.activeRunId === run.runId) record.activeRunId = null;
     record.lastCallAt = now();
+    settleBundleWake(record, raw);
     log('run_done', { runId: run.runId, requestId: record.requestId, status: result.status, code: result.code,
       ms: run.finishedAt - run.startedAt });
     changed();
@@ -2752,9 +2948,15 @@ export function createDaemon(options = {}) {
       watched = body.while;
     }
     if (body.ask !== undefined && typeof body.ask !== 'boolean') throw badOptions('ask must be a boolean');
-    // ask: also wait while the agent's ask for more on this request waits for the user.
-    await waitUntil(() => !watched.includes(record.state) && !(body.ask === true && record.ask && LIVE.has(record.state)),
-      maxMs, signal);
+    // ask: also wait while the agent's ask for more on this request waits for the user. A bundled ask answered while
+    // this wait holds reached the agent through it (askWaiters, noteBundledAsk): its bundle wakes nobody.
+    if (body.ask === true) record.askWaiters = (record.askWaiters ?? 0) + 1;
+    try {
+      await waitUntil(() => !watched.includes(record.state) && !(body.ask === true && record.ask && LIVE.has(record.state)),
+        maxMs, signal);
+    } finally {
+      if (body.ask === true) record.askWaiters -= 1;
+    }
     touch(record);
     // `budget`: the call budget in effect for this request (the MCP server reads its ceiling from here).
     return { state: record.state, request: viewFor(record, caller), waitedMs: Date.now() - started,
@@ -3373,6 +3575,8 @@ export function createDaemon(options = {}) {
     // The agent session the call comes from (X-Fai-Session), when it names one that authenticates.
     const caller = route.open ? null : sessionFrom(req, { optional: true });
     const instance = clientInstance(req.headers['x-fai-client']);
+    // A session with a combined approval open gets the approval_open receipt instead (spec #87).
+    if (PAUSED_ROUTES.has(route.name)) pauseCheck(route, body, caller);
     switch (route.name) {
       case 'health':
         return { body: health(url) };
@@ -3504,7 +3708,7 @@ export function createDaemon(options = {}) {
     } catch (error) {
       if (error instanceof HttpError) {
         status = error.status;
-        sendJson(res, status, errorBody(error.code, error.message, error.retryable));
+        sendJson(res, status, errorBody(error.code, error.message, error.retryable, error.extra));
       } else {
         status = 500;
         log('internal_error', { route: routeName, message: String(error?.message ?? error) });
@@ -3614,6 +3818,7 @@ export function createDaemon(options = {}) {
       else if (invite.state !== 'open' && !requests.has(invite.requestId)
         && t - (invite.endedAt ?? invite.joinedAt ?? invite.createdAt) >= INVITE_KEEP_MS) invites.delete(invite.inviteId);
     }
+    for (const bundle of [...bundles.values()]) liveBundle(bundle);
     sessions.sweep();
     // A paused request turns stale with time alone (or its agent session went away): show the popup at once.
     const stale = [...requests.values()].filter(record => staleOf(record, t)).map(record => record.requestId).join(',');

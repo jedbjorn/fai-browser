@@ -17,7 +17,7 @@ import { createInterface } from 'node:readline';
 import { faiHome } from './paths.js';
 import { entryCovered, requestStartUrl, siteRoot } from './origins.js';
 import {
-  ENTER_NON_COMMITTING_TEXT, agentResult, applyBudget, approvalSteps, directNext, directResult, leanObserve, nextFor,
+  ENTER_NON_COMMITTING_TEXT, agentResult, applyBudget, approvalOpenResult, approvalSteps, directNext, directResult, leanObserve, nextFor,
   outcomeResult, setOutcome,
 } from './result.js';
 import { validateExpectation } from './expectation.js';
@@ -660,6 +660,14 @@ export function guideResult(args = {}) {
   }
   if (args.topic !== undefined || args.code === undefined) parts.push(guideText(args.topic));
   return { content: [{ type: 'text', text: parts.join('\n\n') }] };
+}
+
+/** The approval_open receipt (src/result.js approvalOpenResult) as the tool's text: next first, then the code. */
+function pausedResult(requestId) {
+  const receipt = approvalOpenResult(requestId);
+  const text = controlText({ next: receipt.next, status: receipt.status, requestId })
+    .replace(/\nrequestId:/, `\ncode: ${receipt.code}\nrequestId:`);
+  return okResult(receipt, [], text);
 }
 
 function errorResult(code, message, extra = {}) {
@@ -1684,6 +1692,8 @@ class McpServer {
     if (!(error instanceof ToolError) && !Number.isInteger(error?.status) && !error?.code) {
       this.log(`tool ${call.tool} failed: ${error?.stack || error}`);
     }
+    // A combined approval of this session is open (spec #87): not an error but the paused receipt. Nothing ran.
+    if (error?.code === 'approval_open' && typeof error.requestId === 'string') return pausedResult(error.requestId);
     return errorFromException(error);
   }
 

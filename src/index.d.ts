@@ -826,8 +826,16 @@ export type OutcomeCode =
    */
   | 'refused_action'
   | 'blocked_risky' | 'select_tab' | 'request_closed' | 'interrupted'
-  /** The Approve gate: the action waits for the user's Approve click (needs_user, next approve; act again unchanged). */
+  /**
+   * The Approve gate: the action waits for the user's Approve click (needs_user, next approve). The text ends the turn:
+   * the user's answer wakes the agent.
+   */
   | 'approval_pending'
+  /**
+   * A combined approval of this session is open (spec #87): nothing ran (needs_user, next end_turn). Over HTTP it is a
+   * 409 error with this code, its requestId and next; the MCP server returns it as a result.
+   */
+  | 'approval_open'
   /** The run reached a 404/410/500/502/503/504 page: status failed, verdict failed, next stop naming the status. */
   | 'error_page'
   | 'timeout' | 'invalid_observation' | 'config' | 'failed';
@@ -969,7 +977,7 @@ export const DEFAULT_THRESHOLDS: Readonly<Thresholds>;
  * Receipt next kinds. MCP responses that are not receipts (state running/pending, observe, request wait, stop,
  * release) also send `next` as `{kind, text}`, with `wait` (call fai_browser_wait) or one of these kinds.
  */
-export type NextKind = 'answer' | 'choose' | 'observe' | 'relay' | 'approve' | 'stop' | 'wait';
+export type NextKind = 'answer' | 'choose' | 'observe' | 'relay' | 'approve' | 'stop' | 'end_turn' | 'wait';
 
 /** Receipt v2 verdict: runtime-written and trusted, except `answer.text` (page text). */
 export interface Verdict {
@@ -1595,12 +1603,16 @@ export function runDaemon(options?: { home?: string; env?: Record<string, string
   | { status: 'ready'; port: number; pid: number; daemon: Daemon; stopped: Promise<void>; stop(): Promise<void> }>;
 
 export class FaiClientError extends Error {
-  constructor(status: number, code: string, message: string, options?: { retryable?: boolean });
+  constructor(status: number, code: string, message: string, options?: { retryable?: boolean; requestId?: string;
+    next?: { kind: 'end_turn'; text: string } });
   readonly name: 'FaiClientError';
   /** HTTP status; 0 for transport failures (daemon_unreachable, port_in_use). */
   status: number;
   code: string;
   retryable: boolean;
+  /** approval_open only (spec #87): the request whose approval is open, and next (end_turn: the answer wakes you). */
+  requestId?: string;
+  next?: { kind: 'end_turn'; text: string };
 }
 
 export interface EnsureDaemonOptions {
