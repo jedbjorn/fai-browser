@@ -40,6 +40,64 @@ Testing adds sign-in and payment fields only when the agent requested `testing`,
 Advanced → Test sites, and you explicitly enable the test-only option with Act. Origin, policy, redaction and
 approval protections still apply. Agent-selected cookie and popup buttons require Act. New approvals separately disclose necessary-only cookies and newsletter dismissal: FAI may take only those narrowly validated, paced actions under Use or Act; ambiguous cases return to the agent. This scope does not grant general button access.
 
+## Guardrails by level
+
+What still applies after you click **Use** or **Act**. **Test site** is Act with the test-only option, and only on origins
+you listed under Advanced → Test sites. "Refused" means the control is not offered, and is refused again if it is sent anyway.
+
+**Reading and buttons**
+
+| Action | Use | Act | Test site |
+|---|---|---|---|
+| Read the page, follow same-site links, scroll, wait | Allowed | Allowed | Allowed |
+| Task tabs | One (a child tab pauses the task) | Up to eight, approved origins only | Up to eight, listed origins only |
+| Click buttons, pick options, fill supplied text, press keys, hover | Refused | Allowed | Allowed |
+| Search, filter or sort submit; Enter in a search field | Refused | Runs without asking | Runs without asking |
+| Dismiss a cookie or newsletter popup (necessary-only, automatic) | Runs automatically | Runs automatically | Runs automatically |
+| Accept cookies (agent's choice) | Refused | Allowed, only when the dialog has no reject button | Allowed, same condition |
+
+**Committing actions**
+
+| Action | Use | Act | Test site |
+|---|---|---|---|
+| Click Save, Send, Submit, Confirm, Publish, Invite, Apply | Refused | **Runs without asking** | Runs without asking |
+| Click Delete, Remove, Cancel subscription or account | Refused | **Runs without asking** | Runs without asking |
+| Confirm button in an "Are you sure?" dialog | Refused | Runs without asking | Runs without asking |
+| Press Enter with `commits: true` | Refused | Asks (Approve once) | Runs without asking |
+| Upload a file | Refused | Asks (Approve once) | Asks (Approve once) |
+| Purchase, pay, place an order | Refused | Asks (Approve once)¹ | Runs without asking |
+
+**Sensitive**
+
+| Action | Use | Act | Test site |
+|---|---|---|---|
+| Credential actions: show password, create, reveal or copy an API key | Refused | Asks (Approve once)² | Asks (Approve once)² |
+| Fill or copy a secret handle | Refused | Asks (Approve once) | Asks (Approve once) |
+| Sign-in controls and password fields | Refused | Refused | Allowed |
+| Payment and card fields | Refused | Refused | Allowed |
+| Answer a JavaScript dialog | Refused | Refused | Allowed; accepting one that names a delete or purchase asks (Approve once) |
+
+**Boundaries (every level)**
+
+| Action | Use | Act | Test site |
+|---|---|---|---|
+| A control whose label matches your `forbid` phrase | Refused | Refused | Refused |
+| A page outside the approved origins, or a browser-internal page | Refused | Refused | Refused |
+
+¹ Asks while **Ask before purchases** is on (the default); refused when it is off. Payment fields are still never filled at Act.
+² Asks while **Ask before credential actions** is on (the default); when it is off, the action runs at its level.
+
+**Always on, at every level:** secret redaction, the injection guard (page text is untrusted), the per-request call and
+time budget (50 calls / 20 minutes by default, your setting is the ceiling), the extension re-clamping every command to
+your grant, and look-alike and Unicode label normalization.
+
+What this means in practice:
+
+- At Act, clicking Send, Submit, Save, Publish, Invite or Delete does **not** ask again. You approved it when you clicked Act, within the approved origins.
+- The only way to block one specific control at Act is a `forbid` phrase in `policy` or `config.json`: a button whose label contains it is refused at every level.
+- Pressing Enter with `commits: true` asks, but clicking the submit button of the same form does not. The agent declares `commits` itself, and `commits: false` runs and only adds a warning to the result.
+- If you do not want an agent sending or deleting without asking, use Use, or watch the task and press Pause or Stop in the popup.
+
 ## 3. Guardrails run three times
 
 Every offered action and every dispatched click is checked by label and field rules in three places: the **service**
