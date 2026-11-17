@@ -87,8 +87,8 @@ There is no "always allow" and nothing is approved in advance. Time spent waitin
 ### Several things at once: one window per tab
 
 Everything the agent waits on for one tab is asked in **one** window: its ask for more (a higher level, more sites) and
-every action waiting for your approval on that tab. A typical case: the agent at Act clicks "Delete account" and asks for
-a higher level to do it. You see one window, not two:
+every action waiting for your approval on that tab. A typical case: an agent limited to a lower API mode (`reversible` or
+`interactive`) clicks "Delete account" and asks for Act to do it. You see one window, not two:
 
 - the title `FAI Browser: approve 2 things?` and a headline such as `Act on shop.example and click "Delete account"?`;
 - each item on its own line with a tag, level first, then sites, then actions in the order asked: `LEVEL`, `SITES`,

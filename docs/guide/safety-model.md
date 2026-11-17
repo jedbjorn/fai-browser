@@ -40,7 +40,7 @@ Testing adds sign-in and payment fields only when the agent requested `testing`,
 Advanced → Test sites, and you explicitly enable the test-only option with Act. Origin, policy, redaction and
 approval protections still apply. Agent-selected cookie and popup buttons require Act. New approvals separately disclose necessary-only cookies and newsletter dismissal: FAI may take only those narrowly validated, paced actions under Use or Act; ambiguous cases return to the agent. This scope does not grant general button access.
 
-## Guardrails by level
+### Guardrails by level
 
 What still applies after you click **Use** or **Act**. **Test site** is Act with the test-only option, and only on origins
 you listed under Advanced → Test sites. "Refused" means the control is not offered, and is refused again if it is sent anyway.
@@ -111,8 +111,10 @@ at every level including Test site. Nothing removes one.
 
 ## 4. The Approve gate
 
-Some actions are worth doing but not without you: purchases, deletions, credential actions (generate, reveal or copy a key,
-password, token), secret handle uses, and submits above the granted level. They are offered marked `needsApproval`
+Some actions are worth doing but not without you: purchases, credential actions (generate, reveal or copy a key,
+password, token), secret handle uses, uploads, a committing Enter, and, under a legacy lower API mode, a submit or delete
+above that mode. At Act, ordinary save, send, submit and delete clicks do not ask ([Guardrails by level](#guardrails-by-level)).
+Those actions are offered marked `needsApproval`
 ("asks the user"), and acting on one opens a window you must answer. Single-use, bound to tab, page revision, control and label
 hash, 60 seconds, no "always allow". Everything the agent waits on for one tab, its ask for more included, is one window that
 lists every item on its own line, costly ones marked; one Approve covers each item once, and the agent is paused until you
@@ -227,7 +229,7 @@ profile to yourself.
 
 | Protected | Not protected |
 |---|---|
-| Tab choice, origins, level, risky clicks | Prompt injection **within** a level you granted: a malicious page can steer the agent to do Use-level things on that tab |
+| Tab choice, origins, level, risky clicks | Prompt injection **within** a level you granted: a malicious page can steer the agent to do anything that level allows on that tab (at Act, including send, submit and delete) |
 | Known secrets in text, URLs and screenshots | Secrets with no rule (short passwords in prose, text in canvases or images, frames from origins you did not approve) |
 | What the agent holds | What your model provider sees in the redacted page; what a page does with values you let the agent type |
 | The pairing secret | A compromised OS account or other malware running as you |
