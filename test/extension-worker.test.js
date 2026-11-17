@@ -1024,8 +1024,8 @@ test('a child_tab pause names the child\'s origin only, also once it leaves abou
 });
 
 const multiLease = { id: LEASE_ID, tabId: 7, requestId: 'req_1', tabMode: 'multiple' };
-async function multipleTask() {
-  return started({ level: 'full', hostGrants: [`${ORIGIN}/*`], local: { tabMode: 'single' } });
+async function multipleTask(options = {}) {
+  return started({ level: 'full', hostGrants: [`${ORIGIN}/*`], local: { tabMode: 'single' }, ...options });
 }
 async function taskOpen(h, url = `${ORIGIN}/next`, lease = multiLease) {
   const id = h.command('execute', { action: { type: 'open_tab', url }, expectedRevision: 'doc:1' }, { lease });
@@ -3427,6 +3427,33 @@ test('bundle: a queued bundle of 2 decided from the popup card sends bundle_open
   ]);
   assert.equal(wire[1].decision, 'denied');
   assert.equal(h.session.approvals.find(item => item.id === first.id)?.id, first.id, 'tab 7\'s bundle still waits');
+});
+
+// Left open by WU22: a bundle queued behind another tab's window never opened (so never announced) and expires: the
+// daemon hears bundle_open first, then bundle_decision expired (announceBundle inside expireBundle).
+test('bundle: a queued bundle of 2 that expires sends bundle_open before bundle_decision expired', async () => {
+  const clock = { offset: 0 };
+  const h = await multipleTask({ clock });
+  gatedControls(h);
+  const at = () => Date.now() + clock.offset + 30_000;
+  await pendingEntry(h, {}, at());
+  assert.equal((await taskOpen(h)).error, undefined);
+  const id = h.command('execute', { action: { type: 'switch_tab', tab: 't1' }, expectedRevision: 'doc:1' }, { lease: multiLease });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === id)).error, undefined);
+  const second = await pendingEntry(h, { target: '2', cls: 'submit' }, at());
+  const third = await pendingEntry(h, { target: '3' }, at());
+  await h.until(() => h.session.bundles?.find(bundle => bundle.tabId === 9)?.entries.length === 2);
+  assert.equal(approveWindows(h).length, 1, 'tab 9\'s bundle waits behind tab 7\'s window');
+  const queued = h.session.bundles.find(bundle => bundle.tabId === 9);
+  assert.equal(h.sent.some(m => m.type === 'bundle_open' && m.bundleId === queued.id), false, 'not announced yet');
+  clock.offset += 10 * 60_000 + 1000;
+  h.push({ type: 'requests', requests: [] });
+  await h.until(() => bridged(h, 'bundle_decision').some(item => item.bundleId === queued.id));
+  const wire = h.sent.filter(m => ['bundle_open', 'bundle_decision'].includes(m.type) && m.bundleId === queued.id);
+  assert.deepEqual(wire.map(m => [m.type, m.version, [...m.entryIds].sort(), m.decision]), [
+    ['bundle_open', queued.version, [second.id, third.id].sort(), undefined],
+    ['bundle_decision', queued.version, [second.id, third.id].sort(), 'expired'],
+  ]);
 });
 
 // Flag #32: an ask whose bundle expired is ended by the daemon, and its next snapshot no longer holds it; nothing in

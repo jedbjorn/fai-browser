@@ -1588,15 +1588,19 @@ export function createDaemon(options = {}) {
     const record = requests.get(bundle.requestId);
     log('bundle_decision', { requestId: bundle.requestId, decision: event.decision, members: memberCount(event) });
     if (!record || record.state !== 'active' || record.lease?.leaseId !== bundle.leaseId) return;
+    // The open that asked still waits for its ask: that call learns the ask ended (read before the ask is dropped).
+    const askWaited = Boolean(bundle.askId) && record.askWaiters > 0;
     // Nobody answered its ask: the ask ends with the bundle (no surface shows it again), a bundle of one included.
     // Expiry is not a decline: askDeclined is not set (Planner ruling, flag #32).
     if (event.decision === 'expired' && event.askId && event.askId === bundle.askId && record.ask?.id === event.askId) {
       record.ask = null;
       changed();
     }
-    // A bundle of one keeps today's messages and their wakes (the item's own lease, deny or action_decision): its
-    // decision only ends the pause and never wakes, an expiry included (Planner ruling, Sprint 5 message #365).
-    if (memberCount(event) <= 1) return;
+    // A bundle of one keeps today's messages and their wakes when answered (the item's own lease, deny or
+    // action_decision): its approved or denied decision only ends the pause. Its expiry wakes bundle_expired like a
+    // larger bundle's, unless a call waits for it: approval_pending told the agent the answer wakes it (Planner, Sprint
+    // 5 message #395, replacing that clause of ruling #365).
+    if (memberCount(event) <= 1 && (event.decision !== 'expired' || askWaited)) return;
     const ask = event.askId && event.askId === bundle.askId ? bundle.ask : null;
     const pending = { kind: `bundle_${event.decision}`, ask, entryIds: event.entryIds };
     // Its entries are decided now: no action_decision follows, and a late one wakes nobody.

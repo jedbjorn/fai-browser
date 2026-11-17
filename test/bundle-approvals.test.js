@@ -13,6 +13,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createDaemon } from '../src/daemon.js';
 import { bundleEvent } from '../src/bridge.js';
 import { approvalOpenText, directNext } from '../src/result.js';
+import { wakeText } from '../src/wake.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
 import { mcpData } from './helpers/mcp-result.js';
@@ -242,14 +243,32 @@ test('AC8: an expired bundle wakes once with bundle_expired; the pause ends', as
   assert.equal((await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }, ctx.as(ctx.owner))).status, 200);
 });
 
-test('AC8: a bundle of one only ends the pause when it is decided; it never wakes, an expiry included', async t => {
+// Planner, Sprint 5 message #395 (replacing that clause of ruling #365): approval_pending told the agent the answer
+// wakes it, so an expired bundle of one wakes once with bundle_expired; approved and denied keep today's single wakes.
+test('AC8: an expired bundle of one entry wakes once with the exact bundle_expired text; the pause ends', async t => {
   const ctx = await setup(t);
   assert.equal((await ctx.act()).code, 'approval_pending');
   await ctx.open();
   assertPaused(await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }, ctx.as(ctx.owner)), ctx.requestId, 'observe');
   await ctx.decide('expired');
-  assert.deepEqual(await ctx.poll(ctx.owner), []);
+  const wakes = await ctx.poll(ctx.owner);
+  assert.deepEqual(wakes.map(wake => [wake.kind, wake.requestId]), [['bundle_expired', ctx.requestId]]);
+  assert.equal(wakeText(wakes[0]), `[FAI Browser] Your approval on tab request ${ctx.requestId} (action ${ctx.save.id}) `
+    + 'expired without an answer. Nothing was granted or run. Tell the user; ask again only if they want it.');
   assert.equal((await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }, ctx.as(ctx.owner))).status, 200);
+  // Once: the same decision again wakes nobody.
+  await ctx.decide('expired');
+  assert.deepEqual(await ctx.poll(ctx.owner), []);
+});
+
+test('AC8: a bundle of one approved or denied still never wakes from its bundle_decision', async t => {
+  for (const decision of ['approved', 'denied']) {
+    const ctx = await setup(t);
+    assert.equal((await ctx.act()).code, 'approval_pending');
+    await ctx.open();
+    await ctx.decide(decision);
+    assert.deepEqual(await ctx.poll(ctx.owner), [], decision);
+  }
 });
 
 test('AC8: no wake when the act that opened the bundle still waited and got the answer; one when it had ended pending', async t => {
@@ -411,16 +430,33 @@ test('an expired bundle ends its ask: gone from the view and the snapshot, not d
   assert.equal(fresh.level, null, 'the expired level did not merge into the new ask');
 });
 
-test('an expired bundle of one ask ends that ask too, with no wake', async t => {
+test('an expired bundle of one ask ends that ask too, and wakes once with the exact bundle_expired text', async t => {
   const ctx = await setup(t);
   await ctx.ask({ mode: 'full' });
   const askId = (await ctx.view()).ask.id;
   await ctx.open({ askId, entryIds: [] });
   await ctx.decide('expired', { askId, entryIds: [] });
-  assert.deepEqual(await ctx.poll(ctx.owner), []);
+  const wakes = await ctx.poll(ctx.owner);
+  assert.deepEqual(wakes.map(wake => wake.kind), ['bundle_expired']);
+  assert.equal(wakeText(wakes[0]), `[FAI Browser] Your approval on tab request ${ctx.requestId} (level Act (full)) `
+    + 'expired without an answer. Nothing was granted or run. Tell the user; ask again only if they want it.');
   const after = await ctx.view();
   assert.equal(after.ask, undefined);
   assert.equal(after.askDeclined, undefined);
+});
+
+test('an expired bundle of one ask wakes nobody while the open that asked still waits for it', async t => {
+  const ctx = await setup(t);
+  await ctx.ask({ mode: 'full' });
+  const askId = (await ctx.view()).ask.id;
+  const waiting = ctx.api('POST', '/v1/wait', { requestId: ctx.requestId, ask: true, maxMs: 5000 }, ctx.as(ctx.owner));
+  await delay(20);
+  await ctx.open({ askId, entryIds: [] });
+  await ctx.decide('expired', { askId, entryIds: [] });
+  const waited = await waiting;
+  assert.equal(waited.status, 200);
+  assert.equal(waited.body.request.ask, undefined, 'the waiting call learns the ask ended');
+  assert.deepEqual(await ctx.poll(ctx.owner), []);
 });
 
 // Spec #87 "Expiry and closing", AC 9, flag #18: the extension never sees a paused call, so the daemon counts the

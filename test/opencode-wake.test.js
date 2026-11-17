@@ -375,6 +375,11 @@ test('plugin: only FAI\'s exact wake texts are taken (every template src/wake.js
     texts.push(wakeText({ kind, requestId: 'r1', items: [{ type: 'sites', count: 1 }, { type: 'action', actionId: 'a1', revision: 'v1' }] }));
   }
   texts.push(wakeText({ kind: 'bundle_approved', requestId: 'r1', items: [{ type: 'level', level: 'testing' }, { type: 'sites', count: 1 }] }));
+  // Planner, Sprint 5 message #395: a bundle of one (one entry, or one ask) wakes bundle_expired too.
+  for (const one of [{ type: 'action', actionId: 'a12', revision: action.revision }, { type: 'level', level: 'full' },
+    { type: 'sites', count: 2 }]) {
+    texts.push(wakeText({ kind: 'bundle_expired', requestId: 'req_6JOZelWANLlb', items: [one] }));
+  }
   for (const text of texts) assert.deepEqual(await send(text), { ok: true }, text);
   const approved = wakeText({ kind: 'approved', requestId: 'req-1', level: 'full' });
   // Older installed services remain interoperable, without accepting arbitrary level text.
