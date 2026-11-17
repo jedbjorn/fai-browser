@@ -80,8 +80,14 @@ const CODE_DO = {
   select_tab: 'The request waits for the user\'s Use or Act click: the request modal on the task page FAI opened, the FAI Browser '
     + 'window or the toolbar icon on that tab. After a failed attempt the text says "toolbar icon" (the icon on the task '
     + 'tab gets past it); after the user declined the browser\'s site-access prompt it says so: do not push. Then observe.',
-  ask_pending: 'You asked for a level or site on this request; the user has not answered. Relay it, then observe '
-    + 'with the requestId; the tab keeps working at the granted level meanwhile.',
+  approval_pending: 'Relay next.text and end your turn: the user\'s answer wakes you with the act to repeat (it then '
+    + 'runs at once). Until then your calls return approval_open.',
+  approval_open: 'Paused: the user has an approval of yours open (one window per tab: your asks for actions, a level '
+    + 'or sites, one Approve or Deny for all). Nothing ran. End your turn: the user\'s answer wakes you once. '
+    + 'Status, guide, release and fai_browser_wait {maxMs: 0} still work.',
+  ask_pending: 'You asked for a level or site on this request; the user has not answered. Relay it, then end your '
+    + 'turn: on an active request your session is paused (calls return approval_open) until the user answers in the '
+    + 'approval window, and the answer wakes you.',
   time_budget: 'The act ran out of time before its page settled. Observe, then choose; for late content, waitFor.',
   denied: 'The user refused the request. Ask again only if the user asks you to.',
   stopped: 'The user pressed Stop and released the tab. Do not retry without asking.',
@@ -241,9 +247,9 @@ const TOPICS = {
     '- A request with several origins lets the tab move between them once the browser gave access (the request '
       + 'modal\'s Approve asks for it).',
     '- Another site mid-task: ask on the same request, fai_browser_open with the requestId and the extra origin in '
-      + 'origins (and allowedUrls: the exact address, when a page showed it or the user gave it). The user sees an '
-      + '"agent asks for more" card; Use or Act keeps the request id, tab and page. Act enables multiple task tabs. '
-      + 'ask_pending: not answered yet (relay, then observe). ask_declined: continue without it. Without '
+      + 'origins (and allowedUrls: the exact address, when a page showed it or the user gave it). On an active request it '
+      + 'joins the tab\'s approval window and you are paused until the answer; on a paused one the user sees an '
+      + '"agent asks for more" card. Same request id, tab and page; Act enables multiple task tabs. ask_pending: relay, end your turn. ask_declined: continue without it. Without '
       + 'requestId, open makes a new request in a new tab.',
     '- Links to other sites are listed as `link to https://other.example/path (other site): "label"` and never '
       + 'clicked, at any level. To follow one: check with the user, ask for its origin on the same request with the '
@@ -281,7 +287,11 @@ const TOPICS = {
       + 'is unclear or the user says something changed.',
     '- fai_browser_wait: waits for a pending or paused request (requestId) or an act still running (runId, when '
       + 'next.kind is wait), up to 45 s a call; call it again while it says pending. Not needed when FAI wakes your '
-      + 'session and you can end your turn; a subagent or script cannot, so it waits with this.',
+      + 'session and you can end your turn; a subagent or script cannot, so it waits with this. maxMs 0 reads the state '
+      + 'at once.',
+    '- While an approval of yours is open (one window per tab, one Approve or Deny for all you asked there), every call '
+      + 'but status, guide, release and a requestId wait with maxMs 0 returns approval_open and does nothing: end your turn; the '
+      + 'user\'s answer wakes you once.',
     '- fai_browser_evidence: an act\'s screenshot (image) or trace (JSON) by runId: to show the user what happened, '
       + 'or for a bug report.',
     '- fai_browser_release: ends FAI\'s access to a request. Only when the user asks, or for your own requests '

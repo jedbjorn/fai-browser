@@ -51,8 +51,8 @@ const WAKE_FAILED_MS = 10 * 60_000;
 const DAEMON_MAX_WAIT_MS = 45_000;
 // The longest one call waits for the user (an act for the Approve click; in Agent direct also an open for the tab
 // approval): hosts time a tool call out at 120 s (Codex's tool_timeout_sec, src/install.js), so with the act itself a
-// call stays near 90 s at most. The pending approval stays open for 5 minutes (APPROVAL_PENDING_MS), and the same
-// act (or open) repeated meanwhile picks up a click given in between.
+// call stays near 90 s at most. After that the session is paused until the user answers (the daemon's approval_open
+// receipt); the answer wakes it and the act it then repeats runs at once.
 export const GATE_MAX_WAIT_MS = 60_000;
 // Typed text per field and fields per batch (src/runtime.js MAX_TYPED_CHARS and MAX_BATCH_FILLS; a test keeps them equal).
 export const MAX_TYPED_CHARS = 5000;
@@ -356,7 +356,8 @@ export const TOOLS = [
   {
     name: 'fai_browser_wait',
     title: 'Wait for a run or tab',
-    description: 'Wait for a pending tab request (requestId) or a still-running act (runId). Returns within maxMs.',
+    description: 'Wait for a pending tab request (requestId) or a still-running act (runId). Returns within maxMs; '
+      + 'With requestId, maxMs 0 returns the current state at once, also while an approval is open.',
     inputSchema: objectSchema({
       runId: RUN_ID,
       requestId: REQUEST_ID,
