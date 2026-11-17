@@ -85,6 +85,12 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
   const tabPopups = new Map(); // per-tab popup set by chrome.action.setPopup (armed tabs)
   const groupOf = new Map(); // tabId -> groupId; absent: ungrouped
   const groups = new Map(); // groupId -> { title, color }
+  const groupWindow = new Map(); // groupId -> windowId (absent: window 1)
+  const groupCalls = []; // chrome.tabs.group arguments, in order
+  // The browser removes a group once its last tab leaves it.
+  const pruneGroups = () => {
+    for (const groupId of [...groups.keys()]) if (![...groupOf.values()].includes(groupId)) groups.delete(groupId);
+  };
   let nextGroup = 100;
   const alarms = events('onAlarm');
   const alarmsCreated = [];
@@ -337,6 +343,10 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       onAlarm: alarms,
     },
     tabGroups: {
+      async get(groupId) {
+        if (!groups.has(groupId)) throw new Error(`No group with id: ${groupId}.`);
+        return { id: groupId, windowId: groupWindow.get(groupId) ?? 1, ...groups.get(groupId) };
+      },
       async update(groupId, info) { Object.assign(groups.get(groupId), info); },
     },
     offscreen: { async hasDocument() { return true; }, async createDocument() {} },
@@ -417,7 +427,11 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
         if (openedTabs.has(id)) return { id, windowId: 2, groupId, active: id === activeTabId, ...openedTabs.get(id) };
         return { id, url: tab.url, status: tab.status, windowId: 1, groupId, active: id === activeTabId };
       },
-      async remove(id) { openedTabs.delete(id); },
+      async remove(id) {
+        openedTabs.delete(id);
+        groupOf.delete(id);
+        pruneGroups();
+      },
       async update(id, info) {
         if (info.active) activeTabId = id;
         return this.get(id);
@@ -426,13 +440,21 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
         if (openedTabs.has(id)) openedTabs.get(id).windowId = info.windowId;
         return this.get(id);
       },
-      async group({ tabIds, groupId = nextGroup++ }) {
-        if (!groups.has(groupId)) groups.set(groupId, {});
+      async group({ tabIds, groupId, createProperties }) {
+        groupCalls.push(clone({ tabIds, groupId, createProperties }));
+        if (groupId === undefined) {
+          groupId = nextGroup++;
+          groups.set(groupId, {});
+          groupWindow.set(groupId, createProperties?.windowId ?? 1);
+        } else if (!groups.has(groupId)) {
+          throw new Error(`No group with id: ${groupId}.`);
+        }
         for (const id of tabIds) groupOf.set(id, groupId);
         return groupId;
       },
       async ungroup(tabIds) {
         for (const id of tabIds) groupOf.delete(id);
+        pruneGroups();
       },
       async captureVisibleTab() { return 'data:image/jpeg;base64,UkFX'; },
     },
@@ -573,7 +595,8 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     chrome,
     groupOf,
     groups,
-    groupOf,
+    groupWindow,
+    groupCalls,
     openedTabs,
     tabPopups,
     setActiveTab(id) { activeTabId = id; },
@@ -2445,7 +2468,8 @@ test('mark: the leased tab joins a FAI group, retitled FAI ⏸ on pause and ungr
   assert.equal(h.tabBadge(7), 'ON');
   assert.equal(h.badge, '', 'no global ON');
   await h.until(() => h.session.markedTab);
-  assert.deepEqual(clone(h.session.markedTab), { tabId: 7, groupId });
+  assert.deepEqual(clone(h.session.markedTab), { tabId: 7, tabIds: [7], groupId });
+  assert.deepEqual(clone(h.session.faiGroups), { 1: groupId }, 'the window\'s FAI group is recorded');
   await h.send({ type: 'pause' });
   await h.until(() => h.groups.get(groupId).title === 'FAI ⏸');
   assert.equal(h.groupOf.get(7), groupId, 'the same group');
@@ -2481,7 +2505,7 @@ test('mark: the daemon ending the lease, or a worker restart, takes the mark bac
   await h.until(() => !h.groupOf.has(7));
   assert.equal(h.tabBadge(7), null);
   // A worker that died with a marked tab: the next one ungroups it from storage.session.
-  const restarted = harness({ sessionStore: { markedTab: { tabId: 7, groupId: 100 }, badgeTab: 7 } });
+  const restarted = harness({ sessionStore: { markedTab: { tabId: 7, groupId: 100 }, faiGroups: { 1: 100 }, badgeTab: 7 } });
   restarted.groupOf.set(7, 100);
   restarted.groups.set(100, { title: 'FAI' });
   await restarted.until(() => !restarted.groupOf.has(7));
@@ -2494,6 +2518,181 @@ test('mark: an opened window\'s tab is marked after explicit approval', async ()
   await h.until(() => h.groups.get(h.groupOf.get(9))?.title === 'FAI');
   assert.equal(h.groups.get(h.groupOf.get(9)).title, 'FAI');
   assert.equal(h.tabBadge(9), 'ON');
+});
+
+// --- One FAI tab group per window (spec #88) ---------------------------------------------------------------------
+
+// Task tabs open in window 1, the started session's tab's window (the default last focused window is 2).
+const WINDOW_1 = { id: 1, type: 'normal', incognito: false, left: 100, top: 50, width: 1200, height: 800 };
+const created = h => h.groupCalls.filter(call => call.createProperties);
+const activeReq = (extra = {}) => ({ requestId: 'req_1', state: 'active', origins: [ORIGIN], url: `${ORIGIN}/`, mode: 'full', ...extra });
+
+test('one group: two armed tabs, the session tab and its Act tab share one FAI group, made once (spec #88 AC1)', async () => {
+  const h = await started({ level: 'full', hostGrants: [`${ORIGIN}/*`], local: { tabMode: 'single', openRightAway: false }, lastWindow: WINDOW_1 });
+  await h.until(() => h.groupOf.has(7));
+  await withPending(h, [activeReq(), pendingRequest('req_2'), pendingRequest('req_3')]);
+  for (const requestId of ['req_2', 'req_3']) assert.equal((await h.send({ type: 'open', requestId, level: 'read-only' })).error, undefined);
+  await h.until(() => h.groupOf.has(9) && h.groupOf.has(10));
+  assert.equal((await taskOpen(h)).error, undefined);
+  await h.until(() => h.groupOf.has(11));
+  const groupId = h.groupOf.get(7);
+  assert.deepEqual([9, 10, 11].map(id => h.groupOf.get(id)), [groupId, groupId, groupId], 'one group holds all four');
+  assert.equal(h.groups.size, 1);
+  assert.deepEqual(created(h), [{ tabIds: [7], createProperties: { windowId: 1 } }], 'one createProperties call');
+  assert.deepEqual(h.groupCalls.slice(1).map(call => call.groupId), [groupId, groupId, groupId], 'later tabs join by groupId');
+  await h.until(() => h.groups.get(groupId).title === 'FAI ?');
+  assert.deepEqual(clone(h.groups.get(groupId)), { title: 'FAI ?', color: 'grey', collapsed: false });
+  assert.deepEqual(clone(h.session.faiGroups), { 1: groupId });
+});
+
+test('one group: the title follows the most urgent state, FAI ? then FAI ⏸ then FAI, on every change (spec #88 AC2)', async () => {
+  const h = await started({ level: 'full', local: { openRightAway: false }, lastWindow: WINDOW_1 });
+  await h.until(() => h.groupOf.has(7));
+  const groupId = h.groupOf.get(7);
+  const title = () => h.groups.get(groupId)?.title;
+  assert.equal(title(), 'FAI');
+  // An action approval pending on the session's tab.
+  const { id, entry } = await asked(h);
+  await h.until(() => title() === 'FAI ?');
+  await h.send({ type: 'approval_decision', id: entry.id, decision: 'deny' }, APPROVE_PAGE);
+  await h.waitFor(m => m.type === 'result' && m.id === id);
+  await h.until(() => title() === 'FAI');
+  // The request's open ask for more, while its session is on the tab.
+  await withPending(h, [activeReq({ ask: { level: 'full', origins: [SHOP], at: new Date().toISOString() } })]);
+  await h.until(() => title() === 'FAI ?');
+  await withPending(h, [activeReq()]);
+  await h.until(() => title() === 'FAI');
+  await h.send({ type: 'pause' });
+  await h.until(() => title() === 'FAI ⏸');
+  // An armed tab in the same group outranks the pause; its end gives the pause back.
+  await withPending(h, [activeReq({ state: 'paused' }), pendingRequest('req_2')]);
+  assert.equal((await h.send({ type: 'open', requestId: 'req_2', level: 'read-only' })).error, undefined);
+  await h.until(() => h.groupOf.get(9) === groupId && title() === 'FAI ?');
+  await withPending(h, [activeReq({ state: 'paused' })]);
+  await h.until(() => !h.groupOf.has(9) && title() === 'FAI ⏸');
+  await h.send({ type: 'start', requestId: 'req_1', endpoint: ENDPOINT, secret: SECRET, level: 'full' });
+  await h.until(() => title() === 'FAI');
+  assert.equal(h.groups.size, 1);
+});
+
+test('one group: an arm ending or a session stopping ungroups only that tab; the last leave leaves no FAI group (spec #88 AC3)', async () => {
+  const h = await started({ local: { openRightAway: false }, lastWindow: WINDOW_1 });
+  await h.until(() => h.groupOf.has(7));
+  const groupId = h.groupOf.get(7);
+  await withPending(h, [activeReq(), pendingRequest('req_2'), pendingRequest('req_3')]);
+  for (const requestId of ['req_2', 'req_3']) assert.equal((await h.send({ type: 'open', requestId, level: 'read-only' })).error, undefined);
+  await h.until(() => h.groupOf.get(9) === groupId && h.groupOf.get(10) === groupId);
+  // One arm ends.
+  await withPending(h, [activeReq(), pendingRequest('req_3')]);
+  await h.until(() => !h.groupOf.has(9));
+  assert.deepEqual([h.groupOf.get(7), h.groupOf.get(10)], [groupId, groupId], 'the others stay');
+  // The session stops.
+  await h.send({ type: 'stop' });
+  await h.until(() => !h.groupOf.has(7));
+  assert.equal(h.groupOf.get(10), groupId);
+  assert.equal(h.groups.get(groupId).title, 'FAI ?');
+  // The last tab leaves: no FAI group remains, and a later tab gets a new one.
+  await withPending(h, []);
+  await h.until(() => !h.groupOf.has(10));
+  assert.equal(h.groups.size, 0);
+  await withPending(h, [pendingRequest('req_4')]);
+  assert.equal((await h.send({ type: 'open', requestId: 'req_4', level: 'read-only' })).error, undefined);
+  await h.until(() => h.groupOf.has(11));
+  assert.equal(created(h).length, 2);
+  assert.deepEqual(clone(h.session.faiGroups), { 1: h.groupOf.get(11) }, 'the gone group is forgotten');
+});
+
+test('one group: an arm that ends while it is joining the group still leaves it', async () => {
+  const h = harness({ local: { openRightAway: false }, lastWindow: WINDOW_1 });
+  await h.waitFor(m => m.type === 'hello');
+  await withPending(h, [pendingRequest('req_2')]);
+  // The join is slow: the request goes away before it returns.
+  const group = h.chrome.tabs.group;
+  h.chrome.tabs.group = async options => { await sleep(40); return group(options); };
+  const opened = h.send({ type: 'open', requestId: 'req_2', level: 'read-only' });
+  await h.until(() => h.tabsCreated.length === 1);
+  h.push({ type: 'requests', requests: [] });
+  await opened;
+  await h.until(() => h.session.armedTabs?.length === 0);
+  await sleep(120);
+  assert.equal(h.groupOf.has(9), false, 'the ended arm\'s tab is not left in the group');
+  assert.equal(h.groups.size, 0);
+});
+
+test('one group: a new session on the tab the previous one held keeps it in the group; leaving never ungroups a held tab', async () => {
+  const h = await started();
+  await h.until(() => h.groupOf.has(7));
+  const groupId = h.groupOf.get(7);
+  assert.equal((await h.send({ type: 'start', requestId: 'req_2', endpoint: ENDPOINT, secret: SECRET })).status, 'active');
+  await sleep(30);
+  assert.equal(h.groupOf.get(7), groupId, 'the previous session leaving does not take the tab the new one holds');
+  assert.equal(created(h).length, 1);
+  await h.send({ type: 'stop' });
+  await h.until(() => !h.groupOf.has(7));
+  assert.equal(h.groups.size, 0);
+});
+
+test('one group: a user group (even one titled FAI) is untouched; another window gets its own one FAI group (spec #88 AC4)', async () => {
+  const h = harness({ local: { openRightAway: false } });
+  h.groupOf.set(7, 5);
+  h.groups.set(5, { title: 'FAI' });
+  await h.waitFor(m => m.type === 'hello');
+  assert.equal((await h.send({ type: 'start', requestId: 'req_1', endpoint: ENDPOINT, secret: SECRET })).status, 'active');
+  // Task tabs open in window 2 (the last focused one), the session's tab is in window 1.
+  await withPending(h, [activeReq(), pendingRequest('req_2'), pendingRequest('req_3')]);
+  for (const requestId of ['req_2', 'req_3']) assert.equal((await h.send({ type: 'open', requestId, level: 'read-only' })).error, undefined);
+  await h.until(() => h.groupOf.has(9) && h.groupOf.has(10));
+  assert.equal(h.groupOf.get(7), 5, 'the user\'s group keeps its tab');
+  assert.deepEqual(clone(h.groups.get(5)), { title: 'FAI' }, 'and is never adopted or retitled');
+  assert.equal(h.groupOf.get(9), h.groupOf.get(10));
+  assert.notEqual(h.groupOf.get(9), 5);
+  assert.deepEqual(created(h), [{ tabIds: [9], createProperties: { windowId: 2 } }]);
+  await h.send({ type: 'stop' });
+  await sleep(30);
+  assert.equal(h.groupOf.get(7), 5, 'stop leaves the user group alone');
+
+  // The session's tab in window 1 and arms in window 2: one FAI group per window.
+  const two = await started({ local: { openRightAway: false } });
+  await two.until(() => two.groupOf.has(7));
+  await withPending(two, [activeReq(), pendingRequest('req_2'), pendingRequest('req_3')]);
+  for (const requestId of ['req_2', 'req_3']) assert.equal((await two.send({ type: 'open', requestId, level: 'read-only' })).error, undefined);
+  await two.until(() => two.groupOf.has(9) && two.groupOf.has(10));
+  assert.equal(two.groupOf.get(9), two.groupOf.get(10));
+  assert.notEqual(two.groupOf.get(7), two.groupOf.get(9));
+  assert.deepEqual(created(two).map(call => call.createProperties.windowId), [1, 2]);
+  assert.deepEqual(clone(two.session.faiGroups), { 1: two.groupOf.get(7), 2: two.groupOf.get(9) });
+  await two.until(() => two.groups.get(two.groupOf.get(7)).title === 'FAI' && two.groups.get(two.groupOf.get(9)).title === 'FAI ?');
+});
+
+test('one group: a restarted worker keeps held tabs grouped, ungroups the rest, and makes no second group (spec #88 AC5)', async () => {
+  const arm = { tabId: 12, requestId: 'req_2', level: 'read-only', scope: 'origin', client: '', at: Date.now(), groupId: 100 };
+  const h = harness({ local: { openRightAway: false }, lastWindow: WINDOW_1,
+    sessionStore: { armedTabs: [arm], markedTab: { tabId: 7, tabIds: [7, 13], groupId: 100 }, faiGroups: { 1: 100 } } });
+  for (const id of [7, 12, 13]) h.groupOf.set(id, 100);
+  h.groups.set(100, { title: 'FAI', color: 'grey', collapsed: false });
+  await h.waitFor(m => m.type === 'hello');
+  await h.until(() => !h.groupOf.has(7) && !h.groupOf.has(13));
+  assert.equal(h.groupOf.get(12), 100, 'the armed tab stays grouped');
+  await h.until(() => h.groups.get(100).title === 'FAI ?');
+  assert.deepEqual(clone(h.session.faiGroups), { 1: 100 }, 'the record is kept');
+  assert.equal(h.session.markedTab, null);
+  await withPending(h, [pendingRequest('req_2'), pendingRequest('req_3')]);
+  assert.equal((await h.send({ type: 'open', requestId: 'req_3', level: 'read-only' })).error, undefined);
+  await h.until(() => h.groupOf.has(9));
+  assert.equal(h.groupOf.get(9), 100, 'a new arm joins the recorded group');
+  assert.deepEqual(created(h), [], 'no second group');
+
+  // A recorded group the user renamed is forgotten, never reused.
+  const renamed = harness({ local: { openRightAway: false }, lastWindow: WINDOW_1, sessionStore: { faiGroups: { 1: 60 } } });
+  renamed.groupOf.set(12, 60);
+  renamed.groups.set(60, { title: 'Mine' });
+  await renamed.waitFor(m => m.type === 'hello');
+  await withPending(renamed, [pendingRequest('req_3')]);
+  assert.equal((await renamed.send({ type: 'open', requestId: 'req_3', level: 'read-only' })).error, undefined);
+  await renamed.until(() => renamed.groupOf.has(9));
+  assert.notEqual(renamed.groupOf.get(9), 60);
+  assert.deepEqual(clone(renamed.groups.get(60)), { title: 'Mine' });
+  assert.deepEqual(clone(renamed.session.faiGroups), { 1: renamed.groupOf.get(9) });
 });
 
 // --- updates (docs/REFERENCE.md "Updates") ------------------------------------------------------------------------

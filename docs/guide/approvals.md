@@ -32,7 +32,7 @@ Screenshots may still require the toolbar click because a host grant alone does
 not grant screenshot access. The modal never asks for all-sites access to work around that limit.
 
 "Open requested pages right away" and "Show a window when an agent asks" are settings under Advanced. While the agent holds the
-tab it sits in a tab group titled `FAI` and the icon shows `ON`. **Pause** and **Stop** sit at the top of the popup, above every card. **Pause** pauses the tab (a run in progress ends) until you choose **Use** or **Act** to resume, **Stop** releases the tab. Domain
+tab it sits in the window's one FAI tab group and the icon shows `ON`. Every tab FAI opens or holds in that window joins that group, titled `FAI ?` while anything in it waits for you, `FAI ⏸` while paused, else `FAI`. **Pause** and **Stop** sit at the top of the popup, above every card. **Pause** pauses the tab (a run in progress ends) until you choose **Use** or **Act** to resume, **Stop** releases the tab. Domain
 roots are remembered for 24 hours only if you turn that on.
 
 ## 2. Approve once
