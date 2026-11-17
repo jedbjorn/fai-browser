@@ -1523,7 +1523,9 @@ export function createDaemon(options = {}) {
 
   function onBundleOpen(event) {
     const record = requests.get(event.requestId);
-    if (!record || record.state !== 'active' || record.lease?.tabId !== event.tabId || !sameBrowser(record, event.browserId)) {
+    // Any task tab of the lease (the extension names the tab the action is on, not only the home tab; flag #31): the
+    // browser that holds the lease is the only one that can announce, and bundles are keyed by browser and bundle id.
+    if (!record || record.state !== 'active' || !sameBrowser(record, event.browserId)) {
       log('bundle_refused', { requestId: event.requestId });
       return;
     }
@@ -1564,6 +1566,12 @@ export function createDaemon(options = {}) {
     const record = requests.get(bundle.requestId);
     log('bundle_decision', { requestId: bundle.requestId, decision: event.decision, members: memberCount(event) });
     if (!record || record.state !== 'active' || record.lease?.leaseId !== bundle.leaseId) return;
+    // Nobody answered its ask: the ask ends with the bundle (no surface shows it again), a bundle of one included.
+    // Expiry is not a decline: askDeclined is not set (Planner ruling, flag #32).
+    if (event.decision === 'expired' && event.askId && event.askId === bundle.askId && record.ask?.id === event.askId) {
+      record.ask = null;
+      changed();
+    }
     // A bundle of one keeps today's messages and their wakes (the item's own lease, deny or action_decision): its
     // decision only ends the pause and never wakes, an expiry included (Planner ruling, Sprint 5 message #365).
     if (memberCount(event) <= 1) return;

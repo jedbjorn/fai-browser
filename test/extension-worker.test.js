@@ -3429,6 +3429,26 @@ test('bundle: a queued bundle of 2 decided from the popup card sends bundle_open
   assert.equal(h.session.approvals.find(item => item.id === first.id)?.id, first.id, 'tab 7\'s bundle still waits');
 });
 
+// Flag #32: an ask whose bundle expired is ended by the daemon, and its next snapshot no longer holds it; nothing in
+// the worker keeps the tab group on FAI ? (WU23's waitsForUser) after that.
+test('bundle: an ask\'s bundle expires (askId on the wire); the group leaves FAI ? once the snapshot drops the ask', async () => {
+  const clock = { offset: 0 };
+  const h = await started({ level: 'reversible', clock, local: { openRightAway: false }, lastWindow: WINDOW_1 });
+  await h.until(() => h.groupOf.has(7));
+  const groupId = h.groupOf.get(7);
+  askOnTask(h);
+  await h.until(() => h.session.bundles?.length === 1 && h.groups.get(groupId)?.title === 'FAI ?');
+  clock.offset += 10 * 60_000 + 1000;
+  askOnTask(h);
+  await h.until(() => bridged(h, 'bundle_decision').length === 1);
+  assert.deepEqual(bridged(h, 'bundle_decision').map(item => [item.decision, item.askId]), [['expired', 'ask-1']]);
+  assert.deepEqual(bridged(h, 'bundle_open').map(item => item.askId), ['ask-1'], 'announced before its expiry');
+  assert.deepEqual(h.session.bundles, []);
+  // The daemon's next snapshot, without the ask (bundle-approvals: "an expired bundle ends its ask").
+  h.push({ type: 'requests', requests: [{ requestId: 'req_1', state: 'active', origins: [ORIGIN], mode: 'reversible' }] });
+  await h.until(() => h.groups.get(groupId)?.title === 'FAI');
+});
+
 // Spec #87 acceptance 9 and flag #18: expiry by the bundle's clock; closing the window is not an answer.
 test('bundle: closing the window leaves it pending; a repeat, a join or Show reopens it once; it expires as a whole', async () => {
   const clock = { offset: 0 };

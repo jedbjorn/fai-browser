@@ -354,19 +354,73 @@ test('approval_pending: the text ends the turn, and drops "Or ask for" once the 
   assert.ok(text(second).endsWith(` ${END_TURN}`));
 });
 
-test('a bundle from another browser or tab pauses nothing; a newer version replaces the older', async t => {
+test('a bundle from another browser pauses nothing; a newer version replaces the older', async t => {
   const ctx = await setup(t);
   assert.equal((await ctx.act()).code, 'approval_pending');
   await ctx.hub.emit({ type: 'bundle_open', browserId: 'b-other-browser-0002', requestId: ctx.requestId, tabId: 1,
     bundleId: 'x', version: 1, askId: null, entryIds: [ENTRY] });
-  await ctx.hub.emit({ type: 'bundle_open', browserId: BROWSER, requestId: ctx.requestId, tabId: 9, bundleId: 'y',
-    version: 1, askId: null, entryIds: [ENTRY] });
   assert.equal((await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }, ctx.as(ctx.owner))).status, 200);
   await ctx.open({ version: 2, entryIds: [ENTRY, OTHER_ENTRY] });
   await ctx.open({ version: 1, entryIds: [ENTRY] });
   await ctx.decide('denied', { version: 2, entryIds: [ENTRY, OTHER_ENTRY] });
   // OTHER_ENTRY no act recorded: only the known action is named.
   assert.deepEqual((await ctx.poll(ctx.owner)).map(wake => [wake.kind, wake.items.length]), [['bundle_denied', 1]]);
+});
+
+// Flag #31: the extension names the tab the action is on, which moves off the lease's home tab (open_tab, switch_tab,
+// a child tab). A bundle there pauses and wakes as one on the home tab does.
+test('a bundle on a task tab other than the lease\'s home tab pauses the owner and wakes once with bundle_denied', async t => {
+  const ctx = await setup(t);
+  assert.equal((await ctx.act()).code, 'approval_pending');
+  await ctx.ask({ mode: 'full' });
+  const askId = (await ctx.view()).ask.id;
+  const bundle = { browserId: BROWSER, requestId: ctx.requestId, tabId: 2, bundleId: 'bundle-tab-2', version: 1, askId,
+    entryIds: [ENTRY] };
+  await ctx.hub.emit({ type: 'bundle_open', ...bundle });
+  assertPaused(await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }, ctx.as(ctx.owner)), ctx.requestId, 'observe');
+  await ctx.hub.emit({ type: 'deny', requestId: ctx.requestId, ask: true, bundled: true, browserId: BROWSER });
+  assert.deepEqual(await ctx.poll(ctx.owner), []);
+  await ctx.hub.emit({ type: 'bundle_decision', ...bundle, decision: 'denied' });
+  const wakes = await ctx.poll(ctx.owner);
+  assert.deepEqual(wakes.map(wake => [wake.kind, wake.items]), [['bundle_denied', [{ type: 'level', level: 'full' },
+    { type: 'action', actionId: ctx.save.id, revision: ctx.offer.revision, commits: false }]]]);
+  assert.equal((await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }, ctx.as(ctx.owner))).status, 200, 'not paused');
+});
+
+// Flag #32: nobody answered the bundle, so no surface shows its ask again. The daemon ends it with the bundle (not a
+// decline: askDeclined stays unset); the requests snapshot drops it and a later ask starts fresh.
+test('an expired bundle ends its ask: gone from the view and the snapshot, not declined, and a later ask does not merge it', async t => {
+  const ctx = await setup(t);
+  const published = () => ctx.hub.published.at(-1)?.find(item => item.requestId === ctx.requestId);
+  assert.equal((await ctx.act()).code, 'approval_pending');
+  await ctx.ask({ mode: 'full' });
+  const askId = (await ctx.view()).ask.id;
+  assert.equal(published()?.ask?.id, askId);
+  await ctx.open({ askId });
+  await ctx.decide('expired', { askId });
+  assert.deepEqual((await ctx.poll(ctx.owner)).map(wake => wake.kind), ['bundle_expired'], 'ruling #365: one wake');
+  const after = await ctx.view();
+  assert.equal(after.ask, undefined);
+  assert.equal(after.askDeclined, undefined, 'an expiry is not a decline');
+  assert.equal(after.grant.level, 'reversible');
+  assert.equal(published()?.ask, undefined, 'the extension\'s snapshot no longer holds it');
+  const again = await ctx.ask({ origins: ['https://help.example'] });
+  assert.equal(again.body.asked, true, JSON.stringify(again.body));
+  const fresh = (await ctx.view()).ask;
+  assert.notEqual(fresh.id, askId);
+  assert.equal(fresh.level, null, 'the expired level did not merge into the new ask');
+});
+
+test('an expired bundle of one ask ends that ask too, with no wake', async t => {
+  const ctx = await setup(t);
+  await ctx.ask({ mode: 'full' });
+  const askId = (await ctx.view()).ask.id;
+  await ctx.open({ askId, entryIds: [] });
+  await ctx.decide('expired', { askId, entryIds: [] });
+  assert.deepEqual(await ctx.poll(ctx.owner), []);
+  const after = await ctx.view();
+  assert.equal(after.ask, undefined);
+  assert.equal(after.askDeclined, undefined);
 });
 
 test('MCP: a paused call returns the approval_open receipt (not an error); status and guide still answer', async t => {
