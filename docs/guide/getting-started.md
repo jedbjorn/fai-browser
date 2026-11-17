@@ -107,15 +107,15 @@ running agent session at the level you choose ([REFERENCE: Invites and wakes](..
 
 ## Levels in one minute
 
-| You see | API | The agent may |
+| You click | API | The agent may |
 |---|---|---|
-| **Read** | `read-only` | follow same-site links, scroll, wait |
-| **Use** | `reversible` / `interactive` | also click buttons, pick options, fill the values you supplied, search, filter, sort, page |
-| **Act** | `full` | also save, send, submit, delete, accept cookies |
-| **Test site** | `testing` | everything incl. sign-in and checkout; only for test origins you listed |
+| **Use** | `read-only` | follow same-site links, scroll, wait, in one task tab |
+| **Act** | `full` | also click buttons, pick options, fill the values you supplied, search, filter, and save, send, submit, delete, accept cookies, in up to eight task tabs |
+| **Test site** | `testing` | Act, plus sign-in and checkout; only for test origins you listed |
 
-Details: [safety-model.md](safety-model.md). Risky clicks (a purchase, a delete, "show API key") additionally ask you:
-[approvals.md](approvals.md).
+At Act, a Send, Submit, Save or Delete click runs without asking again. Purchases, credential actions ("show API key"),
+uploads and a committing Enter still ask you: [approvals.md](approvals.md). The full table of what each level allows,
+asks or refuses is [Guardrails by level](safety-model.md#guardrails-by-level).
 
 ## Without a browser or key
 

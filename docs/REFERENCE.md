@@ -1514,6 +1514,7 @@ actions and save, send, submit, delete and cookie acceptance under the existing 
 and policy protections. Both buttons approve directly, even when a legacy request asks for a lower mode.
 There is no Read/View option, level dropdown, default-level preference or separate tab-access preference.
 Only the user’s explicit approval grants Act; existing leases are never silently elevated.
+For which protections still apply at Use, Act and Test site, and which actions run without asking, see [Guardrails by level](guide/safety-model.md#guardrails-by-level).
 
 The agent still asks with `mode` (MCP/daemon, CLI `--mode`, SDK). The legacy modes below remain valid as
 call limits. Approval records the grant (`grant {level, testing, grantedAt}`); the request’s default follows

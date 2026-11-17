@@ -274,6 +274,7 @@ and exit code.
   on approved sites. Both buttons approve directly. Your explicit click sets the grant; existing grants
   are never silently raised. Legacy API modes remain supported as limits on individual calls.
   The receipt’s `permissions` block reports what was requested, granted and effective.
+  At Act, a Send, Submit, Save or Delete click does not ask again; see [Guardrails by level](docs/guide/safety-model.md#guardrails-by-level).
 - **Payments require your approval.** With the agent driving and the Approve gate enabled,
   a payment action waits for your **Approve once** click. With the gate off, purchases are refused
   outside testing mode. Sign-in pages are handed
@@ -348,7 +349,7 @@ permissions take no port: approving `http://127.0.0.1:8080` grants `http://127.0
 
 ## Status and roadmap
 
-FAI Browser is an **early release (v0.10.0)**: the daemon, MCP server, skill, guardrails and benchmark
+FAI Browser is an **early release (v0.12.0)**: the daemon, MCP server, skill, guardrails and benchmark
 harness work and are tested, and interfaces may still change. Open items:
 
 - **Extension UX:** a side panel with a pending-request badge, live run view and real pause and
