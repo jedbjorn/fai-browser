@@ -33,7 +33,7 @@ jobs:
       - name: Check required files and local references
         run: |
           set -eu
-          for f in index.html 404.html styles.css hero.css app.js favicon.svg media/social-preview.png media/demo.mp4 media/approval-card.png media/approve-once.png media/secret-placeholders.png media/evidence/public-pilots-2026-11-07.json media/evidence/gmail-case-2026-11-07.json; do
+          for f in index.html 404.html styles.css hero.css app.js favicon.svg media/social-preview.png media/promo.mp4 media/promo-poster.jpg media/approval-card.png media/approve-once.png media/secret-placeholders.png media/evidence/public-pilots-2026-11-07.json media/evidence/gmail-case-2026-11-07.json; do
             test -s "site/$f" || { echo "missing site/$f"; exit 1; }
           done
           for ref in styles.css hero.css app.js favicon.svg; do

@@ -91,21 +91,6 @@
     });
   });
 
-  document.querySelectorAll('[data-youtube]').forEach(function (facade) {
-    facade.addEventListener('click', function (event) {
-      if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      event.preventDefault();
-      var frame = document.createElement('iframe');
-      frame.src = 'https://www.youtube-nocookie.com/embed/' + facade.dataset.youtube + '?autoplay=1&rel=0';
-      frame.title = 'FAI Browser film';
-      frame.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
-      frame.allowFullscreen = true;
-      frame.referrerPolicy = 'strict-origin-when-cross-origin';
-      facade.replaceWith(frame);
-      frame.focus();
-    });
-  });
-
   document.querySelectorAll('[data-metric]').forEach(function (button) {
     button.addEventListener('click', function () {
       var metric = button.dataset.metric;

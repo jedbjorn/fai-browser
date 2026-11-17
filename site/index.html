@@ -90,7 +90,7 @@ try { var t = localStorage.getItem('fai-theme'); if (t === 'light' || t === 'dar
         <p class="hero-lede">Give your coding agent a browser task. Keep control of where it goes and what it can do. You approve the sites and permission level; FAI enforces that scope on every action and reports which requested checks passed.</p>
         <div class="button-row">
           <a class="button button-primary" href="#install">Set up FAI Browser <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
-          <a class="text-link" href="#film"><svg aria-hidden="true"><use href="#i-play"/></svg>Watch the 60-second film</a>
+          <a class="text-link" href="#demo"><svg aria-hidden="true"><use href="#i-play"/></svg>Watch the 60-second film</a>
         </div>
         <p class="hero-note"><strong>Agent direct by default.</strong> No separate FAI model key or FAI provider calls. Your agent still uses its own model. Works through MCP with Claude Code, Codex and OpenCode.</p>
       </div>
@@ -107,23 +107,6 @@ try { var t = localStorage.getItem('fai-theme'); if (t === 'light' || t === 'dar
       <div><strong>0</strong><span>FAI provider calls in Agent direct</span></div>
       <div><strong>127.0.0.1</strong><span>local FAI service</span></div>
       <div><strong>MIT</strong><span>open-source license</span></div>
-    </div>
-  </section>
-
-  <section class="demo-section film-section" id="film" aria-labelledby="film-title">
-    <div class="shell">
-      <div class="section-heading demo-heading reveal">
-        <div><p class="eyebrow">The film / One minute</p><h2 id="film-title">The whole idea,<br>in sixty seconds.</h2></div>
-        <div><p>You approve the tab, set the limits and keep secrets out of the agent’s view. The work waits for your word.</p><span class="demo-meta">60 seconds · music · plays from YouTube</span></div>
-      </div>
-      <figure class="demo-frame reveal">
-        <div class="demo-chrome" aria-hidden="true"><span></span><span></span><span></span><b>FAI Browser / The film</b><i>PRODUCT OVERVIEW</i></div>
-        <a class="video-facade" href="https://www.youtube.com/watch?v=bVypJiGiUF4" data-youtube="bVypJiGiUF4" aria-label="Play the 60-second FAI Browser film from YouTube">
-          <img src="media/promo-poster.jpg" width="1280" height="720" alt="" loading="lazy" decoding="async">
-          <span class="video-play"><svg aria-hidden="true"><use href="#i-play"/></svg>Play film</span>
-        </a>
-        <figcaption><span>Nothing loads from YouTube until you press play; it then plays in privacy-enhanced mode.</span><a href="#demo">Prefer the recorded walkthrough? <svg aria-hidden="true"><use href="#i-arrow"/></svg></a></figcaption>
-      </figure>
     </div>
   </section>
 
@@ -180,21 +163,17 @@ try { var t = localStorage.getItem('fai-theme'); if (t === 'light' || t === 'dar
   <section class="demo-section" id="demo" aria-labelledby="demo-title">
     <div class="shell">
       <div class="section-heading demo-heading reveal">
-        <div><p class="eyebrow">Product film / Local test shop</p><h2 id="demo-title">See where the agent stops<br>and you begin.</h2></div>
-        <div><p>Approval, verified checkout and secret redaction in a genuine local Firefox session.</p><span class="demo-meta">81 seconds · silent · on-screen captions</span></div>
+        <div><p class="eyebrow">The film / One minute</p><h2 id="demo-title">See where the agent stops<br>and you begin.</h2></div>
+        <div><p>You approve the tab, set the limits and keep secrets out of the agent’s view. The work waits for your word.</p><span class="demo-meta">60 seconds · music</span></div>
       </div>
       <figure class="demo-frame reveal">
-        <div class="demo-chrome" aria-hidden="true"><span></span><span></span><span></span><b>FAI Browser / Northwind test shop</b><i>RECORDED PRODUCT DEMO</i></div>
-        <video controls playsinline preload="none" poster="media/approve-once.png" width="1920" height="1080" aria-label="FAI Browser demo showing tab approval, payment approval, verified checkout and secret redaction">
-          <source src="media/demo.mp4" type="video/mp4">
-          <a href="media/demo.mp4">Download the demo video</a>.
+        <div class="demo-chrome" aria-hidden="true"><span></span><span></span><span></span><b>FAI Browser / The film</b><i>PRODUCT OVERVIEW</i></div>
+        <video controls playsinline preload="none" poster="media/promo-poster.jpg" width="1920" height="1080" aria-label="FAI Browser film: tab approval, permission levels, pause and stop, secret redaction and waiting for your word">
+          <source src="media/promo.mp4" type="video/mp4">
+          <a href="media/promo.mp4">Download the film</a>.
         </video>
-        <figcaption><span>Watch the actual approval cards and returned receipts.</span><a href="https://github.com/jedbjorn/fai-browser/blob/main/docs/guide/demo.md">Read capture provenance <svg aria-hidden="true"><use href="#i-arrow"/></svg></a></figcaption>
+        <figcaption><span>All keys shown are fake fixtures.</span><a href="https://www.youtube.com/watch?v=bVypJiGiUF4">Watch on YouTube <svg aria-hidden="true"><use href="#i-arrow"/></svg></a></figcaption>
       </figure>
-      <div class="provenance reveal">
-        <span class="note-label">What you are seeing</span>
-        <p>An edited presentation of real Firefox 159 development-build UI on local fixtures. A scripted MCP client made real calls and automation clicked the approval UI; this was not a live model-driven session. All keys are fake, no real purchase occurred, and the footage is not of the current signed release.</p>
-      </div>
     </div>
   </section>
 
