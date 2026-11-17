@@ -1,18 +1,18 @@
 # Site media and benchmark data
 
-The PNG and MP4 files (except the promo poster) are copies of the genuine captures in `docs/media/`. Do not replace them
+The PNG files are copies of the genuine captures in `docs/media/`. Do not replace them
 with illustrative product screenshots or footage of personal browser sessions.
 
 | File | Use | Provenance |
 |---|---|---|
-| `demo.mp4` | Product demo | Edited, silent presentation of a genuine Firefox 159 development-build session on local fixtures; scripted MCP calls and automated approval clicks |
+| `promo.mp4` | The film in `#demo` | 60-second promo film with music (also on YouTube), re-encoded H.264 CRF 24 for the web; built from add-on UI captures and fixture pages, fake keys and accounts |
 | `approval-card.png` | Hero tab request | Unmodified development-add-on UI capture; local test origin and fake task |
 | `approve-once.png` | Demo poster and payment feature | Unmodified development-add-on UI capture; fake local shop and $142.80 fixture total |
 | `secret-placeholders.png` | Redaction feature | Verbatim MCP digest excerpt using repository fixture secrets |
 | `redacted-screenshot.png` | Available redaction capture | Firefox page beside the actual FAI-redacted MCP image; fake fixture data |
 | `firefox-launcher.png` | Available launcher capture | Actual signed 0.3.0 add-on in the dedicated FAI profile |
 | `social-preview.png` | Open Graph and Twitter card | Project social graphic, 1280 × 640 |
-| `promo-poster.jpg` | Poster for the YouTube film in `#film` | End card of the 60-second promo film (frame at 55 s), 1280 × 720; the film itself is served from YouTube only after the visitor presses play |
+| `promo-poster.jpg` | Poster for `promo.mp4` | End card of the film (frame at 55 s), 1280 × 720 |
 
 The full capture record, limitations and media hashes are in `docs/guide/demo.md` and
 `docs/media/manifest.json`. Dark site themes do not recolour the light product captures.
@@ -28,5 +28,5 @@ latency dominant; cost is list/API-equivalent pricing, not a subscription invoic
 
 The separate twelve-page opening-token evidence is hard-coded from the release 0.3.1
 `bench/tokens/results-real-0.3.1` corpus: medians of 1,147 versus 11,786.5, a 90.27% reduction
-displayed as 90.3%. It measures output size, not task success. The demo retains its historical
+displayed as 90.3%. It measures output size, not task success. The original demo (`docs/media/demo.mp4`) retains its historical
 release 0.3.0 chart with the earlier 1,130 median.
