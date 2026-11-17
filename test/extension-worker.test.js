@@ -1024,8 +1024,8 @@ test('a child_tab pause names the child\'s origin only, also once it leaves abou
 });
 
 const multiLease = { id: LEASE_ID, tabId: 7, requestId: 'req_1', tabMode: 'multiple' };
-async function multipleTask() {
-  return started({ level: 'full', hostGrants: [`${ORIGIN}/*`], local: { tabMode: 'single' } });
+async function multipleTask(options = {}) {
+  return started({ level: 'full', hostGrants: [`${ORIGIN}/*`], local: { tabMode: 'single' }, ...options });
 }
 async function taskOpen(h, url = `${ORIGIN}/next`, lease = multiLease) {
   const id = h.command('execute', { action: { type: 'open_tab', url }, expectedRevision: 'doc:1' }, { lease });
@@ -3429,6 +3429,33 @@ test('bundle: a queued bundle of 2 decided from the popup card sends bundle_open
   assert.equal(h.session.approvals.find(item => item.id === first.id)?.id, first.id, 'tab 7\'s bundle still waits');
 });
 
+// Left open by WU22: a bundle queued behind another tab's window never opened (so never announced) and expires: the
+// daemon hears bundle_open first, then bundle_decision expired (announceBundle inside expireBundle).
+test('bundle: a queued bundle of 2 that expires sends bundle_open before bundle_decision expired', async () => {
+  const clock = { offset: 0 };
+  const h = await multipleTask({ clock });
+  gatedControls(h);
+  const at = () => Date.now() + clock.offset + 30_000;
+  await pendingEntry(h, {}, at());
+  assert.equal((await taskOpen(h)).error, undefined);
+  const id = h.command('execute', { action: { type: 'switch_tab', tab: 't1' }, expectedRevision: 'doc:1' }, { lease: multiLease });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === id)).error, undefined);
+  const second = await pendingEntry(h, { target: '2', cls: 'submit' }, at());
+  const third = await pendingEntry(h, { target: '3' }, at());
+  await h.until(() => h.session.bundles?.find(bundle => bundle.tabId === 9)?.entries.length === 2);
+  assert.equal(approveWindows(h).length, 1, 'tab 9\'s bundle waits behind tab 7\'s window');
+  const queued = h.session.bundles.find(bundle => bundle.tabId === 9);
+  assert.equal(h.sent.some(m => m.type === 'bundle_open' && m.bundleId === queued.id), false, 'not announced yet');
+  clock.offset += 10 * 60_000 + 1000;
+  h.push({ type: 'requests', requests: [] });
+  await h.until(() => bridged(h, 'bundle_decision').some(item => item.bundleId === queued.id));
+  const wire = h.sent.filter(m => ['bundle_open', 'bundle_decision'].includes(m.type) && m.bundleId === queued.id);
+  assert.deepEqual(wire.map(m => [m.type, m.version, [...m.entryIds].sort(), m.decision]), [
+    ['bundle_open', queued.version, [second.id, third.id].sort(), undefined],
+    ['bundle_decision', queued.version, [second.id, third.id].sort(), 'expired'],
+  ]);
+});
+
 // Flag #32: an ask whose bundle expired is ended by the daemon, and its next snapshot no longer holds it; nothing in
 // the worker keeps the tab group on FAI ? (WU23's waitsForUser) after that.
 test('bundle: an ask\'s bundle expires (askId on the wire); the group leaves FAI ? once the snapshot drops the ask', async () => {
@@ -3513,6 +3540,89 @@ test('bundle: closing the window leaves it pending; a repeat, a join or Show reo
   await sync();
   expired = bridged(h, 'bundle_decision');
   assert.deepEqual(expired.at(-1).entryIds, [next.id]);
+  assert.deepEqual(h.session.bundles, []);
+});
+
+// Spec #87 "Expiry and closing", AC 9, flag #18: while a bundle is open the agent's calls never reach the worker (the
+// daemon answers each with the approval_open receipt); the request snapshot's count of them (pausedCallSeq) does. A rise
+// brings a window the user closed back once; one still open, answered or expired stays as it is.
+function pausedSnapshot(h, seq, ask = null) {
+  h.push({ type: 'requests', requests: [{ requestId: 'req_1', state: 'active', origins: [ORIGIN], mode: 'reversible',
+    ...(seq ? { pausedCallSeq: seq } : {}),
+    ...(ask ? { ask: { id: 'ask-1', level: 'full', origins: [], access: [], at: new Date().toISOString(), ...ask } } : {}) }] });
+}
+
+test('bundle: after the user closed its window, the next paused repeat, wait or join reopens it once; never while open', async () => {
+  const h = await started({ level: 'reversible', hostGrants: [`${ORIGIN}/*`] });
+  gatedControls(h);
+  pausedSnapshot(h, 0);
+  await sleep(20);
+  await pendingEntry(h);
+  await h.until(() => approveWindows(h).length === 1);
+  const [bundle] = h.session.bundles;
+  // Still open: a paused call opens nothing more.
+  pausedSnapshot(h, 1);
+  await sleep(30);
+  assert.equal(approveWindows(h).length, 1, 'no second window while it is open');
+  // Closed by hand: pending, and nothing reopens by itself.
+  h.userClose(31);
+  await sleep(20);
+  assert.equal(h.session.bundles[0].shown, false);
+  pausedSnapshot(h, 1);
+  await sleep(30);
+  assert.equal(approveWindows(h).length, 1, 'no rise, no window');
+  // The agent repeats its act (paused at the daemon): back once, the same bundle and version.
+  pausedSnapshot(h, 2);
+  await h.until(() => approveWindows(h).length === 2);
+  assert.ok(approveWindows(h)[1].url.endsWith(`bundle=${bundle.id}`));
+  assert.equal(h.session.bundles[0].version, bundle.version);
+  assert.equal(approveWindows(h)[1].focused, true);
+  // Closed again: no loop. The agent's wait (paused): back once.
+  h.userClose(32);
+  await sleep(20);
+  pausedSnapshot(h, 2);
+  await sleep(30);
+  assert.equal(approveWindows(h).length, 2, 'closing again keeps it closed until the next call');
+  pausedSnapshot(h, 3);
+  await h.until(() => approveWindows(h).length === 3);
+  await sleep(30);
+  assert.equal(approveWindows(h).length, 3, 'once per rise');
+  // Closed again: the agent's open asking for more joins (its ask and the count's rise in one snapshot): back once.
+  h.userClose(33);
+  await sleep(20);
+  pausedSnapshot(h, 4, {});
+  await h.until(() => approveWindows(h).length === 4);
+  await sleep(30);
+  assert.equal(approveWindows(h).length, 4, 'one window for the join and its paused call');
+  assert.equal(h.session.bundles[0].ask?.id, 'ask-1');
+  // Answered (Deny): a later paused call brings nothing back.
+  const shown = h.session.bundles[0];
+  const reply = await h.send({ type: 'bundle_decision', bundleId: shown.id, version: shown.version, decision: 'deny' }, APPROVE_PAGE);
+  assert.equal(reply.error, undefined, JSON.stringify(reply));
+  await h.until(() => h.session.bundles.length === 0);
+  pausedSnapshot(h, 5);
+  await sleep(30);
+  assert.equal(approveWindows(h).length, 4, 'nothing after an answer');
+  assert.deepEqual(h.session.bundles, []);
+});
+
+test('bundle: a paused call after its bundle expired, with the window closed, reopens nothing', async () => {
+  const clock = { offset: 0 };
+  const h = await started({ level: 'full', clock });
+  gatedControls(h);
+  pausedSnapshot(h, 0);
+  await sleep(20);
+  await pendingEntry(h, {}, Date.now() + 30_000);
+  await h.until(() => approveWindows(h).length === 1);
+  h.userClose(31);
+  await sleep(20);
+  clock.offset += 5 * 60_000 + 1000;
+  pausedSnapshot(h, 1);
+  await h.until(() => bridged(h, 'bundle_decision').length === 1);
+  assert.equal(bridged(h, 'bundle_decision')[0].decision, 'expired');
+  pausedSnapshot(h, 2);
+  await sleep(30);
+  assert.equal(approveWindows(h).length, 1, 'no window after the expiry');
   assert.deepEqual(h.session.bundles, []);
 });
 

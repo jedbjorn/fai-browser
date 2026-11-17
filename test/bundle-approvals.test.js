@@ -1,4 +1,4 @@
-// Combined approvals, daemon and MCP side (spec #87 AC 3, 4, 7, 8, 13; bridge contract decision #51): while the
+// Combined approvals, daemon and MCP side (spec #87 AC 3, 4, 7, 8, 9, 13; the Planner's bridge contract, decision #42): while the
 // extension holds a bundle window open for a task tab (bundle_open), the request's owner session is paused (every
 // observe, act, open, wait and evidence call gets the approval_open receipt and runs nothing); an ask on the same
 // request joins first. The bundle's decision (bundle_decision) ends the pause and wakes the owner once, with ids only,
@@ -13,6 +13,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createDaemon } from '../src/daemon.js';
 import { bundleEvent } from '../src/bridge.js';
 import { approvalOpenText, directNext } from '../src/result.js';
+import { wakeText } from '../src/wake.js';
 import { call, createFakeHub } from './helpers/fake-hub.js';
 import { spawnMcp } from './helpers/mcp-harness.js';
 import { mcpData } from './helpers/mcp-result.js';
@@ -242,14 +243,32 @@ test('AC8: an expired bundle wakes once with bundle_expired; the pause ends', as
   assert.equal((await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }, ctx.as(ctx.owner))).status, 200);
 });
 
-test('AC8: a bundle of one only ends the pause when it is decided; it never wakes, an expiry included', async t => {
+// Planner, Sprint 5 message #395 (replacing that clause of ruling #365): approval_pending told the agent the answer
+// wakes it, so an expired bundle of one wakes once with bundle_expired; approved and denied keep today's single wakes.
+test('AC8: an expired bundle of one entry wakes once with the exact bundle_expired text; the pause ends', async t => {
   const ctx = await setup(t);
   assert.equal((await ctx.act()).code, 'approval_pending');
   await ctx.open();
   assertPaused(await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }, ctx.as(ctx.owner)), ctx.requestId, 'observe');
   await ctx.decide('expired');
-  assert.deepEqual(await ctx.poll(ctx.owner), []);
+  const wakes = await ctx.poll(ctx.owner);
+  assert.deepEqual(wakes.map(wake => [wake.kind, wake.requestId]), [['bundle_expired', ctx.requestId]]);
+  assert.equal(wakeText(wakes[0]), `[FAI Browser] Your approval on tab request ${ctx.requestId} (action ${ctx.save.id}) `
+    + 'expired without an answer. Nothing was granted or run. Tell the user; ask again only if they want it.');
   assert.equal((await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }, ctx.as(ctx.owner))).status, 200);
+  // Once: the same decision again wakes nobody.
+  await ctx.decide('expired');
+  assert.deepEqual(await ctx.poll(ctx.owner), []);
+});
+
+test('AC8: a bundle of one approved or denied still never wakes from its bundle_decision', async t => {
+  for (const decision of ['approved', 'denied']) {
+    const ctx = await setup(t);
+    assert.equal((await ctx.act()).code, 'approval_pending');
+    await ctx.open();
+    await ctx.decide(decision);
+    assert.deepEqual(await ctx.poll(ctx.owner), [], decision);
+  }
 });
 
 test('AC8: no wake when the act that opened the bundle still waited and got the answer; one when it had ended pending', async t => {
@@ -411,16 +430,138 @@ test('an expired bundle ends its ask: gone from the view and the snapshot, not d
   assert.equal(fresh.level, null, 'the expired level did not merge into the new ask');
 });
 
-test('an expired bundle of one ask ends that ask too, with no wake', async t => {
+test('an expired bundle of one ask ends that ask too, and wakes once with the exact bundle_expired text', async t => {
   const ctx = await setup(t);
   await ctx.ask({ mode: 'full' });
   const askId = (await ctx.view()).ask.id;
   await ctx.open({ askId, entryIds: [] });
   await ctx.decide('expired', { askId, entryIds: [] });
-  assert.deepEqual(await ctx.poll(ctx.owner), []);
+  const wakes = await ctx.poll(ctx.owner);
+  assert.deepEqual(wakes.map(wake => wake.kind), ['bundle_expired']);
+  assert.equal(wakeText(wakes[0]), `[FAI Browser] Your approval on tab request ${ctx.requestId} (level Act (full)) `
+    + 'expired without an answer. Nothing was granted or run. Tell the user; ask again only if they want it.');
   const after = await ctx.view();
   assert.equal(after.ask, undefined);
   assert.equal(after.askDeclined, undefined);
+});
+
+test('an expired bundle of one ask wakes nobody while the open that asked still waits for it', async t => {
+  const ctx = await setup(t);
+  await ctx.ask({ mode: 'full' });
+  const askId = (await ctx.view()).ask.id;
+  const waiting = ctx.api('POST', '/v1/wait', { requestId: ctx.requestId, ask: true, maxMs: 5000 }, ctx.as(ctx.owner));
+  await delay(20);
+  await ctx.open({ askId, entryIds: [] });
+  await ctx.decide('expired', { askId, entryIds: [] });
+  const waited = await waiting;
+  assert.equal(waited.status, 200);
+  assert.equal(waited.body.request.ask, undefined, 'the waiting call learns the ask ended');
+  assert.deepEqual(await ctx.poll(ctx.owner), []);
+});
+
+// Spec #87 "Expiry and closing", AC 9, flag #18: the extension never sees a paused call, so the daemon counts the
+// owner's paused calls on the request snapshot (pausedCallSeq); a rise brings a closed bundle window back once.
+test('AC9: each kind of paused call from the owner raises pausedCallSeq on the snapshot; nothing else does', async t => {
+  const ctx = await setup(t);
+  const first = await ctx.actRaw();
+  assert.equal(first.body.result.code, 'approval_pending');
+  const runId = first.body.runId;
+  const seq = () => ctx.hub.published.at(-1)?.find(item => item.requestId === ctx.requestId)?.pausedCallSeq ?? 0;
+  await ctx.open();
+  assert.equal(seq(), 0);
+  assert.equal((await ctx.view()).pausedCallSeq, undefined, 'absent until a call is paused');
+  const paused = [
+    ['observe', () => ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }, ctx.as(ctx.owner))],
+    ['act (a repeat)', () => ctx.actRaw()],
+    ['wait', () => ctx.api('POST', '/v1/wait', { requestId: ctx.requestId, maxMs: 1000 }, ctx.as(ctx.owner))],
+    ['wait (a finished run)', () => ctx.api('POST', '/v1/wait', { runId, maxMs: 0 }, ctx.as(ctx.owner))],
+    ['evidence', () => ctx.api('GET', `/v1/runs/${runId}/evidence?step=0`, undefined, ctx.as(ctx.owner))],
+    ['open (another request)', () => ctx.api('POST', '/v1/requests', { origins: ['https://other.example'],
+      reason: 'Something else' }, ctx.as(ctx.owner))],
+    ['open asking more (a join)', () => ctx.ask({ mode: 'full' })],
+  ];
+  for (const [i, [what, call]] of paused.entries()) {
+    assertPaused(await call(), ctx.requestId, what);
+    assert.equal(seq(), i + 1, `${what} raised it once`);
+  }
+  // Not otherwise: calls that go on, and a paused call from anyone but the owner.
+  assert.equal((await ctx.api('POST', '/v1/wait', { requestId: ctx.requestId, maxMs: 0 }, ctx.as(ctx.owner))).status, 200);
+  assert.equal((await ctx.api('GET', '/v1/status', undefined, ctx.as(ctx.owner))).status, 200);
+  assertPaused(await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }, ctx.as(ctx.bystander)), ctx.requestId,
+    'another session');
+  assertPaused(await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }), ctx.requestId, 'a caller without a session');
+  assert.equal(seq(), paused.length);
+  assert.equal((await ctx.view()).pausedCallSeq, paused.length);
+  // Decided: nothing is paused, so nothing rises.
+  await ctx.decide('denied', { askId: (await ctx.view()).ask.id });
+  assert.equal((await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId }, ctx.as(ctx.owner))).status, 200);
+  assert.equal(seq(), paused.length);
+});
+
+// REV2 WU21 note 1: the waiting act got its approval and ended before the extension's bundle_decision reached the
+// daemon. That call had the answer: the decision wakes nobody. An act that ended pending still gets its bundle's wake.
+test('AC8: an act naming a bundled entry that ended before its bundle_decision arrived means no wake', async t => {
+  for (const ending of ['approved', 'denied', 'pending']) {
+    const ctx = await setup(t);
+    await ctx.ask({ mode: 'full' });
+    const askId = (await ctx.view()).ask.id;
+    let answer;
+    ctx.answers.push(() => new Promise(resolve => {
+      answer = resolve;
+    }));
+    const running = ctx.act();
+    while (!answer) await delay(5);
+    await ctx.open({ askId });
+    await ctx.hub.emit({ type: 'lease', requestId: ctx.requestId, tabId: 1, origin: ORIGIN, level: 'full', ask: true, askId,
+      bundled: true, browserId: BROWSER });
+    answer(ending === 'approved' ? { decision: 'approved', approvalId: 'in-time', entryId: ENTRY }
+      : { decision: ending, entryId: ENTRY });
+    const result = await running;
+    assert.equal(result.code === 'approval_pending', ending === 'pending', `${ending}: ${result.code}`);
+    // The decision arrives only now, after the act ended.
+    await ctx.decide(ending === 'denied' ? 'denied' : 'approved', { askId });
+    const wakes = await ctx.poll(ctx.owner);
+    if (ending === 'pending') assert.deepEqual(wakes.map(wake => [wake.kind, wake.items.length]), [['bundle_approved', 2]]);
+    else assert.deepEqual(wakes, [], `${ending}: the call got the answer`);
+  }
+});
+
+// REV2 WU21 note 2: the exemptions for the open that asked (its wait for the ask, the observe after it) hold only for an
+// ask actually in the bundle or a wait for it already holding, never for the caller's flag alone.
+test('AC7: wait {ask:true} and observe {afterAsk:true} are paused unless an ask is in the bundle or awaited', async t => {
+  const ctx = await setup(t);
+  assert.equal((await ctx.act()).code, 'approval_pending');
+  await ctx.open();
+  const observes = ctx.bridge.observes;
+  assertPaused(await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId, afterAsk: true }, ctx.as(ctx.owner)),
+    ctx.requestId, 'observe afterAsk without an ask');
+  assertPaused(await ctx.api('POST', '/v1/wait', { requestId: ctx.requestId, ask: true, maxMs: 0 }, ctx.as(ctx.owner)),
+    ctx.requestId, 'wait ask without an ask');
+  assertPaused(await ctx.api('POST', '/v1/wait', { requestId: ctx.requestId, ask: true, maxMs: 1000 }, ctx.as(ctx.owner)),
+    ctx.requestId, 'wait ask without an ask');
+  assert.equal(ctx.bridge.observes, observes, 'nothing observed');
+  // A bundle whose askId names no ask of the request is not an ask in the bundle either.
+  await ctx.open({ askId: 'abc123', version: 2 });
+  assertPaused(await ctx.api('POST', '/v1/observe', { requestId: ctx.requestId, afterAsk: true }, ctx.as(ctx.owner)),
+    ctx.requestId, 'observe afterAsk with an unknown ask id');
+  assert.equal(ctx.bridge.observes, observes, 'nothing observed');
+});
+
+test('AC7: a wait for the ask that already holds lets the next round go on while the ask has not joined yet', async t => {
+  const ctx = await setup(t);
+  assert.equal((await ctx.act()).code, 'approval_pending');
+  await ctx.ask({ mode: 'full' });
+  const askId = (await ctx.view()).ask.id;
+  const waiting = ctx.api('POST', '/v1/wait', { requestId: ctx.requestId, ask: true, maxMs: 5000 }, ctx.as(ctx.owner));
+  await delay(20);
+  // The extension announced the tab's bundle before the ask joined it.
+  await ctx.open();
+  const round = await ctx.api('POST', '/v1/wait', { requestId: ctx.requestId, ask: true, maxMs: 0 }, ctx.as(ctx.owner));
+  assert.equal(round.status, 200, JSON.stringify(round.body).slice(0, 300));
+  await ctx.open({ askId, version: 2 });
+  await ctx.hub.emit({ type: 'lease', requestId: ctx.requestId, tabId: 1, origin: ORIGIN, level: 'full', ask: true, askId,
+    bundled: true, browserId: BROWSER });
+  assert.equal((await waiting).status, 200);
 });
 
 test('MCP: a paused call returns the approval_open receipt (not an error); status and guide still answer', async t => {

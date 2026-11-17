@@ -1335,6 +1335,11 @@ export interface RequestView {
   grant: Grant | null;
   activeRunId: string | null;
   lastRunId: string | null;
+  /**
+   * How many of the owner's calls a combined approval paused (spec #87); absent while none was. It rises on each one,
+   * and the extension opens again an approval window the user closed.
+   */
+  pausedCallSeq?: number;
   /** The live agent session that owns the request (made it through MCP, or joined its invite). */
   owner?: { sessionId: string; host: string; repo: string } | null;
   /** A tab the user invited an agent to from the popup: the invite and its wake. */

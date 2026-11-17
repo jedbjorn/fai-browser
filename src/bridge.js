@@ -171,7 +171,7 @@ export function actionDecision(message) {
   return { entryId: message.entryId, decision: message.decision };
 }
 
-// A combined approval (spec #87, Planner bridge contract decision #51): the extension's bundle window for one task tab.
+// A combined approval (spec #87; the Planner's bridge contract, decision #42): the extension's bundle window for one task tab.
 // bundle_open {requestId, tabId, bundleId, version, askId|null, entryIds} when it opens and whenever its items change;
 // bundle_decision with decision approved, denied or expired once, after every item was applied. Ids only: anything else
 // a message carries is dropped. Null when it is not one.
