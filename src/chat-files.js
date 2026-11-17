@@ -19,7 +19,9 @@ const MIME = /^[\w.+-]{1,60}\/[\w.+-]{1,100}$/;
 // Names a provider's program would load from its working folder as instructions or config (Claude's CLAUDE.md, Codex's
 // and OpenCode's AGENTS.md, OpenCode's opencode.json): an attached file never takes one of them.
 const PROGRAM_FILES = /^(?:agents(?:\.override)?\.md|claude(?:\.local)?\.md|opencode\.jsonc?)$/i;
-const WINDOWS_RESERVED = /^(?:con|prn|aux|nul|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])(?:\..*)?$/i;
+// Windows reads a name as a device when the part before its first dot, trailing spaces dropped, is a device name:
+// "con.txt", "con .txt" and "nul. .txt" all open the device.
+const WINDOWS_RESERVED = /^(?:con|prn|aux|nul|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3]) *(?:\..*)?$/i;
 
 export class ChatFileError extends Error {
   constructor(code, message) {
