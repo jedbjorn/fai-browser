@@ -15,3 +15,13 @@
 .approval-setting input[type="checkbox"] { flex: 0 0 auto; width: 31px; height: 31px; margin: 0; }
 .approval-setting-name { flex: 0 1 auto; }
 .approval-setting .field-help { margin: 0 0 8px 39px; }
+/* Approval bundles: each item on its own line, its tag first; the costly ones in the warning colour. */
+.bundle-items { margin: 10px 0; padding: 0; list-style: none; font-size: 12px; }
+.bundle-item { margin: 0 0 8px; }
+.bundle-line { margin: 0; overflow-wrap: anywhere; font-weight: 600; }
+.bundle-note { margin: 2px 0 0 4px; color: var(--muted, #6b6359); font-size: 11px; overflow-wrap: anywhere; }
+.bundle-tag { display: inline-block; padding: 1px 5px; border: 1px solid var(--line, #d8d0c4); border-radius: 4px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.04em; }
+.bundle-warn { border-color: #e7b9b1; background: var(--danger-soft, #fbeae7); color: var(--danger, #b3261e); }
+.bundle-summary, .bundle-queue { font-size: 12px; }
+.bundle-headline { font-size: 13px; }

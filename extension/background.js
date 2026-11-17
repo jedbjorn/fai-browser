@@ -140,6 +140,8 @@ const HTTP_PATHS = {
   agents: '/agents',
   approval: '/approval',
   action_decision: '/action-decision',
+  bundle_open: '/bundle-open',
+  bundle_decision: '/bundle-decision',
   ...Object.fromEntries([...PANEL_MESSAGES].map(type => [type, `/${type.replaceAll('_', '-')}`])),
 };
 const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
@@ -842,31 +844,22 @@ function setRequests(list, browsers) {
         self: item.self === true || (typeof item.id === 'string' && item.id === identity?.id) }));
     publishConnection();
   }
-  storeSession({ requests });
+  syncBundles();
   updateBadge();
   ignore(expireArms(true));
   promptChain = promptChain.then(showApproval).catch(() => {});
 }
 
-// The approval UI opens in the real toolbar popup when the browser permits it. Chrome before 127 has no openPopup;
-// Firefox before 149 rejects it without a user gesture. Their fallback is the same popup page in a small window near
-// the last-focused browser window's toolbar, never a centered dialog. Requests already shown are kept in
-// storage.session, so a worker restart does not show them again. Off under Permissions (approvalWindow: false).
+// The request window: the popup page in a small window of its own near the last-focused browser window's toolbar, never
+// a centered dialog and never the toolbar popup (spec #87 "Approvals are always popups": the transient toolbar popup
+// closes at the first click elsewhere). Requests already shown are kept in storage.session, so a worker restart does
+// not show them again. Off under Permissions (approvalWindow: false). The agent's ask for more on the task this browser
+// runs is not shown here: it joins the tab's approval bundle (approve.html, see "Approval bundles").
 const APPROVAL_PAGE = 'popup.html?window=1';
 const APPROVAL_SIZE = { width: 420, height: 620 };
 const POPUP_WINDOW_INSET = { right: 24, top: 90 };
 const SHOWN_KEEP = 100;
 let promptChain = Promise.resolve();
-
-async function openToolbarPopup() {
-  if (typeof chrome.action?.openPopup !== 'function') return false;
-  try {
-    await chrome.action.openPopup();
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function popupWindowPlacement(size) {
   const parent = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => null);
@@ -893,7 +886,7 @@ async function showApproval() {
   const fresh = pending.filter(id => !shown.includes(id) && id !== served);
   // The agent's asks for more on an approved task (issue #30): shown once each, always in the window (its page is
   // already open), keyed by the ask's time.
-  const asks = requests.filter(item => item.ask && ['active', 'paused'].includes(item.state) && here(item))
+  const asks = requests.filter(item => item.ask && ['active', 'paused'].includes(item.state) && here(item) && !askBundled(item))
     .map(item => `${item.requestId}#${item.ask.at}`).filter(key => !shown.includes(key));
   if (!fresh.length && !asks.length) return;
   await chrome.storage.session?.set?.({ shownRequests: [...shown, ...fresh, ...asks].slice(-SHOWN_KEEP) });
@@ -914,7 +907,6 @@ async function showApproval() {
     }
   }
   if ((!left.length && !asks.length) || settings.approvalWindow === false) return;
-  if (await openToolbarPopup()) return;
   const id = stored.approvalWindowId;
   if (Number.isInteger(id) && await chrome.windows.get(id).then(Boolean, () => false)) {
     await chrome.windows.update(id, { ...await popupWindowPlacement(APPROVAL_SIZE), focused: true });
@@ -932,7 +924,7 @@ let badgeTabId = null;
 function updateBadge() {
   let text = '';
   let title = 'FAI Browser';
-  const pendingCount = requests.filter(item => (item.state === 'pending' || (item.ask && item.state !== 'pending'))
+  const pendingCount = requests.filter(item => (item.state === 'pending' || (item.ask && item.state !== 'pending' && !askBundled(item)))
     && here(item)).length;
   const live = session && ['active', 'paused'].includes(session.status) ? session : null;
   const tabText = live ? (live.status === 'active' ? 'ON' : 'Ⅱ') : null;
@@ -950,10 +942,10 @@ function updateBadge() {
   } catch {
     // The action API is unavailable in some test contexts.
   }
-  const approving = [...approvals.values()].filter(entry => entry.status === 'pending').length;
+  const approving = [...bundles.values()].reduce((sum, bundle) => sum + bundle.entryIds.length + (bundle.askId ? 1 : 0), 0);
   if (approving) {
     text = '!';
-    title = `FAI Browser: approve ${approving === 1 ? 'an action' : `${approving} actions`}?`;
+    title = `FAI Browser: approve ${approving === 1 ? 'this' : `${approving} things`}?`;
   } else if (pendingCount) {
     text = '?';
     title = `FAI Browser: ${pendingCount} tab request${pendingCount === 1 ? '' : 's'} waiting`;
@@ -1861,21 +1853,24 @@ function reportApproval({ requestId = null, surface, step, reason = null, origin
 function flushApprovals() {
   if (!connected || !pairing) return;
   for (const event of approvalQueue.splice(0)) ignore(send('approval', event));
-  for (const decision of decisionQueue.splice(0)) ignore(send('action_decision', decision));
+  for (const { type, body } of decisionQueue.splice(0)) ignore(send(type, body));
 }
 
-// An action decided (Approve once or Deny) after the act that asked stopped waiting: the daemon wakes the agent
-// session that owns the request (docs/REFERENCE.md "Invites and wakes"). The entry id and the decision only; the
-// daemon acts on it only for an entry its own act recorded as pending. Waits for the next hello while not connected.
+// What the daemon learns about approvals, in order, waiting for the next hello while not connected: an action decided
+// (Approve once or Deny) after the act that asked stopped waiting (`action_decision`, the entry id and the decision
+// only; the daemon wakes the owner session, docs/REFERENCE.md "Invites and wakes"), and a bundle's window opening or
+// changing and its one answer (`bundle_open`, `bundle_decision`: ids only, see "Approval bundles").
 const decisionQueue = [];
-function reportDecision(entryId, decision) {
-  const message = { entryId, decision };
+function reportBridge(type, body) {
   if (connected && pairing) {
-    ignore(send('action_decision', message));
+    ignore(send(type, body));
     return;
   }
-  decisionQueue.push(message);
-  if (decisionQueue.length > MAX_APPROVALS) decisionQueue.shift();
+  decisionQueue.push({ type, body });
+  if (decisionQueue.length > MAX_APPROVALS * 2) decisionQueue.shift();
+}
+function reportDecision(entryId, decision) {
+  reportBridge('action_decision', { entryId, decision });
 }
 
 // A failure that repeats without a new click (the modal preparing its approval again on every render) is logged once
@@ -3174,7 +3169,7 @@ async function waitTabComplete(tabId, ms) {
 // --- Approve gate (docs/REFERENCE.md "Approve gate") ----------------------------------------------------------
 // An agent's act on a gated control (purchase, secret, delete, submit) sends an `approve` command first. The worker
 // reads the control from the page itself (page.js approvalInfo: label, label hash, gate class, a detected total),
-// opens the toolbar popup or a small top-right fallback window, shows a badge and waits for the user's click. Approve once
+// adds it to its tab's approval bundle (its window over the tab, a red badge, a popup card) and waits for the user's click. Approve once
 // mints a random single-use approvalId bound to the tab, lease, document, revision, target, class and label hash, valid
 // for 60 s (5 min when no act waited for the click: the agent is woken to use it); Deny refuses. The execute that
 // follows carries the id: only an id this worker minted, unused, unexpired and
@@ -3193,7 +3188,7 @@ const APPROVAL_PROMPT_SIZE = { width: 440, height: 420 };
 const MAX_APPROVALS = 20;
 let approvalSettings = { purchase: true, secret: true, level: true };
 // id -> { id, key, tabId, leaseId, requestId, origin, title, revision, documentId, target, cls, label, labelHash, total,
-// note, level, createdAt, expiresAt, status: pending | approved | denied, approvalId, useBy, windowId, waiters, host,
+// note, level, createdAt, expiresAt, status: pending | approved | denied, approvalId, useBy, waiters, host,
 // pageChanged }
 const approvals = new Map();
 
@@ -3233,14 +3228,7 @@ function approvalView(entry) {
 
 function publishApprovals() {
   storeSession({ approvals: [...approvals.values()].filter(entry => entry.status === 'pending').map(approvalView) });
-  updateBadge();
-}
-
-function closeApprovalWindow(entry) {
-  if (!Number.isInteger(entry?.windowId)) return;
-  const id = entry.windowId;
-  entry.windowId = null;
-  ignore(chrome.windows?.remove?.(id));
+  syncBundles();
 }
 
 function settleApproval(entry, answer) {
@@ -3248,44 +3236,261 @@ function settleApproval(entry, answer) {
   entry.waiters.clear();
 }
 
-// Drops approvals past their time (pending: 5 min; approved and unused: 60 s, or 5 min when no act waited), and with
-// `leaseId` every approval of that lease (its session ended).
+// Drops approvals past their time (approved and unused: 60 s, or 5 min when no act waited; denied: when its bundle
+// would have ended), and with `leaseId` every approval of that lease (its session ended). A pending approval waits in
+// its bundle, which expires as a whole (syncBundles).
 function expireApprovals(leaseId = null) {
   const now = Date.now();
   for (const entry of [...approvals.values()]) {
-    const stale = (entry.status === 'pending' && now > entry.expiresAt) || (entry.status === 'approved' && now > entry.useBy)
-      || entry.status === 'denied' && now > entry.expiresAt;
+    const stale = (entry.status === 'approved' && now > entry.useBy) || (entry.status === 'denied' && now > entry.expiresAt);
     if (!stale && (leaseId === null || entry.leaseId !== leaseId)) continue;
     approvals.delete(entry.id);
-    closeApprovalWindow(entry);
     settleApproval(entry, { decision: entry.status === 'denied' ? 'denied' : 'pending' });
   }
   publishApprovals();
 }
 
-// The approval window always opens over the driven tab: inside the browser window that holds the approval's tab, top
-// right below its toolbar (the arm prompt's inset), not over whichever window was focused last, also when that window
-// is focused. Never the toolbar popup (spec #86): the browser counts the window focused while the user is in the agent's
-// chat or another app, and the transient popup then closes at the first click elsewhere, leaving nothing on screen. A
-// minimized window, unknown bounds, or bounds the browser refuses (a window partly off screen) get the browser's own
-// placement, as showPrompt does.
-async function showApprovalWindow(entry) {
+// --- Approval bundles (spec #87 "Combined approvals"; docs/REFERENCE.md "Approve gate") ------------------------------
+// Everything the agent waits on for one task tab is one bundle: every pending action approval of that lease and tab,
+// plus the request's open ask for more (a higher level and/or more sites) while this browser runs that request. The
+// ask joins the tab the lease was on when it was first seen. One approval window per browser (approve.html?bundle=<id>)
+// shows the oldest bundle, each item on its own line, with one Approve and one Deny; other tabs' bundles wait for it
+// and are never refused. A bundle's version changes when an item joins or leaves: Approve and Deny carry the version
+// the user saw, and a changed bundle refuses them (bundle_changed). A bundle stays open 5 min from its newest item and
+// 10 min at most, and its items do not expire on their own. Closing its window is not an answer: the bundle stays
+// pending (badge, popup card) and the window comes back when an item joins, the agent repeats an item, or the user
+// clicks Show approval window on the card. The daemon gets `bundle_open` when the window opens and whenever its items
+// change, then one `bundle_decision` (approved, denied or expired) after every item was applied here. When the lease,
+// the request or the site ends, the bundle goes with it and no decision is sent.
+const BUNDLE_IDLE_MS = 5 * 60_000;
+const BUNDLE_MAX_MS = 10 * 60_000;
+const BUNDLE_CHANGED = 'Updated: the agent added an item. Check the list again.';
+const BUNDLE_GONE = 'This approval is no longer waiting.';
+const ASKS_KEPT = 100;
+// `leaseId|tabId` -> { id, key, leaseId, tabId, requestId, host, version, entryIds, askId, openedAt, newestAt, windowId,
+// opening, dismissed, announced, deciding }
+const bundles = new Map();
+// The tab each ask joined (ask id -> tab id), and the asks answered or expired in a bundle (never bundled again).
+const askTabs = new Map();
+const settledAsks = new Set();
+let bundleTimer = null;
+
+function keepRecent(collection) {
+  while (collection.size > ASKS_KEPT) collection.delete(collection.keys().next().value);
+}
+
+// The ask for more on the request this browser runs while its lease is active: a member of that tab's bundle.
+function liveAsk() {
+  if (session?.status !== 'active') return null;
+  const request = requests.find(item => item.requestId === session.requestId && item.state === 'active' && here(item));
+  const ask = request?.ask;
+  if (typeof ask?.id !== 'string' || settledAsks.has(ask.id)) return null;
+  if (!askTabs.has(ask.id)) {
+    askTabs.set(ask.id, session.tabId);
+    keepRecent(askTabs);
+  }
+  return ask;
+}
+
+/** Whether a request's ask is shown in a bundle (or was answered there): no ask card, no request window for it. */
+function askBundled(request) {
+  const id = request?.ask?.id;
+  return typeof id === 'string' && (settledAsks.has(id) || [...bundles.values()].some(bundle => bundle.askId === id));
+}
+
+// The requests as the popup sees them: an ask a bundle shows is marked, so the popup shows no second card for it.
+function requestsView() {
+  return requests.map(item => (askBundled(item) ? { ...item, askBundled: true } : item));
+}
+
+function bundleExpiry(bundle) {
+  return Math.min(bundle.newestAt + BUNDLE_IDLE_MS, bundle.openedAt + BUNDLE_MAX_MS);
+}
+
+function bundleWire(bundle) {
+  return { requestId: bundle.requestId, tabId: bundle.tabId, bundleId: bundle.id, version: bundle.version,
+    askId: bundle.askId, entryIds: [...bundle.entryIds] };
+}
+
+// The ask as the bundle shows and applies it: the level asked (or the one granted, for an ask for sites only), the
+// sites it adds, and what the Approve click asks the browser for (askSiteAccess): the sites the ask adds or needs
+// access to, the task's own origin when the level brings multiple task tabs, and the domain roots' patterns when the
+// task or the ask has a root. Never a site of the request the ask is not about.
+function askView(ask) {
+  const strings = list => (Array.isArray(list) ? list.filter(item => typeof item === 'string') : []);
+  const added = strings(ask.origins);
+  const access = strings(ask.access);
+  const level = cleanLevel(ask.level) ?? grantedLevel() ?? 'read-only';
+  const request = requests.find(item => item.requestId === session?.requestId);
+  const wanted = [...new Set([...strings(request?.origins), ...added])];
+  const own = approvalTabMode(level) === 'multiple' ? [session?.origin] : [];
+  const origins = [...new Set([...own, ...added, ...access])].filter(origin => typeof origin === 'string' && !origin.includes('*'));
+  const roots = [...new Set(wanted.map(siteRoot).filter(Boolean))];
+  const domain = roots.length > 0 && (session?.scope === 'domain' || added.some(origin => siteRoot(origin)));
+  return { id: ask.id, level: cleanLevel(ask.level), origins: added, access,
+    apply: { level, origins, patterns: domain ? roots.map(sitePattern) : [], scope: domain ? 'domain' : null } };
+}
+
+// What the window and the popup card show, the bundle on screen first.
+function bundleViews() {
+  return [...bundles.values()].sort((a, b) => a.openedAt - b.openedAt).map(bundle => {
+    const ask = bundle.askId ? requests.find(item => item.requestId === bundle.requestId)?.ask : null;
+    return { id: bundle.id, version: bundle.version, requestId: bundle.requestId, tabId: bundle.tabId, host: bundle.host,
+      expiresAt: bundleExpiry(bundle), shown: Number.isInteger(bundle.windowId),
+      ask: ask?.id === bundle.askId ? askView(ask) : null,
+      entries: bundle.entryIds.map(id => approvals.get(id)).filter(Boolean).map(approvalView) };
+  });
+}
+
+function publishBundles() {
+  storeSession({ requests: requestsView(), bundles: bundleViews() });
+  updateBadge();
+}
+
+// Rebuilds the bundles from the pending approvals and the live ask: an item joins or leaves (a new version, and the
+// daemon hears it once the window has opened), a bundle past its time expires, and the bundle on screen gets its window.
+function syncBundles() {
+  const now = Date.now();
+  const members = new Map();
+  const member = (leaseId, tabId, requestId) => {
+    const key = `${leaseId}|${tabId}`;
+    if (!members.has(key)) members.set(key, { leaseId, tabId, requestId, entryIds: [], askId: null, host: null });
+    return members.get(key);
+  };
+  const pending = [...approvals.values()].filter(entry => entry.status === 'pending').sort((a, b) => a.createdAt - b.createdAt);
+  for (const entry of pending) {
+    const found = member(entry.leaseId, entry.tabId, entry.requestId);
+    found.entryIds.push(entry.id);
+    found.host ??= entry.host;
+  }
+  const ask = liveAsk();
+  if (ask) member(session.leaseId, askTabs.get(ask.id), session.requestId).askId = ask.id;
+  for (const [key, bundle] of bundles) {
+    if (bundle.deciding || members.has(key)) continue;
+    // Every item left without an answer: the lease, the request or the site ended. No decision.
+    bundles.delete(key);
+    closeBundleWindow(bundle);
+  }
+  for (const [key, found] of members) {
+    let bundle = bundles.get(key);
+    if (bundle?.deciding) continue;
+    if (!bundle) {
+      bundle = { id: randomId(), key, leaseId: found.leaseId, tabId: found.tabId, requestId: found.requestId,
+        host: found.host ?? hostOf(session?.origin ?? ''), version: 0, entryIds: [], askId: null, openedAt: now,
+        newestAt: now, windowId: null, opening: false, dismissed: false, announced: false, deciding: false };
+      bundles.set(key, bundle);
+    }
+    const joined = found.entryIds.some(id => !bundle.entryIds.includes(id)) || (found.askId !== null && found.askId !== bundle.askId);
+    const left = bundle.entryIds.some(id => !found.entryIds.includes(id)) || (bundle.askId !== null && bundle.askId !== found.askId);
+    if (!joined && !left) continue;
+    bundle.version++;
+    bundle.entryIds = found.entryIds;
+    bundle.askId = found.askId;
+    if (joined) {
+      bundle.newestAt = now;
+      bundle.dismissed = false;
+    }
+    if (bundle.announced) reportBridge('bundle_open', bundleWire(bundle));
+  }
+  for (const bundle of [...bundles.values()]) {
+    if (!bundle.deciding && now > bundleExpiry(bundle)) expireBundle(bundle);
+  }
+  // Items do not expire on their own while in a bundle: a pending answer names the bundle's time.
+  for (const bundle of bundles.values()) {
+    for (const id of bundle.entryIds) if (approvals.has(id)) approvals.get(id).expiresAt = bundleExpiry(bundle);
+  }
+  showBundle();
+  clearTimeout(bundleTimer);
+  bundleTimer = null;
+  const next = Math.min(...[...bundles.values()].filter(bundle => !bundle.deciding).map(bundleExpiry));
+  if (Number.isFinite(next)) bundleTimer = setTimeout(syncBundles, Math.max(0, next - now) + 50);
+  publishBundles();
+}
+
+// Nobody answered in time: nothing is granted or run; the ask is not shown again.
+function expireBundle(bundle) {
+  bundles.delete(bundle.key);
+  closeBundleWindow(bundle);
+  for (const id of bundle.entryIds) {
+    const entry = approvals.get(id);
+    if (entry?.status !== 'pending') continue;
+    approvals.delete(id);
+    settleApproval(entry, { decision: 'pending' });
+  }
+  if (bundle.askId) settleAsk(bundle.askId);
+  reportBridge('bundle_decision', { ...bundleWire(bundle), decision: 'expired' });
+}
+
+function settleAsk(id) {
+  settledAsks.add(id);
+  keepRecent(settledAsks);
+}
+
+function closeBundleWindow(bundle) {
+  if (!Number.isInteger(bundle?.windowId)) return;
+  const id = bundle.windowId;
+  bundle.windowId = null;
+  ignore(chrome.windows?.remove?.(id));
+}
+
+// One approval window per browser: the oldest bundle's. The others wait until it is answered or expires.
+function showBundle() {
+  const [current, ...waiting] = [...bundles.values()].sort((a, b) => a.openedAt - b.openedAt);
+  for (const bundle of waiting) closeBundleWindow(bundle);
+  if (!current || current.dismissed || current.opening || Number.isInteger(current.windowId)) return;
+  current.opening = true;
+  ignore(openBundleWindow(current).finally(() => { current.opening = false; }));
+}
+
+// The approval window always opens over the bundle's tab: inside the browser window that holds it, top right below its
+// toolbar (the arm prompt's inset), not over whichever window was focused last, also when that window is focused. Never
+// the toolbar popup (spec #86): the browser counts the window focused while the user is in the agent's chat or another
+// app, and the transient popup then closes at the first click elsewhere, leaving nothing on screen. A minimized
+// window, unknown bounds, or bounds the browser refuses (a window partly off screen) get the browser's own placement,
+// as showPrompt does. The daemon hears `bundle_open` once it opened (or could not open: the badge and card remain).
+async function openBundleWindow(bundle) {
   try {
-    const tab = await chrome.tabs.get(entry.tabId).catch(() => null);
+    const tab = await chrome.tabs.get(bundle.tabId).catch(() => null);
+    if (hostOf(tab?.url ?? '')) bundle.host = hostOf(tab.url);
     const parent = Number.isInteger(tab?.windowId) ? await chrome.windows.get(tab.windowId).catch(() => null) : null;
     const size = APPROVAL_PROMPT_SIZE;
     const placed = parent && parent.state !== 'minimized' && Number.isInteger(parent.left) && Number.isInteger(parent.top)
       && Number.isInteger(parent.width)
       ? { left: Math.max(parent.left, parent.left + parent.width - size.width - PROMPT_INSET.right), top: parent.top + PROMPT_INSET.top }
       : {};
-    const options = { url: chrome.runtime.getURL(`${APPROVAL_PROMPT_PAGE}?id=${entry.id}`), type: 'popup', ...size, focused: true };
+    const options = { url: chrome.runtime.getURL(`${APPROVAL_PROMPT_PAGE}?bundle=${bundle.id}`), type: 'popup', ...size, focused: true };
     const created = await chrome.windows.create({ ...options, ...placed })
       .catch(error => (placed.left === undefined ? Promise.reject(error) : chrome.windows.create(options)));
-    if (Number.isInteger(created?.id) && approvals.get(entry.id) === entry && entry.status === 'pending') entry.windowId = created.id;
+    if (Number.isInteger(created?.id) && bundles.get(bundle.key) === bundle && !bundle.dismissed) bundle.windowId = created.id;
     else if (Number.isInteger(created?.id)) ignore(chrome.windows.remove(created.id));
   } catch {
-    // No window: the badge and the popup card still show the request.
+    // No window: the badge and the popup card still show the bundle.
   }
+  if (bundles.get(bundle.key) !== bundle) return;
+  if (!bundle.announced) {
+    bundle.announced = true;
+    reportBridge('bundle_open', bundleWire(bundle));
+  }
+  publishBundles();
+}
+
+// The window was closed without an answer: the bundle stays pending (flag #18).
+chrome.windows?.onRemoved?.addListener(id => {
+  const closed = [...bundles.values()].filter(bundle => bundle.windowId === id);
+  for (const bundle of closed) {
+    bundle.windowId = null;
+    bundle.dismissed = true;
+  }
+  if (closed.length) publishBundles();
+});
+
+// "Show approval window" on a popup card: the window on screen comes to the front, a closed one opens again.
+function showBundleAgain(bundleId) {
+  if (![...bundles.values()].some(bundle => bundle.id === bundleId)) throw new Error(BUNDLE_GONE);
+  for (const bundle of bundles.values()) bundle.dismissed = false;
+  const [current] = [...bundles.values()].sort((a, b) => a.openedAt - b.openedAt);
+  if (Number.isInteger(current.windowId)) ignore(chrome.windows.update(current.windowId, { focused: true }));
+  showBundle();
 }
 
 // The `approve` command: { target, expectedRevision, cls, note?, waitMs, kind?, handle? }. Answers { decision:
@@ -3359,7 +3564,7 @@ async function approveCommand(command) {
       total: typeof info.total === 'string' ? info.total.slice(0, 120) : null,
       note: typeof note === 'string' && note.trim() ? reportedText(note.replace(/\s+/g, ' ').trim()).slice(0, 200) : null,
       level, createdAt: now, expiresAt: now + APPROVAL_PENDING_MS, status: 'pending', approvalId: null, useBy: 0,
-      windowId: null, waiters: new Set(),
+      waiters: new Set(),
       // A secret use: the handle, and what the card shows of it (its placeholder and the origin it came from).
       kind: secretUse || dialogUse || uploadUse || enterUse ? kind : null, handle: secretUse ? handle : null,
       // An upload: the file's name and size the user approves (the bytes are checked against them at execute).
@@ -3367,9 +3572,12 @@ async function approveCommand(command) {
       secret: secretUse ? { label: secretPlaceholder(handle, secret.kind, secret.value, secret.pre), kind: secret.kind, from: secret.origin } : null,
     };
     approvals.set(entry.id, entry);
-    publishApprovals();
+  } else {
+    // The agent repeats an item whose window the user closed: the window comes back.
+    const bundle = [...bundles.values()].find(item => item.entryIds.includes(entry.id));
+    if (bundle) bundle.dismissed = false;
   }
-  if (!Number.isInteger(entry.windowId)) await showApprovalWindow(entry);
+  publishApprovals();
   const room = Math.min(APPROVAL_MAX_WAIT_MS, Number.isFinite(waitMs) ? Math.max(0, waitMs) : 0,
     Math.max(0, command.deadline - Date.now() - 1_000));
   return new Promise(resolve => {
@@ -3383,12 +3591,10 @@ async function approveCommand(command) {
   });
 }
 
-// The user's click in the approval window or on the popup card. An act waiting for it gets the answer (no wake; the
-// approval is usable for 60 s). Otherwise the daemon is told, to wake the agent, and an approval stays usable for
-// 5 min.
-function decideApproval(id, decision) {
-  const entry = approvals.get(id);
-  if (!entry || entry.status !== 'pending' || Date.now() > entry.expiresAt) throw new Error('This action is no longer waiting for approval.');
+// One item of an answered bundle. An act waiting for it gets the answer (no wake; the approval is usable for 60 s).
+// Otherwise the approval stays usable for 5 min, and in a bundle of one the daemon is told (action_decision), to wake
+// the agent; a larger bundle's one wake comes from its bundle_decision.
+function settleEntry(entry, decision, report) {
   const waited = entry.waiters.size > 0;
   if (decision === 'approve') {
     entry.status = 'approved';
@@ -3399,8 +3605,54 @@ function decideApproval(id, decision) {
     entry.status = 'denied';
     settleApproval(entry, { decision: 'denied', entryId: entry.id });
   }
-  if (!waited) reportDecision(entry.id, entry.status);
-  closeApprovalWindow(entry);
+  if (!waited && report) reportDecision(entry.id, entry.status);
+}
+
+// The ask inside a bundle, answered the way its card answered it: Approve applies exactly the shown ask on the same
+// request and tab (lease with ask and askId; the site access was asked in the click), Deny declines it. In a bundle of
+// more than one item it says `bundled`: the daemon sends no wake of its own for it.
+async function answerAsk(bundle, decision, single) {
+  const request = requests.find(item => item.requestId === bundle.requestId);
+  if (request?.ask?.id !== bundle.askId) throw new ExtensionError('bundle_changed', BUNDLE_CHANGED);
+  const bundled = single ? {} : { bundled: true };
+  if (decision !== 'approve') {
+    reportApproval({ requestId: request.requestId, surface: 'window', step: 'denied', reason: 'ask_declined' });
+    await send('deny', { requestId: request.requestId, ask: true, ...bundled });
+    return;
+  }
+  if (session?.requestId !== request.requestId) throw new Error(BUNDLE_GONE);
+  const { apply } = askView(request.ask);
+  await approveOnSessionTab({ type: 'start', requestId: request.requestId, level: apply.level, ask: true,
+    askId: request.ask.id, tabMode: approvalTabMode(apply.level), onSessionTab: true,
+    ...(apply.scope ? { scope: 'domain' } : {}),
+    ...(session.automaticPopups === AUTOMATIC_POPUPS_POLICY ? { automaticPopups: AUTOMATIC_POPUPS_POLICY } : {}), ...bundled });
+  reportApproval({ requestId: request.requestId, surface: 'window', step: 'approved', origin: session?.origin ?? null });
+}
+
+// Approve or Deny on a bundle, from its window or its popup card: every item shown, once each, or none. `version` is
+// the bundle the user saw: a bundle that changed since refuses the click. If the ask cannot be applied (the browser's
+// site access was refused, the daemon refused the lease), nothing in the bundle is approved.
+async function decideBundle(bundleId, version, decision) {
+  const bundle = [...bundles.values()].find(item => item.id === bundleId);
+  if (!bundle || bundle.deciding || Date.now() > bundleExpiry(bundle)) throw new Error(BUNDLE_GONE);
+  if (version !== bundle.version) throw new ExtensionError('bundle_changed', BUNDLE_CHANGED);
+  const single = bundle.entryIds.length + (bundle.askId ? 1 : 0) === 1;
+  bundle.deciding = true;
+  try {
+    if (bundle.askId) await answerAsk(bundle, decision, single);
+  } catch (error) {
+    bundle.deciding = false;
+    syncBundles();
+    throw error;
+  }
+  for (const id of bundle.entryIds) {
+    const entry = approvals.get(id);
+    if (entry?.status === 'pending') settleEntry(entry, decision, single);
+  }
+  if (bundle.askId) settleAsk(bundle.askId);
+  bundles.delete(bundle.key);
+  closeBundleWindow(bundle);
+  reportBridge('bundle_decision', { ...bundleWire(bundle), decision: decision === 'approve' ? 'approved' : 'denied' });
   publishApprovals();
 }
 
@@ -4089,7 +4341,8 @@ async function bindSession(message, given) {
       : await send('lease', { requestId, tabId: leaseTabId, origin, title, level, tabMode: approvedTabMode, ...asked,
         ...(message.automaticPopups === AUTOMATIC_POPUPS_POLICY ? { automaticPopups: AUTOMATIC_POPUPS_POLICY } : {}),
         // The ask the user's card showed (its id): the daemon applies exactly that one, or nothing.
-        ...(message.ask === true ? { ask: true, askId: typeof message.askId === 'string' ? message.askId.slice(0, 64) : '' } : {}) });
+        ...(message.ask === true ? { ask: true, askId: typeof message.askId === 'string' ? message.askId.slice(0, 64) : '',
+          ...(message.bundled === true ? { bundled: true } : {}) } : {}) });
   } catch (error) {
     settlePending();
     // A failed start (refused lease, daemon unreachable) never leaves the permission it just obtained behind.
@@ -4764,7 +5017,7 @@ function popupState() {
     status: session?.status ?? null,
     session: sessionView(),
     connection: connectionView(),
-    requests,
+    requests: requestsView(),
   };
 }
 
@@ -4854,13 +5107,16 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       // The popup is about to request these patterns in an Approve click (see trackSites); one the browser already
       // holds (the user allowed it by hand, or it was remembered) is never tracked, so never removed (trackNewSites).
       await trackNewSites(message.patterns);
-    } else if (message.type === 'approval_decision') {
-      // Approve once or Deny, from the approval window or the popup card: an extension page only, never a web page.
+    } else if (message.type === 'bundle_decision' || message.type === 'bundle_show') {
+      // Approve or Deny on a bundle (the version shown), or Show approval window: from the approval window or the popup
+      // card, an extension page only, never a web page.
       const extensionPage = typeof sender.url === 'string' && sender.url.startsWith(chrome.runtime.getURL(''));
-      if (!extensionPage || typeof message.id !== 'string' || !['approve', 'deny'].includes(message.decision)) {
+      if (!extensionPage || typeof message.bundleId !== 'string'
+        || (message.type === 'bundle_decision' && (!Number.isInteger(message.version) || !['approve', 'deny'].includes(message.decision)))) {
         throw new Error('Approvals come from the FAI Browser window only.');
       }
-      decideApproval(message.id, message.decision);
+      if (message.type === 'bundle_show') showBundleAgain(message.bundleId);
+      else await decideBundle(message.bundleId, message.version, message.decision);
     } else if (message.type === 'arm_level') {
       // Legacy level-selection messages update metadata only; no icon click grants that level (startSession
       // checks Testing against the listed environments again).
@@ -4984,7 +5240,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       // Nothing to log with.
     }
     // A panel call keeps the service's code (chat_too_many, chat_signed_out …): the panel shows FAI's line for it.
-    const code = error.code === 'stale_approval' || (PANEL_MESSAGES.has(message.type) && typeof error.code === 'string');
+    const code = ['stale_approval', 'bundle_changed'].includes(error.code) || (PANEL_MESSAGES.has(message.type) && typeof error.code === 'string');
     respond({ error: error.message, ...(code ? { code: error.code } : {}) });
   });
   return true;
@@ -5210,7 +5466,7 @@ chrome.runtime.onInstalled?.addListener(() => connect());
 // previous worker held. The saved pairing secret is only ever sent to a valid loopback service endpoint.
 ignore(chrome.storage.local.setAccessLevel?.({ accessLevel: 'TRUSTED_CONTEXTS' }));
 ignore(chrome.storage.local.set({ status: 'Reconnect required' }));
-storeSession({ requests: [], connection: { connected: false, transport: 'none', paired: false, native: null } });
+storeSession({ requests: [], bundles: [], connection: { connected: false, transport: 'none', paired: false, native: null } });
 updateBadge();
 ignore(loadTestingOrigins());
 ignore(loadSecretRedaction());

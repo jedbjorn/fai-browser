@@ -111,8 +111,10 @@ test.after(() => browser?.close());
 // `state` what the worker answers to every message (merged with the message log).
 // `allowSite`: what Chrome's site-access prompt answers to chrome.permissions.request (recorded in __permissionRequests).
 // `held`: patterns Chrome already holds (chrome.permissions.contains); removals are recorded in __permissionRemovals.
+// `path`: another extension page with the same fake (approve.html, the approval window); `state.bundles` is the worker's
+// storage.session `bundles`, `state.replies` answers by message type.
 async function popup(t, { local = {}, requests = [], state = {}, tabUrl = 'http://localhost:3000/app', allowSite = true,
-  held = [], query = '', pinned = true, connected = true } = {}) {
+  held = [], query = '', pinned = true, connected = true, path = 'popup.html' } = {}) {
   const page = await browser.newPage({ viewport: { width: 400, height: 900 } });
   t.after(() => page.close());
   page.setDefaultTimeout(3000);
@@ -141,7 +143,7 @@ async function popup(t, { local = {}, requests = [], state = {}, tabUrl = 'http:
           async get(keys) { return Object.fromEntries(keys.filter(key => key in __local).map(key => [key, structuredClone(__local[key])])); },
           async set(values) { Object.assign(__local, structuredClone(values)); },
         },
-        session: { async get() { return { requests: __requests, approvals: __state.approvals ?? [], connection: { connected, transport: connected ? 'websocket' : 'none', paired: connected, native: __state.native ?? null, ...(__state.connection ?? {}) } }; } },
+        session: { async get() { return { requests: __requests, bundles: __state.bundles ?? [], connection: { connected, transport: connected ? 'websocket' : 'none', paired: connected, native: __state.native ?? null, ...(__state.connection ?? {}) } }; } },
         onChanged: { addListener(listener) { listeners.push(listener); } },
       },
       tabs: { async query() { __tabQueries++; return [{ id: 7, url: tabUrl, title: 'App' }]; } },
@@ -167,6 +169,7 @@ async function popup(t, { local = {}, requests = [], state = {}, tabUrl = 'http:
       runtime: {
         async sendMessage(message) {
           __sent.push(message);
+          if (__state.replies?.[message.type]) return __state.replies[message.type];
           if (message.type === 'pair' && __state.pairError) return { error: __state.pairError };
           const live = connected || (message.type === 'pair' && !__state.pairError);
           return { status: __state.status ?? null, session: __state.session ?? null, requests: __requests,
@@ -176,13 +179,17 @@ async function popup(t, { local = {}, requests = [], state = {}, tabUrl = 'http:
       },
     };
   }, [local, requests, state, tabUrl, allowSite, held, pinned, connected]);
-  await page.goto(`https://popup.test/popup.html${query}`);
+  await page.goto(`https://popup.test/${path}${query}`);
+  if (path !== 'popup.html') return page;
   await page.waitForFunction(expected => document.querySelector('#transport').textContent.includes(expected),
     connected ? 'websocket' : 'not connected');
   return page;
 }
 
 const PAIRED = { endpoint: 'http://127.0.0.1:4318', secret: 'x'.repeat(30) };
+// A bundle of one action approval, as the worker publishes it (storage.session `bundles`).
+const oneBundle = entry => ({ id: 'bundle-1', version: 1, requestId: 'req_1', tabId: 7, host: 'localhost:3000', ask: null,
+  entries: [entry], expiresAt: Date.now() + 300_000 });
 const request = (origins, mode) => ({ requestId: 'req_1', state: 'pending', origins, mode, reason: 'Run the checkout test', createdAt: new Date().toISOString() });
 const options = page => page.$$eval('.request-card .approve-request', nodes => nodes.map(node => node.dataset.level));
 // How many elements match. Never assert on an element handle itself: a failing assertion makes node inspect the whole
@@ -267,12 +274,12 @@ test('popup: replacing a request card preserves keyboard focus on its direct app
 test('popup: replacing an approval card preserves keyboard focus on Approve once', async t => {
   const approval = { id: 'approval-1', kind: 'click', cls: 'purchase', origin: 'http://localhost:3000',
     title: 'Checkout', label: 'Pay now', total: 'Total $20.00', note: 'Complete the test order' };
-  const page = await popup(t, { local: { ...PAIRED }, state: { approvals: [approval] } });
+  const page = await popup(t, { local: { ...PAIRED }, state: { bundles: [oneBundle(approval)] } });
   await page.waitForSelector('.approval-card .primary-button');
   await page.focus('.approval-card .primary-button');
   await page.evaluate(updated => {
-    for (const listener of __listeners) listener({ approvals: { newValue: [updated] } }, 'session');
-  }, { ...approval, note: 'Updated test order' });
+    for (const listener of __listeners) listener({ bundles: { newValue: [updated] } }, 'session');
+  }, oneBundle({ ...approval, note: 'Updated test order' }));
   assert.match(await page.textContent('.approval-card'), /Updated test order/);
   assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Approve once');
   assert.equal(await page.evaluate(() => document.activeElement.closest('.approval-card')?.dataset.approvalId), 'approval-1');
@@ -281,7 +288,7 @@ test('popup: replacing an approval card preserves keyboard focus on Approve once
 test('popup: upload consent identifies the file, size and destination before approving that upload', async t => {
   const approval = { id: 'upload-1', kind: 'upload', cls: 'submit', origin: 'http://localhost:3000',
     title: 'Application', label: 'Resume', file: { name: 'private-<report>.pdf', size: 56789 } };
-  const page = await popup(t, { local: { ...PAIRED }, state: { approvals: [approval] } });
+  const page = await popup(t, { local: { ...PAIRED }, state: { bundles: [oneBundle(approval)] } });
   await page.waitForSelector('.approval-card .primary-button');
   const text = await page.textContent('.approval-card');
   assert.match(text, /APPROVE UPLOAD/);
@@ -291,10 +298,10 @@ test('popup: upload consent identifies the file, size and destination before app
   assert.match(text, /one file from the agent's workspace/);
   assert.match(text, /site receives it when the form is sent/);
   assert.equal(await count(page, '.approval-card report'), 0, 'the filename is rendered as text');
-  assert.ok(!(await page.evaluate(() => __sent)).some(message => message.type === 'approval_decision'));
+  assert.ok(!(await page.evaluate(() => __sent)).some(message => message.type === 'bundle_decision'));
   await page.click('.approval-card .primary-button');
-  assert.deepEqual((await page.evaluate(() => __sent)).filter(message => message.type === 'approval_decision'),
-    [{ type: 'approval_decision', id: 'upload-1', decision: 'approve' }]);
+  assert.deepEqual((await page.evaluate(() => __sent)).filter(message => message.type === 'bundle_decision'),
+    [{ type: 'bundle_decision', bundleId: 'bundle-1', version: 1, decision: 'approve' }]);
 });
 
 test('popup: normal-text color pairs meet WCAG AA contrast', async t => {
@@ -776,7 +783,7 @@ test('popup: Pause and Stop stay above the pin hint, update, approval, invite an
   const elsewhere = { ...LIVE_SESSION, tabId: 9 };
   const live = { ...LIVE, lease: { leaseId: 'l1', tabId: 9 } };
   const page = await popup(t, { local: { ...PAIRED, status: 'active' }, pinned: false, requests: [PAUSED, live, FRESH],
-    tabUrl: 'https://shop.example.com/cart', state: { status: 'active', session: elsewhere, approvals: [approval], connection: { update } } });
+    tabUrl: 'https://shop.example.com/cart', state: { status: 'active', session: elsewhere, bundles: [oneBundle(approval)], connection: { update } } });
   await page.setViewportSize(POPUP);
   await page.waitForSelector('.approval-card');
   for (const selector of ['#pin-hint', '#update', '#update-install', '.approval-card', '.invite-picker', '#request-list .request-card']) {
@@ -1440,15 +1447,16 @@ test('popup: a press on Approve that spans a re-render still approves (the card 
 
 test('popup: a press on Approve once that spans an approvals update still approves', async t => {
   const approval = { id: 'approval-1', kind: 'click', cls: 'purchase', origin: 'http://localhost:3000', title: 'Checkout', label: 'Pay now' };
-  const page = await popup(t, { local: { ...PAIRED }, state: { approvals: [approval] } });
+  const page = await popup(t, { local: { ...PAIRED }, state: { bundles: [oneBundle(approval)] } });
   const box = await page.locator('.approval-card .primary-button').boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
-  await emit(page, { approvals: { newValue: [approval, { ...approval, id: 'approval-2', label: 'Pay again' }] } });
+  await emit(page, { bundles: { newValue: [oneBundle(approval), { ...oneBundle({ ...approval, id: 'approval-2', label: 'Pay again' }),
+    id: 'bundle-2', tabId: 9 }] } });
   await page.mouse.up();
-  await page.waitForFunction(() => __sent.some(message => message.type === 'approval_decision'), null, { timeout: 2000 }).catch(() => {});
-  assert.deepEqual((await page.evaluate(() => __sent)).filter(message => message.type === 'approval_decision'),
-    [{ type: 'approval_decision', id: 'approval-1', decision: 'approve' }]);
+  await page.waitForFunction(() => __sent.some(message => message.type === 'bundle_decision'), null, { timeout: 2000 }).catch(() => {});
+  assert.deepEqual((await page.evaluate(() => __sent)).filter(message => message.type === 'bundle_decision'),
+    [{ type: 'bundle_decision', bundleId: 'bundle-1', version: 1, decision: 'approve' }]);
   await page.waitForFunction(() => document.querySelector('[data-approval-id="approval-2"]') !== null);
 });
 
@@ -1606,4 +1614,173 @@ test('popup: Pause cancels an outstanding Act choice even if native access is al
   await page.evaluate(() => __answerNative(true));
   await page.waitForTimeout(50);
   assert.equal(await page.evaluate(() => __sent.filter(message => message.type === 'start').length), 0, 'the late answer cannot resume the paused task');
+});
+
+// --- Approval bundles (spec #87 "Combined approvals"): approve.html and the popup card -------------------------------
+
+const DELETE = { id: 'e-delete', cls: 'delete', origin: 'https://shop.example', host: 'shop.example', title: 'Account',
+  label: 'Delete account', note: 'Remove the old account', createdAt: 1 };
+const ASK_FULL = { id: 'ask-1', level: 'full', origins: [], access: [],
+  apply: { level: 'full', origins: ['https://shop.example'], patterns: [], scope: null } };
+const bundleOf = (entries, ask = null, extra = {}) => ({ id: 'bundle-1', version: 1, requestId: 'req_1', tabId: 7,
+  host: 'shop.example', ask, entries, expiresAt: Date.now() + 300_000, ...extra });
+const windowText = page => page.evaluate(() => ({
+  title: document.title,
+  eyebrow: document.querySelector('.eyebrow').textContent,
+  headline: document.getElementById('headline').textContent,
+  lines: [...document.querySelectorAll('.bundle-line')].map(node => node.textContent),
+  notes: [...document.querySelectorAll('.bundle-note')].map(node => node.textContent),
+  warn: [...document.querySelectorAll('.bundle-warn')].map(node => node.textContent),
+  pageText: [...document.querySelectorAll('.bundle-line .page-text')].map(node => node.textContent),
+  summary: document.getElementById('summary').hidden ? '' : document.getElementById('summary').textContent,
+  queue: document.getElementById('queue').hidden ? '' : document.getElementById('queue').textContent,
+  approve: document.getElementById('approve').textContent,
+  deny: document.getElementById('deny').textContent,
+  facts: !document.getElementById('facts').hidden,
+  focused: document.activeElement === document.body || document.activeElement === null,
+}));
+const approveWindow = (t, bundles, extra = {}) => popup(t, { path: 'approve.html', query: '?bundle=bundle-1',
+  state: { bundles, ...extra.state }, allowSite: extra.allowSite ?? true });
+
+test('approval window: a bundle of one action keeps today\'s window, with the bundle title and eyebrow', async t => {
+  const page = await approveWindow(t, [bundleOf([DELETE])]);
+  await page.waitForFunction(() => document.getElementById('label').textContent === 'Delete account');
+  const text = await windowText(page);
+  assert.equal(text.title, 'FAI Browser: approve this?');
+  assert.equal(text.eyebrow, 'AGENT ASKS, NOT APPROVED YET');
+  assert.equal(text.headline, 'Click "Delete account" on shop.example?');
+  assert.equal(text.facts, true);
+  assert.deepEqual([text.approve, text.deny, text.summary, text.queue], ['Approve once', 'Deny', '', '']);
+  assert.equal(text.focused, true, 'neither button has focus at first');
+});
+
+// Spec #87 acceptance 2: the exact lines for bundles of 2 and 3 items and for each item kind.
+test('approval window: two items read "<first> and <second>?", each on its own tagged line, costly tags warned', async t => {
+  const page = await approveWindow(t, [bundleOf([DELETE], ASK_FULL)]);
+  await page.waitForSelector('.bundle-line');
+  const text = await windowText(page);
+  assert.equal(text.title, 'FAI Browser: approve 2 things?');
+  assert.equal(text.eyebrow, 'AGENT ASKS, NOT APPROVED YET');
+  assert.equal(text.headline, 'Act on shop.example and click "Delete account"?');
+  assert.deepEqual(text.lines, ['LEVEL Act on shop.example: save, send, submit and delete on this task',
+    'DELETE Click "Delete account" on shop.example (text from the page)']);
+  assert.deepEqual(text.notes, ['This also changes what the agent may do without asking on this task.',
+    'Agent says: Remove the old account (not checked)']);
+  assert.deepEqual(text.warn, ['DELETE']);
+  assert.deepEqual(text.pageText, ['Delete account'], 'the label is page text, in quotes');
+  assert.equal(text.summary, 'Approve covers all 2 items, once each. Deny refuses all 2.');
+  assert.deepEqual([text.approve, text.deny, text.facts], ['Approve', 'Deny', false]);
+  assert.equal(text.focused, true);
+});
+
+test('approval window: three items or more read "<first> and <n-1> more?"; every kind has its line and tag', async t => {
+  const entries = [
+    { id: 'e1', cls: 'submit', host: 'shop.example', label: 'Save', createdAt: 1 },
+    { id: 'e2', cls: 'purchase', host: 'shop.example', label: 'Place order', total: '$12.00', createdAt: 2 },
+    { id: 'e3', cls: 'secret', host: 'shop.example', label: 'Create API key', createdAt: 3 },
+    { id: 'e4', cls: 'submit', kind: 'enter_commit', host: 'shop.example', origin: 'https://shop.example', label: 'Message', createdAt: 4 },
+    { id: 'e5', cls: 'secret', kind: 'fill_secret', handle: '3', origin: 'https://shop.example', host: 'shop.example', label: 'API key',
+      secret: { label: 'secret:3', kind: 'jwt', from: 'https://keys.example' }, createdAt: 5 },
+    { id: 'e6', cls: 'submit', kind: 'upload', host: 'shop.example', origin: 'https://shop.example', label: 'Resume',
+      file: { name: 'cv.pdf', size: 2048 }, createdAt: 6 },
+    { id: 'e7', cls: 'delete', kind: 'dialog', host: 'shop.example', label: 'Delete everything?', createdAt: 7 },
+  ];
+  const ask = { id: 'ask-2', level: 'reversible', origins: ['https://help.example', 'https://*.docs.example'], access: [],
+    apply: { level: 'reversible', origins: [], patterns: [], scope: null } };
+  const page = await approveWindow(t, [bundleOf(entries, ask)]);
+  await page.waitForSelector('.bundle-line');
+  const text = await windowText(page);
+  assert.equal(text.title, 'FAI Browser: approve 9 things?');
+  assert.equal(text.headline, 'Act on shop.example and 8 more?');
+  assert.deepEqual(text.lines, [
+    'LEVEL Act on shop.example: buttons and fields on this task',
+    'SITES Also work on 2 more sites: https://help.example, all of docs.example',
+    'SUBMIT Click "Save" on shop.example (text from the page)',
+    'PURCHASE Click "Place order" on shop.example (text from the page)',
+    'CREDENTIAL Click "Create API key" on shop.example (text from the page)',
+    'COMMITS Press Enter in "Message" on shop.example (text from the page)',
+    'SECRET Paste secret:3 (token from keys.example) into "API key" on shop.example (text from the page)',
+    'UPLOAD Upload cv.pdf (2 KB) to shop.example',
+    'DIALOG Accept the dialog "Delete everything?" on shop.example (text from the page)',
+  ]);
+  assert.deepEqual(text.warn, ['PURCHASE', 'CREDENTIAL', 'COMMITS', 'SECRET']);
+  assert.ok(text.notes.includes('Total: $12.00 (as the page shows it)'));
+  assert.ok(text.notes.includes('Agent says this commits you.'));
+  assert.equal(text.summary, 'Approve covers all 9 items, once each. Deny refuses all 9.');
+  // Only the interactive ask: its own line.
+  const interactive = await approveWindow(t, [bundleOf([DELETE], { ...ask, level: 'interactive', origins: [] })]);
+  await interactive.waitForSelector('.bundle-line');
+  assert.equal((await windowText(interactive)).lines[0], 'LEVEL Act on shop.example: also search and filter on this task');
+});
+
+// Spec #87 acceptance 6 (window side): another tab's bundle waits, and the window says so.
+test('approval window: another tab\'s bundle waiting is named under the list', async t => {
+  const page = await approveWindow(t, [bundleOf([DELETE], ASK_FULL), bundleOf([DELETE], null, { id: 'bundle-2', tabId: 9 })]);
+  await page.waitForSelector('.bundle-line');
+  assert.equal((await windowText(page)).queue, '1 more approval waits on another tab.');
+});
+
+// Spec #87 acceptance 5: a bundle that changed under the user is not approved blind.
+test('approval window: an item joining shows "Updated", holds both buttons for a second, and a stale click is refused', async t => {
+  const page = await approveWindow(t, [bundleOf([DELETE])]);
+  await page.waitForFunction(() => document.getElementById('label').textContent === 'Delete account');
+  await page.evaluate(next => { for (const listener of __listeners) listener({ bundles: { newValue: [next] } }, 'session'); },
+    bundleOf([DELETE], ASK_FULL, { version: 2 }));
+  const held = await page.evaluate(() => ({ updated: document.getElementById('updated').textContent,
+    approve: document.getElementById('approve').disabled, deny: document.getElementById('deny').disabled }));
+  assert.deepEqual(held, { updated: 'Updated: the agent added an item. Check the list again.', approve: true, deny: true });
+  await page.waitForFunction(() => !document.getElementById('approve').disabled, null, { timeout: 2000 });
+  // The worker refuses a click on a version it no longer has: the line again, the buttons held again, nothing closes.
+  await page.evaluate(() => { __state.replies = { bundle_decision: { error: 'Updated: the agent added an item. Check the list again.',
+    code: 'bundle_changed' } }; });
+  await page.click('#approve');
+  await page.waitForFunction(() => document.getElementById('approve').disabled);
+  const sent = await page.evaluate(() => __sent.filter(message => message.type === 'bundle_decision'));
+  assert.deepEqual(sent, [{ type: 'bundle_decision', bundleId: 'bundle-1', version: 2, decision: 'approve' }]);
+  assert.equal(await page.evaluate(() => __closed), 0);
+  assert.equal(await page.textContent('#status'), '');
+});
+
+// Spec #87 "What Approve and Deny do": the ask's site access is asked inside the Approve click; refused, nothing is
+// sent and nothing is approved.
+test('approval window: Approve asks for the ask\'s site access in the click, then decides; refused, it approves nothing', async t => {
+  const ask = { ...ASK_FULL, origins: ['https://help.example'],
+    apply: { level: 'full', origins: ['https://shop.example', 'https://help.example'], patterns: [], scope: null } };
+  const page = await approveWindow(t, [bundleOf([DELETE], ask)]);
+  await page.waitForSelector('.bundle-line');
+  await page.click('#approve');
+  await page.waitForFunction(() => __sent.some(message => message.type === 'bundle_decision'));
+  const [request] = await page.evaluate(() => __permissionRequests);
+  assert.deepEqual(request.origins, ['https://shop.example/*', 'https://help.example/*']);
+  assert.equal(request.sentBefore, (await page.evaluate(() => __sent)).findIndex(message => message.type === 'bundle_decision'),
+    'the browser was asked before the decision went out');
+  const refused = await approveWindow(t, [bundleOf([DELETE], ask)], { allowSite: false });
+  await refused.waitForSelector('.bundle-line');
+  await refused.click('#approve');
+  await refused.waitForFunction(() => document.getElementById('status').textContent.length > 0);
+  assert.equal(await refused.textContent('#status'), 'Browser site access was not granted. Nothing was approved.');
+  assert.equal((await refused.evaluate(() => __sent)).filter(message => message.type === 'bundle_decision').length, 0);
+  assert.equal(await refused.evaluate(() => document.getElementById('approve').disabled), false);
+});
+
+test('popup: a bundle is one card with the window\'s lines, a second place to answer; its ask has no second card', async t => {
+  const requests = [{ requestId: 'req_1', state: 'active', origins: ['https://shop.example'], mode: 'reversible', reason: 'Tidy up',
+    ask: { id: 'ask-1', level: 'full', origins: [], access: [], at: new Date().toISOString() }, askBundled: true }];
+  const page = await popup(t, { local: { ...PAIRED }, requests,
+    state: { bundles: [bundleOf([DELETE], ASK_FULL)], status: 'active', session: { requestId: 'req_1', origin: 'https://shop.example' } } });
+  await page.waitForSelector('.bundle-card');
+  assert.equal(await count(page, '.ask-request'), 0, 'no ask card beside the bundle');
+  assert.equal(await page.textContent('.bundle-card .card-label'), 'AGENT ASKS, NOT APPROVED YET');
+  assert.equal(await page.textContent('.bundle-headline'), 'Act on shop.example and click "Delete account"?');
+  assert.deepEqual(await page.$$eval('.bundle-card .bundle-line', nodes => nodes.map(node => node.textContent)), [
+    'LEVEL Act on shop.example: save, send, submit and delete on this task',
+    'DELETE Click "Delete account" on shop.example (text from the page)']);
+  assert.equal(await page.textContent('.bundle-card .bundle-summary'), 'Approve covers all 2 items, once each. Deny refuses all 2.');
+  assert.deepEqual(await page.$$eval('.bundle-card button', nodes => nodes.map(node => node.textContent)),
+    ['Approve', 'Deny', 'Show approval window']);
+  await page.click('.bundle-show');
+  await page.click('.bundle-card .secondary-button');
+  const sent = (await page.evaluate(() => __sent)).filter(message => message.type.startsWith('bundle_'));
+  assert.deepEqual(sent, [{ type: 'bundle_show', bundleId: 'bundle-1' },
+    { type: 'bundle_decision', bundleId: 'bundle-1', version: 1, decision: 'deny' }]);
 });

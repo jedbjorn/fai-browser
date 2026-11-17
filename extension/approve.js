@@ -1,16 +1,25 @@
-// The "Approve this action?" window (approve.html?id=<approval id>, opened by the worker's approveCommand): one
-// gated action an agent wants to run (the Approve gate, docs/REFERENCE.md). It renders from chrome.storage.session
-// `approvals`: the site and tab (from the browser), the kind of action, the control's label as page text in quotes,
-// a total the page shows and the agent's one line (both untrusted, marked as such). Approve once or Deny; neither
-// button has focus at first, so no key press decides. It closes itself once the action no longer waits. Everything
-// an agent or a page wrote is rendered with textContent only.
-import { ENTER_COMMIT_TEXT, KIND_TEXT, PAGE_CHANGED_TEXT, SECRET_USE_TEXT, directLine, enterCommitLine, originText, secretUseLine } from './approval-card.js';
+// The approval window (approve.html?bundle=<bundle id>, opened by the worker): everything an agent waits on for one
+// task tab (spec #87 "Combined approvals"), from chrome.storage.session `bundles`. One gated action shows as before:
+// the site and tab (from the browser), the kind of action, the control's label as page text in quotes, a total the page
+// shows and the agent's one line (both untrusted, marked as such), Approve once or Deny. Two items or more (or the
+// agent's ask for a higher level or more sites) show each item on its own tagged line, one Approve and one Deny for
+// all of them. Neither button has focus at first, so no key press decides. A bundle that changes under the user says
+// so and holds both buttons for a second; a click on a changed bundle is refused. The window closes itself once the
+// bundle no longer waits. Everything an agent or a page wrote is rendered with textContent only.
+import { BUNDLE_TEXT, ENTER_COMMIT_TEXT, KIND_TEXT, PAGE_CHANGED_TEXT, SECRET_USE_TEXT, bundleHeadline, bundleItems, bundleList,
+  bundleSummary, bundleTitle, decideBundle, directLine, enterCommitLine, originText, queueLine, secretUseLine } from './approval-card.js';
 
-const id = new URLSearchParams(location.search).get('id');
+const UPDATED_HOLD_MS = 1000;
+const id = new URLSearchParams(location.search).get('bundle');
 const approve = document.getElementById('approve');
 const deny = document.getElementById('deny');
 const status = document.getElementById('status');
 let closing = false;
+// The bundle on screen, whether a click is being answered, and until when a change holds the buttons.
+let current = null;
+let busy = false;
+let heldUntil = 0;
+let holdTimer = null;
 
 function close() {
   if (closing) return;
@@ -26,12 +35,51 @@ function show(node, text) {
   if (term) term.hidden = !text;
 }
 
+function setButtons() {
+  const held = Date.now() < heldUntil;
+  approve.disabled = busy || held;
+  deny.disabled = busy || held;
+}
+
+// The bundle changed under the user (an item joined or left): say so, and hold both buttons for a second.
+function holdForUpdate() {
+  show('updated', BUNDLE_TEXT.updated);
+  heldUntil = Date.now() + UPDATED_HOLD_MS;
+  setButtons();
+  clearTimeout(holdTimer);
+  holdTimer = setTimeout(setButtons, UPDATED_HOLD_MS + 10);
+}
+
 function render(list) {
-  const entry = list.find(item => item.id === id);
-  if (!entry) {
+  const index = list.findIndex(item => item.id === id);
+  if (index < 0) {
     close();
     return;
   }
+  const bundle = list[index];
+  if (current && bundle.version !== current.version) holdForUpdate();
+  current = bundle;
+  const items = bundleItems(bundle);
+  document.title = bundleTitle(items.length);
+  show('queue', queueLine(list.length - 1));
+  show('summary', bundleSummary(items.length));
+  approve.textContent = items.length === 1 ? 'Approve once' : 'Approve';
+  const single = !bundle.ask && bundle.entries.length === 1;
+  document.getElementById('facts').hidden = !single;
+  document.getElementById('items').hidden = single;
+  if (single) {
+    renderEntry(bundle.entries[0]);
+    return;
+  }
+  document.getElementById('headline').replaceChildren(...bundleHeadline(items));
+  document.getElementById('items').replaceChildren(bundleList(items));
+  show('changed', '');
+  const minutes = Math.max(1, Math.round((bundle.expiresAt - Date.now()) / 60_000));
+  document.getElementById('detail').textContent = `This waits about ${minutes} more minute${minutes === 1 ? '' : 's'}.`;
+}
+
+// One gated action: the window as it was before bundles.
+function renderEntry(entry) {
   const secretUse = entry.kind === 'fill_secret' || entry.kind === 'copy_secret';
   document.getElementById('origin').textContent = originText(entry);
   document.getElementById('title').textContent = entry.title || '(no title)';
@@ -73,31 +121,34 @@ function render(list) {
   }
 }
 
-async function decide(decision) {
-  approve.disabled = true;
-  deny.disabled = true;
-  try {
-    const reply = await chrome.runtime.sendMessage({ type: 'approval_decision', id, decision });
-    if (reply?.error) throw new Error(reply.error);
-    status.textContent = decision === 'approve' ? 'Approved once.' : 'Denied.';
+function decide(decision) {
+  if (!current || busy || Date.now() < heldUntil) return;
+  busy = true;
+  setButtons();
+  status.textContent = '';
+  // Synchronous up to the browser's site-access prompt (decideBundle): it must open inside this click.
+  decideBundle(current, decision).then(() => {
+    const one = bundleItems(current).length === 1;
+    status.textContent = decision === 'approve' ? (one ? 'Approved once.' : 'Approved.') : 'Denied.';
     setTimeout(close, 400);
-  } catch (error) {
-    approve.disabled = false;
-    deny.disabled = false;
-    status.textContent = error.message;
-  }
+  }, error => {
+    busy = false;
+    if (error.code === 'bundle_changed') holdForUpdate();
+    else status.textContent = error.message;
+    setButtons();
+  });
 }
 
 approve.addEventListener('click', () => decide('approve'));
 deny.addEventListener('click', () => decide('deny'));
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'session' && changes.approvals) render(Array.isArray(changes.approvals.newValue) ? changes.approvals.newValue : []);
+  if (area === 'session' && changes.bundles) render(Array.isArray(changes.bundles.newValue) ? changes.bundles.newValue : []);
 });
 
 try {
-  const { approvals } = await chrome.storage.session.get(['approvals']);
-  render(Array.isArray(approvals) ? approvals : []);
+  const { bundles } = await chrome.storage.session.get(['bundles']);
+  render(Array.isArray(bundles) ? bundles : []);
 } catch {
   close();
 }

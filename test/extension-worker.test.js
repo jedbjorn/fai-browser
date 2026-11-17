@@ -386,7 +386,9 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
         if (!openPopups.has(id)) throw new Error(`No window with id: ${id}.`);
         openPopups.delete(id);
         windowsRemoved.push(id);
+        chrome.windows.onRemoved.emit(id);
       },
+      onRemoved: events('onRemoved'),
       async create(options) {
         if (options.type === 'popup') {
           if (placedPopupFails && options.left !== undefined) throw new Error('Bounds must be at least 50% within visible screen space.');
@@ -576,6 +578,11 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     get promptWindows() { return popupWindows.filter(options => options.url.includes('arm.html')); },
     openPopup(id) { return openPopups.has(id); },
     closePopup(id) { openPopups.delete(id); },
+    // The user closes a window by hand (chrome.windows.onRemoved).
+    userClose(id) {
+      openPopups.delete(id);
+      chrome.windows.onRemoved.emit(id);
+    },
     openedTabs,
     // The user allowed Chrome's site-access prompt the popup opened (chrome.permissions.request).
     grant(pattern) {
@@ -1619,6 +1626,8 @@ async function observeAllow(h, args) {
 }
 
 async function withRequest(h, origins) {
+  // Connected first (the hello answered): approval events sent before that wait for the next hello.
+  await h.until(() => h.session.connection?.connected);
   h.push({ type: 'requests', requests: [{ requestId: 'req_1', state: 'pending', origins, mode: 'testing' }] });
   await h.until(() => h.session.requests?.length === 1);
 }
@@ -2123,6 +2132,17 @@ test('a declined ask is logged with its own reason', async () => {
   assert.deepEqual(events, ['popup:denied:ask_declined', 'popup:denied:null']);
 });
 
+// An approval event sent before the hello is answered waits for it, then goes out.
+test('an approval event sent before the hello is answered goes out once it is', async () => {
+  const h = harness();
+  h.state.replyDelay = { hello: 300 };
+  await h.waitFor(m => m.type === 'hello');
+  await h.send({ type: 'deny', requestId: 'req_1', ask: true }, { id: 'ext', url: 'chrome-extension://ext/popup.html' });
+  assert.equal(h.sent.some(m => m.type === 'approval'), false, 'not connected yet: queued');
+  await h.until(() => h.sent.some(m => m.type === 'approval'));
+  assert.deepEqual(h.sent.filter(m => m.type === 'approval').map(m => `${m.surface}:${m.step}:${m.reason}`), ['popup:denied:ask_declined']);
+});
+
 // Declining only the agent's ask (its card's Decline, `ask: true`) leaves the request's armed tab armed.
 test('an ask decline keeps the request\'s armed tab; a deny of the request disarms it', async () => {
   const { h } = await armed();
@@ -2205,23 +2225,23 @@ test('approval window: without openPopup, a new request opens one focused top-ri
   assert.deepEqual(restarted.popupWindows, []);
 });
 
-test('approval UI: a supported action.openPopup opens the toolbar popup once, with no standalone window', async () => {
-  const h = harness({ local: WINDOW_ONLY, actionOpenPopup: 'ok' });
+// Spec #87 acceptance 12: approvals are always popups. With the task window focused and a browser that supports
+// action.openPopup, a pending request and an ask for more on a task this browser does not run open the request
+// window; the toolbar popup is never tried.
+test('approval UI: a pending request or an ask opens its own window, never action.openPopup', async () => {
+  const h = harness({ local: WINDOW_ONLY, actionOpenPopup: 'ok',
+    lastWindow: { id: 1, type: 'normal', incognito: false, focused: true, left: 100, top: 50, width: 1200, height: 800 } });
   await h.waitFor(m => m.type === 'hello');
   await withPending(h, [pendingRequest('req_1')]);
-  assert.deepEqual(h.actionPopupCalls, [{}]);
-  assert.deepEqual(h.popupWindows, []);
-  await withPending(h, [pendingRequest('req_1')]);
-  assert.equal(h.actionPopupCalls.length, 1);
-});
-
-test('approval UI: a rejected action.openPopup falls back to the top-right window', async () => {
-  const h = harness({ local: WINDOW_ONLY, actionOpenPopup: 'error' });
-  await h.waitFor(m => m.type === 'hello');
-  await withPending(h, [pendingRequest('req_1')]);
-  assert.deepEqual(h.actionPopupCalls, [{}]);
+  assert.deepEqual(h.actionPopupCalls, []);
   assert.deepEqual(clone(h.popupWindows), [{ url: 'chrome-extension://ext/popup.html?window=1', type: 'popup',
     width: 420, height: 620, left: 856, top: 140, focused: true }]);
+  h.closePopup(31);
+  await withPending(h, [{ ...pendingRequest('req_2'), state: 'paused', ask: { id: 'ask-1', level: 'full', origins: [], access: [],
+    at: new Date().toISOString() } }]);
+  assert.deepEqual(h.actionPopupCalls, [], 'never the toolbar popup');
+  assert.equal(h.approvalWindows.length, 2, 'the ask opened the request window');
+  assert.deepEqual(h.session.bundles, [], 'an ask on a task this browser does not run is no bundle');
 });
 
 test('approval window: a second request repositions and focuses the open window instead of opening another', async () => {
@@ -2906,7 +2926,19 @@ test('redaction: an execute screenshot carries the boxes; an annotation that ski
 
 // --- the Approve gate ------------------------------------------------------------------------------------------
 
-const APPROVE_PAGE = { id: 'ext', url: 'chrome-extension://ext/approve.html?id=x' };
+const APPROVE_PAGE = { id: 'ext', url: 'chrome-extension://ext/approve.html?bundle=x' };
+
+// The bundle that shows an approval entry, once the worker published it.
+async function bundleOf(h, entryId) {
+  await h.until(() => (h.session.bundles ?? []).some(bundle => bundle.entries.some(entry => entry.id === entryId)));
+  return h.session.bundles.find(bundle => bundle.entries.some(entry => entry.id === entryId));
+}
+
+// Approve or Deny on the bundle that shows an entry, as its window sends it (the version it shows).
+async function decide(h, entryId, decision, sender = APPROVE_PAGE) {
+  const bundle = await bundleOf(h, entryId);
+  return h.send({ type: 'bundle_decision', bundleId: bundle.id, version: bundle.version, decision }, sender);
+}
 
 // Sends an approve command and returns { id, entry } once the approval window shows the request. `deadline` on the
 // worker's clock (a harness clock runs ahead of the real one).
@@ -2925,16 +2957,16 @@ test('approve: the window, badge and card show the request; Approve once mints a
   assert.equal(entry.note, 'Agent line');
   assert.equal(entry.origin, ORIGIN);
   assert.equal(entry.labelHash, undefined, 'the card never sees the hash');
-  const popup = h.popupWindows.find(options => options.url.includes('approve.html?id='));
+  const popup = h.popupWindows.find(options => options.url.includes('approve.html?bundle='));
   assert.ok(popup, 'the approval window opened');
   assert.equal(popup.left, 836);
   assert.equal(popup.top, 140);
   assert.equal(h.badge, '!');
   assert.deepEqual(h.gateCalls.at(-1), { purchase: true, secret: true, level: true }, 'page.js gets the settings');
   // A web page cannot decide.
-  const forged = await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, { id: 'ext', url: 'https://example.com/' });
+  const forged = await decide(h, entry.id, 'approve', { id: 'ext', url: 'https://example.com/' });
   assert.ok(forged.error, 'a decision from a page is refused');
-  const decided = await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  const decided = await decide(h, entry.id, 'approve');
   assert.equal(decided.error, undefined, JSON.stringify(decided));
   const reply = await h.waitFor(m => m.type === 'result' && m.id === id);
   assert.equal(reply.result.decision, 'approved');
@@ -2961,12 +2993,12 @@ test('approve: with the tab\'s window focused, the approval window opens over it
   const h = await started({ level: 'full', actionOpenPopup: 'ok',
     lastWindow: { id: 1, type: 'normal', incognito: false, left: 100, top: 50, width: 1200, height: 800 } });
   const { id, entry } = await asked(h);
-  await h.until(() => h.popupWindows.some(options => options.url.includes('approve.html?id=')));
+  await h.until(() => h.popupWindows.some(options => options.url.includes('approve.html?bundle=')));
   assert.deepEqual(clone(h.popupWindows.filter(options => options.url.includes('approve.html'))), [{
-    url: `chrome-extension://ext/approve.html?id=${entry.id}`, type: 'popup', width: 440, height: 420, focused: true,
+    url: `chrome-extension://ext/approve.html?bundle=${(await bundleOf(h, entry.id)).id}`, type: 'popup', width: 440, height: 420, focused: true,
     left: 100 + 1200 - 440 - 24, top: 50 + 90 }]);
   assert.equal(h.actionPopupCalls.length, 0, 'never the toolbar popup for an action approval');
-  const decided = await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  const decided = await decide(h, entry.id, 'approve');
   assert.equal(decided.error, undefined, JSON.stringify(decided));
   const reply = await h.waitFor(m => m.type === 'result' && m.id === id);
   assert.equal(reply.result.decision, 'approved');
@@ -2993,10 +3025,10 @@ test('approve: the window opens over the driven tab\'s window, top right, not ov
     tabWindow: { type: 'normal', focused: false, state: 'normal', left: 2000, top: 100, width: 1000, height: 700 },
     lastWindow: { id: 2, type: 'normal', incognito: false, left: 0, top: 0, width: 1200, height: 800 } });
   const { entry } = await asked(h);
-  await h.until(() => h.popupWindows.some(options => options.url.includes('approve.html?id=')));
+  await h.until(() => h.popupWindows.some(options => options.url.includes('approve.html?bundle=')));
   assert.equal(h.actionPopupCalls.length, 0, 'never the toolbar popup for an action approval');
-  const popup = h.popupWindows.find(options => options.url.includes('approve.html?id='));
-  assert.deepEqual(clone(popup), { url: `chrome-extension://ext/approve.html?id=${entry.id}`, type: 'popup', width: 440,
+  const popup = h.popupWindows.find(options => options.url.includes('approve.html?bundle='));
+  assert.deepEqual(clone(popup), { url: `chrome-extension://ext/approve.html?bundle=${(await bundleOf(h, entry.id)).id}`, type: 'popup', width: 440,
     height: 420, focused: true, left: 2000 + 1000 - 440 - 24, top: 100 + 90 });
   assert.equal(entry.host, 'example.com', 'the site the header names is the tab\'s host from the browser');
 });
@@ -3019,7 +3051,7 @@ test('approve: a minimized tab window, or bounds the browser refuses, get the br
 test('approve: the window stays open when the tab navigates and says the page has changed; the approval stays bound', async () => {
   const h = await started({ level: 'full' });
   const { id, entry } = await asked(h);
-  await h.until(() => h.popupWindows.some(options => options.url.includes('approve.html?id=')));
+  await h.until(() => h.popupWindows.some(options => options.url.includes('approve.html?bundle=')));
   assert.equal(entry.pageChanged, undefined);
   h.chrome.tabs.onUpdated.emit(7, { status: 'complete' });
   await sleep(20);
@@ -3028,7 +3060,7 @@ test('approve: the window stays open when the tab navigates and says the page ha
   await h.until(() => h.session.approvals.at(-1)?.pageChanged === true);
   assert.deepEqual(h.windowsRemoved, [], 'the window stays open');
   // Still decidable from the window; the approval stays bound to the revision it was asked on.
-  const decided = await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  const decided = await decide(h, entry.id, 'approve');
   assert.equal(decided.error, undefined, JSON.stringify(decided));
   const { approvalId } = (await h.waitFor(m => m.type === 'result' && m.id === id)).result;
   const run = h.command('execute', { action: { type: 'click', target: '1', approvalId }, expectedRevision: 'doc:2', level: 'full' });
@@ -3049,7 +3081,7 @@ test('upload: worker dispatch accepts a bound once-only approval and rejects for
   const forged = await executeUpload({ type: 'upload', target: '1', file, approvalId: '0'.repeat(36) });
   assert.equal(forged.error.code, 'blocked_risky');
   const { id, entry } = await asked(h, { cls: 'submit', kind: 'upload', file: { name: file.name, size: file.size } });
-  await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  await decide(h, entry.id, 'approve');
   const approvalId = (await h.waitFor(message => message.type === 'result' && message.id === id)).result.approvalId;
   const malformed = await executeUpload({ type: 'upload', target: '1', file: { name: file.name, size: file.size }, approvalId });
   assert.equal(malformed.error.code, 'unsupported');
@@ -3069,7 +3101,7 @@ test('upload: worker dispatch accepts a bound once-only approval and rejects for
   changed.approvalInfo = (target, revision) => ({ revision, documentId: 'doc', target,
     label: 'Resume PDF', labelHash: 'h-resume', cls: 'submit' });
   const next = await asked(changed, { cls: 'submit', kind: 'upload', file: { name: file.name, size: file.size } });
-  await changed.send({ type: 'approval_decision', id: next.entry.id, decision: 'approve' }, APPROVE_PAGE);
+  await decide(changed, next.entry.id, 'approve');
   const bound = (await changed.waitFor(message => message.type === 'result' && message.id === next.id)).result.approvalId;
   const mismatch = changed.command('execute', { action: { type: 'upload', target: '1', file: { ...file, name: 'other.pdf' }, approvalId: bound },
     expectedRevision: 'doc:1', level: 'full' });
@@ -3086,13 +3118,13 @@ test('approve: a daemon-supplied (forged) approvalId and an id for another targe
   assert.equal(h.pageArgs.filter(c => c.method === 'execute').length, 0, 'nothing reached the page');
   // Approved for target 1 on doc:1; used for target 2: refused (and spent).
   let { id, entry } = await asked(h);
-  await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  await decide(h, entry.id, 'approve');
   let approvalId = (await h.waitFor(m => m.type === 'result' && m.id === id)).result.approvalId;
   const other = h.command('execute', { action: { type: 'click', target: '2', approvalId }, expectedRevision: 'doc:1', level: 'full' });
   assert.equal((await h.waitFor(m => m.type === 'result' && m.id === other)).error.code, 'blocked_risky');
   // Approved on doc:1, the page moves to doc:2 before the execute: stale, nothing runs.
   ({ id, entry } = await asked(h));
-  await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  await decide(h, entry.id, 'approve');
   approvalId = (await h.waitFor(m => m.type === 'result' && m.id === id)).result.approvalId;
   h.bumpRevision();
   const moved = h.command('execute', { action: { type: 'click', target: '1', approvalId }, expectedRevision: 'doc:2', level: 'full' });
@@ -3106,7 +3138,7 @@ test('approve: a daemon-supplied (forged) approvalId and an id for another targe
 test('approve: Deny answers denied; no click within the wait answers pending and the request keeps waiting', async () => {
   const h = await started({ level: 'full' });
   let { id, entry } = await asked(h);
-  await h.send({ type: 'approval_decision', id: entry.id, decision: 'deny' }, APPROVE_PAGE);
+  await decide(h, entry.id, 'deny');
   assert.equal((await h.waitFor(m => m.type === 'result' && m.id === id)).result.decision, 'denied');
   // The same control asked again while the denial stands: denied at once.
   const repeat = h.command('approve', { target: '1', expectedRevision: 'doc:1', cls: 'secret', waitMs: 5000 });
@@ -3118,7 +3150,7 @@ test('approve: Deny answers denied; no click within the wait answers pending and
   assert.ok(waited.result.expiresAt > Date.now() + 60_000, 'it waits five minutes');
   assert.equal(h.session.approvals.length, 1, 'still on the card');
   // Approved later: the next ask (the agent's act again) gets the id at once.
-  await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  await decide(h, entry.id, 'approve');
   const later = h.command('approve', { target: '1', expectedRevision: 'doc:2', cls: 'secret', waitMs: 5000 });
   const answer = (await h.waitFor(m => m.type === 'result' && m.id === later)).result;
   assert.equal(answer.decision, 'approved');
@@ -3133,7 +3165,7 @@ test('approval wake: a click while the act waits answers it (60 s to use, nothin
   const decisions = () => h.sent.filter(m => m.type === 'action_decision');
   // Waited: the act gets the answer, with the entry it was about; the daemon is told nothing; 60 s to use it.
   let { id, entry } = await asked(h);
-  await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  await decide(h, entry.id, 'approve');
   let reply = (await h.waitFor(m => m.type === 'result' && m.id === id)).result;
   assert.equal(reply.decision, 'approved');
   assert.equal(reply.entryId, entry.id);
@@ -3148,7 +3180,7 @@ test('approval wake: a click while the act waits answers it (60 s to use, nothin
   reply = (await h.waitFor(m => m.type === 'result' && m.id === id)).result;
   assert.equal(reply.decision, 'pending');
   assert.equal(reply.entryId, entry.id);
-  await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  await decide(h, entry.id, 'approve');
   await h.until(() => decisions().length === 1);
   const sent = decisions()[0];
   assert.deepEqual([sent.entryId, sent.decision], [entry.id, 'approved']);
@@ -3158,7 +3190,7 @@ test('approval wake: a click while the act waits answers it (60 s to use, nothin
   h.bumpRevision();
   ({ id, entry } = await asked(h, { expectedRevision: 'doc:2', waitMs: 20 }, Date.now() + clock.offset + 30_000));
   await h.waitFor(m => m.type === 'result' && m.id === id);
-  await h.send({ type: 'approval_decision', id: entry.id, decision: 'deny' }, APPROVE_PAGE);
+  await decide(h, entry.id, 'deny');
   await h.until(() => decisions().length === 2);
   assert.deepEqual([decisions()[1].entryId, decisions()[1].decision], [entry.id, 'denied']);
 });
@@ -3170,7 +3202,7 @@ test('approval wake: an approval decided while no act waited is usable for 5 min
   const lateApproval = async (revision = 'doc:1') => {
     const { id, entry } = await asked(h, { expectedRevision: revision, waitMs: 20 }, Date.now() + clock.offset + 30_000);
     assert.equal((await h.waitFor(m => m.type === 'result' && m.id === id)).result.decision, 'pending');
-    await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+    await decide(h, entry.id, 'approve');
     return entry;
   };
   const execute = async (approvalId, revision = 'doc:1') => {
@@ -3209,6 +3241,234 @@ test('approval wake: an approval decided while no act waited is usable for 5 min
   assert.equal(executes(), before);
 });
 
+// --- Approval bundles (spec #87 "Combined approvals") ---------------------------------------------------------------
+
+// The page's gated controls by target: 1 "Delete account" (delete), 2 "Save" (submit).
+function gatedControls(h) {
+  h.approvalInfo = (target, revision) => (target === '2'
+    ? { revision, documentId: 'doc', target, label: 'Save', labelHash: 'h-save', cls: 'submit' }
+    : { revision, documentId: 'doc', target, label: 'Delete account', labelHash: 'h-delete', cls: 'delete' });
+}
+// The agent asks for more on the task this browser runs (fai_browser_open with its requestId and mode full).
+function askOnTask(h, ask = {}) {
+  h.push({ type: 'requests', requests: [{ requestId: 'req_1', state: 'active', origins: [ORIGIN], mode: 'reversible',
+    ask: { id: 'ask-1', level: 'full', origins: [], access: [], at: new Date().toISOString(), ...ask } }] });
+}
+// An act on a gated control that stopped waiting (approval_pending): its entry.
+async function pendingEntry(h, args = {}, deadline) {
+  const { id } = await asked(h, { waitMs: 20, cls: 'delete', ...args }, deadline);
+  const { result } = await h.waitFor(m => m.type === 'result' && m.id === id);
+  assert.equal(result.decision, 'pending');
+  await h.until(() => h.session.approvals.some(item => item.id === result.entryId));
+  return h.session.approvals.find(item => item.id === result.entryId);
+}
+const approveWindows = h => h.popupWindows.filter(options => options.url.includes('approve.html'));
+const bridged = (h, type) => h.sent.filter(m => m.type === type).map(({ via: _via, v: _v, type: _type, ...body }) => body);
+
+// Spec #87 acceptance 1 (the FnB's case): a pending delete, then the agent's ask for full on the same task and tab.
+test('bundle: an ask and an action on one tab open one approve.html window; no request window, no openPopup', async () => {
+  const h = await started({ level: 'reversible', actionOpenPopup: 'ok' });
+  gatedControls(h);
+  const entry = await pendingEntry(h);
+  askOnTask(h);
+  await h.until(() => h.session.bundles?.[0]?.ask);
+  await sleep(30);
+  const [bundle] = h.session.bundles;
+  assert.equal(h.session.bundles.length, 1, 'one bundle for the tab');
+  assert.deepEqual([bundle.ask.id, bundle.ask.level, bundle.entries.map(item => item.id), bundle.version, bundle.host],
+    ['ask-1', 'full', [entry.id], 2, 'example.com']);
+  assert.deepEqual(clone(approveWindows(h)).map(options => options.url), [`chrome-extension://ext/approve.html?bundle=${bundle.id}`]);
+  assert.deepEqual(h.approvalWindows, [], 'no popup.html?window=1 window for the ask');
+  assert.equal(h.actionPopupCalls.length, 0, 'no openPopup');
+  assert.equal(h.session.requests[0].askBundled, true, 'the popup shows no second card for the ask');
+  // What Approve asks the browser for: the task's own origin (full brings multiple task tabs), nothing else.
+  assert.deepEqual(clone(bundle.ask.apply), { level: 'full', origins: [ORIGIN], patterns: [], scope: null });
+  askOnTask(h, { id: 'ask-sites', level: null, origins: ['https://partner.example.org'] });
+  await h.until(() => h.session.bundles[0].ask?.id === 'ask-sites');
+  assert.deepEqual(clone(h.session.bundles[0].ask.apply), { level: 'reversible', origins: ['https://partner.example.org'],
+    patterns: [], scope: null }, 'an ask for a site only: that site, at the level granted');
+  askOnTask(h);
+  await h.until(() => h.session.bundles[0].ask?.id === 'ask-1');
+  assert.equal(h.badge, '!');
+  // The daemon heard the window open, then the ask join (ids only).
+  assert.deepEqual(bridged(h, 'bundle_open').slice(0, 2), [
+    { requestId: 'req_1', tabId: 7, bundleId: bundle.id, version: 1, askId: null, entryIds: [entry.id] },
+    { requestId: 'req_1', tabId: 7, bundleId: bundle.id, version: 2, askId: 'ask-1', entryIds: [entry.id] }]);
+});
+
+// Spec #87 acceptance 3: one Approve applies the ask (its id, `bundled`) and gives each entry its own single-use id.
+test('bundle: Approve applies the ask and approves every entry once, with its own bound id; a second Approve is refused', async () => {
+  const h = await started({ level: 'reversible', hostGrants: [`${ORIGIN}/*`] });
+  gatedControls(h);
+  const remove = await pendingEntry(h);
+  const save = await pendingEntry(h, { target: '2', cls: 'submit' });
+  askOnTask(h);
+  await h.until(() => h.session.bundles?.[0]?.ask && h.session.bundles[0].entries.length === 2);
+  const [bundle] = h.session.bundles;
+  const reply = await h.send({ type: 'bundle_decision', bundleId: bundle.id, version: bundle.version, decision: 'approve' }, APPROVE_PAGE);
+  assert.equal(reply.error, undefined, JSON.stringify(reply));
+  const lease = h.sent.filter(m => m.type === 'lease').at(-1);
+  assert.deepEqual([lease.ask, lease.askId, lease.bundled, lease.level, lease.tabMode], [true, 'ask-1', true, 'full', 'multiple']);
+  assert.deepEqual(bridged(h, 'action_decision'), [], 'entries in a bundle are not sent one by one');
+  assert.deepEqual(bridged(h, 'bundle_decision'), [{ requestId: 'req_1', tabId: 7, bundleId: bundle.id, version: bundle.version,
+    decision: 'approved', askId: 'ask-1', entryIds: [remove.id, save.id] }]);
+  await h.until(() => h.session.bundles.length === 0);
+  const again = await h.send({ type: 'bundle_decision', bundleId: bundle.id, version: bundle.version, decision: 'approve' }, APPROVE_PAGE);
+  assert.match(again.error, /no longer waiting/);
+  assert.equal(h.sent.filter(m => m.type === 'bundle_decision').length, 1);
+  // Each entry: its own approval id, picked up by the agent's repeated act.
+  const pick = async target => {
+    const id = h.command('approve', { target, expectedRevision: 'doc:1', cls: target === '2' ? 'submit' : 'delete', waitMs: 5000 });
+    return (await h.waitFor(m => m.type === 'result' && m.id === id)).result;
+  };
+  const [first, second] = [await pick('1'), await pick('2')];
+  assert.deepEqual([first.decision, second.decision], ['approved', 'approved']);
+  assert.notEqual(first.approvalId, second.approvalId);
+  const run = (target, approvalId, revision = 'doc:1') => {
+    const id = h.command('execute', { action: { type: 'click', target, approvalId }, expectedRevision: revision, level: 'full' });
+    return h.waitFor(m => m.type === 'result' && m.id === id);
+  };
+  assert.equal((await run('2', first.approvalId)).error?.code, 'blocked_risky', 'bound to its own control');
+  assert.equal((await run('1', first.approvalId)).error?.code, 'blocked_risky', 'single use: spent by the refused try');
+  h.bumpRevision();
+  assert.equal((await run('2', second.approvalId, 'doc:2')).error?.code, 'stale', 'still bound to the revision shown');
+});
+
+// Spec #87 acceptance 4: one Deny declines the ask and denies every entry.
+test('bundle: Deny declines the ask (bundled) and denies every entry; a bundle of one ask keeps today\'s deny', async () => {
+  const h = await started({ level: 'reversible' });
+  gatedControls(h);
+  const entry = await pendingEntry(h);
+  askOnTask(h);
+  await h.until(() => h.session.bundles?.[0]?.ask);
+  let [bundle] = h.session.bundles;
+  const reply = await h.send({ type: 'bundle_decision', bundleId: bundle.id, version: bundle.version, decision: 'deny' }, APPROVE_PAGE);
+  assert.equal(reply.error, undefined, JSON.stringify(reply));
+  assert.deepEqual(clone(h.sent.filter(m => m.type === 'deny').at(-1)), { via: 'ws', v: 3, type: 'deny', ref: h.sent.filter(m => m.type === 'deny').at(-1).ref,
+    requestId: 'req_1', ask: true, bundled: true });
+  assert.equal(h.sent.some(m => m.type === 'lease' && m.ask), false, 'nothing granted');
+  const repeat = h.command('approve', { target: '1', expectedRevision: 'doc:1', cls: 'delete', waitMs: 5000 });
+  const denied = (await h.waitFor(m => m.type === 'result' && m.id === repeat)).result;
+  assert.deepEqual([denied.decision, denied.entryId], ['denied', entry.id]);
+  assert.deepEqual(bridged(h, 'action_decision'), []);
+  assert.deepEqual(bridged(h, 'bundle_decision').map(item => [item.decision, item.askId, item.entryIds]), [['denied', 'ask-1', [entry.id]]]);
+  // Another ask alone: a bundle of one, declined with today's deny (no `bundled`).
+  askOnTask(h, { id: 'ask-2' });
+  await h.until(() => h.session.bundles?.[0]?.ask?.id === 'ask-2');
+  [bundle] = h.session.bundles;
+  assert.deepEqual(bundle.entries, []);
+  await h.send({ type: 'bundle_decision', bundleId: bundle.id, version: bundle.version, decision: 'deny' }, APPROVE_PAGE);
+  const last = h.sent.filter(m => m.type === 'deny').at(-1);
+  assert.deepEqual([last.ask, last.bundled], [true, undefined]);
+  assert.deepEqual(bridged(h, 'bundle_decision').at(-1).entryIds, []);
+});
+
+// Spec #87 acceptance 5: an item joins between render and click.
+test('bundle: a click on a version that changed is refused and grants nothing', async () => {
+  const h = await started({ level: 'reversible', hostGrants: [`${ORIGIN}/*`] });
+  gatedControls(h);
+  const entry = await pendingEntry(h);
+  await h.until(() => h.session.bundles?.length === 1);
+  const shown = h.session.bundles[0];
+  askOnTask(h);
+  await h.until(() => h.session.bundles[0].version === shown.version + 1);
+  const reply = await h.send({ type: 'bundle_decision', bundleId: shown.id, version: shown.version, decision: 'approve' }, APPROVE_PAGE);
+  assert.equal(reply.code, 'bundle_changed');
+  assert.equal(reply.error, 'Updated: the agent added an item. Check the list again.');
+  assert.equal(h.sent.some(m => m.type === 'lease' && m.ask), false);
+  assert.deepEqual(bridged(h, 'bundle_decision'), []);
+  assert.equal(h.session.approvals.find(item => item.id === entry.id)?.id, entry.id, 'the entry still waits');
+});
+
+// Spec #87 acceptance 6: entries on two task tabs at full: one window, the other bundle waits for it.
+test('bundle: one tab at a time; the other tab\'s bundle opens once the first is answered', async () => {
+  const h = await multipleTask();
+  gatedControls(h);
+  const first = await pendingEntry(h);
+  assert.equal((await taskOpen(h)).error, undefined);
+  const id = h.command('execute', { action: { type: 'switch_tab', tab: 't1' }, expectedRevision: 'doc:1' }, { lease: multiLease });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === id)).error, undefined);
+  const second = await pendingEntry(h, { target: '2', cls: 'submit' });
+  await h.until(() => h.session.bundles?.length === 2);
+  await sleep(30);
+  assert.deepEqual(h.session.bundles.map(bundle => [bundle.tabId, bundle.entries[0].id]), [[7, first.id], [9, second.id]]);
+  assert.equal(approveWindows(h).length, 1, 'one window on screen');
+  assert.ok(approveWindows(h)[0].url.endsWith(h.session.bundles[0].id));
+  assert.deepEqual(bridged(h, 'bundle_open').map(item => item.tabId), [7], 'the waiting bundle has not opened');
+  await decide(h, first.id, 'approve');
+  await h.until(() => approveWindows(h).length === 2);
+  assert.ok(approveWindows(h)[1].url.endsWith(h.session.bundles[0].id));
+  assert.equal(h.session.bundles[0].tabId, 9);
+  assert.deepEqual(bridged(h, 'bundle_open').map(item => item.tabId), [7, 9]);
+});
+
+// Spec #87 acceptance 9 and flag #18: expiry by the bundle's clock; closing the window is not an answer.
+test('bundle: closing the window leaves it pending; a repeat, a join or Show reopens it once; it expires as a whole', async () => {
+  const clock = { offset: 0 };
+  const h = await started({ level: 'full', clock });
+  gatedControls(h);
+  const at = () => Date.now() + clock.offset + 30_000;
+  const first = await pendingEntry(h, {}, at());
+  await h.until(() => approveWindows(h).length === 1);
+  const sync = async () => {
+    h.push({ type: 'requests', requests: [] });
+    await sleep(20);
+  };
+  // Closed by hand: pending, still on the badge and the card; nothing reopens by itself.
+  h.userClose(31);
+  await sleep(20);
+  assert.equal(h.session.bundles[0].shown, false);
+  assert.equal(h.badge, '!');
+  await sync();
+  assert.equal(approveWindows(h).length, 1);
+  // The agent repeats the act: the window comes back, once.
+  await pendingEntry(h, {}, at());
+  await h.until(() => approveWindows(h).length === 2);
+  await pendingEntry(h, {}, at());
+  assert.equal(approveWindows(h).length, 2, 'already on screen');
+  // Closed again; an item joins: back.
+  h.userClose(32);
+  await sleep(20);
+  const joined = await pendingEntry(h, { target: '2', cls: 'submit' }, at());
+  await h.until(() => approveWindows(h).length === 3);
+  // Closed again; the card's Show approval window: back.
+  h.userClose(33);
+  await sleep(20);
+  const shown = await h.send({ type: 'bundle_show', bundleId: h.session.bundles[0].id }, { id: 'ext', url: 'chrome-extension://ext/popup.html' });
+  assert.equal(shown.error, undefined, JSON.stringify(shown));
+  await h.until(() => approveWindows(h).length === 4);
+  // Five minutes from the newest item (the join), ten at most from the opening; items do not expire on their own.
+  assert.ok(Math.abs(h.session.bundles[0].expiresAt - (joined.createdAt + 5 * 60_000)) < 1000);
+  clock.offset += 4 * 60_000;
+  h.bumpRevision();
+  await pendingEntry(h, { target: '1', expectedRevision: 'doc:2' }, at());
+  clock.offset += 4 * 60_000;
+  h.bumpRevision();
+  await pendingEntry(h, { target: '1', expectedRevision: 'doc:3' }, at());
+  clock.offset += 90_000;
+  await sync();
+  assert.equal(h.session.bundles.length, 1, 'the joins keep it open past five minutes from its first item...');
+  clock.offset += 31_000;
+  await sync();
+  assert.deepEqual(h.session.bundles, [], '...but never past ten minutes from its opening');
+  let expired = bridged(h, 'bundle_decision');
+  assert.deepEqual(expired.map(item => [item.decision, item.entryIds.length]), [['expired', 4]]);
+  assert.deepEqual(expired[0].entryIds.slice(0, 2), [first.id, joined.id]);
+  assert.ok(h.windowsRemoved.includes(34), 'its window closed');
+  assert.equal(h.badge, '');
+  // Nothing was granted: the agent's next act asks again, in a new bundle that expires 5 min after its newest item.
+  const next = await pendingEntry(h, { target: '1', expectedRevision: 'doc:3' }, at());
+  assert.ok(!expired[0].entryIds.includes(next.id));
+  clock.offset += 5 * 60_000 - 2_000;
+  await sync();
+  assert.equal(h.session.bundles.length, 1);
+  clock.offset += 3_000;
+  await sync();
+  expired = bridged(h, 'bundle_decision');
+  assert.deepEqual(expired.at(-1).entryIds, [next.id]);
+  assert.deepEqual(h.session.bundles, []);
+});
+
 test('approve: never at read-only, purchases only from full, off when the user turned the setting off, class from the page', async () => {
   const readOnly = await started();
   const ro = readOnly.command('approve', { target: '1', expectedRevision: 'doc:1', cls: 'secret', waitMs: 10 });
@@ -3244,8 +3504,8 @@ test('enter_commit: a committing Enter is always asked (asks off too), shows its
   assert.equal(entry.label, 'Message');
   assert.equal(entry.note, 'Sends your reply');
   assert.equal(h.pageArgs.filter(c => c.method === 'approvalInfo').at(-1).args[2], 'enter_commit', 'page.js checks the field offers Enter');
-  assert.ok(h.popupWindows.some(options => options.url.includes('approve.html?id=')), 'the approval window opened');
-  await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  assert.ok(h.popupWindows.some(options => options.url.includes('approve.html?bundle=')), 'the approval window opened');
+  await decide(h, entry.id, 'approve');
   const approvalId = (await h.waitFor(m => m.type === 'result' && m.id === id)).result.approvalId;
   // A click on the same target cannot spend an Enter's approval.
   const click = h.command('execute', { action: { type: 'click', target: '1', approvalId }, expectedRevision: 'doc:1', level: 'full' });
@@ -3253,7 +3513,7 @@ test('enter_commit: a committing Enter is always asked (asks off too), shows its
   assert.equal(h.pageArgs.filter(c => c.method === 'execute').length, 0);
   // Asked again (the click spent the first id): the Enter runs once with it; page.js gets the binding, never the id.
   const second = await asked(h, { cls: 'submit', kind: 'enter_commit' });
-  await h.send({ type: 'approval_decision', id: second.entry.id, decision: 'approve' }, APPROVE_PAGE);
+  await decide(h, second.entry.id, 'approve');
   const enterId = (await h.waitFor(m => m.type === 'result' && m.id === second.id)).result.approvalId;
   const run = h.command('execute', { action: { type: 'submit_field', target: '1', approvalId: enterId }, expectedRevision: 'doc:1', level: 'full' });
   const ran = await h.waitFor(m => m.type === 'result' && m.id === run);
@@ -3268,7 +3528,7 @@ test('enter_commit: a committing Enter is always asked (asks off too), shows its
   const denying = await started({ level: 'full' });
   denying.approvalInfo = messageField;
   const third = await asked(denying, { cls: 'submit', kind: 'enter_commit' });
-  await denying.send({ type: 'approval_decision', id: third.entry.id, decision: 'deny' }, APPROVE_PAGE);
+  await decide(denying, third.entry.id, 'deny');
   assert.deepEqual((await denying.waitFor(m => m.type === 'result' && m.id === third.id)).result,
     { decision: 'denied', entryId: third.entry.id }, 'the answer names the entry it was about');
 });
@@ -3312,7 +3572,7 @@ test('fill_secret: asked every time (credential asks off too), the card shows ha
   assert.deepEqual(entry.secret, { label: '[secret:1 openai sk-proj-…6789 len 49]', kind: 'openai', from: ORIGIN });
   assert.equal(JSON.stringify(h.session).includes(FAKE_KEY), false, 'the card never holds the value');
   assert.equal(h.pageArgs.filter(c => c.method === 'approvalInfo').at(-1).args[2], 'fill_secret', 'page.js checks the field');
-  await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  await decide(h, entry.id, 'approve');
   const approvalId = (await h.waitFor(m => m.type === 'result' && m.id === asked)).result.approvalId;
   // An approval for handle 1 used for handle 2, a fill without one, or a raw value from the daemon: refused.
   const other = h.command('execute', { action: { type: 'fill_secret', target: '1', handle: '2', approvalId: 'x'.repeat(36) },
@@ -3342,7 +3602,7 @@ test('copy_secret: approved, the offscreen document writes the clipboard; Deny w
   const { h, observation } = await vaulted();
   const denied = h.command('approve', { expectedRevision: observation.revision, cls: 'secret', kind: 'copy_secret', handle: '1', waitMs: 5000 });
   await h.until(() => (h.session.approvals ?? []).length > 0);
-  await h.send({ type: 'approval_decision', id: h.session.approvals.at(-1).id, decision: 'deny' }, APPROVE_PAGE);
+  await decide(h, h.session.approvals.at(-1).id, 'deny');
   assert.equal((await h.waitFor(m => m.type === 'result' && m.id === denied)).result.decision, 'denied');
   assert.deepEqual(h.clipboard, []);
   h.bumpRevision();
@@ -3350,7 +3610,7 @@ test('copy_secret: approved, the offscreen document writes the clipboard; Deny w
   await h.until(() => (h.session.approvals ?? []).some(entry => entry.kind === 'copy_secret'));
   const entry = h.session.approvals.at(-1);
   assert.equal(entry.label, '');
-  await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  await decide(h, entry.id, 'approve');
   const approvalId = (await h.waitFor(m => m.type === 'result' && m.id === asked)).result.approvalId;
   const run = h.command('execute', { action: { type: 'copy_secret', handle: '1', approvalId }, expectedRevision: 'doc:2', level: 'reversible' });
   const ran = await h.waitFor(m => m.type === 'result' && m.id === run);
@@ -4132,7 +4392,7 @@ test('frames: the Approve gate reads a frame control in its frame; the execute c
   const { id, entry } = await asked(h, { target: 'f1.1', expectedRevision: before.revision, cls: 'delete' });
   assert.equal(entry.label, 'Delete tenant', 'the label the frame page script read');
   assert.deepEqual(page.calls.find(call => call.method === 'approvalInfo'), { method: 'approvalInfo', target: '1', expected: 'framedoc:1', kind: null });
-  await h.send({ type: 'approval_decision', id: entry.id, decision: 'approve' }, APPROVE_PAGE);
+  await decide(h, entry.id, 'approve');
   const { approvalId } = (await h.waitFor(m => m.type === 'result' && m.id === id)).result;
   // The approval names f1.1: a top control cannot use it.
   const wrong = await executed(h, { type: 'click', target: '1', approvalId }, before.revision);
@@ -4140,7 +4400,7 @@ test('frames: the Approve gate reads a frame control in its frame; the execute c
   assert.equal(page.calls.filter(call => call.method === 'execute').length, 0);
   // Approved again, for the frame control itself: it runs there with the local target.
   const { id: second, entry: next } = await asked(h, { target: 'f1.1', expectedRevision: before.revision, cls: 'delete' });
-  await h.send({ type: 'approval_decision', id: next.id, decision: 'approve' }, APPROVE_PAGE);
+  await decide(h, next.id, 'approve');
   const granted = (await h.waitFor(m => m.type === 'result' && m.id === second)).result.approvalId;
   const ran = await executed(h, { type: 'click', target: 'f1.1', approvalId: granted }, before.revision);
   assert.equal(ran.error, undefined, JSON.stringify(ran.error));

@@ -70,14 +70,14 @@ export function replaceCardsPreservingFocus(container, cards) {
   const active = document.activeElement;
   const previous = active?.closest?.('.request-card');
   const inside = previous && container.contains(previous);
-  const key = inside ? previous.dataset.requestId ?? previous.dataset.approvalId : null;
+  const key = inside ? previous.dataset.requestId ?? previous.dataset.approvalId ?? previous.dataset.bundleId : null;
   const controls = inside ? [...previous.querySelectorAll('button, input, select')] : [];
   const index = controls.indexOf(active);
   container.replaceChildren(...cards);
   if (key == null || index < 0) return;
   // Searched in the container, so a card inside a fold (the popup's "Older paused tasks") keeps its focus too.
   const card = [...container.querySelectorAll('.request-card')]
-    .find(item => (item.dataset.requestId ?? item.dataset.approvalId) === key);
+    .find(item => (item.dataset.requestId ?? item.dataset.approvalId ?? item.dataset.bundleId) === key);
   const next = card?.querySelectorAll('button, input, select')[index];
   if (next && !next.disabled) next.focus({ preventScroll: true });
 }
