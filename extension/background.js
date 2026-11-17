@@ -3418,6 +3418,7 @@ function expireBundle(bundle) {
     settleApproval(entry, { decision: 'pending' });
   }
   if (bundle.askId) settleAsk(bundle.askId);
+  announceBundle(bundle);
   reportBridge('bundle_decision', { ...bundleWire(bundle), decision: 'expired' });
 }
 
@@ -3467,11 +3468,17 @@ async function openBundleWindow(bundle) {
     // No window: the badge and the popup card still show the bundle.
   }
   if (bundles.get(bundle.key) !== bundle) return;
-  if (!bundle.announced) {
-    bundle.announced = true;
-    reportBridge('bundle_open', bundleWire(bundle));
-  }
+  announceBundle(bundle);
   publishBundles();
+}
+
+// The daemon records a bundle (and what its ask asks for) only from `bundle_open`, and drops a decision on one it never
+// recorded: a bundle answered or expired before its window opened (one queued behind another tab's, answered from its
+// popup card) is announced first.
+function announceBundle(bundle) {
+  if (bundle.announced) return;
+  bundle.announced = true;
+  reportBridge('bundle_open', bundleWire(bundle));
 }
 
 // The window was closed without an answer: the bundle stays pending (flag #18).
@@ -3637,6 +3644,8 @@ async function decideBundle(bundleId, version, decision) {
   if (!bundle || bundle.deciding || Date.now() > bundleExpiry(bundle)) throw new Error(BUNDLE_GONE);
   if (version !== bundle.version) throw new ExtensionError('bundle_changed', BUNDLE_CHANGED);
   const single = bundle.entryIds.length + (bundle.askId ? 1 : 0) === 1;
+  // Before the ask is answered: the daemon takes the ask's level and sites from the open ask when the bundle opens.
+  announceBundle(bundle);
   bundle.deciding = true;
   try {
     if (bundle.askId) await answerAsk(bundle, decision, single);

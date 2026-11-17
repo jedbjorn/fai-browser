@@ -2574,7 +2574,7 @@ test('one group: the title follows the most urgent state, FAI ? then FAI ⏸ the
   // An action approval pending on the session's tab.
   const { id, entry } = await asked(h);
   await h.until(() => title() === 'FAI ?');
-  await h.send({ type: 'approval_decision', id: entry.id, decision: 'deny' }, APPROVE_PAGE);
+  await decide(h, entry.id, 'deny');
   await h.waitFor(m => m.type === 'result' && m.id === id);
   await h.until(() => title() === 'FAI');
   // The request's open ask for more, while its session is on the tab.
@@ -3400,6 +3400,33 @@ test('bundle: one tab at a time; the other tab\'s bundle opens once the first is
   assert.ok(approveWindows(h)[1].url.endsWith(h.session.bundles[0].id));
   assert.equal(h.session.bundles[0].tabId, 9);
   assert.deepEqual(bridged(h, 'bundle_open').map(item => item.tabId), [7, 9]);
+});
+
+// Review finding 3 (WU22 round 1): the daemon drops a decision on a bundle it never had an open for. A bundle queued
+// behind another tab's, answered from its popup card, is announced first.
+test('bundle: a queued bundle of 2 decided from the popup card sends bundle_open before bundle_decision', async () => {
+  const h = await multipleTask();
+  gatedControls(h);
+  const first = await pendingEntry(h);
+  assert.equal((await taskOpen(h)).error, undefined);
+  const id = h.command('execute', { action: { type: 'switch_tab', tab: 't1' }, expectedRevision: 'doc:1' }, { lease: multiLease });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === id)).error, undefined);
+  const second = await pendingEntry(h, { target: '2', cls: 'submit' });
+  const third = await pendingEntry(h, { target: '3' });
+  await h.until(() => h.session.bundles?.find(bundle => bundle.tabId === 9)?.entries.length === 2);
+  assert.equal(approveWindows(h).length, 1, 'tab 9\'s bundle waits behind tab 7\'s window');
+  assert.deepEqual(bridged(h, 'bundle_open').map(item => item.tabId), [7]);
+  const queued = h.session.bundles.find(bundle => bundle.tabId === 9);
+  const popup = { id: 'ext', url: 'chrome-extension://ext/popup.html' };
+  const reply = await h.send({ type: 'bundle_decision', bundleId: queued.id, version: queued.version, decision: 'deny' }, popup);
+  assert.equal(reply.error, undefined);
+  const wire = h.sent.filter(m => ['bundle_open', 'bundle_decision'].includes(m.type) && m.bundleId === queued.id);
+  assert.deepEqual(wire.map(m => [m.type, m.version, [...m.entryIds].sort()]), [
+    ['bundle_open', queued.version, [second.id, third.id].sort()],
+    ['bundle_decision', queued.version, [second.id, third.id].sort()],
+  ]);
+  assert.equal(wire[1].decision, 'denied');
+  assert.equal(h.session.approvals.find(item => item.id === first.id)?.id, first.id, 'tab 7\'s bundle still waits');
 });
 
 // Spec #87 acceptance 9 and flag #18: expiry by the bundle's clock; closing the window is not an answer.

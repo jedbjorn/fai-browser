@@ -291,7 +291,8 @@ test('#30 an ask that changes while its window is open: marked updated, Approve 
   const card = await bundleWindow(env);
   await card.waitForSelector('#approve:not([disabled])', { timeout: 5000 });
   assert.equal(await card.isHidden('#updated'), true);
-  await env.client.ask(requestId, { mode: 'interactive' });
+  // The window is open, so the session is paused (spec #87 AC7): the ask joins the bundle, then the call gets the receipt.
+  await assert.rejects(env.client.ask(requestId, { mode: 'interactive' }), { code: 'approval_open' });
   await card.waitForSelector('#updated:not([hidden])', { timeout: 5000 });
   assert.equal(await card.textContent('#updated'), 'Updated: the agent added an item. Check the list again.');
   assert.equal(await card.locator('#approve[disabled], #deny[disabled]').count(), 2, 'both buttons are held right after the change');
