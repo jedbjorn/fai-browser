@@ -12,7 +12,7 @@ action approvals and verified outcomes.**
 [![Firefox add-on](https://img.shields.io/badge/Firefox-add--on-FF7139?style=flat-square&logo=firefoxbrowser&logoColor=white)](docs/guide/install.md)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](#contributing)
 
-[Website](https://jedbjorn.github.io/fai-browser/) · [Install](docs/guide/install.md) · [Measured comparisons](#benchmarks)
+[Website](https://fai-browser.designs-os.com/) · [Install](docs/guide/install.md) · [Measured comparisons](#benchmarks)
 
 FAI Browser lets a coding agent work in one Firefox tab you approved, in your own signed-in browser.
 **Your agent drives**: `fai_browser_open` asks for your approval and returns a compact
@@ -49,9 +49,9 @@ approval for payments. Login is restricted to your configured test environments.
 
 ## Demo
 
-[![Watch the Firefox demo](docs/media/social-preview.png)](https://jedbjorn.github.io/fai-browser/#demo)
+[![Watch the Firefox demo](docs/media/social-preview.png)](https://fai-browser.designs-os.com/#demo)
 
-[Watch the demo](https://jedbjorn.github.io/fai-browser/#demo) · [Download MP4](docs/media/demo.mp4) · [30-second cut](docs/media/demo-social.mp4)
+[Watch the demo](https://fai-browser.designs-os.com/#demo) · [Download MP4](docs/media/demo.mp4) · [30-second cut](docs/media/demo-social.mp4)
 
 Real Firefox development-build UI on local test sites, with scripted clicks and edited presentation.
 The demo shows payment approval, verified confirmation, secret redaction, and approved secret reuse.
@@ -395,13 +395,13 @@ This is a plain-language summary, not legal advice.
 FAI Browser is part of [Designs/OS](https://designs-os.com). Other open-source projects by the same author:
 
 - **[Subfloor](https://subfloor.designs-os.com)** — a standing team of coding agents for your Git repository, with durable identity, memory, specs and handoffs, run through your coding harness. ([source](https://github.com/jedbjorn/subfloor))
-- **[RST](https://jedbjorn.github.io/rst-c/)** — a native Revit add-in for curated ribbon profiles: admins build them, users load them with one click. ([source](https://github.com/jedbjorn/rst-c))
-- **[Gantt-It](https://jedbjorn.github.io/gantt-it/)** — a Revit add-in that draws Gantt charts in your project, ready to place on sheets. ([source](https://github.com/jedbjorn/gantt-it))
-- **[Splash-It](https://jedbjorn.github.io/splash-it/)** — a Revit add-in that colors view tabs by file, so open models and families are easy to tell apart. ([source](https://github.com/jedbjorn/splash-it))
+- **[RST](https://rst-c.designs-os.com/)** — a native Revit add-in for curated ribbon profiles: admins build them, users load them with one click. ([source](https://github.com/jedbjorn/rst-c))
+- **[Gantt-It](https://gantt-it.designs-os.com/)** — a Revit add-in that draws Gantt charts in your project, ready to place on sheets. ([source](https://github.com/jedbjorn/gantt-it))
+- **[Splash-It](https://splash-it.designs-os.com/)** — a Revit add-in that colors view tabs by file, so open models and families are easy to tell apart. ([source](https://github.com/jedbjorn/splash-it))
 - **[md-converter](https://md-converter.designs-os.com)** — a static web app that renders themed Markdown into styled, shareable HTML. ([source](https://github.com/jedbjorn/md-converter))
 - **[Storybench](https://github.com/jedbjorn/storybench)** — a local workspace for developing videos with an AI production agent.
-- **[AnJ Cloud](https://jedbjorn.github.io/anj-cloud/)** — household file sync from a gateway you host yourself, with clients for Linux, macOS, Windows and Android. ([source](https://github.com/jedbjorn/anj-cloud))
-- **[Pick-It](https://jedbjorn.github.io/pick-it/)** — a Revit add-in that picks any colour on screen, shows its RGB values on the ribbon button and adds it to Revit's custom colours. ([source](https://github.com/jedbjorn/pick-it))
+- **[AnJ Cloud](https://anj-cloud.designs-os.com/)** — household file sync from a gateway you host yourself, with clients for Linux, macOS, Windows and Android. ([source](https://github.com/jedbjorn/anj-cloud))
+- **[Pick-It](https://pick-it.designs-os.com/)** — a Revit add-in that picks any colour on screen, shows its RGB values on the ribbon button and adds it to Revit's custom colours. ([source](https://github.com/jedbjorn/pick-it))
 
 ## License
 
