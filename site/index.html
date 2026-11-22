@@ -3,24 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FAI Browser — Your agent. Your browser. Your say.</title>
-<meta name="description" content="FAI Browser gives your coding agent one browser tab you approve, semantic page context and scoped outcome checks. Agent direct needs no separate FAI model key and adds no FAI provider calls. Open source and MIT licensed.">
+<title>FAI Browser – Browser Control for AI Coding Agents</title>
+<meta name="description" content="Give Claude Code, Codex or OpenCode a browser tab you approve. FAI Browser is an open-source MCP tool for scoped browser actions and explicit payment approval.">
+<meta name="robots" content="index, follow, max-image-preview:large">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="canonical" href="https://jedbjorn.github.io/fai-browser/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="FAI Browser">
-<meta property="og:title" content="FAI Browser — Your agent. Your browser. Your say.">
-<meta property="og:description" content="One approved tab. A compact page digest. Explicit approval for payments. Your own coding agent drives by default.">
+<meta property="og:title" content="FAI Browser – Browser Control for AI Coding Agents">
+<meta property="og:description" content="Give Claude Code, Codex or OpenCode a browser tab you approve. FAI Browser is an open-source MCP tool for scoped browser actions and explicit payment approval.">
 <meta property="og:url" content="https://jedbjorn.github.io/fai-browser/">
 <meta property="og:image" content="https://jedbjorn.github.io/fai-browser/media/social-preview.png">
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="640">
 <meta property="og:image:alt" content="FAI Browser: your agent, your browser, your say. One approved tab, secret redaction and Approve once.">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="FAI Browser — Your agent. Your browser. Your say.">
-<meta name="twitter:description" content="One approved tab. A compact page digest. Explicit approval for payments. Open source and MIT licensed.">
+<meta name="twitter:title" content="FAI Browser – Browser Control for AI Coding Agents">
+<meta name="twitter:description" content="Give Claude Code, Codex or OpenCode a browser tab you approve. FAI Browser is an open-source MCP tool for scoped browser actions and explicit payment approval.">
 <meta name="twitter:image" content="https://jedbjorn.github.io/fai-browser/media/social-preview.png">
 <meta name="twitter:image:alt" content="FAI Browser: your agent, your browser, your say.">
 <script>
@@ -35,15 +36,30 @@ try { var t = localStorage.getItem('fai-theme'); if (t === 'light' || t === 'dar
   "@type": "SoftwareApplication",
   "name": "FAI Browser",
   "url": "https://jedbjorn.github.io/fai-browser/",
-  "description": "An open-source browser layer that gives coding agents one user-approved tab, compact page context, explicit payment approval and scoped outcome checks.",
+  "description": "Give Claude Code, Codex or OpenCode a browser tab you approve. FAI Browser is an open-source MCP tool for scoped browser actions and explicit payment approval.",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "Linux, macOS, Windows",
   "softwareVersion": "0.12.0",
   "license": "https://opensource.org/licenses/MIT",
   "isAccessibleForFree": true,
-  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-  "codeRepository": "https://github.com/jedbjorn/fai-browser",
-  "softwareHelp": { "@type": "CreativeWork", "url": "https://github.com/jedbjorn/fai-browser/blob/main/docs/guide/install.md" }
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "softwareHelp": {
+    "@type": "CreativeWork",
+    "url": "https://github.com/jedbjorn/fai-browser/blob/main/docs/guide/install.md"
+  },
+  "@id": "https://jedbjorn.github.io/fai-browser/#app",
+  "publisher": {
+    "@type": "Organization",
+    "@id": "https://designs-os.com/#org",
+    "name": "Designs/OS",
+    "url": "https://designs-os.com/"
+  },
+  "screenshot": "https://jedbjorn.github.io/fai-browser/media/social-preview.png",
+  "downloadUrl": "https://github.com/jedbjorn/fai-browser/releases"
 }
 </script>
 </head>
@@ -87,7 +103,7 @@ try { var t = localStorage.getItem('fai-theme'); if (t === 'light' || t === 'dar
       <div class="hero-copy">
         <p class="kicker"><span>Open source · MIT</span><span>v0.12.0</span></p>
         <h1 id="hero-title">Your agent.<br>Your browser.<br><em>Your say.</em></h1>
-        <p class="hero-lede">Give your coding agent a browser task. Keep control of where it goes and what it can do. You approve the sites and permission level; FAI enforces that scope on every action and reports which requested checks passed.</p>
+        <p class="hero-lede">FAI Browser gives your AI coding agent one browser tab at a time. You choose where it can go and what it can do. You approve the sites and permission level; FAI enforces that scope on every action and reports which requested checks passed.</p>
         <div class="button-row">
           <a class="button button-primary" href="#install">Set up FAI Browser <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
           <a class="text-link" href="#demo"><svg aria-hidden="true"><use href="#i-play"/></svg>Watch the 60-second film</a>
@@ -281,7 +297,7 @@ npm run setup</code></pre>
     <div><a class="brand" href="#top"><svg class="brand-mark" aria-hidden="true"><use href="#i-mark"/></svg><span>FAI Browser</span></a><p>One approved tab for your coding agent.<br>Local service. Compact context. Your say.</p></div>
     <nav aria-label="Project"><strong>Project</strong><a href="https://github.com/jedbjorn/fai-browser">GitHub</a><a href="https://github.com/jedbjorn/fai-browser#quickstart">Quickstart</a><a href="https://github.com/jedbjorn/fai-browser/blob/main/docs/REFERENCE.md">Reference</a><a href="https://github.com/jedbjorn/fai-browser/blob/main/ARCHITECTURE.md">Architecture</a></nav>
     <nav aria-label="Evidence and testing"><strong>Evidence</strong><a href="https://github.com/jedbjorn/fai-browser/blob/main/docs/TESTED.md">What was tested</a><a href="media/evidence/public-pilots-2026-11-07.json">Public trial data</a><a href="https://github.com/jedbjorn/fai-browser/tree/main/bench">Benchmark harness</a><a href="https://github.com/jedbjorn/fai-browser/blob/main/docs/guide/demo.md">Demo provenance</a></nav>
-    <nav aria-label="Legal and support"><strong>More</strong><a href="https://github.com/jedbjorn/fai-browser/blob/main/LICENSE">MIT license</a><a href="https://github.com/jedbjorn/fai-browser/blob/main/SECURITY.md">Security</a><a href="https://github.com/jedbjorn/fai-browser/issues">Report an issue</a><a href="#faq">FAQ</a></nav>
+    <nav aria-label="Legal and support"><strong>More</strong><a href="https://github.com/jedbjorn/fai-browser/blob/main/LICENSE">MIT license</a><a href="https://github.com/jedbjorn/fai-browser/blob/main/SECURITY.md">Security</a><a href="https://github.com/jedbjorn/fai-browser/issues">Report an issue</a><a href="#faq">FAQ</a><a href="https://designs-os.com/ai-coding-tools/">Guide to AI coding tools</a></nav>
   </div>
   <div class="shell footer-notice" id="notice">
     <div><strong>Use at your own risk</strong><p>FAI Browser automates websites in your own browser. Some websites’ terms of service forbid or limit automated use, so using FAI on them may violate those terms; you are responsible for complying with the terms of every site you use it on. FAI is provided as-is under the <a href="https://github.com/jedbjorn/fai-browser/blob/main/LICENSE">MIT license</a>, without warranty, and its authors are not responsible for how it is used or for what an agent does with it. FAI’s data (settings, the pairing secret, screenshots, traces and task history) is stored only on your machine, and its security is your responsibility. FAI never sends your data to us; data goes only to the providers you configure: page text and any screenshots the agent asks for go to your agent’s model provider. Traces and screenshots are pruned automatically, by default after 50 runs, 500 MB or 7 days. This is a plain-language summary, not legal advice.</p></div>
