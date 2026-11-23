@@ -461,6 +461,8 @@
   const OFFSITE_RESERVE = 5;
   // Visibility checks spent on counting the off-screen controls the cap left out (controlsDropped).
   const DROP_COUNT_BUDGET = 500;
+  // In-viewport controls of the top document whose reach is assessed before the cap is applied (selectControls).
+  const REACH_SCAN_BUDGET = 300;
 
   // Consent dialogs. The runtime offers only `reject` buttons and never `accept`; page.js refuses accept buttons
   // itself (risk 'destructive'). Kept in step with the runtime's consent label list.
@@ -875,15 +877,26 @@
     return list;
   }
 
+  // A listbox that has a popup and an expanded state of its own is the button of a dropdown, not the list: a select
+  // built on a menu button (as Closure's is) carries role=listbox itself, with its caption inside as its one option,
+  // and opens a list mounted elsewhere. It is a control (a press opens or closes the list); its caption is not an
+  // option to choose. The list it opens may repeat aria-haspopup, but has no expanded state: that one holds the options.
+  function popupListbox(el) {
+    const popup = el.getAttribute('aria-haspopup');
+    return el.getAttribute('role') === 'listbox' && popup !== null && popup !== 'false' && el.hasAttribute('aria-expanded');
+  }
+
   // A custom dropdown container (role=listbox holding role=option items) is not a control itself: its options are.
   function optionContainer(el) {
-    return el.tagName !== 'SELECT' && el.getAttribute('role') === 'listbox' && Boolean(el.querySelector('[role="option"]'));
+    return el.tagName !== 'SELECT' && el.getAttribute('role') === 'listbox' && !popupListbox(el) && Boolean(el.querySelector('[role="option"]'));
   }
 
   // Options and menu items count inside a listbox/menu, or inside the popup an expanded trigger names with
   // aria-controls or aria-owns. Native <option> elements are reported through their <select>.
   function offeredOption(el) {
     if (el.tagName === 'OPTION') return false;
+    const list = el.parentElement?.closest('[role="listbox"]');
+    if (list && popupListbox(list)) return false;
     const scope = el.getRootNode();
     // An explicit collapsed state overrides a popup's leftover rendered boxes (e.g. a closing animation).
     for (let node = el, depth = 0; node && node.nodeType === 1 && depth < 6; node = node.parentElement, depth++) {
@@ -900,6 +913,19 @@
       if (scope.querySelector(`[aria-expanded="true"][aria-controls~="${id}"],[aria-expanded="true"][aria-owns~="${id}"]`)) return true;
     }
     return false;
+  }
+
+  // A checkbox or radio the page hides to draw its own (an input of a pixel or less, often parked off the page, with
+  // its <label> as the visible box): the rendered label stands in for it, as a user presses the label. Null for an
+  // input with a box of its own.
+  function toggleLabel(el) {
+    if (el.tagName !== 'INPUT' || (el.type !== 'checkbox' && el.type !== 'radio')) return null;
+    const own = boxOf(el);
+    if (own.width > 1 && own.height > 1) return null;
+    return Array.from(el.labels ?? []).find(label => {
+      const box = boxOf(label);
+      return box.width > 0 && box.height > 0;
+    }) ?? null;
   }
 
   // The document's HTTP status from Navigation Timing (Chrome 109+), only while the URL is still the loaded one
@@ -3497,6 +3523,46 @@
     return floatingRoots.some(root => within(el, root));
   }
 
+  // A panel or menu opened over the page with no role of its own (a search-options panel, a dropdown built of divs)
+  // shows in what it covers: a positioned layer lying over at least COVERING_MIN controls a press can no longer reach
+  // is floating UI like a semantic menu, and its controls are the current task. Never a bar along the top or bottom
+  // edge (a fixed header over content scrolled under it), a consent dialog or a nag overlay.
+  const COVERING_MIN = 2;
+
+  // The outermost positioned box over the centre of `rect` that does not hold `el`.
+  function coveringLayer(el, rect) {
+    const x = (Math.max(rect.left, 0) + Math.min(rect.right, innerWidth)) / 2;
+    const y = (Math.max(rect.top, 0) + Math.min(rect.bottom, innerHeight)) / 2;
+    let layer = null;
+    for (let node = hitAt(x, y), depth = 0; node && node.nodeType === 1 && depth < 40; node = parentOf(node), depth++) {
+      if (node === document.body || node === document.documentElement || within(el, node)) break;
+      const position = styleOf(node).position;
+      if (position !== 'absolute' && position !== 'fixed') continue;
+      const box = boxOf(node);
+      if (box.width > 0 && box.height > 0) layer = node;
+    }
+    return layer;
+  }
+
+  // `reach`: the top document's in-viewport items ({ el, rect }) with their assessment (selectControls).
+  function detectCovering(reach, consent) {
+    const counts = new Map();
+    for (const [item, assessment] of reach) {
+      if (assessment.state !== 'blocked' || assessment.reason !== 'covered') continue;
+      const layer = coveringLayer(item.el, item.rect);
+      if (layer) counts.set(layer, (counts.get(layer) ?? 0) + 1);
+    }
+    for (const [layer, count] of counts) {
+      if (floatingRoots.length >= MAX_FLOATING_CONTAINERS) break;
+      if (count < COVERING_MIN || inFloating(layer)) continue;
+      if (consent?.container && (within(layer, consent.container) || within(consent.container, layer))) continue;
+      if (lastOverlay && lastOverlay.kind !== 'task' && (within(layer, lastOverlay.root) || within(lastOverlay.root, layer))) continue;
+      const box = boxOf(layer);
+      if (box.height < innerHeight * 0.3 && (box.top <= 0 || box.bottom >= innerHeight)) continue;
+      floatingRoots.push(layer);
+    }
+  }
+
   // ------------------------------------------------------------------------------------------------------------
   // Derived views: readable lines for content the text walk reads badly or not at all. A chart (SVG) becomes one
   // line of its labels and, when its values exist only as bar heights against numeric axis ticks, the values read
@@ -4371,8 +4437,8 @@
   // Picks at most MAX_CONTROLS controls. Returns [{ el, rect, label?, offscreen, consentKind? }] in output
   // order: in-viewport floating choices, other in-viewport controls, off-screen term matches, then other off-screen
   // controls, each in document order. Selection priority: consent buttons, nag closers, floating choices, in-viewport
-  // term matches, other in-viewport controls (leaving up to TERM_RESERVE slots for off-screen term matches), off-screen
-  // term matches, off-screen controls.
+  // term matches, other in-viewport controls (those known to be out of reach last; leaving up to TERM_RESERVE slots for
+  // off-screen term matches), off-screen term matches, off-screen controls.
   // An <a> whose href is a web page (http or https), and one on another site than the approved one.
   // What an <a> leads to, read from its raw href (an anchor's URL properties parse the href on every read, and a page
   // holds thousands of links): `{ web, offSite, words }`. A relative href resolves against a base on the page's own
@@ -4456,7 +4522,7 @@
       const pickerLabel = type === 'file' && !(own.width > 0 && own.height > 0) ? Array.from(el.labels ?? []).find(label => {
         const box = boxOf(label);
         return box.width > 0 && box.height > 0;
-      }) : null;
+      }) : toggleLabel(el);
       let rect = pickerLabel ? boxOf(pickerLabel) : own;
       if (!(rect.width > 0 && rect.height > 0)) {
         if (styleOf(el).display !== 'contents') continue;
@@ -4469,6 +4535,15 @@
       if (item.offscreen) offView.push(item);
       else inView.push(item);
     }
+    // What a press can reach among the top document's in-viewport controls, and the floating UI the unreachable ones
+    // lie under. A frame's controls are not assessed here (each costs its frame's assessment too): unknown, like the
+    // ones past the budget.
+    const reach = new Map();
+    for (const item of inView) {
+      if (reach.size >= REACH_SCAN_BUDGET) break;
+      if (item.el.ownerDocument === document) reach.set(item, assessActionability(item.pickerLabel ?? item.el));
+    }
+    detectCovering(reach, consent);
     const labels = new Map();
     const labelFor = item => {
       if (!labels.has(item)) labels.set(item, labelOf(item.el));
@@ -4534,7 +4609,16 @@
       if (offSites.length >= OFFSITE_RESERVE) break;
       if (!offMatches.includes(item) && offSiteLink(item.el) && rendered(item.el, item.rect)) offSites.push(item);
     }
-    for (const item of inView) take(item, MAX_CONTROLS - offMatches.length - offSites.length);
+    // Under the cap a control known to be out of a press's reach (covered by an open panel, hidden, clipped) comes
+    // after the others: it is never offered, and its place would cost a control of the panel lying over it. A disabled
+    // control keeps its place: that it is there and disabled is part of what the page shows.
+    const inViewLimit = MAX_CONTROLS - offMatches.length - offSites.length;
+    const unreachable = item => {
+      const assessment = reach.get(item);
+      return assessment?.state === 'blocked' && assessment.reason !== 'disabled';
+    };
+    for (const item of inView) if (!unreachable(item)) take(item, inViewLimit);
+    for (const item of inView) take(item, inViewLimit);
     for (const item of offMatches) take(item);
     for (const item of offSites) take(item);
     let capped = false;
@@ -6714,8 +6798,10 @@
       control = observation.controls.find(c => c.id === action.target) ?? null;
       risk = targetRisks.get(action.target);
     }
-    // A styled file picker hides its input: its rendered label stands in for it (selectControls).
-    const shown = node => assessActionability(node).state !== 'blocked' || (action.type === 'upload' && Array.from(node.labels ?? []).some(label => rendered(label)));
+    // A styled file picker hides its input: its rendered label stands in for it (selectControls). So does the label of
+    // a checkbox or radio the page hides (toggleLabel): the press goes to the label.
+    const press = (action.type === 'click' && el && toggleLabel(el)) || el;
+    const shown = node => assessActionability(node === el ? press : node).state !== 'blocked' || (action.type === 'upload' && Array.from(node.labels ?? []).some(label => rendered(label)));
     if ((action.target || action.point) && (!el?.isConnected || !shown(el) || el.disabled || control?.enabled === false)) {
       throw new PageError('target_unavailable', 'Target is unavailable');
     }
@@ -6811,8 +6897,14 @@
           const identity = targetIdentity(el);
           const doc = el.ownerDocument;
           const href = doc.location.href;
-          const initial = assessActionability(el);
+          const initial = assessActionability(press);
           if (initial.state !== 'ready') throw new PageError('target_unavailable', `Target is unavailable: ${initial.reason}`);
+          // The control's own box, null for one without (display: contents).
+          const ownBox = () => {
+            const box = press.getBoundingClientRect();
+            return box.width > 0 && box.height > 0 ? box : null;
+          };
+          const initialBox = ownBox();
           const point = action.point ?? initial.point;
           const stillValid = async () => {
             if (nuisanceProof && !nuisanceProofHolds(nuisanceProof, el)) throw new PageError('target_unavailable', 'The automatic popup candidate changed');
@@ -6820,9 +6912,13 @@
             if (!el.isConnected || doc.location.href !== href || targetIdentity(el) !== identity) throw new PageError('stale', 'The control identity changed before the click');
             const frame = frameByDoc.get(doc);
             const localPoint = frame ? { x: point.x - frame.dx, y: point.y - frame.dy } : point;
-            const current = assessActionability(el, localPoint);
+            const current = assessActionability(press, localPoint);
             if (current.state !== 'ready') throw new PageError('target_unavailable', `Target is unavailable: ${current.reason}`);
-            if (['left', 'top', 'right', 'bottom'].some(side => Math.abs(current.geometry[side] - initial.geometry[side]) > 1)) {
+            // Moving is said of the control's own box, not of the part that paints it: a menu item is text on a
+            // transparent box until the pointer this click moves there gives it a background, and is still where it was.
+            const box = initialBox && ownBox();
+            const [was, now] = box ? [initialBox, box] : [initial.geometry, current.geometry];
+            if (['left', 'top', 'right', 'bottom'].some(side => Math.abs(now[side] - was[side]) > 1)) {
               throw new PageError('target_unavailable', 'The control is moving; observe again after it settles');
             }
             if (!approved && !automaticNuisance && !dispatchable(riskOf(el, roleOf(el), labelOf(el), lastConsent?.kinds.get(el)))) throw new PageError('blocked_risky', 'The control changed before the click');
@@ -6831,12 +6927,12 @@
               const reply = await chrome.runtime.sendMessage({ kind: 'fai.framePoint', point });
               if (!reply?.ok || reply.valid !== true) throw new PageError('target_unavailable', 'The containing frame is unavailable');
               if (nuisanceProof && !nuisanceProofHolds(nuisanceProof, el)) throw new PageError('target_unavailable', 'The automatic popup candidate changed during frame verification');
-              if (targetIdentity(el) !== identity || assessActionability(el, localPoint).state !== 'ready') throw new PageError('stale', 'The control changed during frame verification');
+              if (targetIdentity(el) !== identity || assessActionability(press, localPoint).state !== 'ready') throw new PageError('stale', 'The control changed during frame verification');
             }
             return true;
           };
           if (realInput()) {
-            const { stale, unavailable } = await realInput().click(el, { point, fragment: initial.fragment, stillValid,
+            const { stale, unavailable } = await realInput().click(press, { point, fragment: initial.fragment, stillValid,
               explicitClick: automaticNuisance || el.tagName === 'A' || control.role === 'link' });
             if (stale) throw new PageError('stale', 'The control changed before the click');
             if (unavailable) throw new PageError('target_unavailable', 'Target is unavailable before the click');
@@ -6848,7 +6944,7 @@
             await stillValid();
             if (['INPUT', 'TEXTAREA'].includes(el.tagName)) el.focus({ preventScroll: true });
             await stillValid();
-            el.click();
+            press.click();
           }
         } finally {
           navigation?.removeEventListener?.('navigate', onNavigate);

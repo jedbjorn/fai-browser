@@ -765,3 +765,39 @@ for (const path of PATHS) {
     assert.equal(eaten.corrected, true);
   });
 }
+
+test('a menu item that paints its background only once the pointer is over it still takes the click', async t => {
+  // A script-highlighted menu (Closure's, as in a mail client's label picker): an item is text on a transparent box
+  // until mouseover gives it a background, so what paints it changes under the pointer the click itself moves there.
+  const body = `<!doctype html><title>Menu</title><style>
+      #menu { position: absolute; top: 80px; left: 200px; width: 300px; background: white; border: 1px solid #555; }
+      [role=option] { height: 32px; padding: 0 44px; line-height: 32px; }
+      .hover { background: #ddd; }
+    </style><p id="status" role="status">Nothing chosen</p>
+    <div id="menu" role="listbox">${['Inbox', 'Notes', 'Receipts'].map(name => `<div role="option"><div>${name}</div></div>`).join('')}</div>
+    <script>
+      for (const item of document.querySelectorAll('[role=option]')) {
+        item.addEventListener('mouseover', () => item.classList.add('hover'));
+        item.addEventListener('mouseout', () => item.classList.remove('hover'));
+        item.addEventListener('click', () => { document.getElementById('status').textContent = 'Chosen: ' + item.textContent; });
+      }
+    </script>`;
+  const { page, run } = await open(t, body);
+  const result = await act(run, 'Notes', { type: 'click' });
+  assert.equal(result.error, undefined, result.error);
+  assert.equal(await page.textContent('#status'), 'Chosen: Notes');
+});
+
+test('a control whose own box shifts under the pointer is still refused as moving', async t => {
+  const body = `<!doctype html><title>Shifty</title><p id="status">Nothing pressed</p>
+    <button id="shifty" style="position:absolute;top:100px;left:200px;width:200px;height:60px">Shifty</button>
+    <script>
+      const button = document.getElementById('shifty');
+      button.addEventListener('mouseover', () => { button.style.left = '212px'; });
+      button.addEventListener('click', () => { document.getElementById('status').textContent = 'Pressed'; });
+    </script>`;
+  const { page, run } = await open(t, body);
+  const result = await act(run, 'Shifty', { type: 'click' });
+  assert.match(result.error ?? '', /^target_unavailable: The control is moving/);
+  assert.equal(await page.textContent('#status'), 'Nothing pressed');
+});
