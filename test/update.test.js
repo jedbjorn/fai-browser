@@ -453,6 +453,79 @@ test('install failure after the move rolls back to the previous commit and resta
 
 // --- the command, end to end against the local repos ---------------------------------------------------------------
 
+// `update --main` (a development clone): the remote's main, tagged or not.
+async function pushUntagged(r) {
+  await writeFile(join(r.source, 'notes.txt'), 'between releases\n');
+  r.git(r.source, 'commit', '-q', '-am', 'Between releases');
+  r.git(r.source, 'push', '-q', 'origin', 'main');
+  return r.git(r.source, 'rev-parse', 'HEAD');
+}
+
+test('install --main: fast-forwards main to the remote main past the tag; already there it still refreshes and restarts', async t => {
+  const r = await repos(t);
+  const tip = await pushUntagged(r);
+  const steps = fakeSteps();
+  const result = await installUpdate({ root: r.checkout, target: null, main: true, currentVersion: '0.4.0', git: r.run,
+    remoteOk: r.remoteOk, steps });
+  assert.equal(result.moved, 'fast_forward');
+  assert.equal(result.commit, tip);
+  assert.equal(result.to, '0.5.0', 'the version main carries');
+  assert.equal(result.tag, null);
+  assert.equal(r.git(r.checkout, 'rev-parse', 'HEAD'), tip);
+  assert.equal(r.git(r.checkout, 'symbolic-ref', '--short', 'HEAD'), 'main');
+  assert.deepEqual(steps.calls, ['finish', 'restart:0.5.0']);
+
+  // Pulled by hand, the service still runs what it started with: nothing moves, the refresh and restart still run.
+  const again = fakeSteps();
+  const inPlace = await installUpdate({ root: r.checkout, target: null, main: true, currentVersion: '0.5.0', git: r.run,
+    remoteOk: r.remoteOk, steps: again });
+  assert.equal(inPlace.moved, 'none');
+  assert.deepEqual(again.calls, ['finish', 'restart:0.5.0']);
+  // A restart that fails there has nothing to roll back: failed, the checkout where it was.
+  await assert.rejects(installUpdate({ root: r.checkout, target: null, main: true, currentVersion: '0.5.0', git: r.run,
+    remoteOk: r.remoteOk, steps: fakeSteps({ failAt: 'restart' }) }), error => error instanceof UpdateFailed && !error.moved
+    && error.step === 'restart');
+  assert.equal(r.git(r.checkout, 'rev-parse', 'HEAD'), tip);
+});
+
+test('install --main: refused on a detached HEAD or another branch, with a lease, and a failure after the move rolls back', async t => {
+  const r = await repos(t);
+  await pushUntagged(r);
+  const main = extra => installUpdate({ root: r.checkout, target: null, main: true, currentVersion: '0.4.0', git: r.run,
+    remoteOk: r.remoteOk, steps: fakeSteps(), ...extra });
+  await refused(main({ requests: [{ requestId: 'req_1', state: 'active' }] }), 'lease_active');
+  r.git(r.checkout, 'checkout', '-q', '--detach', 'HEAD');
+  await refused(main(), 'detached');
+  r.git(r.checkout, 'checkout', '-q', '-b', 'feature');
+  await refused(main(), 'other_branch');
+  r.git(r.checkout, 'checkout', '-q', 'main');
+  const steps = fakeSteps({ failAt: 'restart' });
+  await assert.rejects(main({ steps }), error => error instanceof UpdateFailed && error.moved && error.rolledBack);
+  assert.equal(r.git(r.checkout, 'rev-parse', 'HEAD'), r.v4, 'back where it was');
+  assert.deepEqual(steps.calls, ['finish', 'restart:0.5.0', 'finish', 'restart:0.4.0']);
+});
+
+test('update command --main: installs without a release check and records it; --main takes no --tag or --check', async t => {
+  const r = await repos(t);
+  const tip = await pushUntagged(r);
+  const home = join(r.dir, 'fai-home');
+  await mkdir(home);
+  const env = { ...r.env, FAI_HOME: home };
+  delete env.FAI_DAEMON_DIR;
+  const fetch = async () => { throw new Error('--main asks GitHub\'s releases nothing'); };
+  const options = { home, env, fetch, root: r.checkout, git: r.run, remoteOk: r.remoteOk, steps: fakeSteps(), requests: [],
+    currentVersion: '0.4.0' };
+  assert.equal((await updateCommand({ main: true, tag: 'v0.5.0' }, options)).value.code, 'bad_request');
+  assert.equal((await updateCommand({ main: true, check: true }, options)).value.code, 'bad_request');
+  const done = await updateCommand({ main: true }, options);
+  assert.equal(done.exitCode, 0, JSON.stringify(done.value));
+  assert.equal(done.value.commit, tip);
+  const record = readInstallState(homePaths({ home, env }));
+  assert.equal(record.state, 'succeeded');
+  assert.match(record.message, /^Updated to main \([0-9a-f]{12}, 0\.5\.0\)/);
+  assert.equal(existsSync(updatePaths(homePaths({ home, env })).lock), false, 'the lock is released');
+});
+
 test('update command: --check reports, update installs and records the outcome, then reports up to date', async t => {
   const r = await repos(t);
   const home = join(r.dir, 'fai-home');

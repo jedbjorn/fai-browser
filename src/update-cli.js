@@ -2,6 +2,7 @@
 //   update --check   check for a newer release now (even with the automatic check off) and print the result
 //   update           install the latest release into this git checkout (src/update-install.js), when there is one;
 //                    after an interrupted update (the checkout already at the release) finish it: refresh and restart
+//   update --main    (a development clone) fast-forward main to the remote's main, refresh and restart the service
 //   update --finish  (run by the updater from the new version) refresh browser pairing and installed skills
 // Each prints one JSON line; exit 0 on success or nothing to do, 1 when refused or failed. Every run that gets past
 // the argument check leaves an install record (update-install.json) for the popup, except while another live updater
@@ -82,6 +83,12 @@ export async function updateCommand(flags, { home, env: rawEnv = process.env, ..
   const record = fields => {
     if (!runningUpdate(paths) || runningUpdate(paths) === process.pid) writeInstallState(paths, { from: current, ...fields });
   };
+  if (flags.main) {
+    if (flags.tag !== undefined || flags.check) {
+      return { value: { state: 'refused', code: 'bad_request', message: '--main takes neither --tag nor --check' }, exitCode: 1 };
+    }
+    return updateMain({ paths, root, current, env, home, options, record });
+  }
   if (flags.tag !== undefined && !isReleaseTag(flags.tag)) {
     record({ state: 'failed', to: null, step: 'check', error: 'bad_release', message: '--tag must be a release tag like v1.2.3.' });
     return { value: { state: 'refused', code: 'bad_release', message: '--tag must be a release tag like v1.2.3' }, exitCode: 1 };
@@ -152,21 +159,65 @@ export async function updateCommand(flags, { home, env: rawEnv = process.env, ..
       message: `Updated to ${latest.version}. Restart your coding agent to load the new MCP server and skill.${warned}` });
     return { value: { ...result, next: NEXT, log: updatePaths(paths).log }, exitCode: 0 };
   } catch (error) {
-    if (error instanceof UpdateRefused) {
-      await log('update_refused', { code: error.code });
-      return refusal(paths, error, current, target);
-    }
-    const failed = error instanceof UpdateFailed ? error : new UpdateFailed('internal', firstLine(error));
-    // Before the move nothing changed: report the real reason. After it: rolled back, or the rollback's own failure.
-    const state = failed.moved && failed.rolledBack ? 'rolled_back' : 'failed';
-    const message = !failed.moved ? `${failed.message}. Nothing was changed.`
-      : failed.rolledBack ? `${failed.message}. Rolled back to ${current}.`
-        : `${failed.message}. Rollback failed: ${failed.rollbackError}; see ${updatePaths(paths).log}.`;
-    // A failed rollback may have left the release checked out: the commits let the next run finish it there.
-    const where = failed.moved && !failed.rolledBack && failed.commit ? { commit: failed.commit, previous: failed.previous } : {};
-    writeInstallState(paths, { state, from: current, to: target, step: failed.step, error: 'update_failed', message, ...where });
-    await log('update_failed', { state, step: failed.step, moved: failed.moved });
-    return { value: { state, code: 'update_failed', step: failed.step, message, log: updatePaths(paths).log }, exitCode: 1 };
+    return await installFailure({ paths, error, current, target, log });
+  } finally {
+    await release();
+  }
+}
+
+/** The result and install record of an install that was refused or failed (a release, or `--main`). */
+async function installFailure({ paths, error, current, target, log }) {
+  if (error instanceof UpdateRefused) {
+    await log('update_refused', { code: error.code });
+    return refusal(paths, error, current, target);
+  }
+  const failed = error instanceof UpdateFailed ? error : new UpdateFailed('internal', firstLine(error));
+  // Before the move nothing changed: report the real reason. After it: rolled back, or the rollback's own failure.
+  const state = failed.moved && failed.rolledBack ? 'rolled_back' : 'failed';
+  const message = !failed.moved ? `${failed.message}. Nothing was changed.`
+    : failed.rolledBack ? `${failed.message}. Rolled back to ${current}.`
+      : `${failed.message}. Rollback failed: ${failed.rollbackError}; see ${updatePaths(paths).log}.`;
+  // A failed rollback may have left the release checked out: the commits let the next run finish it there.
+  const where = failed.moved && !failed.rolledBack && failed.commit ? { commit: failed.commit, previous: failed.previous } : {};
+  writeInstallState(paths, { state, from: current, to: target, step: failed.step, error: 'update_failed', message, ...where });
+  await log('update_failed', { state, step: failed.step, moved: failed.moved });
+  return { value: { state, code: 'update_failed', step: failed.step, message, log: updatePaths(paths).log }, exitCode: 1 };
+}
+
+/**
+ * `update --main` (a development clone): fast-forward main to the verified remote's main and refresh and restart the
+ * service, with every check and the rollback of a release install. No release check; the popup never runs it.
+ */
+async function updateMain({ paths, root, current, env, home, options, record }) {
+  const running = runningUpdate(paths);
+  if (running && running !== process.pid) {
+    return { value: { state: 'refused', code: 'update_running', message: `An update (pid ${running}) is running.` }, exitCode: 1 };
+  }
+  const log = updateLogger(paths);
+  let release;
+  try {
+    release = await takeUpdateLock(paths);
+  } catch (error) {
+    if (error instanceof UpdateRefused) return { value: { state: 'refused', code: error.code, message: error.message }, exitCode: 1 };
+    record({ state: 'failed', to: null, step: 'check', error: 'lock_failed', message: `Could not take the update lock: ${firstLine(error)}` });
+    return { value: { state: 'failed', code: 'lock_failed', message: firstLine(error) }, exitCode: 1 };
+  }
+  const steps = options.steps ?? defaultSteps({ root, env, home });
+  const git = options.git ?? gitRunner({ cwd: root, env });
+  try {
+    const requests = options.requests ?? await liveRequests({ home, env });
+    writeInstallState(paths, { pid: process.pid, state: 'running', from: current, to: null, step: 'check', message: 'Updating to main.' });
+    await log('update_start', { from: current, to: 'main', source: 'main' });
+    const result = await installUpdate({ root, target: null, main: true, currentVersion: current, requests, log, paths, steps,
+      env, git, ...(options.remoteOk ? { remoteOk: options.remoteOk } : {}) });
+    const warned = result.warnings.length ? ` Warning: ${result.warnings.join('; ')}.` : '';
+    const at = result.moved === 'none' ? 'Already at main' : 'Updated to main';
+    writeInstallState(paths, { state: 'succeeded', from: current, to: result.to, step: 'done',
+      message: `${at} (${result.commit.slice(0, 12)}, ${result.to}); the FAI service restarted. Restart your coding agent to `
+        + `load the new MCP server and skill.${warned}` });
+    return { value: { ...result, next: NEXT, log: updatePaths(paths).log }, exitCode: 0 };
+  } catch (error) {
+    return await installFailure({ paths, error, current, target: null, log });
   } finally {
     await release();
   }

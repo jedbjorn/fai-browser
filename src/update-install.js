@@ -183,6 +183,33 @@ export async function verifyTarget({ git, remote, target }) {
   return commit;
 }
 
+/**
+ * `update --main` (a development clone): fetch `remote`'s main and take its tip. Resolves `{ commit, version }`, the
+ * version from that commit's package.json (it may equal the one on disk: main between releases).
+ */
+export async function verifyMain({ git, remote }) {
+  try {
+    await git(['fetch', '--quiet', remote, 'main']);
+  } catch (error) {
+    throw new UpdateRefused('fetch_failed', `git fetch ${remote} main failed: ${firstLine(error)}`,
+      'Check your network and git access to GitHub (git fetch), then update again.');
+  }
+  const commit = await gitOrNull(git, ['rev-parse', '--verify', '--quiet', 'FETCH_HEAD^{commit}']);
+  if (!isCommitSha(commit)) {
+    throw new UpdateRefused('fetch_failed', `git fetch ${remote} main named no commit.`, 'Run git fetch yourself and look.');
+  }
+  let manifest = null;
+  try {
+    manifest = JSON.parse(await git(['show', `${commit}:package.json`]));
+  } catch {
+    // Checked below.
+  }
+  if (!parseVersion(manifest?.version)) {
+    throw new UpdateRefused('bad_version', `${remote}/main has no valid version in package.json.`, 'Nothing was changed.');
+  }
+  return { commit, version: manifest.version };
+}
+
 /** The first line of a git or npm error, without credentials a remote URL may carry (it goes to the log and status). */
 export function firstLine(error) {
   const text = String(error?.stderr || error?.message || error).trim().split('\n').find(Boolean) ?? 'error';
@@ -310,9 +337,12 @@ export async function takeUpdateLock(paths, pid = process.pid) {
  * `{ state: 'succeeded', from, to, moved: 'fast_forward'|'checkout'|'none', previous, commit, npm, finish, daemon,
  * warnings }`; throws UpdateRefused before anything moved, or UpdateFailed (with `moved`, `rolledBack`).
  * `steps` = { npmCi, finish, restart(version) }; `paths` (optional) receives the install record for the popup.
+ * `main` (`update --main`, a development clone): instead of `target`, the tip of the verified remote's main, on branch
+ * main only; a checkout already there is not moved but still refreshed and restarted (pulled by hand, the daemon
+ * still runs the code it started with).
  */
 export async function installUpdate({ root = PACKAGE_ROOT, target, currentVersion, git, steps,
-  remoteOk, requests = [], log = async () => {}, paths = null, env = process.env }) {
+  remoteOk, requests = [], log = async () => {}, paths = null, env = process.env, main = false }) {
   git ??= gitRunner({ cwd: root, env });
   steps ??= defaultSteps({ root, env });
   // From the move on, every record names the verified release commit and the commit before it: an interrupted update
@@ -327,8 +357,14 @@ export async function installUpdate({ root = PACKAGE_ROOT, target, currentVersio
   let commit;
   try {
     where = await preflight({ root, git, remoteOk });
-    await log('update_preflight', { branch: where.branch ?? 'detached', remote: where.remote, from: currentVersion, to: target?.version });
-    commit = await verifyTarget({ git, remote: where.remote, target });
+    if (main && !where.branch) {
+      throw new UpdateRefused('detached', 'The checkout is on a detached HEAD; update --main moves only branch main.',
+        'Switch to main (git switch main) and update again, or use node src/cli.js update for the latest release.');
+    }
+    await log('update_preflight', { branch: where.branch ?? 'detached', remote: where.remote, from: currentVersion,
+      to: main ? 'main' : target?.version });
+    if (main) target = { tag: null, ...(await verifyMain({ git, remote: where.remote })) };
+    commit = main ? target.commit : await verifyTarget({ git, remote: where.remote, target });
     // After the fetch: main must still be pushed, and HEAD must be inside the release (nothing of the user's left behind).
     if (where.upstream) await refuseUnpushed(git, where.upstream);
   } catch (error) {
@@ -336,28 +372,34 @@ export async function installUpdate({ root = PACKAGE_ROOT, target, currentVersio
     throw new UpdateFailed('check', firstLine(error));
   }
   const base = { from: currentVersion, to: target.version, tag: target.tag, previous: where.head, commit, warnings: [] };
-  if (where.head === commit) {
+  const name = main ? `${where.remote}/main` : target.tag;
+  // `--main` on a checkout already at the tip: nothing moves, but the refresh and the restart still run.
+  const inPlace = main && where.head === commit;
+  if (where.head === commit && !main) {
     await log('update_already_current', { commit });
     return { state: 'succeeded', moved: 'none', npm: 'skipped', finish: null, daemon: null, ...base };
   }
-  if (!(await gitOk(git, ['merge-base', '--is-ancestor', where.head, commit]))) {
-    throw new UpdateRefused('not_fast_forward', `The checkout has commits that ${target.tag} does not contain.`,
-      `Check the release out yourself (git checkout ${target.tag}) or keep your version.`);
+  if (!inPlace && !(await gitOk(git, ['merge-base', '--is-ancestor', where.head, commit]))) {
+    throw new UpdateRefused('not_fast_forward', `The checkout has commits that ${name} does not contain.`,
+      main ? `Reconcile main with ${name} yourself (git status, git log), then update again.`
+        : `Check the release out yourself (git checkout ${target.tag}) or keep your version.`);
   }
   const previous = where.head;
   const lockChanged = !(await gitOk(git, ['diff', '--quiet', previous, commit, '--', 'package-lock.json']));
   const runNpm = lockChanged && existsSync(join(root, 'node_modules'));
-  const moved = where.branch ? 'fast_forward' : 'checkout';
-  moveInfo = { commit, previous };
-  record({ state: 'running', step: 'move', message: `Installing ${target.version}.` });
-  await log('update_move', { moved, previous, commit });
-  try {
-    if (where.branch) await git(['merge', '--ff-only', '--quiet', commit]);
-    else await git(['checkout', '--quiet', '--detach', commit]);
-  } catch (error) {
-    // Nothing moved (git refuses atomically, e.g. an untracked file in the way).
-    throw new UpdateRefused('move_failed', `git could not move to ${target.tag}: ${firstLine(error)}`,
-      'Check git status for files in the way, then update again.');
+  const moved = inPlace ? 'none' : where.branch ? 'fast_forward' : 'checkout';
+  if (!inPlace) {
+    moveInfo = { commit, previous };
+    record({ state: 'running', step: 'move', message: `Installing ${target.version}.` });
+    await log('update_move', { moved, previous, commit });
+    try {
+      if (where.branch) await git(['merge', '--ff-only', '--quiet', commit]);
+      else await git(['checkout', '--quiet', '--detach', commit]);
+    } catch (error) {
+      // Nothing moved (git refuses atomically, e.g. an untracked file in the way).
+      throw new UpdateRefused('move_failed', `git could not move to ${name}: ${firstLine(error)}`,
+        'Check git status for files in the way, then update again.');
+    }
   }
   const outcome = { npm: runNpm ? 'ran' : 'skipped', finish: null, daemon: null };
   if (runNpm) {
@@ -380,6 +422,11 @@ export async function installUpdate({ root = PACKAGE_ROOT, target, currentVersio
     outcome.daemon = await steps.restart(target.version);
   } catch (error) {
     await log('update_step_failed', { step, message: firstLine(error) });
+    // Nothing moved: nothing to roll back (a held tab stopped nothing; a failed restart had only this version to start).
+    if (inPlace) {
+      if (error instanceof UpdateRefused) throw error;
+      throw new UpdateFailed(step, `${step} failed: ${firstLine(error)}`);
+    }
     // The old daemon is started again only when this update stopped it: after a refresh failure, or a restart that
     // refused before its shutdown (a tab held), the old daemon still runs.
     const restartOld = step === 'restart' && error?.daemonStopped !== false && !error?.daemonUntouched;
