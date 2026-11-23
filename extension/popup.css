@@ -95,6 +95,8 @@ input::placeholder { color: var(--muted); }
 .link-button { padding: 0; border: 0; background: none; color: var(--muted); font-size: 12px; text-decoration: underline; }
 .link-button:hover { color: var(--ink); }
 .transport { margin-top: 8px; }
+.version-line { margin: 0 0 8px; font-variant-numeric: tabular-nums; }
+#update-check:disabled { opacity: 0.6; cursor: default; }
 .request-level { margin: 0 0 8px; }
 .request-level label { margin: 0 0 4px; font-size: 11px; }
 .level-select { display: block; width: 100%; height: 34px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: white; color: var(--ink); }

@@ -786,8 +786,12 @@ function here(request) {
 const PLAIN_VERSION = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
 const RELEASE_NOTES = 'https://github.com/jedbjorn/fai-browser/releases/tag/v';
 const INSTALL_STATES = ['running', 'succeeded', 'failed', 'rolled_back'];
+const CHECK_STATUSES = ['never', 'ok', 'not_found', 'error', 'rate_limited'];
 
-/** The daemon's update view, reduced to what the popup shows: versions, a release-notes link, the last install. */
+/**
+ * The daemon's update view, reduced to what the popup shows: versions, a release-notes link, the last install, and
+ * the last check's outcome (Advanced, "Check for updates").
+ */
 function cleanUpdate(value) {
   if (!value || typeof value !== 'object' || !PLAIN_VERSION.test(String(value.current))) return null;
   const latest = PLAIN_VERSION.test(String(value.latest)) ? value.latest : null;
@@ -800,7 +804,10 @@ function cleanUpdate(value) {
   return { current: value.current, latest, available: value.available === true && Boolean(latest),
     installable: value.installable !== false,
     installer: value.installer === true,
-    notesUrl: latest && value.notesUrl === `${RELEASE_NOTES}${latest}` ? value.notesUrl : null, install };
+    notesUrl: latest && value.notesUrl === `${RELEASE_NOTES}${latest}` ? value.notesUrl : null, install,
+    checkedAt: typeof value.checkedAt === 'string' && Number.isFinite(Date.parse(value.checkedAt)) ? value.checkedAt : null,
+    status: CHECK_STATUSES.includes(value.status) ? value.status : null,
+    error: typeof value.error === 'string' && /^[a-z0-9_]{1,40}$/.test(value.error) ? value.error : null };
 }
 
 function newerVersion(a, b) {

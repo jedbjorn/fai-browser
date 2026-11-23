@@ -11,7 +11,7 @@ import {
   addRelaxedOrigin, removeRelaxedOrigin,
 } from './permissions.js';
 import { mountApprovals } from './approval-card.js';
-import { mountUpdate } from './update-card.js';
+import { mountUpdate, mountVersion } from './update-card.js';
 import { agentLabel, mountInvite } from './invite-card.js';
 import {
   PIN_HINT, TESTING_WARNING, actionShortcut, allSitesGranted, askSiteAccess, element, iconPinned, openChatPanel,
@@ -630,6 +630,9 @@ mountApprovals({ list: document.getElementById('approvals'), settings: document.
 mountUpdate({ card: document.getElementById('update'), label: document.getElementById('update-label'),
   text: document.getElementById('update-text'), notes: document.getElementById('update-notes'),
   button: document.getElementById('update-install'), error: document.getElementById('update-error') }).catch(() => {});
+// Advanced, "Version": the running version and "Check for updates" (extension/update-card.js).
+mountVersion({ version: document.getElementById('version'), button: document.getElementById('update-check'),
+  text: document.getElementById('update-check-text'), error: document.getElementById('update-check-error') }).catch(() => {});
 // Setup state: not paired or not reachable shows the setup card (Pair asks the native host, which also starts the FAI
 // service); connected collapses to one line, everything else lives under Advanced.
 function renderSetup() {

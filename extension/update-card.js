@@ -1,8 +1,9 @@
 // The update card in the popup (docs/REFERENCE.md "Updates"): "Update available vX.Y.Z" with the release notes link and
 // an Update button, then the install's progress and outcome. The worker keeps the FAI service's update view in the
-// session `connection.update` (already reduced to versions, a notes link built from the version, and the last
-// install); Update sends `update_install`, which the worker passes to the service only from this popup. Nothing
-// installs without that click. Text is set with textContent only.
+// session `connection.update` (already reduced to versions, a notes link built from the version, the last install and
+// the last check); Update sends `update_install`, which the worker passes to the service only from this popup. Nothing
+// installs without that click. Also Advanced, "Version" (end of file): the version and "Check for updates". Text is
+// set with textContent only.
 
 const RECENT_MS = 24 * 60 * 60_000;
 
@@ -99,6 +100,107 @@ export async function mountUpdate({ card, label, text, notes, button, error }, {
   setInterval(() => {
     if (update?.install?.state === 'running' && !installing) send({ type: 'connect' }).catch(() => {});
   }, 2000);
+  try {
+    apply((await chrome.storage.session.get('connection'))?.connection);
+  } catch {
+    render();
+  }
+}
+
+// --- Advanced, "Version": the running version and "Check for updates" ---------------------------------------------
+// The button sends `update_check`; the worker asks the service to check GitHub now (a result younger than a minute is
+// reused) and the session `connection.update` carries the outcome. A newer release shows in the update card above,
+// where Update installs it; this section only reports.
+
+const CHECK_ERRORS = { network: 'no network', timeout: 'GitHub did not answer in time', git_failed: 'git could not read the releases',
+  bad_json: 'GitHub sent an unreadable reply', internal: 'the FAI service hit an error' };
+
+function when(at) {
+  const time = Date.parse(at ?? '');
+  if (!Number.isFinite(time)) return '';
+  return new Date(time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+/**
+ * The version line: the extension's version, plus the FAI service's when it differs (a Firefox add-on that has not
+ * updated itself yet, or a service that has not restarted).
+ */
+export function versionLine(update, extensionVersion) {
+  const service = typeof update?.current === 'string' ? update.current : null;
+  const own = typeof extensionVersion === 'string' && extensionVersion ? extensionVersion : null;
+  if (own && service && own !== service) return `FAI Browser ${own} · FAI service ${service}`;
+  return `FAI Browser ${own ?? service ?? 'version unknown'}`;
+}
+
+/**
+ * The check row: `{ text, button: { label, disabled } }`. `checking`: the user just clicked and the reply is not in.
+ */
+export function checkView(update, { connected = true, checking = false } = {}) {
+  if (checking) return { text: 'Checking GitHub for a newer release…', button: { label: 'Checking…', disabled: true } };
+  const button = { label: 'Check for updates', disabled: !connected || update?.install?.state === 'running' };
+  if (!connected) return { text: 'Connect to the FAI service to check for updates.', button };
+  if (!update || typeof update !== 'object') return { text: '', button };
+  if (update.install?.state === 'running') return { text: 'An update is installing.', button };
+  const checked = when(update.checkedAt);
+  const ago = checked ? ` Last checked ${checked}.` : '';
+  if (update.available && update.latest) {
+    return { text: `FAI Browser ${update.latest} is available: update from the card at the top of this popup.${ago}`, button };
+  }
+  if (update.status === 'rate_limited') return { text: `GitHub is limiting checks; try again later.${ago}`, button };
+  if (update.status === 'error') {
+    const reason = CHECK_ERRORS[update.error] ?? (update.error ? `GitHub answered ${update.error.replace('http_', 'HTTP ')}` : 'unknown error');
+    return { text: `Could not check for updates: ${reason}.${ago}`, button };
+  }
+  if (update.status === 'ok' || update.status === 'not_found') return { text: `You have the latest version.${ago}`, button };
+  return { text: 'Not checked yet.', button };
+}
+
+/** Wire the Version section. `elements`: {version, button, text, error}. Resolves once the first view is shown. */
+export async function mountVersion({ version, button, text, error }, {
+  send = message => chrome.runtime.sendMessage(message),
+  extensionVersion = globalThis.chrome?.runtime?.getManifest?.()?.version,
+} = {}) {
+  let update = null;
+  let connected = false;
+  let checking = false;
+
+  function render() {
+    version.textContent = versionLine(update, extensionVersion);
+    const view = checkView(update, { connected, checking });
+    text.textContent = view.text;
+    text.hidden = !view.text;
+    button.textContent = view.button.label;
+    button.disabled = view.button.disabled;
+  }
+
+  function apply(connection) {
+    if (connection && typeof connection === 'object') {
+      connected = Boolean(connection.connected);
+      update = connection.update ?? null;
+    }
+    render();
+  }
+
+  button.addEventListener('click', async () => {
+    if (checking) return;
+    checking = true;
+    error.textContent = '';
+    render();
+    try {
+      const result = await send({ type: 'update_check' });
+      if (result?.error) throw new Error(result.error);
+      checking = false;
+      apply(result?.connection);
+    } catch (failure) {
+      checking = false;
+      error.textContent = failure.message;
+      render();
+    }
+  });
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'session' && changes.connection) apply(changes.connection.newValue);
+  });
   try {
     apply((await chrome.storage.session.get('connection'))?.connection);
   } catch {
