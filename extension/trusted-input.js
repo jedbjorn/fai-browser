@@ -14,11 +14,11 @@
 // below, with coordinates inside the viewport, bounded text and waits.
 
 const TRUSTED_IDLE_MS = 600;
-const TRUSTED_MAX_STEPS = 400;
+const TRUSTED_MAX_STEPS = 600;
 const TRUSTED_MAX_WAIT_MS = 600;
 const TRUSTED_MAX_TEXT = 4000;
 // `until` steps (wait until this long after the first step) and a call's `deadline` stay within this.
-const TRUSTED_MAX_UNTIL_MS = 10_000;
+const TRUSTED_MAX_UNTIL_MS = 15_000;
 // Past the deadline, a beat before the held keys are released (never a keyup a moment after a keydown).
 const TRUSTED_LATE_RELEASE_MS = 12;
 const TRUSTED_MOUSE = new Set(['mouseMoved', 'mousePressed', 'mouseReleased', 'mouseWheel']);

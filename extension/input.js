@@ -17,10 +17,13 @@
     // Think time before each action (ms, a jittered draw between the two).
     think: [15, 70],
     // Typing: characters typed key by key while the planned rhythm stays within this much time (a whole value within
-    // RHYTHM.slack of it is typed in full) and up to this many characters, the rest inserted in one piece (as an IME
-    // commit or autocomplete does), so long text never takes long.
-    typeBudgetMs: 1000,
-    maxTyped: 40,
+    // RHYTHM.slack of it is typed in full) and up to this many characters, the rest inserted in one piece (as a paste
+    // does). The budget covers what a form field usually takes (an address, a query, a name: about 60 characters are
+    // typed whole), so the rhythm runs to the end of the value instead of stopping after its first groups; only long
+    // text ends in an insertion. A fill stays well inside the daemon's command timeout and trusted-input.js's bounds
+    // (TRUSTED_MAX_STEPS, TRUSTED_MAX_UNTIL_MS).
+    typeBudgetMs: 6000,
+    maxTyped: 80,
     // The typist's speed for this session (RHYTHM): the worker sends one seed per lease, so every document of a task
     // types at the same pace; 0 means a seed of this document's own.
     rhythmSeed: 0,
