@@ -461,7 +461,7 @@
   const OFFSITE_RESERVE = 5;
   // Visibility checks spent on counting the off-screen controls the cap left out (controlsDropped).
   const DROP_COUNT_BUDGET = 500;
-  // In-viewport controls whose reach is assessed before the cap is applied (selectControls).
+  // In-viewport controls of the top document whose reach is assessed before the cap is applied (selectControls).
   const REACH_SCAN_BUDGET = 300;
 
   // Consent dialogs. The runtime offers only `reject` buttons and never `accept`; page.js refuses accept buttons
@@ -3520,11 +3520,11 @@
     return layer;
   }
 
-  // `reach`: in-viewport items ({ el, rect }) with their assessment (selectControls).
+  // `reach`: the top document's in-viewport items ({ el, rect }) with their assessment (selectControls).
   function detectCovering(reach, consent) {
     const counts = new Map();
     for (const [item, assessment] of reach) {
-      if (assessment.state !== 'blocked' || assessment.reason !== 'covered' || item.el.ownerDocument !== document) continue;
+      if (assessment.state !== 'blocked' || assessment.reason !== 'covered') continue;
       const layer = coveringLayer(item.el, item.rect);
       if (layer) counts.set(layer, (counts.get(layer) ?? 0) + 1);
     }
@@ -4413,7 +4413,7 @@
   // Picks at most MAX_CONTROLS controls. Returns [{ el, rect, label?, offscreen, consentKind? }] in output
   // order: in-viewport floating choices, other in-viewport controls, off-screen term matches, then other off-screen
   // controls, each in document order. Selection priority: consent buttons, nag closers, floating choices, in-viewport
-  // term matches, other in-viewport controls (those a press can reach first; leaving up to TERM_RESERVE slots for
+  // term matches, other in-viewport controls (those known to be out of reach last; leaving up to TERM_RESERVE slots for
   // off-screen term matches), off-screen term matches, off-screen controls.
   // An <a> whose href is a web page (http or https), and one on another site than the approved one.
   // What an <a> leads to, read from its raw href (an anchor's URL properties parse the href on every read, and a page
@@ -4511,9 +4511,14 @@
       if (item.offscreen) offView.push(item);
       else inView.push(item);
     }
-    // What a press can reach among the in-viewport controls, and the floating UI the unreachable ones lie under.
+    // What a press can reach among the top document's in-viewport controls, and the floating UI the unreachable ones
+    // lie under. A frame's controls are not assessed here (each costs its frame's assessment too): unknown, like the
+    // ones past the budget.
     const reach = new Map();
-    for (const item of inView.slice(0, REACH_SCAN_BUDGET)) reach.set(item, assessActionability(item.pickerLabel ?? item.el));
+    for (const item of inView) {
+      if (reach.size >= REACH_SCAN_BUDGET) break;
+      if (item.el.ownerDocument === document) reach.set(item, assessActionability(item.pickerLabel ?? item.el));
+    }
     detectCovering(reach, consent);
     const labels = new Map();
     const labelFor = item => {
@@ -4580,15 +4585,15 @@
       if (offSites.length >= OFFSITE_RESERVE) break;
       if (!offMatches.includes(item) && offSiteLink(item.el) && rendered(item.el, item.rect)) offSites.push(item);
     }
-    // Under the cap a control a press can reach comes before one it cannot (covered by an open panel, hidden, clipped):
-    // that one is never offered, and its place would cost a control of the panel lying over it. A disabled control
-    // keeps its place: that it is there and disabled is part of what the page shows.
+    // Under the cap a control known to be out of a press's reach (covered by an open panel, hidden, clipped) comes
+    // after the others: it is never offered, and its place would cost a control of the panel lying over it. A disabled
+    // control keeps its place: that it is there and disabled is part of what the page shows.
     const inViewLimit = MAX_CONTROLS - offMatches.length - offSites.length;
-    const reachable = item => {
+    const unreachable = item => {
       const assessment = reach.get(item);
-      return Boolean(assessment) && (assessment.state !== 'blocked' || assessment.reason === 'disabled');
+      return assessment?.state === 'blocked' && assessment.reason !== 'disabled';
     };
-    for (const item of inView) if (reachable(item)) take(item, inViewLimit);
+    for (const item of inView) if (!unreachable(item)) take(item, inViewLimit);
     for (const item of inView) take(item, inViewLimit);
     for (const item of offMatches) take(item);
     for (const item of offSites) take(item);
