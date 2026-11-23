@@ -16,7 +16,8 @@
     #panel input { width: 320px; }
     .pick { display: inline-block; padding: 4px 8px; border-bottom: 1px solid #333; cursor: pointer; }
     #labels { position: absolute; top: 150px; left: 330px; width: 220px; background: white; border: 1px solid #555; z-index: 6; }
-    #labels div { padding: 6px 8px; cursor: pointer; }
+    #labels div, #sizes div { padding: 6px 8px; cursor: pointer; }
+    #sizes { position: absolute; top: 160px; left: 250px; width: 160px; background: white; border: 1px solid #555; z-index: 6; }
     #status { position: fixed; bottom: 0; left: 0; padding: 4px 12px; }
   </style>
 </head>
@@ -31,9 +32,16 @@
   <div id="panel" hidden>
     <label>From <input id="from" type="text"></label>
     <label>Has the words <input id="words" type="text"></label>
+    <!-- A select built on a menu button (Closure's): the button is the listbox, its caption its one option, and the
+         list is mounted at the end of the body. -->
+    <p>Size: <span id="size" class="pick" role="listbox" aria-haspopup="true" aria-expanded="false" aria-activedescendant="size-caption" tabindex="0"><span id="size-caption" role="option" aria-selected="true">greater than</span></span></p>
     <p>Apply the label: <span id="pick" class="pick" role="button" tabindex="0">Choose label...</span></p>
     <button id="create" type="button">Create filter</button>
     <button id="search" type="button">Search</button>
+  </div>
+  <div id="sizes" role="listbox" hidden>
+    <div role="option" aria-selected="true">greater than</div>
+    <div role="option" aria-selected="false">less than</div>
   </div>
   <div id="labels" hidden>
     <div role="button" tabindex="0">Newsletters</div>
@@ -57,6 +65,13 @@
     pick.addEventListener('click', () => { labels.hidden = !labels.hidden; });
     for (const item of labels.children) {
       item.addEventListener('click', () => { pick.textContent = item.textContent; labels.hidden = true; });
+    }
+    const size = document.getElementById('size');
+    const sizes = document.getElementById('sizes');
+    const setSizes = open => { size.setAttribute('aria-expanded', String(open)); sizes.hidden = !open; };
+    size.addEventListener('click', () => setSizes(sizes.hidden));
+    for (const item of sizes.children) {
+      item.addEventListener('click', () => { document.getElementById('size-caption').textContent = item.textContent; setSizes(false); });
     }
     document.getElementById('create').addEventListener('click', () => {
       status.textContent = `Filter created: ${document.getElementById('words').value} -> ${pick.textContent}`;

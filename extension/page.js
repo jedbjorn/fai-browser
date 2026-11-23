@@ -877,15 +877,25 @@
     return list;
   }
 
+  // A listbox that says it has a popup is the button of a dropdown, not the list: a select built on a menu button (as
+  // Closure's is) carries role=listbox itself, with its caption inside as its one option, and opens a list mounted
+  // elsewhere. It is a control (a press opens the list); its caption is not an option to choose.
+  function popupListbox(el) {
+    const popup = el.getAttribute('aria-haspopup');
+    return el.getAttribute('role') === 'listbox' && popup !== null && popup !== 'false';
+  }
+
   // A custom dropdown container (role=listbox holding role=option items) is not a control itself: its options are.
   function optionContainer(el) {
-    return el.tagName !== 'SELECT' && el.getAttribute('role') === 'listbox' && Boolean(el.querySelector('[role="option"]'));
+    return el.tagName !== 'SELECT' && el.getAttribute('role') === 'listbox' && !popupListbox(el) && Boolean(el.querySelector('[role="option"]'));
   }
 
   // Options and menu items count inside a listbox/menu, or inside the popup an expanded trigger names with
   // aria-controls or aria-owns. Native <option> elements are reported through their <select>.
   function offeredOption(el) {
     if (el.tagName === 'OPTION') return false;
+    const list = el.parentElement?.closest('[role="listbox"]');
+    if (list && popupListbox(list)) return false;
     const scope = el.getRootNode();
     // An explicit collapsed state overrides a popup's leftover rendered boxes (e.g. a closing animation).
     for (let node = el, depth = 0; node && node.nodeType === 1 && depth < 6; node = node.parentElement, depth++) {

@@ -14,7 +14,7 @@ import { PageBridge } from './helpers/page-bridge.js';
 const PAGE_SCRIPT = new URL('../extension/page.js', import.meta.url).pathname;
 const FIXTURE = await readFile(new URL('../fixtures/covering-panel.html', import.meta.url), 'utf8');
 const ORIGIN = 'https://example.com';
-const PANEL = ['From', 'Has the words', 'Choose label...', 'Create filter', 'Search'];
+const PANEL = ['From', 'Has the words', 'greater than', 'Choose label...', 'Create filter', 'Search'];
 const MENU = ['Newsletters', 'Receipts', 'Travel', 'New label...'];
 
 let browser;
@@ -99,4 +99,26 @@ test('the runtime offers the panel and its menu first, and a choice in the menu 
   assert.ok(after.find(action => action.label === 'Newsletters' && action.type === 'click' && action.floating),
     'the picker now shows the chosen label');
   assert.equal(after.find(action => action.label === 'Travel'), undefined, 'choosing closes the menu');
+});
+
+test('a select built on a menu button: the listbox that has a popup is the control, its caption is not an option', async t => {
+  const page = await load(t);
+  await page.click('#options');
+  const open = await observe(page);
+  const size = open.controls.filter(control => control.label === 'greater than');
+  assert.deepEqual(size.map(control => [control.role, control.actionability]), [['listbox', 'ready']], 'one control: the button');
+
+  const bridge = new PageBridge(page, { level: 'reversible' });
+  const runtime = new BrowserRuntime({ bridge });
+  const offered = await runtime.observe({ mode: 'reversible', allowedOrigins: [ORIGIN] });
+  const trigger = offered.actions.find(action => action.label === 'greater than');
+  assert.equal(trigger?.type, 'click');
+  const opened = await runtime.act({ actionId: trigger.id }, { revision: offered.observation.revision });
+  const actions = opened.actions ?? opened.offer.actions;
+  const less = actions.find(action => action.label === 'less than' && action.role === 'option');
+  assert.ok(less, 'the open list offers its options');
+  const chosen = await runtime.act({ actionId: less.id }, { revision: opened.observation?.revision ?? opened.offer.revision });
+  const after = chosen.actions ?? chosen.offer.actions;
+  assert.ok(after.find(action => action.label === 'less than' && action.role === 'listbox'), 'the button shows the choice');
+  assert.equal(after.find(action => action.role === 'option'), undefined, 'the list is closed and the caption is no option');
 });
