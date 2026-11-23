@@ -14,7 +14,7 @@ import { PageBridge } from './helpers/page-bridge.js';
 const PAGE_SCRIPT = new URL('../extension/page.js', import.meta.url).pathname;
 const FIXTURE = await readFile(new URL('../fixtures/covering-panel.html', import.meta.url), 'utf8');
 const ORIGIN = 'https://example.com';
-const PANEL = ['From', 'Has the words', 'greater than', 'Choose label...', 'Create filter', 'Search'];
+const PANEL = ['From', 'Has the words', 'greater than', 'Choose label...', 'Skip the Inbox (Archive it)', 'Create filter', 'Search'];
 const MENU = ['Newsletters', 'Receipts', 'Travel', 'New label...'];
 
 let browser;
@@ -121,4 +121,19 @@ test('a select built on a menu button: the listbox that has a popup is the contr
   const after = chosen.actions ?? chosen.offer.actions;
   assert.ok(after.find(action => action.label === 'less than' && action.role === 'listbox'), 'the button shows the choice');
   assert.equal(after.find(action => action.role === 'option'), undefined, 'the list is closed and the caption is no option');
+});
+
+test('a checkbox the page hides behind its label: the label stands in for it, and a press on it checks the box', async t => {
+  const page = await load(t);
+  await page.click('#options');
+  const bridge = new PageBridge(page, { level: 'reversible' });
+  const runtime = new BrowserRuntime({ bridge });
+  const offered = await runtime.observe({ mode: 'reversible', allowedOrigins: [ORIGIN] });
+  const skip = offered.actions.find(action => action.label === 'Skip the Inbox (Archive it)');
+  assert.deepEqual([skip?.type, skip?.role, skip?.checked, skip?.floating], ['click', 'checkbox', false, true]);
+  const pressed = await runtime.act({ actionId: skip.id }, { revision: offered.observation.revision });
+  assert.equal(pressed.status, 'checkpoint', pressed.reason);
+  assert.equal(await page.evaluate(() => document.getElementById('skip').checked), true);
+  const after = (pressed.actions ?? pressed.offer.actions).find(action => action.label === 'Skip the Inbox (Archive it)');
+  assert.equal(after?.checked, true, 'the new state is reported');
 });

@@ -877,12 +877,13 @@
     return list;
   }
 
-  // A listbox that says it has a popup is the button of a dropdown, not the list: a select built on a menu button (as
-  // Closure's is) carries role=listbox itself, with its caption inside as its one option, and opens a list mounted
-  // elsewhere. It is a control (a press opens the list); its caption is not an option to choose.
+  // A listbox that has a popup and an expanded state of its own is the button of a dropdown, not the list: a select
+  // built on a menu button (as Closure's is) carries role=listbox itself, with its caption inside as its one option,
+  // and opens a list mounted elsewhere. It is a control (a press opens or closes the list); its caption is not an
+  // option to choose. The list it opens may repeat aria-haspopup, but has no expanded state: that one holds the options.
   function popupListbox(el) {
     const popup = el.getAttribute('aria-haspopup');
-    return el.getAttribute('role') === 'listbox' && popup !== null && popup !== 'false';
+    return el.getAttribute('role') === 'listbox' && popup !== null && popup !== 'false' && el.hasAttribute('aria-expanded');
   }
 
   // A custom dropdown container (role=listbox holding role=option items) is not a control itself: its options are.
@@ -912,6 +913,19 @@
       if (scope.querySelector(`[aria-expanded="true"][aria-controls~="${id}"],[aria-expanded="true"][aria-owns~="${id}"]`)) return true;
     }
     return false;
+  }
+
+  // A checkbox or radio the page hides to draw its own (an input of a pixel or less, often parked off the page, with
+  // its <label> as the visible box): the rendered label stands in for it, as a user presses the label. Null for an
+  // input with a box of its own.
+  function toggleLabel(el) {
+    if (el.tagName !== 'INPUT' || (el.type !== 'checkbox' && el.type !== 'radio')) return null;
+    const own = boxOf(el);
+    if (own.width > 1 && own.height > 1) return null;
+    return Array.from(el.labels ?? []).find(label => {
+      const box = boxOf(label);
+      return box.width > 0 && box.height > 0;
+    }) ?? null;
   }
 
   // The document's HTTP status from Navigation Timing (Chrome 109+), only while the URL is still the loaded one
@@ -4508,7 +4522,7 @@
       const pickerLabel = type === 'file' && !(own.width > 0 && own.height > 0) ? Array.from(el.labels ?? []).find(label => {
         const box = boxOf(label);
         return box.width > 0 && box.height > 0;
-      }) : null;
+      }) : toggleLabel(el);
       let rect = pickerLabel ? boxOf(pickerLabel) : own;
       if (!(rect.width > 0 && rect.height > 0)) {
         if (styleOf(el).display !== 'contents') continue;
@@ -6784,8 +6798,10 @@
       control = observation.controls.find(c => c.id === action.target) ?? null;
       risk = targetRisks.get(action.target);
     }
-    // A styled file picker hides its input: its rendered label stands in for it (selectControls).
-    const shown = node => assessActionability(node).state !== 'blocked' || (action.type === 'upload' && Array.from(node.labels ?? []).some(label => rendered(label)));
+    // A styled file picker hides its input: its rendered label stands in for it (selectControls). So does the label of
+    // a checkbox or radio the page hides (toggleLabel): the press goes to the label.
+    const press = (action.type === 'click' && el && toggleLabel(el)) || el;
+    const shown = node => assessActionability(node === el ? press : node).state !== 'blocked' || (action.type === 'upload' && Array.from(node.labels ?? []).some(label => rendered(label)));
     if ((action.target || action.point) && (!el?.isConnected || !shown(el) || el.disabled || control?.enabled === false)) {
       throw new PageError('target_unavailable', 'Target is unavailable');
     }
@@ -6881,8 +6897,14 @@
           const identity = targetIdentity(el);
           const doc = el.ownerDocument;
           const href = doc.location.href;
-          const initial = assessActionability(el);
+          const initial = assessActionability(press);
           if (initial.state !== 'ready') throw new PageError('target_unavailable', `Target is unavailable: ${initial.reason}`);
+          // The control's own box, null for one without (display: contents).
+          const ownBox = () => {
+            const box = press.getBoundingClientRect();
+            return box.width > 0 && box.height > 0 ? box : null;
+          };
+          const initialBox = ownBox();
           const point = action.point ?? initial.point;
           const stillValid = async () => {
             if (nuisanceProof && !nuisanceProofHolds(nuisanceProof, el)) throw new PageError('target_unavailable', 'The automatic popup candidate changed');
@@ -6890,9 +6912,13 @@
             if (!el.isConnected || doc.location.href !== href || targetIdentity(el) !== identity) throw new PageError('stale', 'The control identity changed before the click');
             const frame = frameByDoc.get(doc);
             const localPoint = frame ? { x: point.x - frame.dx, y: point.y - frame.dy } : point;
-            const current = assessActionability(el, localPoint);
+            const current = assessActionability(press, localPoint);
             if (current.state !== 'ready') throw new PageError('target_unavailable', `Target is unavailable: ${current.reason}`);
-            if (['left', 'top', 'right', 'bottom'].some(side => Math.abs(current.geometry[side] - initial.geometry[side]) > 1)) {
+            // Moving is said of the control's own box, not of the part that paints it: a menu item is text on a
+            // transparent box until the pointer this click moves there gives it a background, and is still where it was.
+            const box = initialBox && ownBox();
+            const [was, now] = box ? [initialBox, box] : [initial.geometry, current.geometry];
+            if (['left', 'top', 'right', 'bottom'].some(side => Math.abs(now[side] - was[side]) > 1)) {
               throw new PageError('target_unavailable', 'The control is moving; observe again after it settles');
             }
             if (!approved && !automaticNuisance && !dispatchable(riskOf(el, roleOf(el), labelOf(el), lastConsent?.kinds.get(el)))) throw new PageError('blocked_risky', 'The control changed before the click');
@@ -6901,12 +6927,12 @@
               const reply = await chrome.runtime.sendMessage({ kind: 'fai.framePoint', point });
               if (!reply?.ok || reply.valid !== true) throw new PageError('target_unavailable', 'The containing frame is unavailable');
               if (nuisanceProof && !nuisanceProofHolds(nuisanceProof, el)) throw new PageError('target_unavailable', 'The automatic popup candidate changed during frame verification');
-              if (targetIdentity(el) !== identity || assessActionability(el, localPoint).state !== 'ready') throw new PageError('stale', 'The control changed during frame verification');
+              if (targetIdentity(el) !== identity || assessActionability(press, localPoint).state !== 'ready') throw new PageError('stale', 'The control changed during frame verification');
             }
             return true;
           };
           if (realInput()) {
-            const { stale, unavailable } = await realInput().click(el, { point, fragment: initial.fragment, stillValid,
+            const { stale, unavailable } = await realInput().click(press, { point, fragment: initial.fragment, stillValid,
               explicitClick: automaticNuisance || el.tagName === 'A' || control.role === 'link' });
             if (stale) throw new PageError('stale', 'The control changed before the click');
             if (unavailable) throw new PageError('target_unavailable', 'Target is unavailable before the click');
@@ -6918,7 +6944,7 @@
             await stillValid();
             if (['INPUT', 'TEXTAREA'].includes(el.tagName)) el.focus({ preventScroll: true });
             await stillValid();
-            el.click();
+            press.click();
           }
         } finally {
           navigation?.removeEventListener?.('navigate', onNavigate);

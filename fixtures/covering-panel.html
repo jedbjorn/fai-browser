@@ -14,6 +14,9 @@
     #panel { position: absolute; top: 50px; left: 200px; width: 520px; padding: 16px; background: white; border: 1px solid #555; z-index: 5; }
     #panel label { display: block; margin-bottom: 12px; }
     #panel input { width: 320px; }
+    /* A checkbox the page draws itself: the input is a pixel parked off the page, its label is the visible box. */
+    .parked { position: absolute; left: -9999px; width: 1px; height: 1px; }
+    .parked + label { display: inline-block; padding-left: 24px; background: linear-gradient(#888, #888) 0 50% / 14px 14px no-repeat; }
     .pick { display: inline-block; padding: 4px 8px; border-bottom: 1px solid #333; cursor: pointer; }
     #labels { position: absolute; top: 150px; left: 330px; width: 220px; background: white; border: 1px solid #555; z-index: 6; }
     #labels div, #sizes div { padding: 6px 8px; cursor: pointer; }
@@ -33,15 +36,17 @@
     <label>From <input id="from" type="text"></label>
     <label>Has the words <input id="words" type="text"></label>
     <!-- A select built on a menu button (Closure's): the button is the listbox, its caption its one option, and the
-         list is mounted at the end of the body. -->
+         list is another listbox next to it. -->
     <p>Size: <span id="size" class="pick" role="listbox" aria-haspopup="true" aria-expanded="false" aria-activedescendant="size-caption" tabindex="0"><span id="size-caption" role="option" aria-selected="true">greater than</span></span></p>
+    <!-- Its list sits beside the button, repeats aria-haspopup and has no id for the button to point at. -->
+    <div id="sizes" role="listbox" aria-haspopup="true" aria-activedescendant="size-caption" hidden>
+      <div role="option">greater than</div>
+      <div role="option">less than</div>
+    </div>
     <p>Apply the label: <span id="pick" class="pick" role="button" tabindex="0">Choose label...</span></p>
+    <p><input id="skip" class="parked" type="checkbox"><label for="skip">Skip the Inbox (Archive it)</label></p>
     <button id="create" type="button">Create filter</button>
     <button id="search" type="button">Search</button>
-  </div>
-  <div id="sizes" role="listbox" hidden>
-    <div role="option" aria-selected="true">greater than</div>
-    <div role="option" aria-selected="false">less than</div>
   </div>
   <div id="labels" hidden>
     <div role="button" tabindex="0">Newsletters</div>
