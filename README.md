@@ -11,6 +11,8 @@ action approvals and verified outcomes.**
 [![MCP server](https://img.shields.io/badge/MCP-server-7c3aed?style=flat-square)](docs/REFERENCE.md#coding-agents-mcp-and-skill)
 [![Firefox add-on](https://img.shields.io/badge/Firefox-add--on-FF7139?style=flat-square&logo=firefoxbrowser&logoColor=white)](docs/guide/install.md)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](#contributing)
+<br>
+[![jedbjorn/fai-browser MCP server](https://glama.ai/mcp/servers/jedbjorn/fai-browser/badges/score.svg)](https://glama.ai/mcp/servers/jedbjorn/fai-browser)
 
 [Website](https://fai-browser.designs-os.com/) · [Install](docs/guide/install.md) · [Measured comparisons](#benchmarks)
 
