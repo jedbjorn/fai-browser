@@ -123,7 +123,7 @@ test('refuses other tabs, frames and senders, anything outside the step set, and
     [{ wait: 60_000 }],
     [{ m: 'text', text: 'x'.repeat(5000) }],
     [{ m: 'key', type: 'char', key: 'a' }],
-    Array.from({ length: 401 }, () => ({ wait: 0 })),
+    Array.from({ length: 601 }, () => ({ wait: 0 })),
   ]) {
     assert.deepEqual(await h.send({ kind: 'fai-trusted-input', steps, viewport: VIEWPORT }), { ok: false, dispatched: 0, reason: 'invalid' });
   }

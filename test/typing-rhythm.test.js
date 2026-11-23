@@ -661,6 +661,37 @@ test('a fill types for a bounded time: values up to 14 characters in full, long 
   assert.equal(plan('abcdef', { session: session(1), random, budgetMs: 1e6, maxTyped: 4 }).typed, 4);
 });
 
+test('the default budget types an ordinary field value to its end, and every fill stays within the trusted-input bounds', () => {
+  const worker = readFileSync(new URL('../extension/trusted-input.js', import.meta.url), 'utf8');
+  const bound = name => Number(new RegExp(`const ${name} = ([\\d_]+);`).exec(worker)[1].replaceAll('_', ''));
+  const maxSteps = bound('TRUSTED_MAX_STEPS');
+  const maxUntil = bound('TRUSTED_MAX_UNTIL_MS');
+  const random = seeded(31);
+  const fields = [...SENTENCES.filter(text => text.length <= 50), 'someone.with.a.long.name@mail.example.com',
+    'unsubscribe newsletter OR "special offer"', 'HELLO THERE, THIS IS ALL IN CAPITALS!'];
+  for (let i = 0; i < 500; i++) {
+    for (const text of fields) {
+      const p = plan(text, { session: session(i + 1), random, slips: true });
+      assert.equal(p.chunked, false, `${text.length} characters typed to the end`);
+      assertValid(text, p);
+    }
+    // Long text is still bounded: it ends in one insertion, after far more than its first groups.
+    for (const text of [LONG.slice(0, 400), LONG.slice(0, 400).toUpperCase()]) {
+      const p = plan(text, { session: session(i + 1), random, slips: true });
+      assert.equal(p.chunked, true);
+      assert.ok(p.typed >= 30 && p.total <= 6000, `typed ${p.typed} in ${p.total} ms`);
+      // The steps of the trusted path (the keys, then the rest as one text step) and its deadline (RHYTHM_LATE_MS).
+      assert.ok(steps(Array.from(text), p).length + 2 <= maxSteps);
+      assert.ok(p.total + 400 <= maxUntil);
+    }
+    // A secret's call lasts a fixed time (typeTrusted: BLIND_MARGIN_MS and BLIND_STEP_MS for its worst case).
+    for (const length of [20, 60, 900]) {
+      const p = plan('x'.repeat(length), { session: session(i + 1), random, blind: true });
+      assert.ok(p.total + 100 + 3 * (3 * length + 4) <= maxUntil, `${length}: ${p.total}`);
+    }
+  }
+});
+
 test('a secret is planned from its length alone: same times, groups, pauses, total and prefix whatever it holds; no slips', () => {
   const values = ['aaaaaaaaaaaa', 'Tr0ub4dor&3!', 'ZZZZZZZZZZZZ', 'p@ss W0RD #1', 'ééééééééééé1', 'AbCdEfGhIjKl', 'hello world!'];
   for (const budgetMs of [600, 1e9]) {

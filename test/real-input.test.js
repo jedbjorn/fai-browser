@@ -196,7 +196,8 @@ test('click latency: p50 under 250 ms over repeated clicks; typing is capped', a
   const long = await actOnField(run, 'Long field', { type: 'fill_supplied_text', text: 'x'.repeat(400) });
   assert.equal(long.fill.kept, true);
   t.diagnostic(`400-character fill ${long.inputMs} ms`);
-  assert.ok(long.inputMs < 2500, `long fill ${long.inputMs}`);
+  // The typing budget (typeBudgetMs, 6000 ms), then the rest in one insertion.
+  assert.ok(long.inputMs < 7500, `long fill ${long.inputMs}`);
 });
 
 test('links navigate once, submit buttons submit once, and page-cancelled presses behave as for a mouse', async t => {
@@ -625,7 +626,8 @@ for (const path of PATHS) {
     const slow = await typeInto(run, '#slow', 'the quick brown fox');
     t.diagnostic(`${path} slow page: ${slow.ms} ms, ${slow.typed} keys planned`);
     assert.equal(slow.value, 'the quick brown fox');
-    assert.ok(slow.ms < 2600, `slow fill took ${slow.ms} ms`);
+    // No longer than its plan (19 keys: up to about 3.2 s) and how far behind it the keys may fall (RHYTHM_LATE_MS).
+    assert.ok(slow.ms < 4200, `slow fill took ${slow.ms} ms`);
     // A formatter's output holds the value: no select-all and whole-value paste after the keys.
     await pageLog(page);
     const phone = await typeInto(run, '#ph', '1234567890');
