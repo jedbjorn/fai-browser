@@ -10,7 +10,7 @@
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { closeSync, openSync, readFileSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { join } from 'node:path';
 import { PACKAGE_ROOT } from './paths.js';
 import { EXIT_ERROR_MARKER } from './breakaway.js';
@@ -106,6 +106,38 @@ export async function probeHealth(port, timeoutMs = HEALTH_TIMEOUT_MS) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether the daemon on `port` holds `token`: its health answer to a fresh nonce carries the HMAC of its port and the
+ * nonce under the token (src/daemon.js). The request carries no token, so a squatter on the port learns nothing.
+ * Resolves `{ ok: true }`, or `{ ok: false, code }`: `no_proof` (a FAI daemon older than 0.6, which cannot prove it)
+ * or `unproven` (anything else).
+ */
+export async function proveDaemon(port, token, timeoutMs = HEALTH_TIMEOUT_MS) {
+  const challenge = randomBytes(18).toString('base64url');
+  let answer;
+  try {
+    answer = await httpJson({ port, method: 'GET', path: `/v1/health?challenge=${challenge}`, timeoutMs });
+  } catch {
+    return { ok: false, code: 'unproven' };
+  }
+  const { status, body } = answer;
+  const expected = Buffer.from(createHmac('sha256', token).update(`fai-health:${port}:${challenge}`).digest('hex'));
+  const given = Buffer.from(typeof body?.proof === 'string' ? body.proof : '');
+  if (status === 200 && given.length === expected.length && timingSafeEqual(given, expected)) return { ok: true };
+  return { ok: false, code: body?.service === 'fai-browser' && body?.proof === undefined ? 'no_proof' : 'unproven' };
+}
+
+// Before the client token (or anything that follows it: a session key, supplied text, the native host's pairing
+// secret) goes to the daemon on `port`, the daemon proves it holds that token.
+async function requireProof(port, token, health) {
+  if (!token) return;
+  const proof = await proveDaemon(port, token);
+  if (proof.ok) return;
+  const old = proof.code === 'no_proof' && health?.pid ? ` If it is an older FAI Browser service, stop it (process ${health.pid}) and try again.` : '';
+  throw new FaiClientError(409, proof.code, `The service on port ${port} did not prove it is this user's FAI Browser daemon.${old}`,
+    { retryable: false });
 }
 
 /** The port a client should use: explicit, else a non-zero env port, else daemon.json, else 4318 (or null). */
@@ -250,6 +282,7 @@ export async function ensureDaemon(options = {}) {
 
   let port = resolveClientPort(paths, { port: options.port, env });
   let health = await probeHealth(port);
+  if (health) await requireProof(port, readClientToken(paths, env), health);
 
   // `takeover: false` (the MCP server's background session loop): never stop a daemon of another version, however
   // idle; refuse with `version_mismatch` instead, and leave the takeover to a real client call.
@@ -293,6 +326,8 @@ export async function ensureDaemon(options = {}) {
 
   const token = readClientToken(paths, env);
   if (!token) throw new FaiClientError(401, 'unauthorized', `No client token at ${paths.clientToken}`);
+  // A daemon this call started proves itself too: something else may have taken the port first.
+  if (started) await requireProof(port, token, health);
   return { port, token, health, started, warnings };
 }
 

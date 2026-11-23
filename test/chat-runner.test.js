@@ -359,6 +359,15 @@ test('attachments: waiting files move into the chat\'s files folder under clean 
   assert.throws(() => ctx.uploads.check([stray.fileId], null), { code: 'unknown_file' });
 });
 
+test('a new chat whose files cannot be moved is not left behind as an empty chat', async t => {
+  const ctx = await setup(t);
+  const file = await ctx.uploads.add({ chatId: null, name: 'a.txt', data: b64('a') });
+  const [entry] = ctx.uploads.check([file.fileId], null);
+  // The same file twice: the second is no longer waiting once the first is moved.
+  await assert.rejects(ctx.runner.send({ provider: 'claude', text: 'twice', files: [entry, entry] }), { code: 'unknown_file' });
+  assert.equal((await ctx.store.list()).total, 0, 'the chat this send created is gone again');
+});
+
 test('a refused turn keeps its files waiting: they are moved only once the turn has its slot', async t => {
   const ctx = await setup(t, { control: { claude: { mode: 'hang' } } });
   const running = await ctx.runner.send({ provider: 'claude', text: 'busy' });

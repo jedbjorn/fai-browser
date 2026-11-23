@@ -211,6 +211,28 @@ test('a port held by another program fails with port_in_use', async t => {
   await assert.rejects(ensureDaemon({ home, env, autoStart: false }), error => error.code === 'daemon_unreachable');
 });
 
+test('a squatter on the port that answers like FAI but cannot prove the client token gets no token', async t => {
+  const home = await tempHome(t);
+  const env = daemonEnv(home);
+  ensureClientToken(homePaths({ home, env }));
+  for (const [proof, code] of [[undefined, 'no_proof'], ['0'.repeat(64), 'unproven']]) {
+    const seen = [];
+    const squatter = http.createServer((req, res) => {
+      seen.push({ url: req.url, authorization: req.headers.authorization });
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ ok: true, service: 'fai-browser', version: '0.0.1', pid: 1, ...(proof ? { proof } : {}) }));
+    });
+    await new Promise(resolve => squatter.listen(0, '127.0.0.1', resolve));
+    const { port } = squatter.address();
+    await assert.rejects(ensureDaemon({ home, env: { ...env, FAI_DAEMON_PORT: String(port) } }),
+      error => error instanceof FaiClientError && error.code === code);
+    await new Promise(resolve => squatter.close(resolve));
+    assert.ok(seen.length >= 2, 'it asked for health and for the proof');
+    assert.ok(seen.every(call => call.authorization === undefined), 'the token never went to it');
+    assert.ok(seen.every(call => call.url.startsWith('/v1/health')), 'no status or shutdown call (version skew) before the proof');
+  }
+});
+
 test('version skew: an idle old daemon is replaced; a busy one is kept with a warning', async t => {
   const home = await tempHome(t);
   const env = daemonEnv(home);

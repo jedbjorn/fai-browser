@@ -3557,11 +3557,20 @@ export function createDaemon(options = {}) {
     for (const [routeMethod, pattern, name, open, quiet] of ROUTES) {
       const match = pattern.exec(pathname);
       if (match && routeMethod === method) {
-        return { name, open: Boolean(open), quiet: Boolean(quiet), param: match[1] && decodeURIComponent(match[1]),
-          param2: match[2] && decodeURIComponent(match[2]) };
+        return { name, open: Boolean(open), quiet: Boolean(quiet), param: match[1] && decodePathPart(match[1]),
+          param2: match[2] && decodePathPart(match[2]) };
       }
     }
     return null;
+  }
+
+  // A malformed escape (`%E0%A4%A`) is the caller's mistake: 400, not an internal error.
+  function decodePathPart(part) {
+    try {
+      return decodeURIComponent(part);
+    } catch {
+      throw new HttpError(400, 'bad_request', 'Malformed percent-encoding in the path');
+    }
   }
 
   function validHost(host) {

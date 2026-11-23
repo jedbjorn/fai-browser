@@ -983,7 +983,10 @@ client call does) and then registers. Every new connection (the first, and every
 as `503 shutting_down`, or a transport error) asks `GET /v1/health?challenge=<nonce>` without the token and checks
 `proof`, an HMAC-SHA256 of `fai-health:<daemon port>:<nonce>` under the client token, before the token or the session
 key is sent, so a process squatting on the port gets nothing and cannot inject wakes (a daemon without the proof, an
-older one, turns invites and wakes off). The daemon hands out at most 4 wakes a poll; the server acts on each wake id
+older one, turns invites and wakes off). Every other client does the same before its first call: the CLI, an MCP
+server's tool calls and the native messaging host (which hands the extension the pairing secret) prove the daemon they
+found or started, before a status or shutdown call of a version change; one that cannot prove it is refused with
+`no_proof` (a service older than 0.6: stop it and try again) or `unproven`. The daemon hands out at most 4 wakes a poll; the server acts on each wake id
 once (the last 256 remembered) and at most 12 a minute, and reports one over a cap as `failed`/`rate_limited` at once.
 It reports an outcome only over the connection the wake came from, while that is still its current, verified one
 (otherwise the daemon fails the wake as `no_report`). After any failed wake the server's relay texts name the

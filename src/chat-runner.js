@@ -317,7 +317,7 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
   // the chat's folder, writes the record, starts the process. `compose(paths)` gives {text, record} once the files'
   // paths are known; `files`: waiting files checked by uploads.check. `addendum(chatId)`: more text for this turn (the
   // page beside the chat, spec #84), asked once the turn may start.
-  async function begin(header, compose, files = [], turn = null, addendum = null) {
+  async function begin(header, compose, files = [], turn = null, addendum = null, fresh = false) {
     const { chatId, provider } = header;
     if (!turn) {
       checkLimits(chatId);
@@ -338,6 +338,9 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
         ...(attached.length ? { files: attached.map(({ name, size, type }) => ({ name, size, type })) } : {}) });
     } catch (error) {
       turns.delete(chatId);
+      // A chat this send created holds nothing yet (no message, perhaps some of the files): it goes, rather than
+      // stay in the list as an empty chat.
+      if (fresh) await store.remove(chatId).catch(() => {});
       throw error;
     }
     await launch(turn, header, composed.text, attached.map(file => file.path));
@@ -392,7 +395,7 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
       turns.delete(chatId);
       throw error;
     }
-    return begin(header, compose, files, turn, addendum);
+    return begin(header, compose, files, turn, addendum, true);
   }
 
   /**
