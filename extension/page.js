@@ -461,6 +461,8 @@
   const OFFSITE_RESERVE = 5;
   // Visibility checks spent on counting the off-screen controls the cap left out (controlsDropped).
   const DROP_COUNT_BUDGET = 500;
+  // In-viewport controls whose reach is assessed before the cap is applied (selectControls).
+  const REACH_SCAN_BUDGET = 300;
 
   // Consent dialogs. The runtime offers only `reject` buttons and never `accept`; page.js refuses accept buttons
   // itself (risk 'destructive'). Kept in step with the runtime's consent label list.
@@ -3497,6 +3499,46 @@
     return floatingRoots.some(root => within(el, root));
   }
 
+  // A panel or menu opened over the page with no role of its own (a search-options panel, a dropdown built of divs)
+  // shows in what it covers: a positioned layer lying over at least COVERING_MIN controls a press can no longer reach
+  // is floating UI like a semantic menu, and its controls are the current task. Never a bar along the top or bottom
+  // edge (a fixed header over content scrolled under it), a consent dialog or a nag overlay.
+  const COVERING_MIN = 2;
+
+  // The outermost positioned box over the centre of `rect` that does not hold `el`.
+  function coveringLayer(el, rect) {
+    const x = (Math.max(rect.left, 0) + Math.min(rect.right, innerWidth)) / 2;
+    const y = (Math.max(rect.top, 0) + Math.min(rect.bottom, innerHeight)) / 2;
+    let layer = null;
+    for (let node = hitAt(x, y), depth = 0; node && node.nodeType === 1 && depth < 40; node = parentOf(node), depth++) {
+      if (node === document.body || node === document.documentElement || within(el, node)) break;
+      const position = styleOf(node).position;
+      if (position !== 'absolute' && position !== 'fixed') continue;
+      const box = boxOf(node);
+      if (box.width > 0 && box.height > 0) layer = node;
+    }
+    return layer;
+  }
+
+  // `reach`: in-viewport items ({ el, rect }) with their assessment (selectControls).
+  function detectCovering(reach, consent) {
+    const counts = new Map();
+    for (const [item, assessment] of reach) {
+      if (assessment.state !== 'blocked' || assessment.reason !== 'covered' || item.el.ownerDocument !== document) continue;
+      const layer = coveringLayer(item.el, item.rect);
+      if (layer) counts.set(layer, (counts.get(layer) ?? 0) + 1);
+    }
+    for (const [layer, count] of counts) {
+      if (floatingRoots.length >= MAX_FLOATING_CONTAINERS) break;
+      if (count < COVERING_MIN || inFloating(layer)) continue;
+      if (consent?.container && (within(layer, consent.container) || within(consent.container, layer))) continue;
+      if (lastOverlay && lastOverlay.kind !== 'task' && (within(layer, lastOverlay.root) || within(lastOverlay.root, layer))) continue;
+      const box = boxOf(layer);
+      if (box.height < innerHeight * 0.3 && (box.top <= 0 || box.bottom >= innerHeight)) continue;
+      floatingRoots.push(layer);
+    }
+  }
+
   // ------------------------------------------------------------------------------------------------------------
   // Derived views: readable lines for content the text walk reads badly or not at all. A chart (SVG) becomes one
   // line of its labels and, when its values exist only as bar heights against numeric axis ticks, the values read
@@ -4371,8 +4413,8 @@
   // Picks at most MAX_CONTROLS controls. Returns [{ el, rect, label?, offscreen, consentKind? }] in output
   // order: in-viewport floating choices, other in-viewport controls, off-screen term matches, then other off-screen
   // controls, each in document order. Selection priority: consent buttons, nag closers, floating choices, in-viewport
-  // term matches, other in-viewport controls (leaving up to TERM_RESERVE slots for off-screen term matches), off-screen
-  // term matches, off-screen controls.
+  // term matches, other in-viewport controls (those a press can reach first; leaving up to TERM_RESERVE slots for
+  // off-screen term matches), off-screen term matches, off-screen controls.
   // An <a> whose href is a web page (http or https), and one on another site than the approved one.
   // What an <a> leads to, read from its raw href (an anchor's URL properties parse the href on every read, and a page
   // holds thousands of links): `{ web, offSite, words }`. A relative href resolves against a base on the page's own
@@ -4469,6 +4511,10 @@
       if (item.offscreen) offView.push(item);
       else inView.push(item);
     }
+    // What a press can reach among the in-viewport controls, and the floating UI the unreachable ones lie under.
+    const reach = new Map();
+    for (const item of inView.slice(0, REACH_SCAN_BUDGET)) reach.set(item, assessActionability(item.pickerLabel ?? item.el));
+    detectCovering(reach, consent);
     const labels = new Map();
     const labelFor = item => {
       if (!labels.has(item)) labels.set(item, labelOf(item.el));
@@ -4534,7 +4580,16 @@
       if (offSites.length >= OFFSITE_RESERVE) break;
       if (!offMatches.includes(item) && offSiteLink(item.el) && rendered(item.el, item.rect)) offSites.push(item);
     }
-    for (const item of inView) take(item, MAX_CONTROLS - offMatches.length - offSites.length);
+    // Under the cap a control a press can reach comes before one it cannot (covered by an open panel, hidden, clipped):
+    // that one is never offered, and its place would cost a control of the panel lying over it. A disabled control
+    // keeps its place: that it is there and disabled is part of what the page shows.
+    const inViewLimit = MAX_CONTROLS - offMatches.length - offSites.length;
+    const reachable = item => {
+      const assessment = reach.get(item);
+      return Boolean(assessment) && (assessment.state !== 'blocked' || assessment.reason === 'disabled');
+    };
+    for (const item of inView) if (reachable(item)) take(item, inViewLimit);
+    for (const item of inView) take(item, inViewLimit);
     for (const item of offMatches) take(item);
     for (const item of offSites) take(item);
     let capped = false;

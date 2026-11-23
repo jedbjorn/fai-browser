@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Covering panel fixture</title>
+  <style>
+    body { margin: 0; font: 14px sans-serif; }
+    /* Page chrome: a fixed bar the list scrolls under. */
+    #bar { position: fixed; top: 0; left: 0; right: 0; height: 44px; padding: 8px 12px; box-sizing: border-box; background: #eee; z-index: 2; }
+    #rows { display: flex; flex-wrap: wrap; gap: 4px; padding: 56px 12px 12px; }
+    #rows button { width: 90px; height: 28px; }
+    #spacer { height: 1200px; }
+    /* A panel and a menu built of plain divs: no dialog, menu or listbox role, mounted at the end of the body. */
+    #panel { position: absolute; top: 50px; left: 200px; width: 520px; padding: 16px; background: white; border: 1px solid #555; z-index: 5; }
+    #panel label { display: block; margin-bottom: 12px; }
+    #panel input { width: 320px; }
+    .pick { display: inline-block; padding: 4px 8px; border-bottom: 1px solid #333; cursor: pointer; }
+    #labels { position: absolute; top: 150px; left: 330px; width: 220px; background: white; border: 1px solid #555; z-index: 6; }
+    #labels div { padding: 6px 8px; cursor: pointer; }
+    #status { position: fixed; bottom: 0; left: 0; padding: 4px 12px; }
+  </style>
+</head>
+<body>
+  <div id="bar">
+    <button id="options" type="button">Search options</button>
+    <button id="account" type="button">Account</button>
+  </div>
+  <div id="rows"></div>
+  <div id="spacer"></div>
+  <p id="status" role="status">Nothing chosen</p>
+  <div id="panel" hidden>
+    <label>From <input id="from" type="text"></label>
+    <label>Has the words <input id="words" type="text"></label>
+    <p>Apply the label: <span id="pick" class="pick" role="button" tabindex="0">Choose label...</span></p>
+    <button id="create" type="button">Create filter</button>
+    <button id="search" type="button">Search</button>
+  </div>
+  <div id="labels" hidden>
+    <div role="button" tabindex="0">Newsletters</div>
+    <div role="button" tabindex="0">Receipts</div>
+    <div role="button" tabindex="0">Travel</div>
+    <div role="button" tabindex="0">New label...</div>
+  </div>
+  <script>
+    const rows = document.getElementById('rows');
+    for (let i = 0; i < 180; i++) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = `Message ${i + 1}`;
+      rows.append(button);
+    }
+    const panel = document.getElementById('panel');
+    const labels = document.getElementById('labels');
+    const pick = document.getElementById('pick');
+    const status = document.getElementById('status');
+    document.getElementById('options').addEventListener('click', () => { panel.hidden = !panel.hidden; labels.hidden = true; });
+    pick.addEventListener('click', () => { labels.hidden = !labels.hidden; });
+    for (const item of labels.children) {
+      item.addEventListener('click', () => { pick.textContent = item.textContent; labels.hidden = true; });
+    }
+    document.getElementById('create').addEventListener('click', () => {
+      status.textContent = `Filter created: ${document.getElementById('words').value} -> ${pick.textContent}`;
+      panel.hidden = true;
+    });
+  </script>
+</body>
+</html>
