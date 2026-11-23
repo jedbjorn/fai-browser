@@ -5,6 +5,16 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## 0.13.0 (2026-11-23)
+
+### Added
+
+- **Version and Check for updates in the popup.** The toolbar popup's **Advanced** section ends with **Version**: the add-on's version (and the FAI service's, when the two differ) and a **Check for updates** button. It asks the FAI service to check GitHub for a newer release now (a check younger than a minute, or a rate limit, is reused) and says what it found: up to date, a newer release (installed from the **Update** card at the top of the popup, as before), or why the check failed, with when it last checked. It installs nothing. The button is off while the popup is not connected to the FAI service or an update installs.
+
+### Verification
+
+- Headless popup tests for the new section (the version line, one `update_check` per click, the result, a found release showing the Update card, a refused check) and the worker's update view. Not checked live in Firefox; the button uses the existing `update_check` path from the popup to the service.
+
 ## 0.12.1 (2026-11-23)
 
 ### Fixed
