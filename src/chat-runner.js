@@ -277,7 +277,15 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
       log('chat_start_error', { chatId, provider, message: String(error?.code ?? error?.message ?? error).slice(0, 200) });
     });
     const parser = createOutputParser(provider);
-    createInterface({ input: child.stdout, crlfDelay: Infinity }).on('line', raw => onEvents(turn, parser.line(raw)));
+    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+    lines.on('line', raw => onEvents(turn, parser.line(raw)));
+    // The turn ends only once every output line has been read: the process's 'close' can come before the reader's
+    // last lines (seen on Node 22 in CI), and the turn would then end without the answer it printed.
+    // Also once stdout itself has closed (a turn never waits on a reader that did not close).
+    const linesRead = new Promise(resolve => {
+      lines.once('close', resolve);
+      child.stdout.once('close', () => setImmediate(resolve));
+    });
     child.stderr.on('data', chunk => {
       turn.stderr = (turn.stderr + chunk.toString('utf8')).slice(-STDERR_KEEP);
     });
@@ -285,7 +293,7 @@ export function createChatRunner({ store, root, prepare = async () => {}, server
       // Anything left of the tree after a Stop or the time limit goes now.
       if (turn.stopReason && platform !== 'win32' && child.pid) signalGroup(child.pid, 'SIGKILL');
     });
-    child.on('close', code => finish(turn, { code, startError: startError && !turn.stopReason }));
+    child.on('close', code => linesRead.then(() => finish(turn, { code, startError: startError && !turn.stopReason })));
     turn.limitTimer = setTimeout(() => killTree(turn, 'timed_out'), turnLimitMs);
     turn.limitTimer.unref?.();
     log('chat_turn_start', { chatId, turnId: turn.turnId, provider, resumed: Boolean(header.conversationId) });
