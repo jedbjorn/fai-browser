@@ -139,6 +139,12 @@
         <input id="secret" type="password" autocomplete="off" spellcheck="false" placeholder="Only if automatic pairing fails">
         <p id="secret-help" class="field-help">node src/cli.js pair prints it. Pairing is usually automatic.</p>
         <p id="transport" class="field-help transport">Connection: not connected</p>
+
+        <span class="section-label">Version</span>
+        <p id="version" class="version-line">FAI Browser</p>
+        <button id="update-check" class="secondary-button" type="button">Check for updates</button>
+        <p id="update-check-text" class="field-help" aria-live="polite" hidden></p>
+        <p id="update-check-error" class="field-help field-error" role="alert"></p>
       </div>
     </details>
   </main>

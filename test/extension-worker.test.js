@@ -2721,11 +2721,16 @@ const UPDATE = { enabled: true, current: '0.3.0', latest: '0.9.0', tag: 'v0.9.0'
   notesUrl: 'https://github.com/jedbjorn/fai-browser/releases/tag/v0.9.0', status: 'ok', install: null };
 
 test('update: the hello and the popup connect carry a cleaned update view; Update from the popup asks the service', async () => {
-  const h = harness({ daemonUpdate: { ...UPDATE, notesUrl: 'https://evil.example/', extra: 'x' } });
+  const h = harness({ daemonUpdate: { ...UPDATE, notesUrl: 'https://evil.example/', extra: 'x',
+    checkedAt: '2026-11-21T07:00:00.000Z', error: '<b>no</b>' } });
   await h.until(() => h.session.connection?.update);
   assert.deepEqual(h.session.connection.update, { current: '0.3.0', latest: '0.9.0', available: true, installable: true, installer: false,
-    notesUrl: null, install: null },
-    'only versions, a notes link of the release itself, and the install');
+    notesUrl: null, install: null, checkedAt: '2026-11-21T07:00:00.000Z', status: 'ok', error: null },
+    'only versions, a notes link of the release itself, the install, and the last check (a code-shaped error only)');
+  const check = await h.send({ type: 'update_check' }, { id: 'ext', url: ORIGIN });
+  assert.match(check.error, /popup/, 'a page cannot ask for a check');
+  await h.send({ type: 'update_check' }, { id: 'ext', url: 'chrome-extension://ext/popup.html' });
+  assert.ok(h.sent.some(message => message.type === 'update' && message.action === 'check'), 'Check for updates asks the service');
   const page = await h.send({ type: 'update_install' }, { id: 'ext', url: ORIGIN });
   assert.match(page.error, /popup/);
   assert.ok(!h.sent.some(message => message.type === 'update' && message.action === 'install'), 'a page cannot install');
