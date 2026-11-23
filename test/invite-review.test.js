@@ -52,7 +52,9 @@ async function fakeDaemon(t, { version, proof = () => undefined }) {
 }
 
 test('review: an old MCP server\'s session loop never shuts down a newer, idle daemon; it waits for its own call', async t => {
-  const fake = await fakeDaemon(t, { version: '9.9.9' });
+  // A real (proving) daemon of another version: every client proves the daemon before anything else.
+  const fake = await fakeDaemon(t, { version: '9.9.9', proof: challenge => challenge
+    ? createHmac('sha256', fake.env.FAI_CLIENT_TOKEN).update(`fai-health:${fake.env.FAI_DAEMON_PORT}:${challenge}`).digest('hex') : undefined });
   const session = new AgentSession({ env: fake.env, home: fake.home, connect: options => FaiBrowserClient.connect(options),
     clientName: 'probe', host: 'unknown', backoffMs: 50 });
   session.start();

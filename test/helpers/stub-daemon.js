@@ -1,7 +1,7 @@
 // In-process stand-in for the Phase 2 daemon's client API (design section 2) with canned data. D3's MCP, CLI and
 // setup tests run against it until the real daemon lands; it also checks auth and records every call.
 import http from 'node:http';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -290,7 +290,10 @@ export async function startStubDaemon(behavior = {}) {
   async function route(method, url, body, headers) {
     const path = url.pathname;
     if (method === 'GET' && path === '/v1/health') {
-      return [200, { ok: true, service: 'fai-browser', version: stub.version, pid: process.pid }];
+      // The daemon's proof that it holds the client token (src/daemon.js), as every client checks it.
+      const challenge = url.searchParams.get('challenge');
+      const proof = challenge ? createHmac('sha256', token).update(`fai-health:${stub.port}:${challenge}`).digest('hex') : undefined;
+      return [200, { ok: true, service: 'fai-browser', version: stub.version, pid: process.pid, ...(proof ? { proof } : {}) }];
     }
     if (headers.origin) {
       throw httpError(403, 'forbidden_origin', 'Requests with an Origin header are refused');

@@ -119,6 +119,9 @@ test('client API rejects Origin, foreign Host, missing or wrong token; health is
   assert.deepEqual(status.body.requests, []);
 
   assert.equal((await ctx.api('GET', '/v1/nope')).body.error.code, 'not_found');
+  const escape = await ctx.api('GET', '/v1/requests/%E0%A4%A');
+  assert.equal(escape.status, 400, 'a malformed escape is the caller\'s mistake, not an internal error');
+  assert.equal(escape.body.error.code, 'bad_request');
   const bad = await ctx.api('POST', '/v1/requests', undefined, { raw: '{oops' });
   assert.equal(bad.status, 400);
   assert.equal(bad.body.error.code, 'bad_request');

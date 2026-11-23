@@ -139,25 +139,44 @@ export class FrameParser {
     this.requireMask = requireMask;
     this.maxMessageBytes = maxMessageBytes;
     this.buffer = Buffer.alloc(0);
+    // Bytes received since the last parse, and how many the next frame needs before parsing is worth it: a large
+    // message arrives in many chunks, and joining them on every chunk would copy it over and over.
+    this.chunks = [];
+    this.pending = 0;
+    this.need = 0;
     this.fragments = null; // {opcode, parts, length} while a fragmented message is open
     this.decoder = new TextDecoder('utf-8', { fatal: true });
   }
 
   push(chunk) {
-    this.buffer = this.buffer.length ? Buffer.concat([this.buffer, chunk]) : chunk;
+    this.chunks.push(chunk);
+    this.pending += chunk.length;
+    if (this.pending < this.need) return [];
+    this.buffer = this.chunks.length === 1 ? this.chunks[0] : Buffer.concat(this.chunks, this.pending);
+    this.need = 0;
     const events = [];
-    for (;;) {
-      const frame = this.#takeFrame();
-      if (!frame) break;
-      const event = this.#handleFrame(frame);
-      if (event) events.push(event);
+    try {
+      for (;;) {
+        const frame = this.#takeFrame();
+        if (!frame) break;
+        const event = this.#handleFrame(frame);
+        if (event) events.push(event);
+      }
+    } finally {
+      this.chunks = this.buffer.length ? [this.buffer] : [];
+      this.pending = this.buffer.length;
     }
     return events;
   }
 
+  #short(bytes) {
+    this.need = bytes;
+    return null;
+  }
+
   #takeFrame() {
     const buffer = this.buffer;
-    if (buffer.length < 2) return null;
+    if (buffer.length < 2) return this.#short(2);
     const fin = (buffer[0] & 0x80) !== 0;
     const rsv = buffer[0] & 0x70;
     const opcode = buffer[0] & 0x0f;
@@ -171,12 +190,12 @@ export class FrameParser {
     if (![0, 1, 2, 8, 9, 10].includes(opcode)) throw new ProtocolError(1002, `Unknown opcode ${opcode}`);
     if (control && (!fin || length > 125)) throw new ProtocolError(1002, 'Invalid control frame');
     if (length === 126) {
-      if (buffer.length < 4) return null;
+      if (buffer.length < 4) return this.#short(4);
       length = buffer.readUInt16BE(2);
       if (length < 126) throw new ProtocolError(1002, 'Non-minimal payload length');
       offset = 4;
     } else if (length === 127) {
-      if (buffer.length < 10) return null;
+      if (buffer.length < 10) return this.#short(10);
       const big = buffer.readBigUInt64BE(2);
       if (big & (1n << 63n)) throw new ProtocolError(1002, 'Reserved payload length bit set');
       if (big < 65_536n) throw new ProtocolError(1002, 'Non-minimal payload length');
@@ -190,7 +209,7 @@ export class FrameParser {
     }
     const maskOffset = offset;
     if (masked) offset += 4;
-    if (buffer.length < offset + length) return null;
+    if (buffer.length < offset + length) return this.#short(offset + length);
     const payload = Buffer.from(buffer.subarray(offset, offset + length));
     if (masked) {
       for (let i = 0; i < length; i++) payload[i] ^= buffer[maskOffset + (i & 3)];
