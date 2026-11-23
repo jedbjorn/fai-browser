@@ -37,6 +37,7 @@ const USAGE = `Usage (your agent chooses each action):
                            levels, states, tools, troubleshooting); no daemon needed
   fai-browser daemon [start|stop|restart|status|logs [--lines N]]
   fai-browser update [--check]    install the latest GitHub release into this checkout (--check: only look)
+  fai-browser update --main       development clone: fast-forward main to GitHub's main, refresh, restart the service
   fai-browser install --host claude|codex|opencode [--scope project|user] [--link] [--dry-run] [--force]
                       [--command-name] [--always-load]
   fai-browser uninstall --host claude|codex|opencode|all
@@ -166,6 +167,7 @@ function parseCli(argv) {
         'always-load': { type: 'boolean' },
         check: { type: 'boolean' },
         finish: { type: 'boolean' },
+        main: { type: 'boolean' },
         tag: { type: 'string' },
         code: { type: 'string' },
       },
