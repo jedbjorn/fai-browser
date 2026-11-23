@@ -640,7 +640,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     emitStorage(changes, area) {
       chrome.storage.onChanged.emit(changes, area);
     },
-    send(message, sender = { id: 'ext' }) {
+    send(message, sender = { id: 'ext', url: 'chrome-extension://ext/popup.html' }) {
       // Replies come from the VM realm; JSON round-trip makes them comparable with deepStrictEqual.
       return new Promise(resolve => chrome.runtime.onMessage.emit(message, sender, reply => resolve(clone(reply))));
     },
@@ -2990,6 +2990,20 @@ test('approve: the window, badge and card show the request; Approve once mints a
   const again = h.command('execute', { action: { type: 'click', target: '1', approvalId }, expectedRevision: 'doc:2', level: 'full' });
   assert.equal((await h.waitFor(m => m.type === 'result' && m.id === again)).error.code, 'blocked_risky');
   assert.equal(h.pageArgs.filter(c => c.method === 'execute').length, executes);
+});
+
+// An approved dialog accept has no control to bind to (the dialog's own text was approved): the command check lets it
+// through to the approval, which decides (here: none was given, so it is refused as unapproved, not as malformed).
+test('approve: an approved dialog accept passes the command check without a target and meets the approval check', async () => {
+  const h = await started({ level: 'full' });
+  const run = h.command('execute', { action: { type: 'dialog', answer: 'accept', approvalId: 'not-a-real-approval' },
+    expectedRevision: 'doc:1', level: 'full' });
+  const error = (await h.waitFor(m => m.type === 'result' && m.id === run)).error;
+  assert.equal(error.code, 'blocked_risky', JSON.stringify(error));
+  assert.match(error.message, /no approval/);
+  const point = h.command('execute', { action: { type: 'dialog', answer: 'accept', approvalId: 'x', point: { x: 1, y: 1 } },
+    expectedRevision: 'doc:1', level: 'full' });
+  assert.equal((await h.waitFor(m => m.type === 'result' && m.id === point)).error.code, 'unsupported', 'never with a point');
 });
 
 // Spec #86 acceptance 1: the driven tab's window is the focused and last focused one, and the browser supports
@@ -5428,9 +5442,15 @@ async function automaticStarted({ marker = AUTOMATIC_POLICY, echoed = marker, se
 }
 
 test('automatic popup authority comes only from disclosed user approval and the matching daemon grant', async () => {
-  for (const options of [{ marker: null }, { marker: 'future-policy' }, { echoed: null },
-    { sender: { id: 'ext', tab: { id: 7 }, frameId: 0, url: `${ORIGIN}/` } },
-    { sender: { id: 'ext' } }]) {
+  // A content script (the page's renderer) or a sender without a URL cannot start a session at all.
+  for (const sender of [{ id: 'ext', tab: { id: 7 }, frameId: 0, url: `${ORIGIN}/` }, { id: 'ext' }]) {
+    const h = harness({ leaseGrant: { tabMode: 'single', automaticPopups: AUTOMATIC_POLICY } });
+    await h.waitFor(message => message.type === 'hello');
+    const reply = await h.send({ type: 'start', requestId: 'req_1', level: 'read-only', automaticPopups: AUTOMATIC_POLICY }, sender);
+    assert.match(reply.error, /popup/, JSON.stringify(sender));
+    assert.equal(h.sent.some(message => message.type === 'lease'), false, JSON.stringify(sender));
+  }
+  for (const options of [{ marker: null }, { marker: 'future-policy' }, { echoed: null }]) {
     const h = await automaticStarted(options);
     const state = await h.send({ type: 'state' });
     assert.equal(state.session.automaticPopups, undefined, JSON.stringify(options));
@@ -5438,8 +5458,7 @@ test('automatic popup authority comes only from disclosed user approval and the 
     await h.waitFor(message => message.type === 'result' && message.id === id);
     assert.equal(h.pageArgs.some(entry => entry.method === 'clearNuisances'), false);
     assert.equal(h.sent.find(message => message.type === 'lease').automaticPopups,
-      (options.marker === undefined ? AUTOMATIC_POLICY : options.marker) === AUTOMATIC_POLICY
-        && options.sender === undefined ? AUTOMATIC_POLICY : undefined);
+      (options.marker === undefined ? AUTOMATIC_POLICY : options.marker) === AUTOMATIC_POLICY ? AUTOMATIC_POLICY : undefined);
   }
   const approved = await automaticStarted();
   const state = await approved.send({ type: 'state' });

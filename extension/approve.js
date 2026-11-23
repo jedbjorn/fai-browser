@@ -4,7 +4,7 @@
 // shows and the agent's one line (both untrusted, marked as such), Approve once or Deny. Two items or more (or the
 // agent's ask for a higher level or more sites) show each item on its own tagged line, one Approve and one Deny for
 // all of them. Neither button has focus at first, so no key press decides. A bundle that changes under the user says
-// so and holds both buttons for a second; a click on a changed bundle is refused. The window closes itself once the
+// so and holds both buttons for a second, as on first showing; a click on a changed bundle is refused. The window closes itself once the
 // bundle no longer waits. Everything an agent or a page wrote is rendered with textContent only.
 import { BUNDLE_TEXT, ENTER_COMMIT_TEXT, KIND_TEXT, PAGE_CHANGED_TEXT, SECRET_USE_TEXT, bundleHeadline, bundleItems, bundleList,
   bundleSummary, bundleTitle, decideBundle, directLine, enterCommitLine, originText, queueLine, secretUseLine } from './approval-card.js';
@@ -41,13 +41,19 @@ function setButtons() {
   deny.disabled = busy || held;
 }
 
-// The bundle changed under the user (an item joined or left): say so, and hold both buttons for a second.
-function holdForUpdate() {
-  show('updated', BUNDLE_TEXT.updated);
+// Hold both buttons for a second: when the window first shows (a click meant for the page under it, where the window
+// appears at a predictable spot, must not land on Approve) and when the bundle changes.
+function hold() {
   heldUntil = Date.now() + UPDATED_HOLD_MS;
   setButtons();
   clearTimeout(holdTimer);
   holdTimer = setTimeout(setButtons, UPDATED_HOLD_MS + 10);
+}
+
+// The bundle changed under the user (an item joined or left): say so, and hold both buttons for a second.
+function holdForUpdate() {
+  show('updated', BUNDLE_TEXT.updated);
+  hold();
 }
 
 function render(list) {
@@ -57,7 +63,8 @@ function render(list) {
     return;
   }
   const bundle = list[index];
-  if (current && bundle.version !== current.version) holdForUpdate();
+  if (!current) hold();
+  else if (bundle.version !== current.version) holdForUpdate();
   current = bundle;
   const items = bundleItems(bundle);
   document.title = bundleTitle(items.length);
