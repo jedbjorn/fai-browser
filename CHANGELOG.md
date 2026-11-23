@@ -5,6 +5,21 @@ project aims to follow [Semantic Versioning](https://semver.org/) from 1.0; unti
 
 Version 0.2.0 was the first published state; the 0.3 series introduces the default agent driver and signed Firefox add-on.
 
+## 0.12.1 (2026-11-23)
+
+### Fixed
+
+- **Typing keeps its rhythm to the end of the value.** A fill typed the first second's worth of characters (about five) and inserted the rest at once. The typing budget is now 6 s and up to 80 characters: a value of up to about 50 characters is typed whole (30 characters take about 3.3 s). Longer text is typed for about 6 s, then the rest is inserted in one step, so a fill stays well inside the 30 s command limit.
+- **A panel or menu opened over the page is offered first.** A form or menu the page shows in a plain positioned element (no dialog or menu role), such as Gmail's search options and filter form, lost its controls when the page behind it had more than 100: the covered ones filled the list. Controls the panel covers now give way, and the panel's controls are listed first as floating choices. A fixed header or footer bar is not treated as a panel.
+- **Dropdowns built from a `listbox` button.** A button with `role="listbox"`, `aria-haspopup` and `aria-expanded` (Closure-style selects) is offered as one dropdown control named by its current choice; its opened list offers each option.
+- **Checkboxes and radio buttons the page hides behind a label.** An input shrunk to a pixel or parked off screen is offered through its visible label, with its checked state, and a click presses the label.
+- **Menu items that highlight under the pointer take the click.** An item that paints its background only on hover was refused as "The control is moving". The check now compares the control's own box, so a control that really shifts is still refused.
+
+### Verification
+
+- Live in Firefox on Linux with a pre-release build of the add-on loaded by hand, on Gmail: the search options fields and selects, every checkbox and dropdown of the filter form, a label chosen from **Choose label…** and the **New label…** dialog. Nothing was saved. The signed 0.12.1 add-on was not checked live; Windows and macOS run the same add-on code.
+- **Known limits.** After a click, the returned page can be read before the site has reacted (it reports `unchanged` or the next act reports `stale`); observe again. In Gmail's **New label** dialog the **Nest label under** checkbox is not offered.
+
 ## 0.12.0 (2026-11-17)
 
 ### Changed
