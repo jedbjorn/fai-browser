@@ -179,6 +179,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
       onStartup: events('onStartup'),
       onInstalled: events('onInstalled'),
       getManifest: () => ({ version: '0.3.0' }),
+      getURL: path => `chrome-extension://ext/${path}`,
       async sendMessage(message) {
         assert.equal(message.type, 'annotate');
         annotations.push(clone(message));
@@ -350,7 +351,7 @@ function harness({ ws = 'open', http = 'ok', paired = true, timeScale = 1, mode 
     },
     send(message) {
       // Replies come from the VM realm; JSON round-trip makes them comparable with deepStrictEqual.
-      return new Promise(resolve => chrome.runtime.onMessage.emit(message, { id: 'ext' }, reply => resolve(clone(reply))));
+      return new Promise(resolve => chrome.runtime.onMessage.emit(message, { id: 'ext', url: 'chrome-extension://ext/popup.html' }, reply => resolve(clone(reply))));
     },
     push(message) {
       h.socket.deliver({ v: 3, ...message });

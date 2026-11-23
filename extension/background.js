@@ -3049,9 +3049,10 @@ function validateAction(action) {
   if (['navigate_allowed_url', 'open_tab'].includes(action.type) && !sameSessionSite(action.url)) {
     throw new ExtensionError('cross_origin', 'Navigation outside selected origin');
   }
-  // An approved action (the Approve gate): bound to a target, never a point (copy_secret names a handle instead).
-  if (action.approvalId !== undefined && (!['click', 'fill_secret', 'copy_secret', 'upload', 'submit_field'].includes(action.type) || action.point !== undefined
-    || (action.type !== 'copy_secret' && action.target === undefined)
+  // An approved action (the Approve gate): bound to a target, never a point (copy_secret names a handle instead; an
+  // accepted dialog has no control, the dialog's own text was approved).
+  if (action.approvalId !== undefined && (!['click', 'fill_secret', 'copy_secret', 'upload', 'submit_field', 'dialog'].includes(action.type) || action.point !== undefined
+    || (!['copy_secret', 'dialog'].includes(action.type) && action.target === undefined)
     || typeof action.approvalId !== 'string' || action.approvalId.length > 64)) {
     throw new ExtensionError('unsupported', 'Invalid approved click');
   }
@@ -5068,6 +5069,13 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   // input.js's trusted-input steps: answered by trusted-input.js only.
   if (message?.kind === 'fai-trusted-input') return;
   if (sender.id !== chrome.runtime.id) return;
+  // Everything below is for the extension's own pages (popup, approval window, request modal, chat panel). FAI's
+  // content scripts carry the extension id too but run in the page's renderer, so they get none of it: their own
+  // messages (above) are the only ones they send.
+  if (typeof sender.url !== 'string' || !sender.url.startsWith(chrome.runtime.getURL(''))) {
+    respond({ error: 'Only the FAI Browser popup and its own windows can send this' });
+    return;
+  }
   (async () => {
     let note = null;
     if (message.type === 'arm_begin') {

@@ -509,8 +509,9 @@ async function decideAction(ctx, decision, beforeClick = () => {}) {
       const url = await ctx.marionette.send('WebDriver:GetCurrentURL');
       if (!String(url.value ?? url).includes('/approve.html')) continue;
       // render() runs after an async storage read; until it fills #detail, #headline still holds the static default.
+      // The buttons are held for a second after the window first shows (a click meant for the page lands on nothing).
       const headline = await ctx.marionette.execute(`return document.getElementById("detail").textContent
-        ? document.getElementById("headline").textContent : null;`);
+        && !document.getElementById("approve").disabled ? document.getElementById("headline").textContent : null;`);
       if (headline === null) continue;
       beforeClick();
       const found = await ctx.marionette.send('WebDriver:FindElement', { using: 'css selector', value: decision === 'approve' ? '#approve' : '#deny' });
@@ -620,7 +621,9 @@ test('Firefox: an ask that adds a site asks for its access inside the approval w
   assert.deepEqual(shown.value, [`SITES Also work on 1 more site: ${other}`]);
   const click = async () => {
     await ctx.marionette.send('WebDriver:SwitchToWindow', { handle: shown.handle, focus: false });
-    const found = await ctx.marionette.send('WebDriver:FindElement', { using: 'css selector', value: '#approve:not([disabled])' });
+    // Held for a second after the window first shows.
+    const found = await until(() => ctx.marionette.send('WebDriver:FindElement', { using: 'css selector', value: '#approve:not([disabled])' })
+      .catch(() => null), 5_000);
     await ctx.marionette.send('WebDriver:ElementClick', { id: Object.values(found.value ?? found)[0] });
   };
 

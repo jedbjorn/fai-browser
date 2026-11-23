@@ -1726,8 +1726,9 @@ answering items one by one: Deny stops it all.
 
 **Changed under the user.** The window shows a bundle version; Approve and Deny carry the version the user saw. If an
 item joined or left since, the click is refused, the window re-renders with `Updated: the agent added an item. Check
-the list again.`, and both buttons stay disabled for a second. An item that expires or goes stale before the answer
-leaves the bundle; with none left, the window closes.
+the list again.`, and both buttons stay disabled for a second. They are also disabled for the first second after the
+window shows, so a click meant for the page under it (the window opens at a predictable spot) approves nothing. An
+item that expires or goes stale before the answer leaves the bundle; with none left, the window closes.
 
 **Expiry and closing.** A bundle stays open 5 minutes from its newest item and at most 10 minutes from when it opened;
 its items do not expire on their own meanwhile. **Closing the window is not an answer.** The bundle stays pending with
