@@ -5,6 +5,7 @@ action approvals and verified outcomes.**
 
 [![CI](https://github.com/jedbjorn/fai-browser/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jedbjorn/fai-browser/actions/workflows/ci.yml)
 [![Release downloads](https://img.shields.io/github/downloads/jedbjorn/fai-browser/total?label=release%20downloads&style=flat-square)](https://github.com/jedbjorn/fai-browser/releases)
+[![Unique cloners in the last 14 days](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fjedbjorn%2Fsubfloor%2Fclone-traffic%2Funique-cloners.json&query=%24%5B%27fai-browser%27%5D.unique_cloners_14d&label=unique%20cloners%20%2814d%29&color=blue&style=flat-square)](https://github.com/jedbjorn/subfloor/blob/clone-traffic/unique-cloners.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Node >=22](https://img.shields.io/badge/node-%3E%3D22-339933?style=flat-square&logo=node.js&logoColor=white)](package.json)
 [![Runtime deps: 0](https://img.shields.io/badge/runtime%20deps-0-brightgreen?style=flat-square)](package.json)
