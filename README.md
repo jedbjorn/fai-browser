@@ -4,6 +4,7 @@
 action approvals and verified outcomes.**
 
 [![CI](https://github.com/jedbjorn/fai-browser/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jedbjorn/fai-browser/actions/workflows/ci.yml)
+[![Release downloads](https://img.shields.io/github/downloads/jedbjorn/fai-browser/total?label=release%20downloads&style=flat-square)](https://github.com/jedbjorn/fai-browser/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Node >=22](https://img.shields.io/badge/node-%3E%3D22-339933?style=flat-square&logo=node.js&logoColor=white)](package.json)
 [![Runtime deps: 0](https://img.shields.io/badge/runtime%20deps-0-brightgreen?style=flat-square)](package.json)
